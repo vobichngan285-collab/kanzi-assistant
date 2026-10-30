@@ -11,6 +11,7 @@ import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.TextureView;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -45,6 +46,7 @@ public class MainActivity extends CameraActivity {
         @Override public void run() { diagnoseUsbDevices(); }
     };
     private FrameLayout previewContainer;
+    private TextureView cameraTextureView;
     private TextView status, diagnostic, result;
     private Button startButton, pauseButton;
     private TextToSpeech tts;
@@ -137,7 +139,8 @@ public class MainActivity extends CameraActivity {
     }
 
     @Override protected IAspectRatio getCameraView() {
-        return new AspectRatioTextureView(this);
+        cameraTextureView = new AspectRatioTextureView(this);
+        return (IAspectRatio) cameraTextureView;
     }
 
     @Override protected ViewGroup getCameraViewContainer() {
@@ -270,12 +273,16 @@ public class MainActivity extends CameraActivity {
         }
         boolean cameraOpened = false;
         try { cameraOpened = isCameraOpened(); } catch (Exception ignored) {}
-        info.append("\\nUSB权限：").append(permission ? "已授予" : "未授予");
-        info.append("\\n预览容器：").append(previewContainer == null ? "未创建" :
+        info.append("\nUSB权限：").append(permission ? "已授予" : "未授予");
+        info.append("\n预览容器：").append(previewContainer == null ? "未创建" :
             previewContainer.getWidth() + "×" + previewContainer.getHeight() +
             "，子视图 " + previewContainer.getChildCount() + " 个");
-        info.append("\\n摄像头状态：").append(cameraOpened ? "已打开" : "未打开");
-        info.append("\\n预览回调：").append(previewCallbackAdded ? "已注册" : "未注册");
+        info.append("\n摄像头状态：").append(cameraOpened ? "已打开" : "未打开");
+        info.append("\n预览回调：").append(previewCallbackAdded ? "已注册" : "未注册");
+        info.append("\n摄像头视图：").append(cameraTextureView == null ? "未创建" :
+            cameraTextureView.getWidth() + "×" + cameraTextureView.getHeight());
+        info.append("\nTextureView表面：").append(cameraTextureView == null ? "未知" :
+            cameraTextureView.isAvailable() ? "已就绪" : "未就绪");
         if (uvcCount > 0 && !permission) {
             info.append("\\n判断：设备已枚举，但 USB 权限未授予，重点检查授权阶段。");
         } else if (uvcCount > 0 && permission && !cameraOpened) {
