@@ -38,7 +38,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.3.8";
+    private static final String APP_VERSION = "0.3.9";
     private final Handler diagnosticHandler = new Handler(Looper.getMainLooper());
     private int diagnosticAttempts = 0;
     private final Runnable diagnosticRunnable = new Runnable() {
@@ -93,13 +93,19 @@ public class MainActivity extends CameraActivity {
         diagnostic.setText("USB 设备诊断信息正在加载…");
         diagnostic.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         diagnostic.setTextColor(0xFF475467);
-        root.addView(diagnostic);
+        // Keep diagnostics from consuming the entire screen. The camera
+        // TextureView needs a non-zero measured height before AUSBC can
+        // receive onSurfaceTextureAvailable() and register its USB monitor.
+        ScrollView diagnosticScroll = new ScrollView(this);
+        diagnosticScroll.setFillViewport(false);
+        diagnosticScroll.addView(diagnostic);
+        root.addView(diagnosticScroll, new LinearLayout.LayoutParams(-1, dp(112)));
 
         previewContainer = new FrameLayout(this);
         previewContainer.setBackgroundColor(Color.BLACK);
-        LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(-1, 0, 1);
-        previewParams.topMargin = dp(10);
-        previewParams.bottomMargin = dp(10);
+        LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(-1, dp(220));
+        previewParams.topMargin = dp(8);
+        previewParams.bottomMargin = dp(8);
         root.addView(previewContainer, previewParams);
 
         LinearLayout buttons = new LinearLayout(this);
