@@ -1,4 +1,5 @@
 name: Android APK (PP-OCRv6 + patched USB permission)
+# Manual workflow_dispatch is enabled for clean rebuilds after stalled runs.
 on:
   push:
     branches: [ main ]
