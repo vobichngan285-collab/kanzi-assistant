@@ -38,7 +38,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.3.7";
+    private static final String APP_VERSION = "0.3.8";
     private final Handler diagnosticHandler = new Handler(Looper.getMainLooper());
     private int diagnosticAttempts = 0;
     private final Runnable diagnosticRunnable = new Runnable() {
@@ -172,9 +172,31 @@ public class MainActivity extends CameraActivity {
             }
         });
         startButton.setOnClickListener(v -> {
+            UsbManager manager = (UsbManager) getSystemService(USB_SERVICE);
+            UsbDevice target = null;
+            if (manager != null) {
+                Map<String, UsbDevice> devices = manager.getDeviceList();
+                if (devices != null) {
+                    for (UsbDevice device : devices.values()) {
+                        if (device.getVendorId() == 0xEBA4 && device.getProductId() == 0x6579) {
+                            target = device;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (target != null && manager != null && !manager.hasPermission(target)) {
+                status.setText("正在申请 USB 摄像头权限，请留意系统弹窗…");
+                requestPermission(target);
+                return;
+            }
+            if (!previewCallbackAdded) {
+                status.setText(target == null ? "没有发现指定 USB 摄像头，请检查连接" : "摄像头权限已具备，正在等待摄像头打开…");
+                return;
+            }
             running = true;
             lastSpoken = "";
-            status.setText(previewCallbackAdded ? "正在识别并朗读新出现的中文文字" : "正在等待 USB 摄像头连接…");
+            status.setText("正在识别并朗读新出现的中文文字");
         });
         pauseButton.setOnClickListener(v -> {
             running = false;
