@@ -330,14 +330,14 @@ public class MainActivity extends CameraActivity {
     }
 
     private void onRecognized(String found) {
-        found = found.trim();
-        if (found.isEmpty()) return;
-        runOnUiThread(() -> result.setText(found));
-        String normalized = found.replaceAll("\\s+", "");
+        final String recognizedText = found.trim();
+        if (recognizedText.isEmpty()) return;
+        runOnUiThread(() -> result.setText(recognizedText));
+        String normalized = recognizedText.replaceAll("\\s+", "");
         if (running && ttsReady && normalized.length() > 1 && !normalized.equals(lastSpoken)) {
             lastSpoken = normalized;
             runOnUiThread(() -> {
-                if (running) tts.speak(found, TextToSpeech.QUEUE_ADD, null, "ocr-" + System.currentTimeMillis());
+                if (running) tts.speak(recognizedText, TextToSpeech.QUEUE_ADD, null, "ocr-" + System.currentTimeMillis());
             });
         }
     }
