@@ -48,6 +48,9 @@ jobs:
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -n "$APKSIGNER" || { echo "ERROR: apksigner not found in Android SDK build-tools"; exit 1; }
           "$APKSIGNER" sign \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
             --ks "$RUNNER_TEMP/kanzi-signing.jks" \
             --ks-key-alias "$KANZI_KEY_ALIAS" \
             --ks-pass env:KANZI_KEYSTORE_PASSWORD \
@@ -55,6 +58,13 @@ jobs:
             --out app/build/outputs/apk/debug/app-debug-signed.apk \
             "$APK"
           "$APKSIGNER" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug-signed.apk
+          "$APKSIGNER" verify --verbose app/build/outputs/apk/debug/app-debug-signed.apk | tee "$RUNNER_TEMP/signature-check.txt"
+          grep -q "Verified using v1 scheme: true" "$RUNNER_TEMP/signature-check.txt"
+          grep -q "Verified using v2 scheme: true" "$RUNNER_TEMP/signature-check.txt"
+          grep -q "Verified using v3 scheme: true" "$RUNNER_TEMP/signature-check.txt"
+          echo "APK_SHA256=$(sha256sum app/build/outputs/apk/debug/app-debug-signed.apk | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
+          echo "APK_SIZE=$(stat -c%s app/build/outputs/apk/debug/app-debug-signed.apk) bytes" >> "$GITHUB_STEP_SUMMARY"
+          echo "All three APK signature schemes verified." >> "$GITHUB_STEP_SUMMARY"
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
