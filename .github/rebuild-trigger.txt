@@ -1,0 +1,2 @@
+Manual rebuild trigger for the Android APK workflow.
+This file can remain in the repository; it does not affect the app build.
