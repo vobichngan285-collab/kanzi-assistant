@@ -23,6 +23,7 @@ jobs:
           set -euo pipefail
           SDK="third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk"
           test -s "$SDK/src/main/java/com/paddle/ocr/PaddleOCR.kt"
+          rm -f "$SDK/build.gradle.kts"
           mkdir -p "$SDK/src/main/assets/models/det" "$SDK/src/main/assets/models/rec"
           curl -fL --retry 3 "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv6_tiny_det_onnx_infer.tar" -o "$RUNNER_TEMP/ppocr-det.tar"
           curl -fL --retry 3 "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv6_tiny_rec_onnx_infer.tar" -o "$RUNNER_TEMP/ppocr-rec.tar"
