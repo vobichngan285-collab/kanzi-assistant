@@ -4,8 +4,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 concurrency:
-  group: android-apk-${{ github.ref }}
-  cancel-in-progress: true
+  # Keep each run independent so a newer commit cannot cancel an active APK build.
+  group: android-apk-${{ github.run_id }}
+  cancel-in-progress: false
 permissions:
   contents: write
   actions: read
