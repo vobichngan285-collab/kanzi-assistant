@@ -67,9 +67,11 @@ public class MainActivity extends CameraActivity {
             recognizer.recognizeNv21(frame, width, height, found -> {
                 busy.set(false);
                 if (found != null && !found.trim().isEmpty()) onRecognized(found);
+                return kotlin.Unit.INSTANCE;
             }, error -> {
                 busy.set(false);
                 runOnUiThread(() -> status.setText("飞桨 OCR 识别异常：" + error));
+                return kotlin.Unit.INSTANCE;
             });
         }
     };
@@ -97,9 +99,6 @@ public class MainActivity extends CameraActivity {
         diagnostic.setText("USB 设备诊断信息正在加载…");
         diagnostic.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         diagnostic.setTextColor(0xFF475467);
-        // Keep diagnostics from consuming the entire screen. The camera
-        // TextureView needs a non-zero measured height before AUSBC can
-        // receive onSurfaceTextureAvailable() and register its USB monitor.
         ScrollView diagnosticScroll = new ScrollView(this);
         diagnosticScroll.setFillViewport(false);
         diagnosticScroll.addView(diagnostic);
@@ -145,13 +144,8 @@ public class MainActivity extends CameraActivity {
         return (IAspectRatio) cameraTextureView;
     }
 
-    @Override protected ViewGroup getCameraViewContainer() {
-        return previewContainer;
-    }
-
-    @Override protected int getGravity() {
-        return Gravity.CENTER;
-    }
+    @Override protected ViewGroup getCameraViewContainer() { return previewContainer; }
+    @Override protected int getGravity() { return Gravity.CENTER; }
 
     @Override protected CameraRequest getCameraRequest() {
         return new CameraRequest.Builder()
@@ -163,12 +157,6 @@ public class MainActivity extends CameraActivity {
             .setAspectRatioShow(true)
             .create();
     }
-
-    // CameraActivity owns the complete USB lifecycle. When its preview
-    // surface becomes available it registers the USB monitor, creates the
-    // camera entry in onAttachDev(), requests permission for getDefaultCamera(),
-    // and opens the camera from onConnectDev(). Do not manually seed its map
-    // or request permission outside that lifecycle.
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -206,16 +194,13 @@ public class MainActivity extends CameraActivity {
         });
     }
 
-    // Prefer the camera reported by the user's phone diagnostics.
     @Override protected UsbDevice getDefaultCamera() {
         UsbManager manager = (UsbManager) getSystemService(USB_SERVICE);
         if (manager == null) return null;
         Map<String, UsbDevice> devices = manager.getDeviceList();
         if (devices == null) return null;
         for (UsbDevice device : devices.values()) {
-            if (device.getVendorId() == 0xEBA4 && device.getProductId() == 0x6579) {
-                return device;
-            }
+            if (device.getVendorId() == 0xEBA4 && device.getProductId() == 0x6579) return device;
         }
         return null;
     }
@@ -235,7 +220,6 @@ public class MainActivity extends CameraActivity {
         }
     }
 
-
     @Override protected void onResume() {
         super.onResume();
         diagnosticAttempts = 0;
@@ -249,7 +233,6 @@ public class MainActivity extends CameraActivity {
         Map<String, UsbDevice> systemDevices = manager == null ? null : manager.getDeviceList();
         List<UsbDevice> uvcDevices = null;
         try {
-            // CameraActivity registers its USB monitor after the preview surface is ready.
             uvcDevices = getDeviceList();
         } catch (Exception e) {
             diagnostic.setText(APP_VERSION + "：UVC 设备列表读取异常：" + e.getClass().getSimpleName());
@@ -272,7 +255,6 @@ public class MainActivity extends CameraActivity {
 
         if (systemCount == 0 && uvcCount <= 0) {
             info.append("\n暂时没有读到设备。正在等待 USB 监控初始化/设备插入…");
-            diagnostic.setText(info.toString());
             info.append("\n持续监测中：每 2 秒重新读取系统 USB 设备列表；插拔后无需重启应用。");
             diagnostic.setText(info.toString());
             diagnosticHandler.postDelayed(diagnosticRunnable, 2000);
@@ -301,11 +283,11 @@ public class MainActivity extends CameraActivity {
         if (uvcCount > 0 && !permission) {
             info.append("\n判断：设备已枚举，但 USB 权限未授予，重点检查授权阶段。");
         } else if (uvcCount > 0 && permission && !cameraOpened) {
-            info.append("\\n判断：USB 权限已具备，但摄像头未打开，重点检查连接/打开阶段。");
+            info.append("\n判断：USB 权限已具备，但摄像头未打开，重点检查连接/打开阶段。");
         } else if (cameraOpened) {
-            info.append("\\n判断：摄像头已打开，继续检查预览数据回调。");
+            info.append("\n判断：摄像头已打开，继续检查预览数据回调。");
         } else if (systemCount > 0) {
-            info.append("\\n判断：安卓已发现设备，UVC 库连接状态仍需确认。");
+            info.append("\n判断：安卓已发现设备，UVC 库连接状态仍需确认。");
         }
         diagnostic.setText(info.toString());
         diagnosticHandler.postDelayed(diagnosticRunnable, 2000);
@@ -342,9 +324,7 @@ public class MainActivity extends CameraActivity {
         }
     }
 
-    private int dp(int value) {
-        return (int) (value * getResources().getDisplayMetrics().density);
-    }
+    private int dp(int value) { return (int) (value * getResources().getDisplayMetrics().density); }
 
     @Override protected void onDestroy() {
         running = false;
