@@ -1,4 +1,4 @@
-name: Android APK (patched USB permission)
+name: Android APK (PP-OCRv6 + patched USB permission)
 on:
   push:
     branches: [ main ]
@@ -10,8 +10,57 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout 看字助手
         uses: actions/checkout@v4
+      - name: Checkout official PaddleOCR v3.7.0 Android SDK
+        uses: actions/checkout@v4
+        with:
+          repository: PaddlePaddle/PaddleOCR
+          ref: v3.7.0
+          path: third_party/PaddleOCR
+      - name: Prepare official PP-OCRv6 Android SDK and tiny models
+        run: |
+          set -euo pipefail
+          SDK="third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk"
+          test -s "$SDK/src/main/java/com/paddle/ocr/PaddleOCR.kt"
+          mkdir -p "$SDK/src/main/assets/models/det" "$SDK/src/main/assets/models/rec"
+          curl -fL --retry 3 "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv6_tiny_det_onnx_infer.tar" -o "$RUNNER_TEMP/ppocr-det.tar"
+          curl -fL --retry 3 "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv6_tiny_rec_onnx_infer.tar" -o "$RUNNER_TEMP/ppocr-rec.tar"
+          mkdir -p "$RUNNER_TEMP/ppocr-det" "$RUNNER_TEMP/ppocr-rec"
+          tar -xf "$RUNNER_TEMP/ppocr-det.tar" -C "$RUNNER_TEMP/ppocr-det"
+          tar -xf "$RUNNER_TEMP/ppocr-rec.tar" -C "$RUNNER_TEMP/ppocr-rec"
+          DET="$(find "$RUNNER_TEMP/ppocr-det" -type f -name inference.onnx | head -n 1)"
+          REC="$(find "$RUNNER_TEMP/ppocr-rec" -type f -name inference.onnx | head -n 1)"
+          CFG="$(find "$RUNNER_TEMP/ppocr-rec" -type f -name inference.yml | head -n 1)"
+          test -n "$DET" && test -n "$REC" && test -n "$CFG"
+          cp "$DET" "$SDK/src/main/assets/models/det/inference.onnx"
+          cp "$REC" "$SDK/src/main/assets/models/rec/inference.onnx"
+          cp "$CFG" "$SDK/src/main/assets/models/rec/inference.yml"
+          cat > "$SDK/build.gradle" <<'GRADLE'
+          plugins {
+              id 'com.android.library'
+              id 'org.jetbrains.kotlin.android'
+          }
+          android {
+              namespace 'com.paddle.ocr'
+              compileSdk 36
+              defaultConfig { minSdk 26 }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = '17' }
+              buildTypes { release { minifyEnabled false } }
+          }
+          dependencies {
+              implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.21.1'
+              implementation 'com.quickbirdstudios:opencv:4.5.3'
+              implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
+              implementation 'androidx.core:core-ktx:1.15.0'
+          }
+          GRADLE
+          echo "PP-OCRv6 tiny model assets prepared." >> "$GITHUB_STEP_SUMMARY"
+          du -h "$SDK/src/main/assets/models/"*/* >> "$GITHUB_STEP_SUMMARY"
       - name: Checkout AUSBC source
         uses: actions/checkout@v4
         with:
@@ -63,16 +112,15 @@ jobs:
           "$ZIPALIGN" -c -v 4 "$APK"
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           "$AAPT" dump badging "$APK" | tee "$RUNNER_TEMP/apk-manifest.txt"
-          grep -q "package: name='com.vobichngan.kanzi' versionCode='12' versionName='0.4.2'" "$RUNNER_TEMP/apk-manifest.txt"
+          grep -q "package: name='com.vobichngan.kanzi' versionCode='13' versionName='0.5.0'" "$RUNNER_TEMP/apk-manifest.txt"
           grep -q "sdkVersion:'26'" "$RUNNER_TEMP/apk-manifest.txt"
           echo "APK_SHA256=$(sha256sum "$APK" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
           echo "APK_SIZE=$(stat -c%s "$APK") bytes" >> "$GITHUB_STEP_SUMMARY"
-          echo "Signing: V2 verified; certificate fingerprint matches the saved release key." >> "$GITHUB_STEP_SUMMARY"
-          echo "Package/version/minSdk and zipalign checks passed." >> "$GITHUB_STEP_SUMMARY"
+          echo "PP-OCRv6 tiny, V2 signature, certificate, package/version/minSdk and zipalign checks passed." >> "$GITHUB_STEP_SUMMARY"
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kanzi-assistant-0.4.2-signed
+          name: kanzi-assistant-0.5.0-ppocrv6-signed
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
@@ -80,6 +128,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: test-build-${{ github.run_number }}
-          name: 看字助手测试版 0.4.2 (${{ github.run_number }})
+          name: 看字助手测试版 0.5.0 PP-OCRv6 (${{ github.run_number }})
           prerelease: true
           files: app/build/outputs/apk/release/app-release.apk
