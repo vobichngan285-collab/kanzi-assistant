@@ -67,11 +67,9 @@ public class MainActivity extends CameraActivity {
             recognizer.recognizeNv21(frame, width, height, found -> {
                 busy.set(false);
                 if (found != null && !found.trim().isEmpty()) onRecognized(found);
-                return kotlin.Unit.INSTANCE;
             }, error -> {
                 busy.set(false);
                 runOnUiThread(() -> status.setText("飞桨 OCR 识别异常：" + error));
-                return kotlin.Unit.INSTANCE;
             });
         }
     };
