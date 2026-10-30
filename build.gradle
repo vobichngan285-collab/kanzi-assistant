@@ -1,3 +1,29 @@
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+    dependencies {
+        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.10'
+    }
+}
+
 plugins {
     id 'com.android.application' version '8.10.1' apply false
+}
+
+ext {
+    versionNameString = '3.6.0'
+    versionCode = 129
+    versionCompiler = 36
+    versionTarget = 36
+    minSdkVersion = 23
+    javaSourceCompatibility = JavaVersion.VERSION_1_8
+    javaTargetCompatibility = JavaVersion.VERSION_1_8
+    androidXVersion = '1.7.1'
+    ndkVersion = '28.1.13356709'
+    coreKtx = '1.18.0'
+    materialVersion = '1.13.0'
+    constraintlayoutVersion = '2.2.1'
 }
