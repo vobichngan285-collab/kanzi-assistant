@@ -39,7 +39,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.4.0";
+    private static final String APP_VERSION = "0.4.1";
     private final Handler diagnosticHandler = new Handler(Looper.getMainLooper());
     private int diagnosticAttempts = 0;
     private final Runnable diagnosticRunnable = new Runnable() {
@@ -226,6 +226,13 @@ public class MainActivity extends CameraActivity {
     }
 
 
+    @Override protected void onResume() {
+        super.onResume();
+        diagnosticAttempts = 0;
+        diagnosticHandler.removeCallbacks(diagnosticRunnable);
+        diagnosticHandler.post(diagnosticRunnable);
+    }
+
     private void diagnoseUsbDevices() {
         diagnosticAttempts++;
         UsbManager manager = (UsbManager) getSystemService(USB_SERVICE);
@@ -256,11 +263,9 @@ public class MainActivity extends CameraActivity {
         if (systemCount == 0 && uvcCount <= 0) {
             info.append("\n暂时没有读到设备。正在等待 USB 监控初始化/设备插入…");
             diagnostic.setText(info.toString());
-            if (diagnosticAttempts < 15) {
-                diagnosticHandler.postDelayed(diagnosticRunnable, 1000);
-            } else {
-                diagnostic.setText(info.append("\n等待 15 秒后仍无设备。请把此结果发给我。").toString());
-            }
+            info.append("\n持续监测中：每 2 秒重新读取系统 USB 设备列表；插拔后无需重启应用。");
+            diagnostic.setText(info.toString());
+            diagnosticHandler.postDelayed(diagnosticRunnable, 2000);
             return;
         }
         boolean permission = false;
@@ -284,7 +289,7 @@ public class MainActivity extends CameraActivity {
         info.append("\nTextureView表面：").append(cameraTextureView == null ? "未知" :
             cameraTextureView.isAvailable() ? "已就绪" : "未就绪");
         if (uvcCount > 0 && !permission) {
-            info.append("\\n判断：设备已枚举，但 USB 权限未授予，重点检查授权阶段。");
+            info.append("\n判断：设备已枚举，但 USB 权限未授予，重点检查授权阶段。");
         } else if (uvcCount > 0 && permission && !cameraOpened) {
             info.append("\\n判断：USB 权限已具备，但摄像头未打开，重点检查连接/打开阶段。");
         } else if (cameraOpened) {
@@ -293,7 +298,7 @@ public class MainActivity extends CameraActivity {
             info.append("\\n判断：安卓已发现设备，UVC 库连接状态仍需确认。");
         }
         diagnostic.setText(info.toString());
-        if (diagnosticAttempts < 15) diagnosticHandler.postDelayed(diagnosticRunnable, 1500);
+        diagnosticHandler.postDelayed(diagnosticRunnable, 2000);
     }
 
     private void appendDeviceInfo(StringBuilder info, String source, UsbDevice device) {
