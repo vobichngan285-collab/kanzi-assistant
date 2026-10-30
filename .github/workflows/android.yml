@@ -48,6 +48,7 @@ jobs:
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -n "$APKSIGNER" || { echo "ERROR: apksigner not found in Android SDK build-tools"; exit 1; }
           "$APKSIGNER" sign \
+            --min-sdk-version 23 \
             --v1-signing-enabled true \
             --v2-signing-enabled true \
             --v3-signing-enabled true \
