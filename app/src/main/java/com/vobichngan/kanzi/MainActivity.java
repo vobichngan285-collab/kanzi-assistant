@@ -27,11 +27,10 @@ import com.jiangdg.ausbc.callback.ICameraStateCallBack;
 import com.jiangdg.ausbc.callback.IPreviewDataCallBack;
 import com.jiangdg.ausbc.widget.AspectRatioTextureView;
 import com.jiangdg.ausbc.widget.IAspectRatio;
-import com.google.mlkit.vision.common.InputImage;
-import com.google.mlkit.vision.text.Text;
-import com.google.mlkit.vision.text.TextRecognition;
-import com.google.mlkit.vision.text.TextRecognizer;
-import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions;
+import android.graphics.BitmapFactory;
+import android.graphics.ImageFormat;
+import android.graphics.Rect;
+import android.graphics.YuvImage;
 
 import java.util.Locale;
 import java.util.Map;
@@ -39,7 +38,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.4.2";
+    private static final String APP_VERSION = "0.5.0";
     private final Handler diagnosticHandler = new Handler(Looper.getMainLooper());
     private int diagnosticAttempts = 0;
     private final Runnable diagnosticRunnable = new Runnable() {
@@ -50,7 +49,7 @@ public class MainActivity extends CameraActivity {
     private TextView status, diagnostic, result;
     private Button startButton, pauseButton;
     private TextToSpeech tts;
-    private TextRecognizer recognizer;
+    private PaddleOcrEngine recognizer;
     private boolean running = false;
     private boolean ttsReady = false;
     private boolean previewCallbackAdded = false;
@@ -65,10 +64,13 @@ public class MainActivity extends CameraActivity {
             if (now - lastProcess < 900 || !busy.compareAndSet(false, true)) return;
             lastProcess = now;
             byte[] frame = data.clone();
-            InputImage image = InputImage.fromByteArray(frame, width, height, 0, InputImage.IMAGE_FORMAT_NV21);
-            recognizer.process(image)
-                .addOnSuccessListener(MainActivity.this::onRecognized)
-                .addOnCompleteListener(task -> busy.set(false));
+            recognizer.recognizeNv21(frame, width, height, found -> {
+                busy.set(false);
+                if (found != null && !found.trim().isEmpty()) onRecognized(found);
+            }, error -> {
+                busy.set(false);
+                runOnUiThread(() -> status.setText("飞桨 OCR 识别异常：" + error));
+            });
         }
     };
 
@@ -172,7 +174,15 @@ public class MainActivity extends CameraActivity {
         super.onCreate(state);
         diagnosticAttempts = 0;
         diagnosticHandler.postDelayed(diagnosticRunnable, 1200);
-        recognizer = TextRecognition.getClient(new ChineseTextRecognizerOptions.Builder().build());
+        recognizer = new PaddleOcrEngine(getApplicationContext(), new PaddleOcrEngine.Listener() {
+            @Override public void onReady() {
+                runOnUiThread(() -> status.setText("PP-OCRv6 已加载，等待 USB 摄像头…"));
+            }
+            @Override public void onError(String message) {
+                runOnUiThread(() -> status.setText("飞桨 OCR 初始化失败：" + message));
+            }
+        });
+        recognizer.initialize();
         tts = new TextToSpeech(this, code -> {
             if (code == TextToSpeech.SUCCESS) {
                 int language = tts.setLanguage(Locale.SIMPLIFIED_CHINESE);
@@ -319,16 +329,8 @@ public class MainActivity extends CameraActivity {
         }
     }
 
-    private void onRecognized(Text text) {
-        StringBuilder builder = new StringBuilder();
-        for (Text.TextBlock block : text.getTextBlocks()) {
-            String value = block.getText().trim();
-            if (!value.isEmpty()) {
-                if (builder.length() > 0) builder.append("\n");
-                builder.append(value);
-            }
-        }
-        String found = builder.toString().trim();
+    private void onRecognized(String found) {
+        found = found.trim();
         if (found.isEmpty()) return;
         runOnUiThread(() -> result.setText(found));
         String normalized = found.replaceAll("\\s+", "");
@@ -347,7 +349,7 @@ public class MainActivity extends CameraActivity {
     @Override protected void onDestroy() {
         running = false;
         if (tts != null) { tts.stop(); tts.shutdown(); }
-        if (recognizer != null) recognizer.close();
+        if (recognizer != null) recognizer.release();
         diagnosticHandler.removeCallbacksAndMessages(null);
         super.onDestroy();
     }
