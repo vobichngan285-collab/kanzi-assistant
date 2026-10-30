@@ -45,12 +45,20 @@ jobs:
           APK="app/build/outputs/apk/release/app-release.apk"
           test -s "$APK"
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
-          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee "$RUNNER_TEMP/certificate-check.txt"
           "$APKSIGNER" verify --verbose "$APK" | tee "$RUNNER_TEMP/signature-check.txt"
-          grep -q "Verified using v1 scheme: true" "$RUNNER_TEMP/signature-check.txt"
           grep -q "Verified using v2 scheme: true" "$RUNNER_TEMP/signature-check.txt"
+          grep -qi "Signer #1 certificate SHA-256 digest: bb39562d03f819bcad66902404ed7a5839d6ea781d21f0294fc174ad375e8422" "$RUNNER_TEMP/certificate-check.txt"
+          ZIPALIGN="$(find "$ANDROID_HOME/build-tools" -type f -name zipalign | sort -V | tail -n 1)"
+          "$ZIPALIGN" -c -v 4 "$APK"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          "$AAPT" dump badging "$APK" | tee "$RUNNER_TEMP/apk-manifest.txt"
+          grep -q "package: name='com.vobichngan.kanzi' versionCode='11' versionName='0.4.0'" "$RUNNER_TEMP/apk-manifest.txt"
+          grep -q "sdkVersion:'26'" "$RUNNER_TEMP/apk-manifest.txt"
           echo "APK_SHA256=$(sha256sum "$APK" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
           echo "APK_SIZE=$(stat -c%s "$APK") bytes" >> "$GITHUB_STEP_SUMMARY"
+          echo "Signing: V2 verified; certificate fingerprint matches the saved release key." >> "$GITHUB_STEP_SUMMARY"
+          echo "Package/version/minSdk and zipalign checks passed." >> "$GITHUB_STEP_SUMMARY"
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
