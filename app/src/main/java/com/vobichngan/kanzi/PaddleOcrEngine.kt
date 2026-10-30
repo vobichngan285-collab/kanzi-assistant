@@ -72,7 +72,7 @@ class PaddleOcrEngine(
             return
         }
         if (released || !busy.compareAndSet(false, true)) {
-            onResult(null)
+            onResult.onResult(null)
             return
         }
         scope.launch {
