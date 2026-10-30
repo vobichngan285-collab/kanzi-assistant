@@ -18,6 +18,9 @@ import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
 
+fun interface OcrResultCallback { fun onResult(text: String?) }
+fun interface OcrErrorCallback { fun onError(message: String) }
+
 class PaddleOcrEngine(
     context: Context,
     private val listener: Listener
@@ -61,11 +64,11 @@ class PaddleOcrEngine(
         data: ByteArray,
         width: Int,
         height: Int,
-        onResult: (String?) -> Unit,
-        onError: (String) -> Unit
+        onResult: OcrResultCallback,
+        onError: OcrErrorCallback
     ) {
         val current = engine ?: run {
-            onResult(null)
+            onResult.onResult(null)
             return
         }
         if (released || !busy.compareAndSet(false, true)) {
@@ -84,12 +87,12 @@ class PaddleOcrEngine(
                     val result = current.recognize(bitmap)
                     val text = result.results.map { it.text.trim() }
                         .filter { it.isNotEmpty() }.joinToString("\n")
-                    withContext(Dispatchers.Main) { onResult(text) }
+                    withContext(Dispatchers.Main) { onResult.onResult(text) }
                 } finally {
                     bitmap.recycle()
                 }
             } catch (t: Throwable) {
-                withContext(Dispatchers.Main) { onError(t.message ?: t.javaClass.simpleName) }
+                withContext(Dispatchers.Main) { onError.onError(t.message ?: t.javaClass.simpleName) }
             } finally {
                 busy.set(false)
             }
