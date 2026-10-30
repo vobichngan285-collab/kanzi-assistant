@@ -48,7 +48,7 @@ jobs:
         env:
           KANZI_KEYSTORE_PASSWORD: ${{ secrets.KANZI_KEYSTORE_PASSWORD }}
           KANZI_KEY_ALIAS: ${{ secrets.KANZI_KEY_ALIAS }}
-          KANZI_KEY_PASSWORD: ${{ secrets.KANZI_KEY_PASSWORD }}
+          KANZI_KEY_PASSWORD: ${{ secrets.KANZI_KEY_PASSWORD || secrets.KANZIKEYPASSWORD || secrets.KANZI_KEYSTORE_PASSWORD }}
         run: |
           set -euo pipefail
           gradle --no-daemon assembleRelease
