@@ -78,7 +78,7 @@ class PaddleOcrEngine(
                 YuvImage(data, ImageFormat.NV21, width, height, null)
                     .compressToJpeg(Rect(0, 0, width, height), 82, output)
                 val bytes = output.toByteArray()
-                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size())
+                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                     ?: error("摄像头画面解码失败")
                 try {
                     val result = current.recognize(bitmap)
