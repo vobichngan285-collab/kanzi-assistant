@@ -21,8 +21,6 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
-      - name: Build debug APK
-        run: gradle --no-daemon assembleDebug
       - name: Decode and validate signing keystore
         env:
           KANZI_KEYSTORE_BASE64: ${{ secrets.KANZI_KEYSTORE_BASE64 }}
@@ -30,53 +28,40 @@ jobs:
           KANZI_KEY_ALIAS: ${{ secrets.KANZI_KEY_ALIAS }}
         run: |
           set -euo pipefail
-          test -n "$KANZI_KEYSTORE_BASE64" || { echo "ERROR: KANZI_KEYSTORE_BASE64 is empty or unavailable"; exit 1; }
-          test -n "$KANZI_KEYSTORE_PASSWORD" || { echo "ERROR: KANZI_KEYSTORE_PASSWORD is empty or unavailable"; exit 1; }
-          test -n "$KANZI_KEY_ALIAS" || { echo "ERROR: KANZI_KEY_ALIAS is empty or unavailable"; exit 1; }
+          test -n "$KANZI_KEYSTORE_BASE64"
+          test -n "$KANZI_KEYSTORE_PASSWORD"
+          test -n "$KANZI_KEY_ALIAS"
           printf '%s' "$KANZI_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/kanzi-signing.jks"
-          test -s "$RUNNER_TEMP/kanzi-signing.jks" || { echo "ERROR: decoded keystore is empty"; exit 1; }
           keytool -list -keystore "$RUNNER_TEMP/kanzi-signing.jks" -storepass "$KANZI_KEYSTORE_PASSWORD" -alias "$KANZI_KEY_ALIAS" >/dev/null
-          echo "Keystore format, password, and alias validation passed."
-      - name: Sign APK with repository key
+          echo "KANZI_KEYSTORE_PATH=$RUNNER_TEMP/kanzi-signing.jks" >> "$GITHUB_ENV"
+      - name: Build signed release APK
         env:
           KANZI_KEYSTORE_PASSWORD: ${{ secrets.KANZI_KEYSTORE_PASSWORD }}
-          KANZI_KEY_PASSWORD: ${{ secrets.KANZIKEYPASSWORD }}
           KANZI_KEY_ALIAS: ${{ secrets.KANZI_KEY_ALIAS }}
+          KANZI_KEY_PASSWORD: ${{ secrets.KANZIKEYPASSWORD }}
         run: |
           set -euo pipefail
-          APK="app/build/outputs/apk/debug/app-debug.apk"
+          gradle --no-daemon assembleRelease
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -s "$APK"
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
-          test -n "$APKSIGNER" || { echo "ERROR: apksigner not found in Android SDK build-tools"; exit 1; }
-          "$APKSIGNER" sign \
-            --min-sdk-version 23 \
-            --v1-signing-enabled true \
-            --v2-signing-enabled true \
-            --v3-signing-enabled true \
-            --ks "$RUNNER_TEMP/kanzi-signing.jks" \
-            --ks-key-alias "$KANZI_KEY_ALIAS" \
-            --ks-pass env:KANZI_KEYSTORE_PASSWORD \
-            --key-pass env:KANZI_KEY_PASSWORD \
-            --out app/build/outputs/apk/debug/app-debug-signed.apk \
-            "$APK"
-          "$APKSIGNER" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug-signed.apk
-          "$APKSIGNER" verify --verbose app/build/outputs/apk/debug/app-debug-signed.apk | tee "$RUNNER_TEMP/signature-check.txt"
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          "$APKSIGNER" verify --verbose "$APK" | tee "$RUNNER_TEMP/signature-check.txt"
           grep -q "Verified using v1 scheme: true" "$RUNNER_TEMP/signature-check.txt"
           grep -q "Verified using v2 scheme: true" "$RUNNER_TEMP/signature-check.txt"
-          grep -q "Verified using v3 scheme: true" "$RUNNER_TEMP/signature-check.txt"
-          echo "APK_SHA256=$(sha256sum app/build/outputs/apk/debug/app-debug-signed.apk | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
-          echo "APK_SIZE=$(stat -c%s app/build/outputs/apk/debug/app-debug-signed.apk) bytes" >> "$GITHUB_STEP_SUMMARY"
-          echo "All three APK signature schemes verified." >> "$GITHUB_STEP_SUMMARY"
+          echo "APK_SHA256=$(sha256sum "$APK" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
+          echo "APK_SIZE=$(stat -c%s "$APK") bytes" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kanzi-assistant-signed-apk
-          path: app/build/outputs/apk/debug/app-debug-signed.apk
+          name: kanzi-assistant-0.4.0-signed
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
       - name: Publish public test download
         uses: softprops/action-gh-release@v2
         with:
           tag_name: test-build-${{ github.run_number }}
-          name: 看字助手测试版 ${{ github.run_number }}
+          name: 看字助手测试版 0.4.0 (${{ github.run_number }})
           prerelease: true
-          files: app/build/outputs/apk/debug/app-debug-signed.apk
+          files: app/build/outputs/apk/release/app-release.apk
