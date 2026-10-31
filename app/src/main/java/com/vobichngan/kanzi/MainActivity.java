@@ -405,7 +405,9 @@ public class MainActivity extends CameraActivity {
         new androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("识别与朗读设置")
             .setView(settingsScroll)
-            .setNegativeButton("取消", null)
+            .setNegativeButton("取消", (dialog, which) -> {
+                if (tts != null && ttsReady) tts.setSpeechRate(speechRate);
+            })
             .setPositiveButton("保存", (dialog, which) -> {
                 long interval = 500L;
                 try {
