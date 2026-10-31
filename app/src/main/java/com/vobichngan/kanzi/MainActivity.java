@@ -501,43 +501,33 @@ public class MainActivity extends CameraActivity {
         if (containerWidth <= 0 || containerHeight <= 0) return;
         boolean quarterTurn = previewRotation == 90 || previewRotation == 270;
 
-        // Swap the TextureView layout dimensions before rotating it. Otherwise Android
-        // rotates a landscape view inside its old landscape-sized layout slot.
+        // Lock the camera view to a true 16:9 source frame. After a 90/270-degree
+        // rotation its visible bounds become 9:16. Fit-center it in the full-screen
+        // preview container without cropping or stretching.
+        float displayAspect = quarterTurn ? (9.0f / 16.0f) : (16.0f / 9.0f);
+        float displayWidth = Math.min(containerWidth, containerHeight * displayAspect);
+        float displayHeight = displayWidth / displayAspect;
+        int wantedWidth = Math.max(1, Math.round(quarterTurn ? displayHeight : displayWidth));
+        int wantedHeight = Math.max(1, Math.round(quarterTurn ? displayWidth : displayHeight));
+
         ViewGroup.LayoutParams raw = cameraTextureView.getLayoutParams();
         if (raw instanceof FrameLayout.LayoutParams) {
             FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) raw;
-            int wantedWidth = quarterTurn ? containerHeight : containerWidth;
-            int wantedHeight = quarterTurn ? containerWidth : containerHeight;
             if (lp.width != wantedWidth || lp.height != wantedHeight || lp.gravity != Gravity.CENTER) {
                 lp.width = wantedWidth;
                 lp.height = wantedHeight;
                 lp.gravity = Gravity.CENTER;
                 cameraTextureView.setLayoutParams(lp);
-                return;
             }
         }
-        cameraTextureView.setRotation(previewRotation);
 
+        cameraTextureView.setRotation(previewRotation);
         int viewWidth = cameraTextureView.getWidth();
         int viewHeight = cameraTextureView.getHeight();
-        // "适应预览框" must never crop the camera image or enlarge it automatically.
-        // Fit the complete rotated frame inside the available area; if aspect ratios differ,
-        // leave unused space rather than zooming/cropping the image.
-        float fitScale = 1.0f;
-        if (previewFill && viewWidth > 0 && viewHeight > 0 &&
-                containerWidth > 0 && containerHeight > 0) {
-            float rotatedWidth = quarterTurn ? viewHeight : viewWidth;
-            float rotatedHeight = quarterTurn ? viewWidth : viewHeight;
-            // Scale up or down to use the available screen area while
-            // keeping the complete rotated camera frame visible (fit-center).
-            fitScale = Math.min(
-                containerWidth / rotatedWidth,
-                containerHeight / rotatedHeight
-            );
-        }
 
-        // previewZoom remains an explicit user-controlled adjustment only.
-        float scale = fitScale * previewZoom;
+        // No automatic zoom: preserve the complete 16:9 frame. Only the explicit
+        // user zoom and mirror/flip controls may transform the preview.
+        float scale = previewZoom;
         cameraTextureView.setPivotX(viewWidth / 2.0f);
         cameraTextureView.setPivotY(viewHeight / 2.0f);
         cameraTextureView.setScaleX(scale * (previewMirror ? -1.0f : 1.0f));
