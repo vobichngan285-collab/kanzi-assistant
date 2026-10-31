@@ -24,6 +24,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.max
@@ -34,7 +35,8 @@ fun interface OcrErrorCallback { fun onError(message: String) }
 
 class PaddleOcrEngine(
     context: Context,
-    private val listener: Listener
+    private val listener: Listener,
+    private val useSmallModel: Boolean = false
 ) {
     interface Listener {
         fun onReady()
@@ -67,14 +69,28 @@ class PaddleOcrEngine(
         scope.launch {
             try {
                 check(OpenCVUtils.init(appContext)) { "OpenCV 初始化失败" }
-                val created = PaddleOCR.create(
-                    context = appContext,
-                    config = PaddleOCRConfig(recBatchSize = 1),
-                    engineConfig = EngineConfig(numThreads = 2),
-                    detModelAssetPath = "models/det/inference.onnx",
-                    recModelAssetPath = "models/rec/inference.onnx",
-                    recConfigAssetPath = "models/rec/inference.yml"
-                )
+                val ocrConfig = PaddleOCRConfig(recBatchSize = 1)
+                val engineConfig = EngineConfig(numThreads = 2)
+                val created = if (useSmallModel && OcrModelDownloader.isInstalled(appContext)) {
+                    val dir = OcrModelDownloader.modelDirectory(appContext)
+                    PaddleOCR.create(
+                        context = appContext,
+                        config = ocrConfig,
+                        engineConfig = engineConfig,
+                        detModelAssetPath = File(dir, "det.onnx").absolutePath,
+                        recModelAssetPath = File(dir, "rec.onnx").absolutePath,
+                        recConfigAssetPath = File(dir, "rec.yml").absolutePath
+                    )
+                } else {
+                    PaddleOCR.create(
+                        context = appContext,
+                        config = ocrConfig,
+                        engineConfig = engineConfig,
+                        detModelAssetPath = "models/det/inference.onnx",
+                        recModelAssetPath = "models/rec/inference.onnx",
+                        recConfigAssetPath = "models/rec/inference.yml"
+                    )
+                }
                 if (released) {
                     created.release()
                     return@launch
