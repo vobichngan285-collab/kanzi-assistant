@@ -1,7 +1,7 @@
 plugins { id 'com.android.application'; id 'org.jetbrains.kotlin.android' }
 
 android {
-    namespace 'com.vobich.kanzi'
+    namespace 'com.vobichngan.kanzi'
     compileSdk 36
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -15,9 +15,8 @@ android {
                 storePassword System.getenv("KANZI_KEYSTORE_PASSWORD")
                 keyAlias System.getenv("KANZI_KEY_ALIAS")
                 keyPassword System.getenv("KANZI_KEY_PASSWORD")
-                // Use the Android Gradle Plugin's actual SigningConfig property names.
-                enableV1Signing = true
-                enableV2Signing = true
+                v1SigningEnabled true
+                v2SigningEnabled true
             }
         }
     }
@@ -28,7 +27,7 @@ android {
         }
     }
     defaultConfig {
-        applicationId 'com.vobich.kanzi'
+        applicationId 'com.vobichngan.kanzi'
         minSdk 26
         targetSdk 35
         versionCode 16
