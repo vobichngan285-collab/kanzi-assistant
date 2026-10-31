@@ -58,6 +58,7 @@ public class MainActivity extends CameraActivity {
     private static final String PREF_PREVIEW_MIRROR = "preview_mirror";
     private static final String PREF_PREVIEW_FLIP = "preview_flip";
     private static final String PREF_ENHANCED_OCR = "enhanced_ocr";
+    private static final String PREF_USE_SMALL_MODEL = "use_small_model";
     private final Handler diagnosticHandler = new Handler(Looper.getMainLooper());
     private int diagnosticAttempts = 0;
     private final Runnable diagnosticRunnable = new Runnable() {
@@ -80,6 +81,7 @@ public class MainActivity extends CameraActivity {
     private volatile boolean previewMirror = false;
     private volatile boolean previewVerticalFlip = false;
     private volatile boolean enhancedOcr = false;
+    private volatile boolean useSmallModel = false;
     private boolean ttsReady = false;
     private boolean previewCallbackAdded = false;
     private String lastSpoken = "";
@@ -210,6 +212,7 @@ public class MainActivity extends CameraActivity {
         previewMirror = prefs.getBoolean(PREF_PREVIEW_MIRROR, false);
         previewVerticalFlip = prefs.getBoolean(PREF_PREVIEW_FLIP, false);
         enhancedOcr = prefs.getBoolean(PREF_ENHANCED_OCR, false);
+        useSmallModel = prefs.getBoolean(PREF_USE_SMALL_MODEL, false) && OcrModelDownloader.isInstalled(this);
     }
 
     private void showSettingsDialog() {
@@ -228,6 +231,60 @@ public class MainActivity extends CameraActivity {
         enhancedNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         enhancedNote.setTextColor(0xFF667085);
         panel.addView(enhancedNote);
+
+        boolean smallModelInstalled = OcrModelDownloader.isInstalled(this);
+        CheckBox smallModelCheck = new CheckBox(this);
+        smallModelCheck.setText("使用 PP-OCRv6 Small 增强模型");
+        smallModelCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        smallModelCheck.setChecked(useSmallModel && smallModelInstalled);
+        smallModelCheck.setEnabled(smallModelInstalled);
+        panel.addView(smallModelCheck);
+
+        TextView smallModelStatus = new TextView(this);
+        smallModelStatus.setText(smallModelInstalled
+            ? "Small 模型已下载。勾选后保存，重新打开 App 生效。"
+            : "尚未下载增强模型。下载后可离线使用，模型保存在 App 私有目录。");
+        smallModelStatus.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        smallModelStatus.setTextColor(0xFF667085);
+        panel.addView(smallModelStatus);
+
+        Button smallModelButton = createControlButton(smallModelInstalled ? "删除 PP-OCRv6 Small 模型" : "下载 PP-OCRv6 Small 模型");
+        panel.addView(smallModelButton);
+        smallModelButton.setOnClickListener(v -> {
+            if (OcrModelDownloader.isInstalled(this)) {
+                new androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("删除增强模型")
+                    .setMessage("删除后将释放存储空间，App 会改用内置 Tiny 模型。")
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton("删除", (d, w) -> {
+                        OcrModelDownloader.deleteSmallModel(this);
+                        smallModelCheck.setChecked(false);
+                        smallModelCheck.setEnabled(false);
+                        smallModelStatus.setText("增强模型已删除，将使用内置 Tiny 模型。");
+                        smallModelButton.setText("下载 PP-OCRv6 Small 模型");
+                    }).show();
+                return;
+            }
+            smallModelButton.setEnabled(false);
+            smallModelStatus.setText("正在下载模型：0%");
+            new OcrModelDownloader(this).downloadSmallModel(new OcrModelDownloader.Listener() {
+                @Override public void onProgress(int percent) {
+                    smallModelStatus.setText("正在下载并校验模型：" + percent + "%");
+                }
+                @Override public void onComplete() {
+                    smallModelStatus.setText("模型下载并校验完成。勾选上方选项，保存后重新打开 App 即可启用。");
+                    smallModelCheck.setEnabled(true);
+                    smallModelCheck.setChecked(true);
+                    smallModelButton.setText("删除 PP-OCRv6 Small 模型");
+                    smallModelButton.setEnabled(true);
+                    Toast.makeText(MainActivity.this, "PP-OCRv6 Small 已下载，可离线使用", Toast.LENGTH_LONG).show();
+                }
+                @Override public void onError(String message) {
+                    smallModelStatus.setText("下载失败：" + message);
+                    smallModelButton.setEnabled(true);
+                }
+            });
+        });
 
         CheckBox queueCheck = new CheckBox(this);
         queueCheck.setText("完整读完当前文字，再读下一段");
@@ -363,6 +420,8 @@ public class MainActivity extends CameraActivity {
                 previewMirror = mirrorCheck.isChecked();
                 previewVerticalFlip = flipCheck.isChecked();
                 enhancedOcr = enhancedCheck.isChecked();
+                boolean previousSmallModel = useSmallModel;
+                useSmallModel = smallModelCheck.isChecked() && OcrModelDownloader.isInstalled(this);
                 if (tts != null) tts.setSpeechRate(speechRate);
                 applyPreviewTransform();
                 getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
@@ -375,9 +434,12 @@ public class MainActivity extends CameraActivity {
                     .putBoolean(PREF_PREVIEW_MIRROR, previewMirror)
                     .putBoolean(PREF_PREVIEW_FLIP, previewVerticalFlip)
                     .putBoolean(PREF_ENHANCED_OCR, enhancedOcr)
+                    .putBoolean(PREF_USE_SMALL_MODEL, useSmallModel)
                     .apply();
                 if (wasQueueEnabled && !queueSpeech) clearSpeechQueue(true);
-                Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, previousSmallModel != useSmallModel
+                    ? "设置已保存，重新打开 App 后切换 OCR 模型"
+                    : "设置已保存", Toast.LENGTH_SHORT).show();
             })
             .show();
     }
@@ -423,7 +485,7 @@ public class MainActivity extends CameraActivity {
             @Override public void onError(String message) {
                 runOnUiThread(() -> status.setText("飞桨 OCR 初始化失败：" + message));
             }
-        });
+        }, useSmallModel);
         recognizer.initialize();
         tts = new TextToSpeech(this, code -> {
             if (code == TextToSpeech.SUCCESS) {
