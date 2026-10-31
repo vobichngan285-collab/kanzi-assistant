@@ -145,8 +145,9 @@ public class MainActivity extends CameraActivity {
     };
 
     @Override protected View getRootView(LayoutInflater inflater) {
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
+        // Use a full-screen overlay root: the control row must not consume preview height.
+        // This lets a quarter-turned 16:9 camera image use the full portrait screen area.
+        FrameLayout root = new FrameLayout(this);
         root.setPadding(0, 0, 0, 0);
         root.setBackgroundColor(Color.BLACK);
 
@@ -156,20 +157,21 @@ public class MainActivity extends CameraActivity {
         diagnostic = new TextView(this);
         diagnostic.setVisibility(View.GONE);
 
-        // The camera preview owns all available space above the bottom control strip.
         previewContainer = new FrameLayout(this);
         previewContainer.setBackgroundColor(Color.BLACK);
         previewContainer.setClipChildren(true);
         previewContainer.setClipToPadding(true);
-        root.addView(previewContainer, new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        root.addView(previewContainer, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
         ));
 
+        // Floating controls sit on top of the preview instead of taking away its height.
         LinearLayout controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.HORIZONTAL);
         controls.setGravity(Gravity.CENTER);
         controls.setPadding(dp(4), dp(4), dp(4), dp(4));
-        controls.setBackgroundColor(0xFF151515);
+        controls.setBackgroundColor(0xAA151515);
 
         modeButton = createControlButton("模式：自动");
         controls.addView(modeButton, new LinearLayout.LayoutParams(0, dp(54), 1f));
@@ -180,9 +182,11 @@ public class MainActivity extends CameraActivity {
         settingsButton = createControlButton("设置");
         controls.addView(settingsButton, new LinearLayout.LayoutParams(0, dp(54), 1f));
 
-        root.addView(controls, new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(62)
-        ));
+        FrameLayout.LayoutParams controlsParams = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(62), Gravity.BOTTOM
+        );
+        root.addView(controls, controlsParams);
+        controls.bringToFront();
         return root;
     }
 
