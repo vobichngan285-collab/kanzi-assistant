@@ -38,7 +38,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.5.0";
+    private static final String APP_VERSION = "0.5.1";
     private final Handler diagnosticHandler = new Handler(Looper.getMainLooper());
     private int diagnosticAttempts = 0;
     private final Runnable diagnosticRunnable = new Runnable() {
@@ -54,6 +54,10 @@ public class MainActivity extends CameraActivity {
     private boolean ttsReady = false;
     private boolean previewCallbackAdded = false;
     private String lastSpoken = "";
+    private String candidateText = "";
+    private String candidateNormalized = "";
+    private int candidateCount = 0;
+    private long lastNonEmptyAt = 0;
     private long lastProcess = 0;
     private final AtomicBoolean busy = new AtomicBoolean(false);
 
@@ -66,7 +70,7 @@ public class MainActivity extends CameraActivity {
             byte[] frame = data.clone();
             recognizer.recognizeNv21(frame, width, height, found -> {
                 busy.set(false);
-                if (found != null && !found.trim().isEmpty()) onRecognized(found);
+                if (found != null) onRecognized(found);
             }, error -> {
                 busy.set(false);
                 runOnUiThread(() -> status.setText("飞桨 OCR 识别异常：" + error));
@@ -183,6 +187,10 @@ public class MainActivity extends CameraActivity {
             }
             running = true;
             lastSpoken = "";
+            candidateText = "";
+            candidateNormalized = "";
+            candidateCount = 0;
+            lastNonEmptyAt = 0;
             status.setText("摄像头已连接，开始识别");
         });
         pauseButton.setOnClickListener(v -> {
@@ -310,16 +318,78 @@ public class MainActivity extends CameraActivity {
     }
 
     private void onRecognized(String found) {
-        final String recognizedText = found.trim();
-        if (recognizedText.isEmpty()) return;
-        runOnUiThread(() -> result.setText(recognizedText));
-        String normalized = recognizedText.replaceAll("\\s+", "");
-        if (running && ttsReady && normalized.length() > 1 && !normalized.equals(lastSpoken)) {
-            lastSpoken = normalized;
-            runOnUiThread(() -> {
-                if (running) tts.speak(recognizedText, TextToSpeech.QUEUE_ADD, null, "ocr-" + System.currentTimeMillis());
-            });
+        final long now = System.currentTimeMillis();
+        final String recognizedText = found == null ? "" : found.trim();
+
+        if (recognizedText.isEmpty()) {
+            candidateText = "";
+            candidateNormalized = "";
+            candidateCount = 0;
+            if (lastNonEmptyAt > 0 && now - lastNonEmptyAt >= 2800) {
+                lastSpoken = "";
+            }
+            return;
         }
+
+        lastNonEmptyAt = now;
+        runOnUiThread(() -> result.setText(recognizedText));
+        final String normalized = normalizeOcrText(recognizedText);
+        if (!running || !ttsReady || normalized.length() < 2) return;
+
+        if (!candidateNormalized.isEmpty() && textSimilarity(candidateNormalized, normalized) >= 0.88f) {
+            candidateCount++;
+            if (recognizedText.length() > candidateText.length()) candidateText = recognizedText;
+            candidateNormalized = normalized;
+        } else {
+            candidateText = recognizedText;
+            candidateNormalized = normalized;
+            candidateCount = 1;
+        }
+
+        // Confirm the same content in two consecutive OCR passes before speaking.
+        if (candidateCount < 2) return;
+        if (!lastSpoken.isEmpty() && textSimilarity(lastSpoken, normalized) >= 0.86f) return;
+
+        lastSpoken = normalized;
+        final String textToSpeak = candidateText;
+        candidateCount = 0;
+        runOnUiThread(() -> {
+            if (running && tts != null) {
+                // Flush stale pending OCR speech instead of building a repeated queue.
+                tts.speak(textToSpeak, TextToSpeech.QUEUE_FLUSH, null, "ocr-" + System.currentTimeMillis());
+            }
+        });
+    }
+
+    private String normalizeOcrText(String text) {
+        return text.toLowerCase(Locale.ROOT)
+            .replaceAll("[\\s\\p{Punct}，。！？、；：…（）【】《》“”‘’·]+", "");
+    }
+
+    private float textSimilarity(String left, String right) {
+        if (left.equals(right)) return 1.0f;
+        if (left.isEmpty() || right.isEmpty()) return 0.0f;
+        int shorter = Math.min(left.length(), right.length());
+        int longer = Math.max(left.length(), right.length());
+        if (shorter < 2 || (float) shorter / longer < 0.70f) return 0.0f;
+
+        int[] previous = new int[right.length() + 1];
+        int[] current = new int[right.length() + 1];
+        for (int j = 0; j <= right.length(); j++) previous[j] = j;
+        for (int i = 1; i <= left.length(); i++) {
+            current[0] = i;
+            for (int j = 1; j <= right.length(); j++) {
+                int cost = left.charAt(i - 1) == right.charAt(j - 1) ? 0 : 1;
+                current[j] = Math.min(
+                    Math.min(current[j - 1] + 1, previous[j] + 1),
+                    previous[j - 1] + cost
+                );
+            }
+            int[] swap = previous;
+            previous = current;
+            current = swap;
+        }
+        return 1.0f - (float) previous[right.length()] / longer;
     }
 
     private int dp(int value) { return (int) (value * getResources().getDisplayMetrics().density); }
