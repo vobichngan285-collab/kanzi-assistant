@@ -7,16 +7,23 @@ import android.os.Looper;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
+import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
+import android.text.InputType;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.TextureView;
 import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.TextView;
+import android.widget.Toast;
 import android.graphics.Color;
 import android.util.TypedValue;
 
@@ -35,10 +42,16 @@ import android.graphics.YuvImage;
 import java.util.Locale;
 import java.util.Map;
 import java.util.List;
+import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.5.1";
+    private static final String APP_VERSION = "0.6.0";
+    private static final String PREFS_NAME = "kanzi_settings";
+    private static final String PREF_AUTO_MODE = "automatic_mode";
+    private static final String PREF_INTERVAL = "recognition_interval_ms";
+    private static final String PREF_SIMILARITY = "similarity_threshold";
+    private static final String PREF_QUEUE_SPEECH = "queue_speech";
     private final Handler diagnosticHandler = new Handler(Looper.getMainLooper());
     private int diagnosticAttempts = 0;
     private final Runnable diagnosticRunnable = new Runnable() {
@@ -46,11 +59,16 @@ public class MainActivity extends CameraActivity {
     };
     private FrameLayout previewContainer;
     private TextureView cameraTextureView;
-    private TextView status, diagnostic, result;
-    private Button startButton, pauseButton;
+    // Kept as non-visible diagnostic targets so existing USB diagnostics remain available.
+    private TextView status, diagnostic;
+    private Button modeButton, captureButton, startButton, settingsButton;
     private TextToSpeech tts;
     private PaddleOcrEngine recognizer;
-    private boolean running = false;
+    private volatile boolean running = false;
+    private volatile boolean automaticMode = true;
+    private volatile long recognitionIntervalMs = 500L;
+    private volatile int similarityThreshold = 88;
+    private volatile boolean queueSpeech = true;
     private boolean ttsReady = false;
     private boolean previewCallbackAdded = false;
     private String lastSpoken = "";
@@ -60,12 +78,38 @@ public class MainActivity extends CameraActivity {
     private long lastNonEmptyAt = 0;
     private long lastProcess = 0;
     private final AtomicBoolean busy = new AtomicBoolean(false);
+    private final AtomicBoolean manualCaptureRequested = new AtomicBoolean(false);
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final ArrayDeque<SpeechItem> speechQueue = new ArrayDeque<>();
+    private SpeechItem currentSpeech;
+    private boolean speakingQueued = false;
+    private long utteranceSequence = 0;
+
+    private static final class SpeechItem {
+        final String text;
+        final String normalized;
+        final String utteranceId;
+        SpeechItem(String text, String normalized, String utteranceId) {
+            this.text = text;
+            this.normalized = normalized;
+            this.utteranceId = utteranceId;
+        }
+    }
 
     private final IPreviewDataCallBack previewCallback = new IPreviewDataCallBack() {
         @Override public void onPreviewData(byte[] data, int width, int height, DataFormat format) {
             if (!running || data == null || format != DataFormat.NV21) return;
             long now = System.currentTimeMillis();
-            if (now - lastProcess < 900 || !busy.compareAndSet(false, true)) return;
+            boolean oneShot = manualCaptureRequested.get();
+            if (oneShot) {
+                if (!manualCaptureRequested.compareAndSet(true, false)) return;
+            } else {
+                if (!automaticMode || now - lastProcess < recognitionIntervalMs) return;
+            }
+            if (!busy.compareAndSet(false, true)) {
+                if (oneShot) manualCaptureRequested.set(true);
+                return;
+            }
             lastProcess = now;
             byte[] frame = data.clone();
             recognizer.recognizeNv21(frame, width, height, found -> {
@@ -81,64 +125,149 @@ public class MainActivity extends CameraActivity {
     @Override protected View getRootView(LayoutInflater inflater) {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(16), dp(12), dp(16), dp(12));
-        root.setBackgroundColor(0xFFF4F6FA);
+        root.setPadding(0, 0, 0, 0);
+        root.setBackgroundColor(Color.BLACK);
 
-        TextView title = new TextView(this);
-        title.setText("看字助手  " + APP_VERSION + "（UVC诊断版）");
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26);
-        title.setTextColor(0xFF101828);
-        title.setTypeface(null, 1);
-        root.addView(title, new LinearLayout.LayoutParams(-1, -2));
-
+        // Keep diagnostic TextViews alive for internal status reporting, but do not show them.
         status = new TextView(this);
-        status.setText("正在检查 USB 设备…");
-        status.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
-        status.setTextColor(0xFF344054);
-        root.addView(status);
-
+        status.setVisibility(View.GONE);
         diagnostic = new TextView(this);
-        diagnostic.setText("USB 设备诊断信息正在加载…");
-        diagnostic.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        diagnostic.setTextColor(0xFF475467);
-        ScrollView diagnosticScroll = new ScrollView(this);
-        diagnosticScroll.setFillViewport(false);
-        diagnosticScroll.addView(diagnostic);
-        root.addView(diagnosticScroll, new LinearLayout.LayoutParams(-1, dp(112)));
+        diagnostic.setVisibility(View.GONE);
 
+        // The camera preview owns all available space above the bottom control strip.
         previewContainer = new FrameLayout(this);
         previewContainer.setBackgroundColor(Color.BLACK);
-        LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(-1, dp(220));
-        previewParams.topMargin = dp(8);
-        previewParams.bottomMargin = dp(8);
-        root.addView(previewContainer, previewParams);
+        root.addView(previewContainer, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        ));
 
-        LinearLayout buttons = new LinearLayout(this);
-        buttons.setOrientation(LinearLayout.HORIZONTAL);
-        startButton = new Button(this);
-        startButton.setText("开始识别");
-        buttons.addView(startButton, new LinearLayout.LayoutParams(0, -2, 1));
-        pauseButton = new Button(this);
-        pauseButton.setText("暂停朗读");
-        buttons.addView(pauseButton, new LinearLayout.LayoutParams(0, -2, 1));
-        root.addView(buttons);
+        LinearLayout controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.HORIZONTAL);
+        controls.setGravity(Gravity.CENTER);
+        controls.setPadding(dp(4), dp(4), dp(4), dp(4));
+        controls.setBackgroundColor(0xFF151515);
 
-        TextView label = new TextView(this);
-        label.setText("识别到的文字");
-        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
-        label.setTypeface(null, 1);
-        label.setTextColor(0xFF101828);
-        root.addView(label);
+        modeButton = createControlButton("模式：自动");
+        controls.addView(modeButton, new LinearLayout.LayoutParams(0, dp(54), 1f));
+        captureButton = createControlButton("识别一次");
+        controls.addView(captureButton, new LinearLayout.LayoutParams(0, dp(54), 1f));
+        startButton = createControlButton("开始识别");
+        controls.addView(startButton, new LinearLayout.LayoutParams(0, dp(54), 1f));
+        settingsButton = createControlButton("设置");
+        controls.addView(settingsButton, new LinearLayout.LayoutParams(0, dp(54), 1f));
 
-        ScrollView scroll = new ScrollView(this);
-        result = new TextView(this);
-        result.setText("识别结果会显示在这里");
-        result.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
-        result.setTextColor(0xFF101828);
-        result.setPadding(dp(4), dp(8), dp(4), dp(8));
-        scroll.addView(result);
-        root.addView(scroll, new LinearLayout.LayoutParams(-1, dp(145)));
+        root.addView(controls, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(62)
+        ));
         return root;
+    }
+
+    private Button createControlButton(String label) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setAllCaps(false);
+        button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        button.setTextColor(Color.WHITE);
+        button.setMinHeight(0);
+        button.setMinimumHeight(dp(48));
+        button.setPadding(dp(2), 0, dp(2), 0);
+        button.setBackgroundTintList(ColorStateList.valueOf(0xFF303030));
+        return button;
+    }
+
+    private void updateControlLabels() {
+        if (modeButton != null) modeButton.setText(automaticMode ? "模式：自动" : "模式：手动");
+        if (startButton != null) startButton.setText(running ? "暂停识别" : "开始识别");
+        if (captureButton != null) captureButton.setEnabled(previewCallbackAdded);
+    }
+
+    private void loadSettings() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        automaticMode = prefs.getBoolean(PREF_AUTO_MODE, true);
+        recognitionIntervalMs = Math.max(1L, Math.min(10000L,
+            prefs.getLong(PREF_INTERVAL, 500L)));
+        similarityThreshold = Math.max(0, Math.min(100,
+            prefs.getInt(PREF_SIMILARITY, 88)));
+        queueSpeech = prefs.getBoolean(PREF_QUEUE_SPEECH, true);
+    }
+
+    private void showSettingsDialog() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(20), dp(8), dp(20), dp(4));
+
+        CheckBox queueCheck = new CheckBox(this);
+        queueCheck.setText("完整读完当前文字，再读下一段");
+        queueCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        queueCheck.setChecked(queueSpeech);
+        panel.addView(queueCheck);
+
+        TextView intervalTitle = new TextView(this);
+        intervalTitle.setText("自动 OCR 识别间隔（毫秒）");
+        intervalTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        intervalTitle.setPadding(0, dp(14), 0, dp(4));
+        panel.addView(intervalTitle);
+
+        EditText intervalInput = new EditText(this);
+        intervalInput.setSingleLine(true);
+        intervalInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        intervalInput.setText(String.valueOf(recognitionIntervalMs));
+        intervalInput.setHint("输入 1 到 10000 毫秒");
+        panel.addView(intervalInput);
+
+        TextView intervalNote = new TextView(this);
+        intervalNote.setText("例如 1000 毫秒约为每秒一次；设为 1 毫秒也不会强制每秒识别 1000 次，实际速度受单次 OCR 耗时限制，程序不会堆积识别任务。");
+        intervalNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        intervalNote.setTextColor(0xFF667085);
+        panel.addView(intervalNote);
+
+        TextView similarityTitle = new TextView(this);
+        similarityTitle.setText("两次识别文字相似度阈值：" + similarityThreshold + "%");
+        similarityTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        similarityTitle.setPadding(0, dp(16), 0, dp(4));
+        panel.addView(similarityTitle);
+
+        SeekBar similaritySeek = new SeekBar(this);
+        similaritySeek.setMax(100);
+        similaritySeek.setProgress(similarityThreshold);
+        similaritySeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                similarityTitle.setText("两次识别文字相似度阈值：" + progress + "%");
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+        panel.addView(similaritySeek);
+
+        TextView similarityNote = new TextView(this);
+        similarityNote.setText("数值越高，越严格地判断两段文字是否相同；0 到 100 均可手动调整。");
+        similarityNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        similarityNote.setTextColor(0xFF667085);
+        panel.addView(similarityNote);
+
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("识别与朗读设置")
+            .setView(panel)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("保存", (dialog, which) -> {
+                long interval = 500L;
+                try {
+                    interval = Long.parseLong(intervalInput.getText().toString().trim());
+                } catch (NumberFormatException ignored) {}
+                recognitionIntervalMs = Math.max(1L, Math.min(10000L, interval));
+                similarityThreshold = similaritySeek.getProgress();
+                boolean wasQueueEnabled = queueSpeech;
+                queueSpeech = queueCheck.isChecked();
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                    .putBoolean(PREF_AUTO_MODE, automaticMode)
+                    .putLong(PREF_INTERVAL, recognitionIntervalMs)
+                    .putInt(PREF_SIMILARITY, similarityThreshold)
+                    .putBoolean(PREF_QUEUE_SPEECH, queueSpeech)
+                    .apply();
+                if (wasQueueEnabled && !queueSpeech) clearSpeechQueue(true);
+                Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show();
+            })
+            .show();
     }
 
     @Override protected IAspectRatio getCameraView() {
@@ -162,6 +291,8 @@ public class MainActivity extends CameraActivity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        loadSettings();
+        updateControlLabels();
         diagnosticAttempts = 0;
         diagnosticHandler.postDelayed(diagnosticRunnable, 1200);
         recognizer = new PaddleOcrEngine(getApplicationContext(), new PaddleOcrEngine.Listener() {
@@ -177,27 +308,61 @@ public class MainActivity extends CameraActivity {
             if (code == TextToSpeech.SUCCESS) {
                 int language = tts.setLanguage(Locale.SIMPLIFIED_CHINESE);
                 ttsReady = language != TextToSpeech.LANG_MISSING_DATA && language != TextToSpeech.LANG_NOT_SUPPORTED;
-                if (!ttsReady) status.setText("系统没有可用的中文语音，请先安装中文语音包");
+                if (ttsReady) {
+                    tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                        @Override public void onStart(String utteranceId) {}
+                        @Override public void onDone(String utteranceId) {
+                            mainHandler.post(() -> finishQueuedUtterance(utteranceId));
+                        }
+                        @Override public void onError(String utteranceId) {
+                            mainHandler.post(() -> finishQueuedUtterance(utteranceId));
+                        }
+                        @Override public void onStop(String utteranceId, boolean interrupted) {
+                            mainHandler.post(() -> finishQueuedUtterance(utteranceId));
+                        }
+                    });
+                    speakNextQueued();
+                } else {
+                    status.setText("系统没有可用的中文语音，请先安装中文语音包");
+                }
             }
         });
-        startButton.setOnClickListener(v -> {
+
+        modeButton.setOnClickListener(v -> {
+            automaticMode = !automaticMode;
+            manualCaptureRequested.set(false);
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                .putBoolean(PREF_AUTO_MODE, automaticMode).apply();
+            updateControlLabels();
+            Toast.makeText(this, automaticMode ? "已切换为自动识别" : "已切换为手动识别",
+                Toast.LENGTH_SHORT).show();
+        });
+
+        captureButton.setOnClickListener(v -> {
             if (!previewCallbackAdded) {
-                status.setText("正在等待 USB 摄像头完成授权并打开预览…");
+                Toast.makeText(this, "请先连接并打开摄像头", Toast.LENGTH_SHORT).show();
                 return;
             }
             running = true;
-            lastSpoken = "";
-            candidateText = "";
-            candidateNormalized = "";
-            candidateCount = 0;
-            lastNonEmptyAt = 0;
-            status.setText("摄像头已连接，开始识别");
+            manualCaptureRequested.set(true);
+            updateControlLabels();
+            Toast.makeText(this, "正在抓取当前画面识别", Toast.LENGTH_SHORT).show();
         });
-        pauseButton.setOnClickListener(v -> {
-            running = false;
-            if (tts != null) tts.stop();
-            status.setText("已暂停朗读和识别");
+
+        startButton.setOnClickListener(v -> {
+            if (!previewCallbackAdded) {
+                Toast.makeText(this, "请先连接并打开摄像头", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            running = !running;
+            if (!running) {
+                manualCaptureRequested.set(false);
+                clearSpeechQueue(true);
+            }
+            updateControlLabels();
         });
+
+        settingsButton.setOnClickListener(v -> showSettingsDialog());
     }
 
     @Override protected UsbDevice getDefaultCamera() {
@@ -217,10 +382,11 @@ public class MainActivity extends CameraActivity {
                 addPreviewDataCallBack(previewCallback);
                 previewCallbackAdded = true;
             }
-            runOnUiThread(() -> status.setText("USB 摄像头已连接。点击“开始识别”"));
+            runOnUiThread(() -> updateControlLabels());
         } else if (code == ICameraStateCallBack.State.CLOSED) {
             previewCallbackAdded = false;
-            runOnUiThread(() -> status.setText("USB 摄像头已断开"));
+            manualCaptureRequested.set(false);
+            runOnUiThread(() -> updateControlLabels());
         } else if (code == ICameraStateCallBack.State.ERROR) {
             runOnUiThread(() -> status.setText("USB 摄像头启动失败：" + (msg == null ? "请重新插拔摄像头" : msg)));
         }
@@ -332,11 +498,11 @@ public class MainActivity extends CameraActivity {
         }
 
         lastNonEmptyAt = now;
-        runOnUiThread(() -> result.setText(recognizedText));
         final String normalized = normalizeOcrText(recognizedText);
         if (!running || !ttsReady || normalized.length() < 2) return;
 
-        if (!candidateNormalized.isEmpty() && textSimilarity(candidateNormalized, normalized) >= 0.88f) {
+        final float threshold = similarityThreshold / 100.0f;
+        if (!candidateNormalized.isEmpty() && textSimilarity(candidateNormalized, normalized) >= threshold) {
             candidateCount++;
             if (recognizedText.length() > candidateText.length()) candidateText = recognizedText;
             candidateNormalized = normalized;
@@ -348,17 +514,56 @@ public class MainActivity extends CameraActivity {
 
         // Confirm the same content in two consecutive OCR passes before speaking.
         if (candidateCount < 2) return;
-        if (!lastSpoken.isEmpty() && textSimilarity(lastSpoken, normalized) >= 0.86f) return;
-
-        lastSpoken = normalized;
         final String textToSpeak = candidateText;
         candidateCount = 0;
+
         runOnUiThread(() -> {
-            if (running && tts != null) {
-                // Flush stale pending OCR speech instead of building a repeated queue.
-                tts.speak(textToSpeak, TextToSpeech.QUEUE_FLUSH, null, "ocr-" + System.currentTimeMillis());
+            if (!running || tts == null || !ttsReady) return;
+            String id = "ocr-" + (++utteranceSequence);
+            if (queueSpeech) {
+                if (isAlreadyQueuedOrRecentlySpoken(normalized, threshold)) return;
+                speechQueue.addLast(new SpeechItem(textToSpeak, normalized, id));
+                speakNextQueued();
+            } else {
+                if (!lastSpoken.isEmpty() && textSimilarity(lastSpoken, normalized) >= threshold) return;
+                lastSpoken = normalized;
+                tts.speak(textToSpeak, TextToSpeech.QUEUE_FLUSH, null, id);
             }
         });
+    }
+
+    private boolean isAlreadyQueuedOrRecentlySpoken(String normalized, float threshold) {
+        if (!lastSpoken.isEmpty() && textSimilarity(lastSpoken, normalized) >= threshold) return true;
+        if (currentSpeech != null &&
+            textSimilarity(currentSpeech.normalized, normalized) >= threshold) return true;
+        for (SpeechItem item : speechQueue) {
+            if (textSimilarity(item.normalized, normalized) >= threshold) return true;
+        }
+        return false;
+    }
+
+    private void speakNextQueued() {
+        if (!queueSpeech || !ttsReady || tts == null || speakingQueued || speechQueue.isEmpty()) return;
+        currentSpeech = speechQueue.pollFirst();
+        speakingQueued = true;
+        lastSpoken = currentSpeech.normalized;
+        int result = tts.speak(currentSpeech.text, TextToSpeech.QUEUE_FLUSH, null,
+            currentSpeech.utteranceId);
+        if (result == TextToSpeech.ERROR) finishQueuedUtterance(currentSpeech.utteranceId);
+    }
+
+    private void finishQueuedUtterance(String utteranceId) {
+        if (currentSpeech == null || !currentSpeech.utteranceId.equals(utteranceId)) return;
+        currentSpeech = null;
+        speakingQueued = false;
+        speakNextQueued();
+    }
+
+    private void clearSpeechQueue(boolean stopCurrent) {
+        speechQueue.clear();
+        currentSpeech = null;
+        speakingQueued = false;
+        if (stopCurrent && tts != null) tts.stop();
     }
 
     private String normalizeOcrText(String text) {
@@ -396,6 +601,9 @@ public class MainActivity extends CameraActivity {
 
     @Override protected void onDestroy() {
         running = false;
+        manualCaptureRequested.set(false);
+        speechQueue.clear();
+        currentSpeech = null;
         if (tts != null) { tts.stop(); tts.shutdown(); }
         if (recognizer != null) recognizer.release();
         diagnosticHandler.removeCallbacksAndMessages(null);
