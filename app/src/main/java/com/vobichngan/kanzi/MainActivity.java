@@ -240,7 +240,7 @@ public class MainActivity extends CameraActivity {
         panel.addView(similaritySeek);
 
         TextView similarityNote = new TextView(this);
-        similarityNote.setText("数值越高，越严格地判断两段文字是否相同；0 到 100 均可手动调整。");
+        similarityNote.setText("数值越高，判断越严格；设为 0 时关闭相似度去重，但仍要求连续两次识别后才朗读。");
         similarityNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         similarityNote.setTextColor(0xFF667085);
         panel.addView(similarityNote);
@@ -502,7 +502,7 @@ public class MainActivity extends CameraActivity {
         if (!running || !ttsReady || normalized.length() < 2) return;
 
         final float threshold = similarityThreshold / 100.0f;
-        if (!candidateNormalized.isEmpty() && textSimilarity(candidateNormalized, normalized) >= threshold) {
+        if (!candidateNormalized.isEmpty() && (threshold <= 0f || textSimilarity(candidateNormalized, normalized) >= threshold)) {
             candidateCount++;
             if (recognizedText.length() > candidateText.length()) candidateText = recognizedText;
             candidateNormalized = normalized;
@@ -525,7 +525,7 @@ public class MainActivity extends CameraActivity {
                 speechQueue.addLast(new SpeechItem(textToSpeak, normalized, id));
                 speakNextQueued();
             } else {
-                if (!lastSpoken.isEmpty() && textSimilarity(lastSpoken, normalized) >= threshold) return;
+                if (threshold > 0f && !lastSpoken.isEmpty() && textSimilarity(lastSpoken, normalized) >= threshold) return;
                 lastSpoken = normalized;
                 tts.speak(textToSpeak, TextToSpeech.QUEUE_FLUSH, null, id);
             }
@@ -533,6 +533,7 @@ public class MainActivity extends CameraActivity {
     }
 
     private boolean isAlreadyQueuedOrRecentlySpoken(String normalized, float threshold) {
+        if (threshold <= 0f) return false;
         if (!lastSpoken.isEmpty() && textSimilarity(lastSpoken, normalized) >= threshold) return true;
         if (currentSpeech != null &&
             textSimilarity(currentSpeech.normalized, normalized) >= threshold) return true;
