@@ -1,0 +1,25 @@
+name: Publish existing 0.7.0 test APK as browser download
+on:
+  push:
+    branches:
+      - feature/v0.7.0-accessibility-upgrades
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the verified signed APK artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download 41182457073 --repo "${GITHUB_REPOSITORY}" --name kanzi-assistant-0.7.0-ppocrv6-signed --dir dist
+          test -s dist/app-release.apk
+      - name: Publish public prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: test-build-0.7.0-browser-20261031
+          name: 看字助手 0.7.0 浏览器直链测试版
+          prerelease: true
+          files: dist/app-release.apk
