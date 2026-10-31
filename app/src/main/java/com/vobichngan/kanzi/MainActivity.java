@@ -22,6 +22,7 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.SeekBar;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.graphics.Color;
@@ -340,9 +341,13 @@ public class MainActivity extends CameraActivity {
         similarityNote.setTextColor(0xFF667085);
         panel.addView(similarityNote);
 
+        ScrollView settingsScroll = new ScrollView(this);
+        settingsScroll.setFillViewport(true);
+        settingsScroll.addView(panel);
+
         new androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("识别与朗读设置")
-            .setView(panel)
+            .setView(settingsScroll)
             .setNegativeButton("取消", null)
             .setPositiveButton("保存", (dialog, which) -> {
                 long interval = 500L;
