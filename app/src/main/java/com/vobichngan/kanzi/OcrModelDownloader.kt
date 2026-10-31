@@ -70,34 +70,51 @@ class OcrModelDownloader(context: Context) {
         }
         val part = File(destination.parentFile, destination.name + ".part")
         part.delete()
-        val connection = (URL(CONFIG_URL).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 20000
-            readTimeout = 30000
-            instanceFollowRedirects = true
-            setRequestProperty("User-Agent", "KanziAssistant/0.7.0")
-        }
-        try {
-            connection.connect()
-            if (connection.responseCode !in 200..299) error("下载识别字典失败：HTTP ${connection.responseCode}")
-            connection.inputStream.use { input ->
-                FileOutputStream(part).use { output ->
-                    val buffer = ByteArray(64 * 1024)
-                    var total = 0L
-                    while (true) {
-                        currentCoroutineContext().ensureActive()
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        output.write(buffer, 0, count)
-                        total += count
-                        val length = connection.contentLengthLong
-                        val local = if (length > 0) (total * 100 / length).toInt().coerceIn(0, 99) else 50
-                        withContext(Dispatchers.Main) { listener.onProgress(66 + local / 3) }
-                    }
-                    output.fd.sync()
-                }
+        var downloaded = false
+        var lastFailure = "HTTP 404"
+        for (url in CONFIG_URLS) {
+            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 20000
+                readTimeout = 30000
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "KanziAssistant/0.7.0")
+                setRequestProperty("Accept", "application/octet-stream")
             }
-        } finally {
-            connection.disconnect()
+            try {
+                connection.connect()
+                if (connection.responseCode !in 200..299) {
+                    lastFailure = "HTTP ${connection.responseCode}"
+                    continue
+                }
+                connection.inputStream.use { input ->
+                    FileOutputStream(part).use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        var total = 0L
+                        while (true) {
+                            currentCoroutineContext().ensureActive()
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            output.write(buffer, 0, count)
+                            total += count
+                            val length = connection.contentLengthLong
+                            val local = if (length > 0) (total * 100 / length).toInt().coerceIn(0, 99) else 50
+                            withContext(Dispatchers.Main) { listener.onProgress(66 + local / 3) }
+                        }
+                        output.fd.sync()
+                    }
+                }
+                downloaded = true
+                break
+            } catch (t: Throwable) {
+                part.delete()
+                lastFailure = t.message ?: t.javaClass.simpleName
+            } finally {
+                connection.disconnect()
+            }
+        }
+        if (!downloaded) {
+            part.delete()
+            error("下载识别字典失败：所有下载地址均不可用（$lastFailure）")
         }
         if (!validConfig(part)) {
             part.delete()
@@ -181,7 +198,11 @@ class OcrModelDownloader(context: Context) {
         private const val REC_REV = "3d2d345"
         private const val DET_URL = "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/5994b4f/inference.onnx"
         private const val REC_URL = "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx"
-        private const val CONFIG_URL = "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml"
+        private val CONFIG_URLS = listOf(
+            "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml?download=true",
+            "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/raw/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml",
+            "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml?download=true"
+        )
 
         @JvmStatic fun isInstalled(context: Context): Boolean {
             val dir = File(context.applicationContext.filesDir, "ocr_models/ppocrv6_small")
