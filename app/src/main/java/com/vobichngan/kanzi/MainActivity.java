@@ -56,6 +56,7 @@ public class MainActivity extends CameraActivity {
     private static final String PREF_PREVIEW_ROTATION = "preview_rotation";
     private static final String PREF_PREVIEW_MIRROR = "preview_mirror";
     private static final String PREF_PREVIEW_FLIP = "preview_flip";
+    private static final String PREF_ENHANCED_OCR = "enhanced_ocr";
     private final Handler diagnosticHandler = new Handler(Looper.getMainLooper());
     private int diagnosticAttempts = 0;
     private final Runnable diagnosticRunnable = new Runnable() {
@@ -77,6 +78,7 @@ public class MainActivity extends CameraActivity {
     private volatile int previewRotation = 0;
     private volatile boolean previewMirror = false;
     private volatile boolean previewVerticalFlip = false;
+    private volatile boolean enhancedOcr = false;
     private boolean ttsReady = false;
     private boolean previewCallbackAdded = false;
     private String lastSpoken = "";
@@ -123,7 +125,8 @@ public class MainActivity extends CameraActivity {
             final int rotation = previewRotation;
             final boolean mirror = previewMirror;
             final boolean flip = previewVerticalFlip;
-            recognizer.recognizeNv21(frame, width, height, rotation, mirror, flip, found -> {
+            final boolean enhance = enhancedOcr;
+            recognizer.recognizeNv21(frame, width, height, rotation, mirror, flip, enhance, found -> {
                 busy.set(false);
                 if (found != null) onRecognized(found);
             }, error -> {
@@ -205,12 +208,25 @@ public class MainActivity extends CameraActivity {
         if (previewRotation != 0 && previewRotation != 90 && previewRotation != 180 && previewRotation != 270) previewRotation = 0;
         previewMirror = prefs.getBoolean(PREF_PREVIEW_MIRROR, false);
         previewVerticalFlip = prefs.getBoolean(PREF_PREVIEW_FLIP, false);
+        enhancedOcr = prefs.getBoolean(PREF_ENHANCED_OCR, false);
     }
 
     private void showSettingsDialog() {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(20), dp(8), dp(20), dp(4));
+
+        CheckBox enhancedCheck = new CheckBox(this);
+        enhancedCheck.setText("增强图像处理（降噪、对比度增强、锐化）");
+        enhancedCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        enhancedCheck.setChecked(enhancedOcr);
+        panel.addView(enhancedCheck);
+
+        TextView enhancedNote = new TextView(this);
+        enhancedNote.setText("适合背景杂乱、文字与背景颜色接近的画面。处理会增加耗时；如果画面本身清晰，可关闭以保持速度。");
+        enhancedNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        enhancedNote.setTextColor(0xFF667085);
+        panel.addView(enhancedNote);
 
         CheckBox queueCheck = new CheckBox(this);
         queueCheck.setText("完整读完当前文字，再读下一段");
@@ -341,6 +357,7 @@ public class MainActivity extends CameraActivity {
                 previewRotation = rotationSeek.getProgress() * 90;
                 previewMirror = mirrorCheck.isChecked();
                 previewVerticalFlip = flipCheck.isChecked();
+                enhancedOcr = enhancedCheck.isChecked();
                 if (tts != null) tts.setSpeechRate(speechRate);
                 applyPreviewTransform();
                 getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
@@ -352,6 +369,7 @@ public class MainActivity extends CameraActivity {
                     .putInt(PREF_PREVIEW_ROTATION, previewRotation)
                     .putBoolean(PREF_PREVIEW_MIRROR, previewMirror)
                     .putBoolean(PREF_PREVIEW_FLIP, previewVerticalFlip)
+                    .putBoolean(PREF_ENHANCED_OCR, enhancedOcr)
                     .apply();
                 if (wasQueueEnabled && !queueSpeech) clearSpeechQueue(true);
                 Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show();
