@@ -75,36 +75,24 @@ jobs:
           src = ort.read_text()
           if "import java.io.File" not in src:
               src = src.replace("import java.nio.FloatBuffer", "import java.nio.FloatBuffer\\nimport java.io.File")
-          old = """    private fun readModelAsset(assetPath: String): ByteArray {
-                  return try {
-                      context.assets.open(assetPath).use { it.readBytes() }
-                  } catch (t: Throwable) {
-                      throw OCRError.ModelNotFound(assetPath, t)
-                  }
-              }"""
-          new = """    private fun readModelAsset(assetPath: String): ByteArray {
-                  return try {
-                      val modelFile = File(assetPath)
-                      if (modelFile.isFile) modelFile.readBytes()
-                      else context.assets.open(assetPath).use { it.readBytes() }
-                  } catch (t: Throwable) {
-                      throw OCRError.ModelNotFound(assetPath, t)
-                  }
-              }"""
-          if old not in src:
+          needle = "context.assets.open(assetPath).use { it.readBytes() }"
+          if needle not in src:
               raise SystemExit("Could not safely patch ORTSessionManager model loader")
-          ort.write_text(src.replace(old, new, 1))
+          src = src.replace(needle, """val modelFile = File(assetPath)
+                      if (modelFile.isFile) modelFile.readBytes()
+                      else context.assets.open(assetPath).use { it.readBytes() }""", 1)
+          ort.write_text(src)
 
           cfg = Path("third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/java/com/paddle/ocr/model/ModelConfig.kt")
           src = cfg.read_text()
           if "import java.io.File" not in src:
               src = src.replace("import com.paddle.ocr.util.YamlUtils", "import com.paddle.ocr.util.YamlUtils\\nimport java.io.File")
-          old = """                context.assets.open(assetPath).bufferedReader().use { it.readText() }"""
-          new = """                val configFile = File(assetPath)
-                      if (configFile.isFile) configFile.bufferedReader().use { it.readText() }
-                      else context.assets.open(assetPath).bufferedReader().use { it.readText() }"""
-          if old not in src:
+          needle = "context.assets.open(assetPath).bufferedReader().use { it.readText() }"
+          if needle not in src:
               raise SystemExit("Could not safely patch ModelConfig file loader")
+          src = src.replace(needle, """val configFile = File(assetPath)
+                      if (configFile.isFile) configFile.bufferedReader().use { it.readText() }
+                      else context.assets.open(assetPath).bufferedReader().use { it.readText() }""", 1)
           cfg.write_text(src.replace(old, new, 1))
           print("PP-OCR SDK supports app-private ONNX/YAML model files.")
           PY
