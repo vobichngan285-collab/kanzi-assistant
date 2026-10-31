@@ -33,6 +33,7 @@ import com.jiangdg.ausbc.base.CameraActivity;
 import com.jiangdg.ausbc.camera.bean.CameraRequest;
 import com.jiangdg.ausbc.callback.ICameraStateCallBack;
 import com.jiangdg.ausbc.callback.IPreviewDataCallBack;
+import com.jiangdg.ausbc.camera.bean.PreviewSize;
 import com.jiangdg.ausbc.widget.AspectRatioTextureView;
 import com.jiangdg.ausbc.widget.IAspectRatio;
 import android.graphics.BitmapFactory;
@@ -47,7 +48,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.7.0";
+    private static final String APP_VERSION = "0.7.1";
     private static final String PREFS_NAME = "kanzi_settings";
     private static final String PREF_AUTO_MODE = "automatic_mode";
     private static final String PREF_INTERVAL = "recognition_interval_ms";
@@ -57,6 +58,8 @@ public class MainActivity extends CameraActivity {
     private static final String PREF_PREVIEW_ROTATION = "preview_rotation";
     private static final String PREF_PREVIEW_MIRROR = "preview_mirror";
     private static final String PREF_PREVIEW_FLIP = "preview_flip";
+    private static final String PREF_PREVIEW_FILL = "preview_fill";
+    private static final String PREF_PREVIEW_ZOOM = "preview_zoom";
     private static final String PREF_ENHANCED_OCR = "enhanced_ocr";
     private static final String PREF_USE_SMALL_MODEL = "use_small_model";
     private final Handler diagnosticHandler = new Handler(Looper.getMainLooper());
@@ -80,6 +83,8 @@ public class MainActivity extends CameraActivity {
     private volatile int previewRotation = 0;
     private volatile boolean previewMirror = false;
     private volatile boolean previewVerticalFlip = false;
+    private volatile boolean previewFill = true;
+    private volatile float previewZoom = 1.0f;
     private volatile boolean enhancedOcr = false;
     private volatile boolean useSmallModel = false;
     private boolean ttsReady = false;
@@ -154,6 +159,8 @@ public class MainActivity extends CameraActivity {
         // The camera preview owns all available space above the bottom control strip.
         previewContainer = new FrameLayout(this);
         previewContainer.setBackgroundColor(Color.BLACK);
+        previewContainer.setClipChildren(true);
+        previewContainer.setClipToPadding(true);
         root.addView(previewContainer, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         ));
@@ -211,6 +218,8 @@ public class MainActivity extends CameraActivity {
         if (previewRotation != 0 && previewRotation != 90 && previewRotation != 180 && previewRotation != 270) previewRotation = 0;
         previewMirror = prefs.getBoolean(PREF_PREVIEW_MIRROR, false);
         previewVerticalFlip = prefs.getBoolean(PREF_PREVIEW_FLIP, false);
+        previewFill = prefs.getBoolean(PREF_PREVIEW_FILL, true);
+        previewZoom = Math.max(1.0f, Math.min(2.5f, prefs.getFloat(PREF_PREVIEW_ZOOM, 1.0f)));
         enhancedOcr = prefs.getBoolean(PREF_ENHANCED_OCR, false);
         useSmallModel = prefs.getBoolean(PREF_USE_SMALL_MODEL, false) && OcrModelDownloader.isInstalled(this);
     }
@@ -386,8 +395,31 @@ public class MainActivity extends CameraActivity {
         flipCheck.setChecked(previewVerticalFlip);
         panel.addView(flipCheck);
 
+        CheckBox fillCheck = new CheckBox(this);
+        fillCheck.setText("铺满整个预览框（保持比例，边缘可能裁切）");
+        fillCheck.setChecked(previewFill);
+        panel.addView(fillCheck);
+
+        TextView zoomTitle = new TextView(this);
+        zoomTitle.setText("预览画面缩放：" + Math.round(previewZoom * 100) + "%");
+        zoomTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        zoomTitle.setPadding(0, dp(8), 0, dp(2));
+        panel.addView(zoomTitle);
+
+        SeekBar zoomSeek = new SeekBar(this);
+        zoomSeek.setMax(150);
+        zoomSeek.setProgress(Math.round((previewZoom - 1.0f) * 100));
+        zoomSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                zoomTitle.setText("预览画面缩放：" + (100 + progress) + "%");
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+        panel.addView(zoomSeek);
+
         TextView transformNote = new TextView(this);
-        transformNote.setText("画面方向设置会同时应用于预览和 OCR 识别，不会改变 USB 摄像头采集格式。");
+        transformNote.setText("旋转和镜像方向同时应用于预览与 OCR；铺满和缩放只改变屏幕显示，不改变 OCR 原始采集画面。预览优先请求 1920×1080，摄像头不支持时由驱动选择可用分辨率。");
         transformNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         transformNote.setTextColor(0xFF667085);
         panel.addView(transformNote);
@@ -421,6 +453,8 @@ public class MainActivity extends CameraActivity {
                 previewRotation = rotationSeek.getProgress() * 90;
                 previewMirror = mirrorCheck.isChecked();
                 previewVerticalFlip = flipCheck.isChecked();
+                previewFill = fillCheck.isChecked();
+                previewZoom = 1.0f + zoomSeek.getProgress() / 100.0f;
                 enhancedOcr = enhancedCheck.isChecked();
                 boolean previousSmallModel = useSmallModel;
                 useSmallModel = smallModelCheck.isChecked() && OcrModelDownloader.isInstalled(this);
@@ -435,6 +469,8 @@ public class MainActivity extends CameraActivity {
                     .putInt(PREF_PREVIEW_ROTATION, previewRotation)
                     .putBoolean(PREF_PREVIEW_MIRROR, previewMirror)
                     .putBoolean(PREF_PREVIEW_FLIP, previewVerticalFlip)
+                    .putBoolean(PREF_PREVIEW_FILL, previewFill)
+                    .putFloat(PREF_PREVIEW_ZOOM, previewZoom)
                     .putBoolean(PREF_ENHANCED_OCR, enhancedOcr)
                     .putBoolean(PREF_USE_SMALL_MODEL, useSmallModel)
                     .apply();
@@ -448,6 +484,8 @@ public class MainActivity extends CameraActivity {
 
     @Override protected IAspectRatio getCameraView() {
         cameraTextureView = new AspectRatioTextureView(this);
+        cameraTextureView.addOnLayoutChangeListener((view, left, top, right, bottom,
+                oldLeft, oldTop, oldRight, oldBottom) -> applyPreviewTransform());
         applyPreviewTransform();
         return (IAspectRatio) cameraTextureView;
     }
@@ -455,8 +493,27 @@ public class MainActivity extends CameraActivity {
     private void applyPreviewTransform() {
         if (cameraTextureView == null) return;
         cameraTextureView.setRotation(previewRotation);
-        cameraTextureView.setScaleX(previewMirror ? -1.0f : 1.0f);
-        cameraTextureView.setScaleY(previewVerticalFlip ? -1.0f : 1.0f);
+
+        int viewWidth = cameraTextureView.getWidth();
+        int viewHeight = cameraTextureView.getHeight();
+        int containerWidth = previewContainer == null ? 0 : previewContainer.getWidth();
+        int containerHeight = previewContainer == null ? 0 : previewContainer.getHeight();
+
+        float fillScale = 1.0f;
+        if (previewFill && viewWidth > 0 && viewHeight > 0 &&
+                containerWidth > 0 && containerHeight > 0) {
+            boolean quarterTurn = previewRotation == 90 || previewRotation == 270;
+            float rotatedWidth = quarterTurn ? viewHeight : viewWidth;
+            float rotatedHeight = quarterTurn ? viewWidth : viewHeight;
+            fillScale = Math.max(
+                containerWidth / rotatedWidth,
+                containerHeight / rotatedHeight
+            );
+        }
+
+        float scale = fillScale * previewZoom;
+        cameraTextureView.setScaleX(scale * (previewMirror ? -1.0f : 1.0f));
+        cameraTextureView.setScaleY(scale * (previewVerticalFlip ? -1.0f : 1.0f));
     }
 
     @Override protected ViewGroup getCameraViewContainer() { return previewContainer; }
@@ -464,8 +521,8 @@ public class MainActivity extends CameraActivity {
 
     @Override protected CameraRequest getCameraRequest() {
         return new CameraRequest.Builder()
-            .setPreviewWidth(1280)
-            .setPreviewHeight(720)
+            .setPreviewWidth(1920)
+            .setPreviewHeight(1080)
             .setRenderMode(CameraRequest.RenderMode.OPENGL)
             .setPreviewFormat(CameraRequest.PreviewFormat.FORMAT_MJPEG)
             .setRawPreviewData(true)
@@ -637,6 +694,11 @@ public class MainActivity extends CameraActivity {
             "，子视图 " + previewContainer.getChildCount() + " 个");
         info.append("\n摄像头状态：").append(cameraOpened ? "已打开" : "未打开");
         info.append("\n预览回调：").append(previewCallbackAdded ? "已注册" : "未注册");
+        PreviewSize actualPreviewSize = getCurrentPreviewSize();
+        info.append("\n实际摄像头预览分辨率：").append(actualPreviewSize == null ? "尚未获取" :
+            actualPreviewSize.getWidth() + "×" + actualPreviewSize.getHeight());
+        info.append("\n预览显示：").append(previewFill ? "铺满" : "完整画面")
+            .append("，缩放 ").append(Math.round(previewZoom * 100)).append("%");
         info.append("\n摄像头视图：").append(cameraTextureView == null ? "未创建" :
             cameraTextureView.getWidth() + "×" + cameraTextureView.getHeight());
         info.append("\nTextureView表面：").append(cameraTextureView == null ? "未知" :

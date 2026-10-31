@@ -163,7 +163,7 @@ jobs:
           "$ZIPALIGN" -c -v 4 "$APK"
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           "$AAPT" dump badging "$APK" | tee "$RUNNER_TEMP/apk-manifest.txt"
-          grep -q "package: name='com.vobichngan.kanzi' versionCode='16' versionName='0.7.0'" "$RUNNER_TEMP/apk-manifest.txt"
+          grep -q "package: name='com.vobichngan.kanzi' versionCode='17' versionName='0.7.1'" "$RUNNER_TEMP/apk-manifest.txt"
           grep -q "sdkVersion:'26'" "$RUNNER_TEMP/apk-manifest.txt"
           echo "APK_SHA256=$(sha256sum "$APK" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
           echo "APK_SIZE=$(stat -c%s "$APK") bytes" >> "$GITHUB_STEP_SUMMARY"
@@ -180,6 +180,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: test-build-${{ github.run_number }}
-          name: 看字助手测试版 0.7.0 PP-OCRv6 (${{ github.run_number }})
+          name: 看字助手测试版 0.7.1 PP-OCRv6 (${{ github.run_number }})
           prerelease: true
           files: app/build/outputs/apk/release/app-release.apk
