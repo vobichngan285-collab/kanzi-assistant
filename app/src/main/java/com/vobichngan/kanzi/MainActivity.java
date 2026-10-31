@@ -48,7 +48,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.7.3";
+    private static final String APP_VERSION = "0.7.4";
     private static final String PREFS_NAME = "kanzi_settings";
     private static final String PREF_AUTO_MODE = "automatic_mode";
     private static final String PREF_INTERVAL = "recognition_interval_ms";
@@ -492,20 +492,36 @@ public class MainActivity extends CameraActivity {
 
     private void applyPreviewTransform() {
         if (cameraTextureView == null) return;
+        int containerWidth = previewContainer == null ? 0 : previewContainer.getWidth();
+        int containerHeight = previewContainer == null ? 0 : previewContainer.getHeight();
+        if (containerWidth <= 0 || containerHeight <= 0) return;
+        boolean quarterTurn = previewRotation == 90 || previewRotation == 270;
+
+        // Swap the TextureView layout dimensions before rotating it. Otherwise Android
+        // rotates a landscape view inside its old landscape-sized layout slot.
+        ViewGroup.LayoutParams raw = cameraTextureView.getLayoutParams();
+        if (raw instanceof FrameLayout.LayoutParams) {
+            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) raw;
+            int wantedWidth = quarterTurn ? containerHeight : containerWidth;
+            int wantedHeight = quarterTurn ? containerWidth : containerHeight;
+            if (lp.width != wantedWidth || lp.height != wantedHeight || lp.gravity != Gravity.CENTER) {
+                lp.width = wantedWidth;
+                lp.height = wantedHeight;
+                lp.gravity = Gravity.CENTER;
+                cameraTextureView.setLayoutParams(lp);
+                return;
+            }
+        }
         cameraTextureView.setRotation(previewRotation);
 
         int viewWidth = cameraTextureView.getWidth();
         int viewHeight = cameraTextureView.getHeight();
-        int containerWidth = previewContainer == null ? 0 : previewContainer.getWidth();
-        int containerHeight = previewContainer == null ? 0 : previewContainer.getHeight();
-
         // "适应预览框" must never crop the camera image or enlarge it automatically.
         // Fit the complete rotated frame inside the available area; if aspect ratios differ,
         // leave unused space rather than zooming/cropping the image.
         float fitScale = 1.0f;
         if (previewFill && viewWidth > 0 && viewHeight > 0 &&
                 containerWidth > 0 && containerHeight > 0) {
-            boolean quarterTurn = previewRotation == 90 || previewRotation == 270;
             float rotatedWidth = quarterTurn ? viewHeight : viewWidth;
             float rotatedHeight = quarterTurn ? viewWidth : viewHeight;
             // Scale up or down to use the available screen area while
@@ -518,6 +534,8 @@ public class MainActivity extends CameraActivity {
 
         // previewZoom remains an explicit user-controlled adjustment only.
         float scale = fitScale * previewZoom;
+        cameraTextureView.setPivotX(viewWidth / 2.0f);
+        cameraTextureView.setPivotY(viewHeight / 2.0f);
         cameraTextureView.setScaleX(scale * (previewMirror ? -1.0f : 1.0f));
         cameraTextureView.setScaleY(scale * (previewVerticalFlip ? -1.0f : 1.0f));
     }
