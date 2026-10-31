@@ -178,7 +178,7 @@ public class MainActivity extends CameraActivity {
     private void updateControlLabels() {
         if (modeButton != null) modeButton.setText(automaticMode ? "模式：自动" : "模式：手动");
         if (startButton != null) startButton.setText(running ? "暂停识别" : "开始识别");
-        if (captureButton != null) captureButton.setEnabled(previewCallbackAdded);
+        if (captureButton != null) captureButton.setEnabled(previewCallbackAdded && !automaticMode);
     }
 
     private void loadSettings() {
@@ -504,7 +504,7 @@ public class MainActivity extends CameraActivity {
         final float threshold = similarityThreshold / 100.0f;
         if (!candidateNormalized.isEmpty() && (threshold <= 0f || textSimilarity(candidateNormalized, normalized) >= threshold)) {
             candidateCount++;
-            if (recognizedText.length() > candidateText.length()) candidateText = recognizedText;
+            if (threshold <= 0f || recognizedText.length() > candidateText.length()) candidateText = recognizedText;
             candidateNormalized = normalized;
         } else {
             candidateText = recognizedText;
