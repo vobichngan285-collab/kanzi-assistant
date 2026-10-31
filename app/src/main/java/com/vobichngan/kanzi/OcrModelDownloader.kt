@@ -181,7 +181,7 @@ class OcrModelDownloader(context: Context) {
         private const val REC_REV = "3d2d345"
         private const val DET_URL = "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/5994b4f/inference.onnx"
         private const val REC_URL = "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx"
-        private const val CONFIG_URL = "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.yml"
+        private const val CONFIG_URL = "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml"
 
         @JvmStatic fun isInstalled(context: Context): Boolean {
             val dir = File(context.applicationContext.filesDir, "ocr_models/ppocrv6_small")
