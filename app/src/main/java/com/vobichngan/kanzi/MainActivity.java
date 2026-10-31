@@ -48,7 +48,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.7.2";
+    private static final String APP_VERSION = "0.7.3";
     private static final String PREFS_NAME = "kanzi_settings";
     private static final String PREF_AUTO_MODE = "automatic_mode";
     private static final String PREF_INTERVAL = "recognition_interval_ms";
@@ -396,7 +396,7 @@ public class MainActivity extends CameraActivity {
         panel.addView(flipCheck);
 
         CheckBox fillCheck = new CheckBox(this);
-        fillCheck.setText("适应整个预览框（完整显示，不裁切、不额外放大）");
+        fillCheck.setText("旋转后尽量利用屏幕空间（完整显示，不裁切）");
         fillCheck.setChecked(previewFill);
         panel.addView(fillCheck);
 
@@ -508,12 +508,11 @@ public class MainActivity extends CameraActivity {
             boolean quarterTurn = previewRotation == 90 || previewRotation == 270;
             float rotatedWidth = quarterTurn ? viewHeight : viewWidth;
             float rotatedHeight = quarterTurn ? viewWidth : viewHeight;
+            // Scale up or down to use the available screen area while
+            // keeping the complete rotated camera frame visible (fit-center).
             fitScale = Math.min(
-                1.0f,
-                Math.min(
-                    containerWidth / rotatedWidth,
-                    containerHeight / rotatedHeight
-                )
+                containerWidth / rotatedWidth,
+                containerHeight / rotatedHeight
             );
         }
 
