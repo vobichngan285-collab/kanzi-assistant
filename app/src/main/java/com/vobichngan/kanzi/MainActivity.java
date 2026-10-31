@@ -389,6 +389,7 @@ public class MainActivity extends CameraActivity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         loadSettings();
+        applyPreviewTransform();
         updateControlLabels();
         diagnosticAttempts = 0;
         diagnosticHandler.postDelayed(diagnosticRunnable, 1200);
@@ -480,7 +481,10 @@ public class MainActivity extends CameraActivity {
                 addPreviewDataCallBack(previewCallback);
                 previewCallbackAdded = true;
             }
-            runOnUiThread(() -> updateControlLabels());
+            runOnUiThread(() -> {
+                applyPreviewTransform();
+                updateControlLabels();
+            });
         } else if (code == ICameraStateCallBack.State.CLOSED) {
             previewCallbackAdded = false;
             manualCaptureRequested.set(false);
