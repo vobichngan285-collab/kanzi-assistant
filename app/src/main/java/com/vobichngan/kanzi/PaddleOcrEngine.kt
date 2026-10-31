@@ -6,6 +6,11 @@ import android.graphics.ImageFormat
 import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.YuvImage
+import org.opencv.android.Utils
+import org.opencv.core.Core
+import org.opencv.core.Mat
+import org.opencv.core.Size
+import org.opencv.imgproc.Imgproc
 import com.paddle.ocr.EngineConfig
 import com.paddle.ocr.PaddleOCR
 import com.paddle.ocr.PaddleOCRConfig
@@ -88,6 +93,7 @@ class PaddleOcrEngine(
         rotationDegrees: Int,
         mirrorHorizontal: Boolean,
         flipVertical: Boolean,
+        enhancedPreprocessing: Boolean,
         onResult: OcrResultCallback,
         onError: OcrErrorCallback
     ) {
@@ -124,6 +130,13 @@ class PaddleOcrEngine(
                         bitmap = transformed
                     }
                 }
+                if (enhancedPreprocessing) {
+                    val enhanced = enhanceForOcr(bitmap)
+                    if (enhanced !== bitmap) {
+                        bitmap.recycle()
+                        bitmap = enhanced
+                    }
+                }
                 try {
                     val result = current.recognize(bitmap)
                     val text = arrangeInReadingOrder(result.results)
@@ -136,6 +149,39 @@ class PaddleOcrEngine(
             } finally {
                 busy.set(false)
             }
+        }
+    }
+
+
+    /** Optional grayscale denoise + local contrast + mild sharpening for difficult scenes. */
+    private fun enhanceForOcr(source: Bitmap): Bitmap {
+        val rgba = Mat()
+        val gray = Mat()
+        val denoised = Mat()
+        val contrasted = Mat()
+        val blurred = Mat()
+        val sharpened = Mat()
+        try {
+            Utils.bitmapToMat(source, rgba)
+            Imgproc.cvtColor(rgba, gray, Imgproc.COLOR_RGBA2GRAY)
+            Imgproc.bilateralFilter(gray, denoised, 5, 35.0, 35.0)
+            val clahe = Imgproc.createCLAHE(2.0, Size(8.0, 8.0))
+            clahe.apply(denoised, contrasted)
+            Imgproc.GaussianBlur(contrasted, blurred, Size(0.0, 0.0), 1.0)
+            Core.addWeighted(contrasted, 1.30, blurred, -0.30, 0.0, sharpened)
+            val output = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
+            Utils.matToBitmap(sharpened, output)
+            return output
+        } catch (_: Throwable) {
+            // Keep the original frame if an enhancement operation is unsupported on a device.
+            return source
+        } finally {
+            rgba.release()
+            gray.release()
+            denoised.release()
+            contrasted.release()
+            blurred.release()
+            sharpened.release()
         }
     }
 
