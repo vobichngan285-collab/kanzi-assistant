@@ -183,17 +183,17 @@ class OcrModelDownloader(context: Context) {
         private const val REC_URL = "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx"
         private const val CONFIG_URL = "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.yml"
 
-        fun isInstalled(context: Context): Boolean {
+        @JvmStatic fun isInstalled(context: Context): Boolean {
             val dir = File(context.applicationContext.filesDir, "ocr_models/ppocrv6_small")
             return File(dir, "complete.flag").isFile &&
                 File(dir, "det.onnx").isFile && File(dir, "rec.onnx").isFile &&
                 File(dir, "rec.yml").isFile
         }
 
-        fun modelDirectory(context: Context): File =
+        @JvmStatic fun modelDirectory(context: Context): File =
             File(context.applicationContext.filesDir, "ocr_models/ppocrv6_small")
 
-        fun deleteSmallModel(context: Context) {
+        @JvmStatic fun deleteSmallModel(context: Context) {
             modelDirectory(context).deleteRecursively()
         }
     }
