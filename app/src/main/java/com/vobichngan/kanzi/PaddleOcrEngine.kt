@@ -3,6 +3,7 @@ package com.vobichngan.kanzi
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
+import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.YuvImage
 import com.paddle.ocr.EngineConfig
@@ -84,6 +85,9 @@ class PaddleOcrEngine(
         data: ByteArray,
         width: Int,
         height: Int,
+        rotationDegrees: Int,
+        mirrorHorizontal: Boolean,
+        flipVertical: Boolean,
         onResult: OcrResultCallback,
         onError: OcrErrorCallback
     ) {
@@ -101,8 +105,25 @@ class PaddleOcrEngine(
                 YuvImage(data, ImageFormat.NV21, width, height, null)
                     .compressToJpeg(Rect(0, 0, width, height), 82, output)
                 val bytes = output.toByteArray()
-                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                var bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                     ?: error("摄像头画面解码失败")
+                if (rotationDegrees != 0 || mirrorHorizontal || flipVertical) {
+                    val matrix = Matrix()
+                    if (rotationDegrees != 0) matrix.postRotate(rotationDegrees.toFloat())
+                    if (mirrorHorizontal || flipVertical) {
+                        matrix.postScale(
+                            if (mirrorHorizontal) -1f else 1f,
+                            if (flipVertical) -1f else 1f
+                        )
+                    }
+                    val transformed = Bitmap.createBitmap(
+                        bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true
+                    )
+                    if (transformed !== bitmap) {
+                        bitmap.recycle()
+                        bitmap = transformed
+                    }
+                }
                 try {
                     val result = current.recognize(bitmap)
                     val text = arrangeInReadingOrder(result.results)
