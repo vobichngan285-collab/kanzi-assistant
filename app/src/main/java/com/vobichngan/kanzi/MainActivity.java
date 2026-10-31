@@ -46,12 +46,16 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.6.0";
+    private static final String APP_VERSION = "0.7.0";
     private static final String PREFS_NAME = "kanzi_settings";
     private static final String PREF_AUTO_MODE = "automatic_mode";
     private static final String PREF_INTERVAL = "recognition_interval_ms";
     private static final String PREF_SIMILARITY = "similarity_threshold";
     private static final String PREF_QUEUE_SPEECH = "queue_speech";
+    private static final String PREF_SPEECH_RATE = "speech_rate";
+    private static final String PREF_PREVIEW_ROTATION = "preview_rotation";
+    private static final String PREF_PREVIEW_MIRROR = "preview_mirror";
+    private static final String PREF_PREVIEW_FLIP = "preview_flip";
     private final Handler diagnosticHandler = new Handler(Looper.getMainLooper());
     private int diagnosticAttempts = 0;
     private final Runnable diagnosticRunnable = new Runnable() {
@@ -69,6 +73,10 @@ public class MainActivity extends CameraActivity {
     private volatile long recognitionIntervalMs = 500L;
     private volatile int similarityThreshold = 88;
     private volatile boolean queueSpeech = true;
+    private volatile float speechRate = 1.0f;
+    private volatile int previewRotation = 0;
+    private volatile boolean previewMirror = false;
+    private volatile boolean previewVerticalFlip = false;
     private boolean ttsReady = false;
     private boolean previewCallbackAdded = false;
     private String lastSpoken = "";
@@ -112,7 +120,10 @@ public class MainActivity extends CameraActivity {
             }
             lastProcess = now;
             byte[] frame = data.clone();
-            recognizer.recognizeNv21(frame, width, height, found -> {
+            final int rotation = previewRotation;
+            final boolean mirror = previewMirror;
+            final boolean flip = previewVerticalFlip;
+            recognizer.recognizeNv21(frame, width, height, rotation, mirror, flip, found -> {
                 busy.set(false);
                 if (found != null) onRecognized(found);
             }, error -> {
@@ -189,6 +200,11 @@ public class MainActivity extends CameraActivity {
         similarityThreshold = Math.max(0, Math.min(100,
             prefs.getInt(PREF_SIMILARITY, 88)));
         queueSpeech = prefs.getBoolean(PREF_QUEUE_SPEECH, true);
+        speechRate = Math.max(0.5f, Math.min(2.0f, prefs.getFloat(PREF_SPEECH_RATE, 1.0f)));
+        previewRotation = prefs.getInt(PREF_PREVIEW_ROTATION, 0);
+        if (previewRotation != 0 && previewRotation != 90 && previewRotation != 180 && previewRotation != 270) previewRotation = 0;
+        previewMirror = prefs.getBoolean(PREF_PREVIEW_MIRROR, false);
+        previewVerticalFlip = prefs.getBoolean(PREF_PREVIEW_FLIP, false);
     }
 
     private void showSettingsDialog() {
@@ -239,6 +255,69 @@ public class MainActivity extends CameraActivity {
         });
         panel.addView(similaritySeek);
 
+        TextView speechTitle = new TextView(this);
+        speechTitle.setText("朗读语速：" + String.format(Locale.US, "%.2f", speechRate) + " 倍");
+        speechTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        speechTitle.setPadding(0, dp(18), 0, dp(4));
+        panel.addView(speechTitle);
+
+        SeekBar speechRateSeek = new SeekBar(this);
+        speechRateSeek.setMax(150);
+        speechRateSeek.setProgress(Math.round((speechRate - 0.5f) * 100f));
+        speechRateSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                float value = 0.5f + progress / 100f;
+                speechTitle.setText("朗读语速：" + String.format(Locale.US, "%.2f", value) + " 倍");
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+        panel.addView(speechRateSeek);
+
+        Button speechPreviewButton = createControlButton("试听当前语速");
+        speechPreviewButton.setOnClickListener(v -> {
+            if (tts != null && ttsReady) {
+                tts.setSpeechRate(0.5f + speechRateSeek.getProgress() / 100f);
+                tts.speak("看字助手语音试听，现在是当前设置的朗读速度。", TextToSpeech.QUEUE_FLUSH, null, "settings-preview");
+            } else {
+                Toast.makeText(this, "中文语音尚未准备好", Toast.LENGTH_SHORT).show();
+            }
+        });
+        panel.addView(speechPreviewButton);
+
+        TextView rotationTitle = new TextView(this);
+        rotationTitle.setText("摄像头画面旋转：" + previewRotation + "°");
+        rotationTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        rotationTitle.setPadding(0, dp(18), 0, dp(4));
+        panel.addView(rotationTitle);
+
+        SeekBar rotationSeek = new SeekBar(this);
+        rotationSeek.setMax(3);
+        rotationSeek.setProgress(previewRotation / 90);
+        rotationSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                rotationTitle.setText("摄像头画面旋转：" + (progress * 90) + "°");
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+        panel.addView(rotationSeek);
+
+        CheckBox mirrorCheck = new CheckBox(this);
+        mirrorCheck.setText("水平镜像");
+        mirrorCheck.setChecked(previewMirror);
+        panel.addView(mirrorCheck);
+        CheckBox flipCheck = new CheckBox(this);
+        flipCheck.setText("垂直翻转");
+        flipCheck.setChecked(previewVerticalFlip);
+        panel.addView(flipCheck);
+
+        TextView transformNote = new TextView(this);
+        transformNote.setText("画面方向设置会同时应用于预览和 OCR 识别，不会改变 USB 摄像头采集格式。");
+        transformNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        transformNote.setTextColor(0xFF667085);
+        panel.addView(transformNote);
+
         TextView similarityNote = new TextView(this);
         similarityNote.setText("数值越高，判断越严格；设为 0 时关闭相似度去重，但仍要求连续两次识别后才朗读。");
         similarityNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
@@ -258,11 +337,21 @@ public class MainActivity extends CameraActivity {
                 similarityThreshold = similaritySeek.getProgress();
                 boolean wasQueueEnabled = queueSpeech;
                 queueSpeech = queueCheck.isChecked();
+                speechRate = 0.5f + speechRateSeek.getProgress() / 100f;
+                previewRotation = rotationSeek.getProgress() * 90;
+                previewMirror = mirrorCheck.isChecked();
+                previewVerticalFlip = flipCheck.isChecked();
+                if (tts != null) tts.setSpeechRate(speechRate);
+                applyPreviewTransform();
                 getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
                     .putBoolean(PREF_AUTO_MODE, automaticMode)
                     .putLong(PREF_INTERVAL, recognitionIntervalMs)
                     .putInt(PREF_SIMILARITY, similarityThreshold)
                     .putBoolean(PREF_QUEUE_SPEECH, queueSpeech)
+                    .putFloat(PREF_SPEECH_RATE, speechRate)
+                    .putInt(PREF_PREVIEW_ROTATION, previewRotation)
+                    .putBoolean(PREF_PREVIEW_MIRROR, previewMirror)
+                    .putBoolean(PREF_PREVIEW_FLIP, previewVerticalFlip)
                     .apply();
                 if (wasQueueEnabled && !queueSpeech) clearSpeechQueue(true);
                 Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show();
@@ -272,7 +361,15 @@ public class MainActivity extends CameraActivity {
 
     @Override protected IAspectRatio getCameraView() {
         cameraTextureView = new AspectRatioTextureView(this);
+        applyPreviewTransform();
         return (IAspectRatio) cameraTextureView;
+    }
+
+    private void applyPreviewTransform() {
+        if (cameraTextureView == null) return;
+        cameraTextureView.setRotation(previewRotation);
+        cameraTextureView.setScaleX(previewMirror ? -1.0f : 1.0f);
+        cameraTextureView.setScaleY(previewVerticalFlip ? -1.0f : 1.0f);
     }
 
     @Override protected ViewGroup getCameraViewContainer() { return previewContainer; }
@@ -307,6 +404,7 @@ public class MainActivity extends CameraActivity {
         tts = new TextToSpeech(this, code -> {
             if (code == TextToSpeech.SUCCESS) {
                 int language = tts.setLanguage(Locale.SIMPLIFIED_CHINESE);
+                tts.setSpeechRate(speechRate);
                 ttsReady = language != TextToSpeech.LANG_MISSING_DATA && language != TextToSpeech.LANG_NOT_SUPPORTED;
                 if (ttsReady) {
                     tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
