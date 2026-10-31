@@ -3,6 +3,8 @@ name: Android APK (PP-OCRv6 + patched USB permission)
 on:
   push:
     branches: [ main ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 concurrency:
   # Keep each run independent so a newer commit cannot cancel an active APK build.
@@ -144,6 +146,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Publish public test download
+        if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: test-build-${{ github.run_number }}
