@@ -1,6 +1,7 @@
 package com.vobichngan.kanzi
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
 import android.graphics.Matrix
