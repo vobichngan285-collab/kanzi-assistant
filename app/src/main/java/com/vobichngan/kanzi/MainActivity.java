@@ -48,7 +48,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.7.1";
+    private static final String APP_VERSION = "0.7.2";
     private static final String PREFS_NAME = "kanzi_settings";
     private static final String PREF_AUTO_MODE = "automatic_mode";
     private static final String PREF_INTERVAL = "recognition_interval_ms";
@@ -396,7 +396,7 @@ public class MainActivity extends CameraActivity {
         panel.addView(flipCheck);
 
         CheckBox fillCheck = new CheckBox(this);
-        fillCheck.setText("铺满整个预览框（保持比例，边缘可能裁切）");
+        fillCheck.setText("适应整个预览框（完整显示，不裁切、不额外放大）");
         fillCheck.setChecked(previewFill);
         panel.addView(fillCheck);
 
@@ -419,7 +419,7 @@ public class MainActivity extends CameraActivity {
         panel.addView(zoomSeek);
 
         TextView transformNote = new TextView(this);
-        transformNote.setText("旋转和镜像方向同时应用于预览与 OCR；铺满和缩放只改变屏幕显示，不改变 OCR 原始采集画面。预览优先请求 1920×1080，摄像头不支持时由驱动选择可用分辨率。");
+        transformNote.setText("旋转和镜像方向同时应用于预览与 OCR；适应预览框时优先完整显示画面，不通过裁切放大来填满空白区域。手动缩放仅在你主动调整缩放滑块时生效，不改变 OCR 原始采集画面。预览优先请求 1920×1080，摄像头不支持时由驱动选择可用分辨率。");
         transformNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         transformNote.setTextColor(0xFF667085);
         panel.addView(transformNote);
@@ -499,19 +499,26 @@ public class MainActivity extends CameraActivity {
         int containerWidth = previewContainer == null ? 0 : previewContainer.getWidth();
         int containerHeight = previewContainer == null ? 0 : previewContainer.getHeight();
 
-        float fillScale = 1.0f;
+        // "适应预览框" must never crop the camera image or enlarge it automatically.
+        // Fit the complete rotated frame inside the available area; if aspect ratios differ,
+        // leave unused space rather than zooming/cropping the image.
+        float fitScale = 1.0f;
         if (previewFill && viewWidth > 0 && viewHeight > 0 &&
                 containerWidth > 0 && containerHeight > 0) {
             boolean quarterTurn = previewRotation == 90 || previewRotation == 270;
             float rotatedWidth = quarterTurn ? viewHeight : viewWidth;
             float rotatedHeight = quarterTurn ? viewWidth : viewHeight;
-            fillScale = Math.max(
-                containerWidth / rotatedWidth,
-                containerHeight / rotatedHeight
+            fitScale = Math.min(
+                1.0f,
+                Math.min(
+                    containerWidth / rotatedWidth,
+                    containerHeight / rotatedHeight
+                )
             );
         }
 
-        float scale = fillScale * previewZoom;
+        // previewZoom remains an explicit user-controlled adjustment only.
+        float scale = fitScale * previewZoom;
         cameraTextureView.setScaleX(scale * (previewMirror ? -1.0f : 1.0f));
         cameraTextureView.setScaleY(scale * (previewVerticalFlip ? -1.0f : 1.0f));
     }
