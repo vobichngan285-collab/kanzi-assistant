@@ -155,7 +155,22 @@ class PaddleOcrEngine(
                     }
                 }
                 try {
-                    val result = current.recognize(bitmap)
+                    var result = current.recognize(bitmap)
+                    // In normal mode, retry only low-confidence text frames with enhanced preprocessing.
+                    // Empty frames are not retried, avoiding extra work when the camera sees no text.
+                    if (!enhancedPreprocessing && shouldRetryWithEnhancement(result.results)) {
+                        val retryBitmap = enhanceForOcr(bitmap)
+                        if (retryBitmap !== bitmap) {
+                            try {
+                                val retryResult = current.recognize(retryBitmap)
+                                if (recognitionQuality(retryResult.results) > recognitionQuality(result.results)) {
+                                    result = retryResult
+                                }
+                            } finally {
+                                retryBitmap.recycle()
+                            }
+                        }
+                    }
                     val text = arrangeInReadingOrder(result.results)
                     withContext(Dispatchers.Main) { onResult.onResult(text) }
                 } finally {
@@ -169,6 +184,20 @@ class PaddleOcrEngine(
         }
     }
 
+
+    private fun shouldRetryWithEnhancement(results: List<OCRResult>): Boolean {
+        if (results.isEmpty()) return false
+        val average = results.map { it.confidence }.average()
+        val lowConfidenceCount = results.count { it.confidence < 0.55f }
+        return average < 0.72 || lowConfidenceCount.toFloat() / results.size >= 0.40f
+    }
+
+    private fun recognitionQuality(results: List<OCRResult>): Float {
+        if (results.isEmpty()) return -1f
+        val average = results.map { it.confidence }.average().toFloat()
+        val characters = results.sumOf { it.text.length }.coerceAtMost(200)
+        return average + characters / 2000f
+    }
 
     /** Optional grayscale denoise + local contrast + mild sharpening for difficult scenes. */
     private fun enhanceForOcr(source: Bitmap): Bitmap {
