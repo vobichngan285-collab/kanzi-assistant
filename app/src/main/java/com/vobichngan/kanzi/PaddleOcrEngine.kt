@@ -30,11 +30,15 @@ fun interface OcrResultCallback { fun onResult(text: String?) }
 fun interface OcrErrorCallback { fun onError(message: String) }
 data class OcrDiagnosticResult(
     val text: String,
+    val rawDetails: String,
+    val modelId: String,
     val boxCount: Int,
     val averageConfidence: Double,
     val detectionTimeMs: Long,
     val recognitionTimeMs: Long,
-    val totalTimeMs: Long
+    val totalTimeMs: Long,
+    val detectorInputShape: String,
+    val recognitionInputShapes: String
 )
 fun interface OcrDiagnosticCallback { fun onResult(result: OcrDiagnosticResult) }
 
@@ -100,9 +104,24 @@ class PaddleOcrEngine(
                     val text = arrangeInReadingOrder(result.results)
                     val confidence = if (result.results.isEmpty()) 0.0
                         else result.results.map { it.confidence.toDouble() }.average()
-                    val report = OcrDiagnosticResult(text, result.results.size, confidence,
-                        result.detectionTimeMs.toLong(), result.recognitionTimeMs.toLong(),
-                        result.totalTimeMs.toLong())
+                    val rawDetails = result.results.mapIndexed { index, item ->
+                        val points = item.box.points.joinToString(";") { point ->
+                            "(${"%.1f".format(java.util.Locale.US, point.x)},${"%.1f".format(java.util.Locale.US, point.y)})"
+                        }
+                        "${index + 1}. conf=${"%.4f".format(java.util.Locale.US, item.confidence)} box=$points raw=${item.text}"
+                    }.joinToString("\n").ifEmpty { "（SDK 未返回任何识别框）" }
+                    val report = OcrDiagnosticResult(
+                        text = text,
+                        rawDetails = rawDetails,
+                        modelId = modelId,
+                        boxCount = result.results.size,
+                        averageConfidence = confidence,
+                        detectionTimeMs = result.detectionTimeMs.toLong(),
+                        recognitionTimeMs = result.recognitionTimeMs.toLong(),
+                        totalTimeMs = result.totalTimeMs.toLong(),
+                        detectorInputShape = result.detInputShape.joinToString("×"),
+                        recognitionInputShapes = result.recInputShapes.joinToString("；") { it.joinToString("×") }
+                    )
                     withContext(Dispatchers.Main) { onResult.onResult(report) }
                 } finally { bitmap.recycle() }
             } catch (t: Throwable) {
@@ -119,15 +138,19 @@ class PaddleOcrEngine(
                 // Keep detector input bounded for mobile devices. The previous SDK defaults
                 // (64/min, 4000 max) left a 1080p frame almost untouched, creating a very
                 // large detector tensor and unnecessary CPU/memory pressure.
+                // Keep detector preprocessing/post-processing paired with the selected model.
+                // PP-OCRv6 ONNX inference.yml: thresh=0.20, box_thresh=0.45, unclip=1.40.
+                // PP-OCRv5 Mobile ONNX inference.yml: resize_long=960, 0.30/0.60/1.50.
+                val isV5 = modelId == "ppocrv5_mobile"
                 val ocrConfig = PaddleOCRConfig(
-                    detLimitSideLen = 1600,
+                    detLimitSideLen = if (isV5) 960 else 1600,
                     detLimitType = "max",
-                    detMaxSideLimit = 1600,
-                    // Match the official PP-OCRv6 Small detector post-processing config.
-                    detThresh = 0.30f,
-                    detBoxThresh = 0.60f,
-                    detUnclipRatio = 1.50f,
-                    recScoreThresh = 0.50f,
+                    detMaxSideLimit = if (isV5) 960 else 1600,
+                    detThresh = if (isV5) 0.30f else 0.20f,
+                    detBoxThresh = if (isV5) 0.60f else 0.45f,
+                    detUnclipRatio = if (isV5) 1.50f else 1.40f,
+                    // Do not discard recognition rows before diagnostics can inspect them.
+                    recScoreThresh = 0.0f,
                     recBatchSize = 1
                 )
                 val engineConfig = EngineConfig(numThreads = 2)
