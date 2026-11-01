@@ -363,7 +363,7 @@ public class MainActivity extends CameraActivity {
             : currentSize.getWidth() + "×" + currentSize.getHeight();
         TextView previewQualityNote = new TextView(this);
         previewQualityNote.setText("当前实际预览分辨率：" + actualSizeText
-            + "。固定请求 1920×1080；若摄像头不支持，会选择不超过 1080p 的最合适分辨率，不再请求 4K。");
+            + "。固定请求 1920×1080；若摄像头不支持，会选择 1080p 以下最合适的模式；如果没有符合上限的模式则明确报错，不会偷偷切换到 4K。");
         previewQualityNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         previewQualityNote.setTextColor(0xFF667085);
         panel.addView(previewQualityNote);
