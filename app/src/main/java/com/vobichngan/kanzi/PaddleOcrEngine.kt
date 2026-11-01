@@ -22,6 +22,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 
 fun interface OcrResultCallback { fun onResult(text: String?) }
 fun interface OcrErrorCallback { fun onError(message: String) }
@@ -35,6 +38,22 @@ class PaddleOcrEngine(
         fun onReady()
         fun onError(message: String)
     }
+
+    private data class PositionedText(
+        val item: OCRResult,
+        val left: Float,
+        val top: Float,
+        val bottom: Float,
+        val centerY: Float,
+        val height: Float
+    )
+
+    private data class TextLine(
+        val items: MutableList<PositionedText>,
+        var top: Float,
+        var bottom: Float,
+        var centerY: Float
+    )
 
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -217,14 +236,66 @@ class PaddleOcrEngine(
         }
     }
 
-    // PaddleOCR's SDK already sorts detection boxes top-to-bottom and left-to-right.
-    // Preserve that order. Re-clustering boxes here used a loose vertical threshold and
-    // could merge neighboring rows or scramble compact game UI text.
-    private fun arrangeInReadingOrder(results: List<OCRResult>): String =
-        results.asSequence()
-            .map { it.text.trim() }
-            .filter { it.isNotEmpty() }
-            .joinToString("\n")
+    // Rebuild rows from box geometry. The SDK's fixed 10px top-edge band can
+    // misorder same-line fragments when their boxes have different heights.
+    // Require both substantial vertical overlap and close baselines so adjacent
+    // game UI rows are not accidentally merged.
+    private fun arrangeInReadingOrder(results: List<OCRResult>): String {
+        if (results.isEmpty()) return ""
+        val positioned = results.mapNotNull { item ->
+            val text = item.text.trim()
+            if (text.isEmpty() || item.box.points.size != 4) return@mapNotNull null
+            val xs = item.box.points.map { it.x }
+            val ys = item.box.points.map { it.y }
+            val left = xs.minOrNull() ?: return@mapNotNull null
+            val top = ys.minOrNull() ?: return@mapNotNull null
+            val bottom = ys.maxOrNull() ?: return@mapNotNull null
+            PositionedText(item, left, top, bottom, (top + bottom) / 2f, max(1f, bottom - top))
+        }.sortedWith(compareBy<PositionedText> { it.centerY }.thenBy { it.left })
+
+        val rows = mutableListOf<TextLine>()
+        for (entry in positioned) {
+            var bestRow: TextLine? = null
+            var bestDistance = Float.MAX_VALUE
+            for (row in rows) {
+                val overlap = max(0f, min(row.bottom, entry.bottom) - max(row.top, entry.top))
+                val smallerHeight = max(1f, min(row.bottom - row.top, entry.height))
+                val overlapRatio = overlap / smallerHeight
+                val distance = abs(row.centerY - entry.centerY)
+                val sameRow = overlapRatio >= 0.50f &&
+                    distance <= max(4f, smallerHeight * 0.35f)
+                if (sameRow && distance < bestDistance) {
+                    bestRow = row
+                    bestDistance = distance
+                }
+            }
+            if (bestRow == null) {
+                rows.add(TextLine(mutableListOf(entry), entry.top, entry.bottom, entry.centerY))
+            } else {
+                val oldCount = bestRow.items.size
+                bestRow.items.add(entry)
+                bestRow.top = min(bestRow.top, entry.top)
+                bestRow.bottom = max(bestRow.bottom, entry.bottom)
+                bestRow.centerY = (bestRow.centerY * oldCount + entry.centerY) / (oldCount + 1)
+            }
+        }
+
+        return rows.sortedBy { it.centerY }.joinToString("\n") { row ->
+            row.items.sortedBy { it.left }.map { it.item.text.trim() }
+                .fold("") { combined, fragment ->
+                    if (combined.isEmpty()) fragment
+                    else {
+                        val previous = combined.last()
+                        val next = fragment.firstOrNull() ?: ' '
+                        val needsSpace = previous.isAsciiWordChar() && next.isAsciiWordChar()
+                        combined + (if (needsSpace) " " else "") + fragment
+                    }
+                }
+        }.trim()
+    }
+
+    private fun Char.isAsciiWordChar(): Boolean =
+        this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9'
 
     private fun nv21ToBitmap(data: ByteArray, width: Int, height: Int, rotationDegrees: Int): Bitmap {
         require(rotationDegrees == 0 || rotationDegrees == 90 ||
