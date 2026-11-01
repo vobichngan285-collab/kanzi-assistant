@@ -53,7 +53,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.9.1";
+    private static final String APP_VERSION = "0.9.2";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -287,10 +287,11 @@ public class MainActivity extends CameraActivity {
         phoneTexture.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) ->
             applyPhonePreviewTransform());
         phoneTexture.setVisibility(View.GONE);
-        // A 1x1 GONE TextureView may never obtain a SurfaceTexture. Use a real
-        // full-size view; show it before starting the phone camera.
-        previewContainer.addView(phoneTexture, new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER));
+        // Do NOT add the phone preview to previewContainer here.
+        // CameraActivity.initView() invokes previewContainer.removeAllViews()
+        // after getRootView() returns; attaching here silently removes this
+        // TextureView and causes both phone lenses to remain black.
+        // attachPhonePreviewAfterUsbInit() adds it after super.onCreate().
         ocrOverlay = new OcrOverlayView(this);
         root.addView(ocrOverlay, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -845,6 +846,9 @@ public class MainActivity extends CameraActivity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        // Upstream CameraActivity.initView() has now completed its removeAllViews()
+        // and added the USB preview. The phone view must be attached afterward.
+        attachPhonePreviewAfterUsbInit();
         loadSettings();
         applyPreviewTransform();
         updateControlLabels();
@@ -1154,6 +1158,25 @@ public class MainActivity extends CameraActivity {
         if (cameraSourceButton != null) cameraSourceButton.announceForAccessibility(message);
     }
 
+    /**
+     * Called only after CameraActivity.initView() has finished replacing the USB
+     * preview container's children. This is the root fix for the perpetual
+     * "正在打开手机前置摄像头" black screen in 0.9.0/0.9.1.
+     */
+    private void attachPhonePreviewAfterUsbInit() {
+        if (previewContainer == null || phoneTexture == null) return;
+        if (phoneTexture.getParent() instanceof ViewGroup) {
+            ((ViewGroup) phoneTexture.getParent()).removeView(phoneTexture);
+        }
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER);
+        previewContainer.addView(phoneTexture, params);
+        phoneTexture.setVisibility(View.GONE);
+        Log.i("KanziPhoneCamera", "Phone TextureView attached AFTER USB init; parent=" +
+            phoneTexture.getParent().getClass().getSimpleName() +
+            ", childCount=" + previewContainer.getChildCount());
+    }
+
     private void showPhonePreviewStatus(String message, boolean speakError) {
         if (!usingPhoneCamera || phonePreviewStatus == null) return;
         phonePreviewStatus.setText(message);
@@ -1179,20 +1202,38 @@ public class MainActivity extends CameraActivity {
         showPhonePreviewStatus(phoneFrontFacing
             ? "正在打开手机前置摄像头…" : "正在打开手机后置摄像头…", false);
         final int sequence = ++phoneStartSequence;
-        // Post until the TextureView is attached and laid out. Ignore stale
-        // requests if the user toggles camera source/lens before it can open.
+        // The watchdog must be independent of the TextureView.post() callback.
+        // If its view is detached, posting to that view can never execute.
+        mainHandler.postDelayed(() -> {
+            if (sequence != phoneStartSequence || !usingPhoneCamera || phonePreviewReceived) return;
+            String detail = phoneTexture.getParent() == null ? "预览控件未挂载"
+                : !phoneTexture.isAttachedToWindow() ? "预览控件尚未连接到窗口"
+                : !phoneTexture.isAvailable() ? "预览SurfaceTexture未就绪"
+                : "摄像头没有产生预览画面";
+            showPhonePreviewStatus("手机摄像头启动超时：" + detail +
+                "。请切换前后摄像头重试。", true);
+        }, 5500L);
+
+        // A normal attached, visible TextureView is the only valid Camera2 target.
         phoneTexture.post(() -> {
-            if (!usingPhoneCamera || phoneController == null ||
-                sequence != phoneStartSequence || !phoneTexture.isAttachedToWindow()) return;
+            if (!usingPhoneCamera || phoneController == null || sequence != phoneStartSequence) return;
+            if (phoneTexture.getParent() != previewContainer) {
+                attachPhonePreviewAfterUsbInit();
+                phoneTexture.setVisibility(View.VISIBLE);
+            }
+            if (!phoneTexture.isAttachedToWindow()) {
+                Log.w("KanziPhoneCamera", "Phone TextureView unattached; waiting for attach");
+                phoneTexture.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+                    @Override public void onViewAttachedToWindow(View v) {
+                        v.removeOnAttachStateChangeListener(this);
+                        if (sequence == phoneStartSequence && usingPhoneCamera)
+                            phoneController.start(phoneFrontFacing);
+                    }
+                    @Override public void onViewDetachedFromWindow(View v) {}
+                });
+                return;
+            }
             phoneController.start(phoneFrontFacing);
-            mainHandler.postDelayed(() -> {
-                if (sequence == phoneStartSequence && usingPhoneCamera && !phonePreviewReceived &&
-                    phonePreviewStatus != null && phonePreviewStatus.getVisibility() == View.VISIBLE &&
-                    phonePreviewStatus.getText().toString().startsWith("正在打开")) {
-                    showPhonePreviewStatus(
-                        "没有收到手机摄像头画面。请尝试切换前后摄像头，或退出重新进入应用。", true);
-                }
-            }, 5500L);
         });
     }
 
