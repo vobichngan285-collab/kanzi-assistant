@@ -894,11 +894,11 @@ public class MainActivity extends CameraActivity {
                 if (usingPhoneCamera) processCameraFrame(nv21, width, height, true);
             }
             @Override public void onOpened(int rawWidth, int rawHeight,
-                                           int sensorNaturalRotation, int ocrRotation) {
+                                           int sensorNaturalRotation, int sensorInputCorrectionDegrees) {
                 phoneRawWidth = rawWidth;
                 phoneRawHeight = rawHeight;
                 phoneSensorNaturalRotation = sensorNaturalRotation;
-                phoneOcrRotation = ocrRotation;
+                phoneOcrRotation = sensorInputCorrectionDegrees;
                 runOnUiThread(() -> {
                     applyPhonePreviewTransform();
                     updateControlLabels();
