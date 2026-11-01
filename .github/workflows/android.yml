@@ -1,8 +1,8 @@
-name: Android APK (PP-OCRv6 Small + 1080p UVC)
+name: Android APK (PP-OCRv6 Small/Tiny + PP-OCRv5 Mobile + 1080p UVC)
 # Manual workflow_dispatch is enabled for clean rebuilds after stalled runs.
 on:
   push:
-    branches: [ main, feature/v0.7.0-accessibility-upgrades, release/v0.7.8 ]
+    branches: [ main, feature/v0.7.0-accessibility-upgrades, release/v0.7.8, release/v0.8.0-ocr-engine-rework ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -44,6 +44,33 @@ jobs:
           test -s "$CFG"
           grep -q "PostProcess:" "$CFG"
           grep -q "character_dict:" "$CFG"
+
+          # Official Android SDK model matrix: PP-OCRv6 Tiny and PP-OCRv5 Mobile.
+          # Fetch model pairs and recognition dictionaries from immutable Hugging Face revisions.
+          TINY="$SDK/src/main/assets/models/ppocrv6_tiny"
+          V5="$SDK/src/main/assets/models/ppocrv5_mobile"
+          mkdir -p "$TINY/det" "$TINY/rec" "$V5/det" "$V5/rec"
+          curl -fL --retry 3 --retry-delay 2 "https://huggingface.co/PaddlePaddle/PP-OCRv6_tiny_det_onnx/resolve/2ba1506/inference.onnx" -o "$TINY/det/inference.onnx"
+          curl -fL --retry 3 --retry-delay 2 "https://huggingface.co/PaddlePaddle/PP-OCRv6_tiny_rec_onnx/resolve/2612ab3/inference.onnx" -o "$TINY/rec/inference.onnx"
+          curl -fL --retry 3 --retry-delay 2 "https://huggingface.co/PaddlePaddle/PP-OCRv6_tiny_rec_onnx/resolve/2612ab3/inference.yml?download=true" -o "$TINY/rec/inference.yml"
+          curl -fL --retry 3 --retry-delay 2 "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det_onnx/resolve/e6f4fa8/inference.onnx" -o "$V5/det/inference.onnx"
+          curl -fL --retry 3 --retry-delay 2 "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_rec_onnx/resolve/ed152b8/inference.onnx" -o "$V5/rec/inference.onnx"
+          curl -fL --retry 3 --retry-delay 2 "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_rec_onnx/resolve/ed152b8/inference.yml?download=true" -o "$V5/rec/inference.yml"
+
+          # Reject truncated downloads and missing recognition dictionaries.
+          test "$(stat -c%s "$TINY/det/inference.onnx")" -gt 1000000
+          test "$(stat -c%s "$TINY/rec/inference.onnx")" -gt 3000000
+          test "$(stat -c%s "$V5/det/inference.onnx")" -gt 3000000
+          test "$(stat -c%s "$V5/rec/inference.onnx")" -gt 10000000
+          for CFG2 in "$TINY/rec/inference.yml" "$V5/rec/inference.yml"; do
+            test -s "$CFG2"
+            grep -q "PostProcess:" "$CFG2"
+            grep -q "character_dict:" "$CFG2"
+          done
+          sha256sum "$TINY/det/inference.onnx" "$TINY/rec/inference.onnx" "$TINY/rec/inference.yml" "$V5/det/inference.onnx" "$V5/rec/inference.onnx" "$V5/rec/inference.yml" | tee "$RUNNER_TEMP/alternate-model-sha256.txt"
+          cat "$RUNNER_TEMP/alternate-model-sha256.txt" >> "$GITHUB_STEP_SUMMARY"
+          echo "PP-OCRv6 Tiny and PP-OCRv5 Mobile ONNX files and recognition dictionaries passed pinned-revision and size/config checks." >> "$GITHUB_STEP_SUMMARY"
+
           cat > "$SDK/build.gradle" <<'GRADLE'
           plugins {
               id 'com.android.library'
@@ -166,15 +193,15 @@ jobs:
           "$ZIPALIGN" -c -v 4 "$APK"
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           "$AAPT" dump badging "$APK" | tee "$RUNNER_TEMP/apk-manifest.txt"
-          grep -q "package: name='com.vobich.kanzi' versionCode='24' versionName='0.7.8'" "$RUNNER_TEMP/apk-manifest.txt"
+          grep -q "package: name='com.vobich.kanzi' versionCode='25' versionName='0.8.0'" "$RUNNER_TEMP/apk-manifest.txt"
           grep -q "sdkVersion:'26'" "$RUNNER_TEMP/apk-manifest.txt"
           echo "APK_SHA256=$(sha256sum "$APK" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
           echo "APK_SIZE=$(stat -c%s "$APK") bytes" >> "$GITHUB_STEP_SUMMARY"
-          echo "PP-OCRv6 Small, original V2 signature, certificate, package/version/minSdk and zipalign checks passed." >> "$GITHUB_STEP_SUMMARY"
+          echo "PP-OCRv6 Small/Tiny + PP-OCRv5 Mobile, original V2 signature, certificate, package/version/minSdk and zipalign checks passed." >> "$GITHUB_STEP_SUMMARY"
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kanzi-assistant-0.7.8-ppocrv6-small-signed
+          name: kanzi-assistant-0.8.0-three-ocr-engines-signed
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
@@ -182,6 +209,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: test-build-${{ github.run_number }}
-          name: 看字助手测试版 0.7.8 PP-OCRv6 Small (${{ github.run_number }})
+          name: 看字助手测试版 0.8.0 三套 OCR 引擎 (${{ github.run_number }})
           prerelease: true
           files: app/build/outputs/apk/release/app-release.apk
