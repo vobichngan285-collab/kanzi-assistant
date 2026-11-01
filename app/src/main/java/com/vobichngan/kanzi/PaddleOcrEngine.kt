@@ -53,6 +53,10 @@ class PaddleOcrEngine(
                     detLimitSideLen = 1600,
                     detLimitType = "max",
                     detMaxSideLimit = 1600,
+                    // Match the official PP-OCRv6 Small detector post-processing config.
+                    detThresh = 0.20f,
+                    detBoxThresh = 0.45f,
+                    detUnclipRatio = 1.40f,
                     recScoreThresh = 0.30f,
                     recBatchSize = 1
                 )
