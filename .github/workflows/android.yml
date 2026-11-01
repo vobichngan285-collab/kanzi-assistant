@@ -251,7 +251,7 @@ jobs:
           "$ZIPALIGN" -c -v 4 "$APK"
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           "$AAPT" dump badging "$APK" | tee "$RUNNER_TEMP/apk-manifest.txt"
-          grep -q "package: name='com.vobich.kanzi' versionCode='27' versionName='0.8.2'" "$RUNNER_TEMP/apk-manifest.txt"
+          grep -q "package: name='com.vobich.kanzi' versionCode='28' versionName='0.8.3'" "$RUNNER_TEMP/apk-manifest.txt"
           grep -q "sdkVersion:'26'" "$RUNNER_TEMP/apk-manifest.txt"
           echo "APK_SHA256=$(sha256sum "$APK" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
           echo "APK_SIZE=$(stat -c%s "$APK") bytes" >> "$GITHUB_STEP_SUMMARY"
@@ -259,7 +259,7 @@ jobs:
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kanzi-assistant-0.8.2-bgr-ocr-signed
+          name: kanzi-assistant-0.8.3-rotation-compare-signed
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
@@ -268,6 +268,6 @@ jobs:
         with:
           tag_name: test-build-${{ github.run_number }}
           target_commitish: ${{ github.sha }}
-          name: 看字助手测试版 0.8.2 BGR 颜色通道修复 (${{ github.run_number }})
+          name: 看字助手测试版 0.8.3 独立 OCR 旋转与 0.7.0 解码对照 (${{ github.run_number }})
           prerelease: true
           files: app/build/outputs/apk/release/app-release.apk

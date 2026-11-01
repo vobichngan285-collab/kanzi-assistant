@@ -2,6 +2,11 @@ package com.vobichngan.kanzi
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageFormat
+import android.graphics.Matrix
+import android.graphics.Rect
+import android.graphics.YuvImage
 import android.util.Log
 import org.opencv.android.Utils
 import org.opencv.core.Core
@@ -21,6 +26,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.max
@@ -79,7 +85,8 @@ class PaddleOcrEngine(
 
     fun diagnoseNv21(
         data: ByteArray, width: Int, height: Int, rotationDegrees: Int,
-        enhancedPreprocessing: Boolean, onResult: OcrDiagnosticCallback, onError: OcrErrorCallback
+        enhancedPreprocessing: Boolean, legacyNv21Jpeg: Boolean,
+        onResult: OcrDiagnosticCallback, onError: OcrErrorCallback
     ) {
         val current = engine ?: run { onError.onError("OCR 引擎尚未初始化"); return }
         if (released || !busy.compareAndSet(false, true)) {
@@ -94,7 +101,7 @@ class PaddleOcrEngine(
                 require(width.toLong() * height.toLong() * 3L / 2L == data.size.toLong()) {
                     "摄像头 NV21 帧长度不正确"
                 }
-                var bitmap = nv21ToBitmap(data, width, height, rotationDegrees)
+                var bitmap = nv21ToBitmap(data, width, height, rotationDegrees, legacyNv21Jpeg)
                 try {
                     if (enhancedPreprocessing) {
                         val enhanced = enhanceForOcr(bitmap)
@@ -185,6 +192,7 @@ class PaddleOcrEngine(
         height: Int,
         rotationDegrees: Int,
         enhancedPreprocessing: Boolean,
+        legacyNv21Jpeg: Boolean,
         onResult: OcrResultCallback,
         onError: OcrErrorCallback
     ) {
@@ -205,7 +213,7 @@ class PaddleOcrEngine(
                 require(expectedBytes == data.size.toLong()) {
                     "NV21 数据长度不匹配：收到 ${data.size} 字节，预期 ${expectedBytes} 字节"
                 }
-                var bitmap = nv21ToBitmap(data, width, height, rotationDegrees)
+                var bitmap = nv21ToBitmap(data, width, height, rotationDegrees, legacyNv21Jpeg)
                 try {
                     if (enhancedPreprocessing) {
                         val enhanced = enhanceForOcr(bitmap)
@@ -368,7 +376,26 @@ class PaddleOcrEngine(
     private fun Char.isAsciiWordChar(): Boolean =
         this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9'
 
-    private fun nv21ToBitmap(data: ByteArray, width: Int, height: Int, rotationDegrees: Int): Bitmap {
+    private fun nv21ToBitmap(data: ByteArray, width: Int, height: Int, rotationDegrees: Int, legacyNv21Jpeg: Boolean): Bitmap {
+        if (legacyNv21Jpeg) {
+            // 0.7.0 reference path: NV21 -> JPEG(82) -> Bitmap -> Matrix rotation.
+            // Used only for A/B comparison against the new lossless OpenCV path.
+            val out = ByteArrayOutputStream()
+            check(YuvImage(data, ImageFormat.NV21, width, height, null)
+                .compressToJpeg(Rect(0, 0, width, height), 82, out)) {
+                "0.7.0 兼容图像转换失败"
+            }
+            val encoded = out.toByteArray()
+            val decoded = BitmapFactory.decodeByteArray(encoded, 0, encoded.size)
+                ?: error("0.7.0 兼容图像解码失败")
+            if (rotationDegrees == 0) return decoded
+            val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+            val rotated = Bitmap.createBitmap(
+                decoded, 0, 0, decoded.width, decoded.height, matrix, true
+            )
+            if (rotated !== decoded) decoded.recycle()
+            return rotated
+        }
         require(rotationDegrees == 0 || rotationDegrees == 90 ||
             rotationDegrees == 180 || rotationDegrees == 270) {
             "不支持的 OCR 旋转角度：${rotationDegrees}"
