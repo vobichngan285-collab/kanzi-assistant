@@ -64,7 +64,7 @@ assert "phoneOcrRotation" in activity
 assert "phoneFit.mapNative(nx, ny)" in overlay
 assert "PhonePreviewGeometry.ocrToNatural(" in overlay
 assert "PhonePreviewGeometry.naturalBufferSize(" in overlay
-assert "PhonePreviewGeometry.camera2Preview(" in geom
+assert "public static Layout camera2Preview(" in geom
 assert "listener.onOpened(activeWidth, activeHeight, sensor, rotationDegrees)" in camera
 assert "rotationDegrees = front ? (sensor - display + 360) % 360" in camera
 assert ": (sensor + display) % 360;" in camera
