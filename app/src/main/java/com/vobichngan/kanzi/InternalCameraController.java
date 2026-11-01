@@ -34,6 +34,7 @@ public final class InternalCameraController {
         boolean shouldReceiveFrame();
         void onFrame(byte[] nv21, int width, int height);
         void onOpened(int rawWidth, int rawHeight, int clockwiseOcrRotation);
+        void onPreviewStarted();
         void onError(String message);
     }
 
