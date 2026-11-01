@@ -51,7 +51,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.8.4";
+    private static final String APP_VERSION = "0.8.5";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -188,7 +188,7 @@ public class MainActivity extends CameraActivity {
             try {
                 recognizer.recognizeNv21(frame, width, height, enhance, legacyDecode, found -> {
                     busy.set(false);
-                    if (found != null) onRecognized(found);
+                    if (found != null) onRecognized(found, oneShot);
                 }, error -> {
                     busy.set(false);
                     Log.e("KanziOCR", "OCR failed for " + width + "x" + height, new RuntimeException(error));
@@ -377,7 +377,7 @@ public class MainActivity extends CameraActivity {
         panel.addView(modelManagementInfo);
 
         CheckBox queueCheck = new CheckBox(this);
-        queueCheck.setText("完整读完当前文字，再读下一段");
+        queueCheck.setText("连续识别时优先读完整段（推荐开启）");
         queueCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         queueCheck.setChecked(queueSpeech);
         panel.addView(queueCheck);
@@ -525,7 +525,7 @@ public class MainActivity extends CameraActivity {
         panel.addView(noNumbersCheck);
 
         TextView maxCharsTitle = new TextView(this);
-        maxCharsTitle.setText("单次最多朗读字符数（0 表示不限）");
+        maxCharsTitle.setText("单次最多朗读字符数（建议设为 0，全文不截断）");
         maxCharsTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         maxCharsTitle.setPadding(0, dp(8), 0, dp(3));
         panel.addView(maxCharsTitle);
@@ -574,14 +574,13 @@ public class MainActivity extends CameraActivity {
             if (textToRead.isEmpty()) Toast.makeText(this, "这次诊断没有得到可朗读的文字", Toast.LENGTH_SHORT).show();
             else if (tts == null || !ttsReady) Toast.makeText(this, "中文语音尚未准备好", Toast.LENGTH_SHORT).show();
             else {
-                int result = tts.speak(textToRead, TextToSpeech.QUEUE_FLUSH, null, "diagnostic-read-" + (++utteranceSequence));
-                if (result == TextToSpeech.ERROR) Toast.makeText(this, "语音引擎拒绝了这次朗读请求", Toast.LENGTH_SHORT).show();
+                queueSpeechText(textToRead, normalizeOcrText(textToRead), true);
             }
         });
         panel.addView(speakDiagnosticButton);
 
         TextView similarityNote = new TextView(this);
-        similarityNote.setText("数值越高，判断越严格；设为 0 时关闭相似度去重，但仍要求连续两次识别后才朗读。");
+        similarityNote.setText("自动模式需连续两帧相近才朗读，手动抓取立即朗读一次；0 关闭相似度去重。长文本自动分段，不会因系统单次朗读限制被截断。若设置了最大朗读字数或不读英文/数字，仍会按这些设置筛选。");
         similarityNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         similarityNote.setTextColor(0xFF667085);
         panel.addView(similarityNote);
@@ -923,61 +922,83 @@ public class MainActivity extends CameraActivity {
         }
     }
 
-    private void onRecognized(String found) {
+    /**
+     * Automatic mode waits for two consistent frames; a deliberate manual capture
+     * reads the one selected frame in full without requiring a second capture.
+     */
+    private void onRecognized(String found, boolean manualCapture) {
         final long now = System.currentTimeMillis();
         final String recognizedText = found == null ? "" : found.trim();
-
         if (recognizedText.isEmpty()) {
             candidateText = "";
             candidateNormalized = "";
             candidateCount = 0;
-            if (lastNonEmptyAt > 0 && now - lastNonEmptyAt >= 2800) {
-                lastSpoken = "";
-            }
+            if (lastNonEmptyAt > 0 && now - lastNonEmptyAt >= 2800) lastSpoken = "";
             return;
         }
-
         lastNonEmptyAt = now;
-        final String normalized = normalizeOcrText(recognizedText);
-        if (!running || !ttsReady || normalized.length() < 2) return;
-        String speechText = recognizedText;
-        if (speechNoEnglish) speechText = speechText.replaceAll("[A-Za-z]+", " ");
-        if (speechNoNumbers) speechText = speechText.replaceAll("[0-9]+", " ");
-        speechText = speechText.replaceAll("\\s+", " ").trim();
-        if (maxSpeechChars > 0 && speechText.length() > maxSpeechChars)
-            speechText = speechText.substring(0, maxSpeechChars).trim();
-        if (speechText.length() < 1) return;
-        final String filteredSpeechText = speechText;
-
-        final float threshold = similarityThreshold / 100.0f;
-        if (!candidateNormalized.isEmpty() && (threshold <= 0f || textSimilarity(candidateNormalized, normalized) >= threshold)) {
-            candidateCount++;
-            if (threshold <= 0f || recognizedText.length() > candidateText.length()) candidateText = recognizedText;
-            candidateNormalized = normalized;
+        if (!running || !ttsReady) return;
+        String confirmed;
+        if (manualCapture) {
+            candidateText = "";
+            candidateNormalized = "";
+            candidateCount = 0;
+            confirmed = recognizedText;
         } else {
-            candidateText = recognizedText;
+            final String normalized = normalizeOcrText(recognizedText);
+            if (normalized.isEmpty()) return;
+            final float threshold = similarityThreshold / 100.0f;
+            if (!candidateNormalized.isEmpty() &&
+                    (threshold <= 0f || textSimilarity(candidateNormalized, normalized) >= threshold)) {
+                candidateCount++;
+                // Use the more complete frame; the old code silently spoke the LAST frame.
+                if (recognizedText.length() > candidateText.length()) candidateText = recognizedText;
+            } else {
+                candidateText = recognizedText;
+                candidateCount = 1;
+            }
             candidateNormalized = normalized;
-            candidateCount = 1;
+            if (candidateCount < 2) return;
+            confirmed = candidateText;
+            candidateCount = 0;
         }
 
-        // Confirm the same content in two consecutive OCR passes before speaking.
-        if (candidateCount < 2) return;
-        final String textToSpeak = filteredSpeechText;
-        candidateCount = 0;
-
+        String speechText = confirmed;
+        if (speechNoEnglish) speechText = speechText.replaceAll("[A-Za-z]+", " ");
+        if (speechNoNumbers) speechText = speechText.replaceAll("[0-9]+", " ");
+        // Keep line/paragraph boundaries for natural reading instead of flattening to spaces.
+        speechText = speechText.replaceAll("[\\t ]+", " ").replaceAll(" *\\n *", "\\n").trim();
+        if (maxSpeechChars > 0 && speechText.length() > maxSpeechChars)
+            speechText = speechText.substring(0, maxSpeechChars).trim();
+        if (speechText.isEmpty()) return;
+        final String fullSpeech = speechText;
+        final String normalizedSpeech = normalizeOcrText(fullSpeech);
+        if (normalizedSpeech.isEmpty()) return;
         runOnUiThread(() -> {
             if (!running || tts == null || !ttsReady) return;
-            String id = "ocr-" + (++utteranceSequence);
-            if (queueSpeech) {
-                if (isAlreadyQueuedOrRecentlySpoken(normalized, threshold)) return;
-                speechQueue.addLast(new SpeechItem(textToSpeak, normalized, id));
-                speakNextQueued();
-            } else {
-                if (threshold > 0f && !lastSpoken.isEmpty() && textSimilarity(lastSpoken, normalized) >= threshold) return;
-                lastSpoken = normalized;
-                tts.speak(textToSpeak, TextToSpeech.QUEUE_FLUSH, null, id);
-            }
+            queueSpeechText(fullSpeech, normalizedSpeech, manualCapture);
         });
+    }
+
+    /** Read one complete frame, splitting into bounded utterances but never dropping its tail. */
+    private void queueSpeechText(String text, String normalized, boolean force) {
+        if (tts == null || !ttsReady || normalized.isEmpty()) return;
+        if (force) {
+            // Explicit manual capture / diagnostic read takes precedence.
+            clearSpeechQueue(true);
+            lastSpoken = "";
+        } else {
+            // Do not accumulate camera frames while a page is still being read.
+            if (currentSpeech != null || !speechQueue.isEmpty()) return;
+            if (isAlreadyQueuedOrRecentlySpoken(normalized, similarityThreshold / 100.0f)) return;
+            if (!queueSpeech) clearSpeechQueue(true);
+        }
+        List<String> chunks = SpeechText.chunks(text);
+        if (chunks.isEmpty()) return;
+        for (String chunk : chunks) {
+            speechQueue.addLast(new SpeechItem(chunk, normalized, "ocr-" + (++utteranceSequence)));
+        }
+        speakNextQueued();
     }
 
     private boolean isAlreadyQueuedOrRecentlySpoken(String normalized, float threshold) {
@@ -992,7 +1013,7 @@ public class MainActivity extends CameraActivity {
     }
 
     private void speakNextQueued() {
-        if (!queueSpeech || !ttsReady || tts == null || speakingQueued || speechQueue.isEmpty()) return;
+        if (!ttsReady || tts == null || speakingQueued || speechQueue.isEmpty()) return;
         currentSpeech = speechQueue.pollFirst();
         speakingQueued = true;
         lastSpoken = currentSpeech.normalized;

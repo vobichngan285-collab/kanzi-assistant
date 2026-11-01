@@ -187,6 +187,17 @@ jobs:
           set -euo pipefail
           python3 scripts/verify_preview_ocr_isolation.py
           echo "OCR input orientation fixed at original 0 degrees." >> "$GITHUB_STEP_SUMMARY"
+      - name: Test OCR reading order and complete speech segmentation
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/reading-flow-classes"
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/reading-flow-classes" \
+            app/src/main/java/com/vobichngan/kanzi/ReadingOrder.java \
+            app/src/main/java/com/vobichngan/kanzi/SpeechText.java \
+            scripts/ReadingFlowSmokeTest.java
+          java -cp "$RUNNER_TEMP/reading-flow-classes" ReadingFlowSmokeTest | tee "$RUNNER_TEMP/reading-flow-test.log"
+          grep -q "READING_FLOW_SMOKE_TEST=PASS" "$RUNNER_TEMP/reading-flow-test.log"
+          echo "Reading order, columns, slanted rows, punctuation and nontruncated TTS chunks passed." >> "$GITHUB_STEP_SUMMARY"
       - name: Checkout AUSBC source
         uses: actions/checkout@v4
         with:
@@ -256,7 +267,7 @@ jobs:
           "$ZIPALIGN" -c -v 4 "$APK"
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           "$AAPT" dump badging "$APK" | tee "$RUNNER_TEMP/apk-manifest.txt"
-          grep -q "package: name='com.vobich.kanzi' versionCode='29' versionName='0.8.4'" "$RUNNER_TEMP/apk-manifest.txt"
+          grep -q "package: name='com.vobich.kanzi' versionCode='30' versionName='0.8.5'" "$RUNNER_TEMP/apk-manifest.txt"
           grep -q "sdkVersion:'26'" "$RUNNER_TEMP/apk-manifest.txt"
           echo "APK_SHA256=$(sha256sum "$APK" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
           echo "APK_SIZE=$(stat -c%s "$APK") bytes" >> "$GITHUB_STEP_SUMMARY"
@@ -264,7 +275,7 @@ jobs:
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kanzi-assistant-0.8.4-original-frame-signed
+          name: kanzi-assistant-0.8.5-natural-reading-signed
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
@@ -273,6 +284,6 @@ jobs:
         with:
           tag_name: test-build-${{ github.run_number }}
           target_commitish: ${{ github.sha }}
-          name: 看字助手测试版 0.8.4 固定原始 OCR 方向 (${{ github.run_number }})
+          name: 看字助手测试版 0.8.5 完整顺序朗读优化 (${{ github.run_number }})
           prerelease: true
           files: app/build/outputs/apk/release/app-release.apk

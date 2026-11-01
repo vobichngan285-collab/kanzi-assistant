@@ -309,70 +309,22 @@ class PaddleOcrEngine(
         }
     }
 
-    // Rebuild rows from box geometry. The SDK's fixed 10px top-edge band can
-    // misorder same-line fragments when their boxes have different heights.
-    // Require both substantial vertical overlap and close baselines so adjacent
-    // game UI rows are not accidentally merged.
+    /**
+     * Do not silently discard recognized lines on a fixed confidence threshold.
+     * The reading-order helper handles slanted quadrilaterals and clear two-column pages.
+     */
     private fun arrangeInReadingOrder(results: List<OCRResult>): String {
-        if (results.isEmpty()) return ""
-        val positioned = results.mapNotNull { item ->
-            val rawText = item.text.trim()
-            // Ignore low-confidence detections and symbol-only fragments before they reach TTS.
-            // Also strip OCR hallucinations such as currency signs and stray operators.
-            val text = rawText.replace(Regex("[^\\p{L}\\p{N}，。！？、；：,.!?;:（）()《》“”‘’\\s-]"), "")
-            if (text.isEmpty() || item.box.points.size != 4 ||
-                item.confidence < 0.55f || text.none { it.isLetterOrDigit() }) return@mapNotNull null
-            val xs = item.box.points.map { it.x }
-            val ys = item.box.points.map { it.y }
-            val left = xs.minOrNull() ?: return@mapNotNull null
-            val top = ys.minOrNull() ?: return@mapNotNull null
-            val bottom = ys.maxOrNull() ?: return@mapNotNull null
-            PositionedText(item, text, left, top, bottom, (top + bottom) / 2f, max(1f, bottom - top))
-        }.sortedWith(compareBy<PositionedText> { it.centerY }.thenBy { it.left })
-
-        val rows = mutableListOf<TextLine>()
-        for (entry in positioned) {
-            var bestRow: TextLine? = null
-            var bestDistance = Float.MAX_VALUE
-            for (row in rows) {
-                val overlap = max(0f, min(row.bottom, entry.bottom) - max(row.top, entry.top))
-                val smallerHeight = max(1f, min(row.bottom - row.top, entry.height))
-                val overlapRatio = overlap / smallerHeight
-                val distance = abs(row.centerY - entry.centerY)
-                val sameRow = overlapRatio >= 0.50f &&
-                    distance <= max(4f, smallerHeight * 0.35f)
-                if (sameRow && distance < bestDistance) {
-                    bestRow = row
-                    bestDistance = distance
-                }
-            }
-            if (bestRow == null) {
-                rows.add(TextLine(mutableListOf(entry), entry.top, entry.bottom, entry.centerY))
-            } else {
-                val oldCount = bestRow.items.size
-                bestRow.items.add(entry)
-                bestRow.top = min(bestRow.top, entry.top)
-                bestRow.bottom = max(bestRow.bottom, entry.bottom)
-                bestRow.centerY = (bestRow.centerY * oldCount + entry.centerY) / (oldCount + 1)
-            }
+        val boxes = results.mapNotNull { item ->
+            val p = item.box.points
+            if (p.size != 4 || item.text.isBlank()) null
+            else ReadingOrder.Box(
+                item.text, item.confidence,
+                floatArrayOf(p[0].x, p[1].x, p[2].x, p[3].x),
+                floatArrayOf(p[0].y, p[1].y, p[2].y, p[3].y)
+            )
         }
-
-        return rows.sortedBy { it.centerY }.joinToString("\n") { row ->
-            row.items.sortedBy { it.left }.map { it.text.trim() }
-                .fold("") { combined, fragment ->
-                    if (combined.isEmpty()) fragment
-                    else {
-                        val previous = combined.last()
-                        val next = fragment.firstOrNull() ?: ' '
-                        val needsSpace = previous.isAsciiWordChar() && next.isAsciiWordChar()
-                        combined + (if (needsSpace) " " else "") + fragment
-                    }
-                }
-        }.trim()
+        return ReadingOrder.arrange(boxes)
     }
-
-    private fun Char.isAsciiWordChar(): Boolean =
-        this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9'
 
     /** Decode the camera's unrotated NV21 pixels; TextureView handles display transforms. */
     private fun nv21ToBitmap(data: ByteArray, width: Int, height: Int, legacyNv21Jpeg: Boolean): Bitmap {
