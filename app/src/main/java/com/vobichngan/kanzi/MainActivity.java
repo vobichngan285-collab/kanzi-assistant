@@ -400,7 +400,7 @@ public class MainActivity extends CameraActivity {
         panel.addView(flipCheck);
 
         CheckBox fillCheck = new CheckBox(this);
-        fillCheck.setText("旋转后尽量利用屏幕空间（完整显示，不裁切）");
+        fillCheck.setText("旋转90°/270°时自动铺满预览区（等比例放大，边缘会适当裁切）");
         fillCheck.setChecked(previewFill);
         panel.addView(fillCheck);
 
@@ -423,7 +423,7 @@ public class MainActivity extends CameraActivity {
         panel.addView(zoomSeek);
 
         TextView transformNote = new TextView(this);
-        transformNote.setText("旋转和镜像方向同时应用于预览与 OCR；适应预览框时优先完整显示画面，不通过裁切放大来填满空白区域。手动缩放仅在你主动调整缩放滑块时生效，不改变 OCR 原始采集画面。预览优先请求 1920×1080，摄像头不支持时由驱动选择可用分辨率。");
+        transformNote.setText("旋转和镜像方向同时应用于预览与 OCR；0°/180°保持完整显示，90°/270°默认等比例放大并铺满预览区，超出边缘会居中裁切，不会拉伸变形。关闭上方选项可恢复完整显示。此缩放只影响屏幕预览，不改变 UVC 原始采集帧和 OCR 输入。预览优先请求 1920×1080，摄像头不支持时由驱动选择可用分辨率。");
         transformNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         transformNote.setTextColor(0xFF667085);
         panel.addView(transformNote);
@@ -501,9 +501,9 @@ public class MainActivity extends CameraActivity {
         if (containerWidth <= 0 || containerHeight <= 0) return;
         boolean quarterTurn = previewRotation == 90 || previewRotation == 270;
 
-        // Lock the camera view to a true 16:9 source frame. After a 90/270-degree
-        // rotation its visible bounds become 9:16. Fit-center it in the full-screen
-        // preview container without cropping or stretching.
+        // First size the TextureView as a correctly proportioned 16:9 source frame.
+        // A quarter-turn makes its visible bounds 9:16; the optional FILL scale below
+        // then enlarges it proportionally to cover the whole preview container.
         float displayAspect = quarterTurn ? (9.0f / 16.0f) : (16.0f / 9.0f);
         float displayWidth = Math.min(containerWidth, containerHeight * displayAspect);
         float displayHeight = displayWidth / displayAspect;
@@ -525,9 +525,22 @@ public class MainActivity extends CameraActivity {
         int viewWidth = cameraTextureView.getWidth();
         int viewHeight = cameraTextureView.getHeight();
 
-        // No automatic zoom: preserve the complete 16:9 frame. Only the explicit
-        // user zoom and mirror/flip controls may transform the preview.
-        float scale = previewZoom;
+        // FIT remains the default at 0/180 degrees. At 90/270 degrees, FILL uses
+        // center-crop: scale the rotated 9:16 bounds until both container dimensions
+        // are covered. Scaling the TextureView preserves aspect ratio; it never stretches
+        // the camera image or changes the raw UVC/OCR frame dimensions.
+        float fillScale = 1.0f;
+        if (quarterTurn && previewFill) {
+            int sourceWidth = viewWidth > 0 ? viewWidth : wantedWidth;
+            int sourceHeight = viewHeight > 0 ? viewHeight : wantedHeight;
+            float rotatedWidth = sourceHeight;
+            float rotatedHeight = sourceWidth;
+            fillScale = Math.max(
+                containerWidth / rotatedWidth,
+                containerHeight / rotatedHeight
+            );
+        }
+        float scale = previewZoom * fillScale;
         cameraTextureView.setPivotX(viewWidth / 2.0f);
         cameraTextureView.setPivotY(viewHeight / 2.0f);
         cameraTextureView.setScaleX(scale * (previewMirror ? -1.0f : 1.0f));
