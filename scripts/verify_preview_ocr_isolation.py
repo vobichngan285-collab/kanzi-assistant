@@ -17,4 +17,6 @@ assert "Imgproc.COLOR_YUV2RGBA_NV21" in ocr
 assert "Bitmap.createBitmap(width, height" in ocr
 assert "previewRotation" not in ocr
 assert "OCR 输入方向：原始摄像头帧（固定 0°）" in ui
+assert ui.count("@Override protected void onResume()") == 1
+assert "InternalCameraController" in ui and "OcrOverlayView" in ui
 print("PASS: preview transforms only affect display; both OCR paths receive raw NV21 orientation")

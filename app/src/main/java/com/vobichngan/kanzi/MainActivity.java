@@ -669,8 +669,8 @@ public class MainActivity extends CameraActivity {
         panel.addView(diagnosticReportView);
         Button runDiagnosticButton = createControlButton("开始 OCR 诊断");
         runDiagnosticButton.setOnClickListener(v -> {
-            if (!previewCallbackAdded) {
-                diagnosticReportView.setText("诊断失败：尚未检测到外接摄像头预览回调。请检查 USB 连接和摄像头权限。");
+            if (!(usingPhoneCamera || previewCallbackAdded)) {
+                diagnosticReportView.setText("诊断失败：尚未获取摄像头画面。请检查 USB 连接或手机摄像头权限。");
                 return;
             }
             if (recognizer == null || !recognizer.isReady()) {
@@ -996,6 +996,7 @@ public class MainActivity extends CameraActivity {
         diagnosticAttempts = 0;
         diagnosticHandler.removeCallbacks(diagnosticRunnable);
         diagnosticHandler.post(diagnosticRunnable);
+        if (usingPhoneCamera && phoneController != null) startPhoneCamera();
     }
 
     private void diagnoseUsbDevices() {
@@ -1371,11 +1372,6 @@ public class MainActivity extends CameraActivity {
     }
 
     private int dp(int value) { return (int) (value * getResources().getDisplayMetrics().density); }
-
-    @Override protected void onResume() {
-        super.onResume();
-        if (usingPhoneCamera && phoneController != null) startPhoneCamera();
-    }
 
     @Override protected void onPause() {
         if (phoneController != null) phoneController.stop();
