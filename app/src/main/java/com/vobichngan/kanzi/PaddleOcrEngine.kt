@@ -41,7 +41,7 @@ fun interface OcrDiagnosticCallback { fun onResult(result: OcrDiagnosticResult) 
 class PaddleOcrEngine(
     context: Context,
     private val listener: Listener,
-    private val useSmallModel: Boolean = false
+    private val modelId: String = "ppocrv6_small"
 ) {
     interface Listener {
         fun onReady()
@@ -123,33 +123,26 @@ class PaddleOcrEngine(
                     detLimitType = "max",
                     detMaxSideLimit = 1600,
                     // Match the official PP-OCRv6 Small detector post-processing config.
-                    detThresh = 0.20f,
-                    detBoxThresh = 0.45f,
-                    detUnclipRatio = 1.40f,
-                    recScoreThresh = 0.30f,
+                    detThresh = 0.30f,
+                    detBoxThresh = 0.60f,
+                    detUnclipRatio = 1.50f,
+                    recScoreThresh = 0.50f,
                     recBatchSize = 1
                 )
                 val engineConfig = EngineConfig(numThreads = 2)
-                val created = if (useSmallModel && OcrModelDownloader.isInstalled(appContext)) {
-                    val dir = OcrModelDownloader.modelDirectory(appContext)
-                    PaddleOCR.create(
-                        context = appContext,
-                        config = ocrConfig,
-                        engineConfig = engineConfig,
-                        detModelAssetPath = File(dir, "det.onnx").absolutePath,
-                        recModelAssetPath = File(dir, "rec.onnx").absolutePath,
-                        recConfigAssetPath = File(dir, "rec.yml").absolutePath
-                    )
-                } else {
-                    PaddleOCR.create(
-                        context = appContext,
-                        config = ocrConfig,
-                        engineConfig = engineConfig,
-                        detModelAssetPath = "models/det/inference.onnx",
-                        recModelAssetPath = "models/rec/inference.onnx",
-                        recConfigAssetPath = "models/rec/inference.yml"
-                    )
+                val modelPrefix = when (modelId) {
+                    "ppocrv6_tiny" -> "models/ppocrv6_tiny"
+                    "ppocrv5_mobile" -> "models/ppocrv5_mobile"
+                    else -> "models"
                 }
+                val created = PaddleOCR.create(
+                    context = appContext,
+                    config = ocrConfig,
+                    engineConfig = engineConfig,
+                    detModelAssetPath = "$modelPrefix/det/inference.onnx",
+                    recModelAssetPath = "$modelPrefix/rec/inference.onnx",
+                    recConfigAssetPath = "$modelPrefix/rec/inference.yml"
+                )
                 if (released) {
                     created.release()
                     return@launch
@@ -294,7 +287,10 @@ class PaddleOcrEngine(
         if (results.isEmpty()) return ""
         val positioned = results.mapNotNull { item ->
             val text = item.text.trim()
-            if (text.isEmpty() || item.box.points.size != 4) return@mapNotNull null
+            // Ignore low-confidence detections and punctuation-only fragments. These were
+            // being passed straight to TTS and sounded like random symbols.
+            if (text.isEmpty() || item.box.points.size != 4 ||
+                item.confidence < 0.55f || text.none { it.isLetterOrDigit() }) return@mapNotNull null
             val xs = item.box.points.map { it.x }
             val ys = item.box.points.map { it.y }
             val left = xs.minOrNull() ?: return@mapNotNull null
