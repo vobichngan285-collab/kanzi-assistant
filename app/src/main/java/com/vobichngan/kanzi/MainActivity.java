@@ -27,6 +27,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.graphics.Color;
 import android.util.TypedValue;
+import android.util.Log;
 
 import com.jiangdg.ausbc.MultiCameraClient;
 import com.jiangdg.ausbc.base.CameraActivity;
@@ -48,7 +49,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.7.6";
+    private static final String APP_VERSION = "0.7.7";
     private static final String PREFS_NAME = "kanzi_settings";
     private static final String PREF_AUTO_MODE = "automatic_mode";
     private static final String PREF_INTERVAL = "recognition_interval_ms";
@@ -58,8 +59,6 @@ public class MainActivity extends CameraActivity {
     private static final String PREF_PREVIEW_ROTATION = "preview_rotation";
     private static final String PREF_PREVIEW_MIRROR = "preview_mirror";
     private static final String PREF_PREVIEW_FLIP = "preview_flip";
-    private static final String PREF_PREVIEW_FILL = "preview_fill_fit_v2";
-    private static final String PREF_PREVIEW_ZOOM = "preview_zoom_fit_v2";
     private static final String PREF_ENHANCED_OCR = "enhanced_ocr";
     private static final String PREF_USE_SMALL_MODEL = "use_small_model";
     private final Handler diagnosticHandler = new Handler(Looper.getMainLooper());
@@ -83,8 +82,6 @@ public class MainActivity extends CameraActivity {
     private volatile int previewRotation = 0;
     private volatile boolean previewMirror = false;
     private volatile boolean previewVerticalFlip = false;
-    private volatile boolean previewFill = false;
-    private volatile float previewZoom = 1.0f;
     private volatile boolean enhancedOcr = false;
     private volatile boolean useSmallModel = false;
     private boolean ttsReady = false;
@@ -117,6 +114,12 @@ public class MainActivity extends CameraActivity {
     private final IPreviewDataCallBack previewCallback = new IPreviewDataCallBack() {
         @Override public void onPreviewData(byte[] data, int width, int height, DataFormat format) {
             if (!running || data == null || format != DataFormat.NV21) return;
+            if (width <= 0 || height <= 0 || (width & 1) != 0 || (height & 1) != 0 ||
+                data.length != ((long) width * height * 3L) / 2L) {
+                Log.w("KanziCamera", "Discard invalid NV21 frame: " + width + "x" + height +
+                    ", bytes=" + data.length);
+                return;
+            }
             long now = System.currentTimeMillis();
             boolean oneShot = manualCaptureRequested.get();
             if (oneShot) {
@@ -131,16 +134,20 @@ public class MainActivity extends CameraActivity {
             lastProcess = now;
             byte[] frame = data.clone();
             final int rotation = previewRotation;
-            final boolean mirror = previewMirror;
-            final boolean flip = previewVerticalFlip;
             final boolean enhance = enhancedOcr;
-            recognizer.recognizeNv21(frame, width, height, rotation, mirror, flip, enhance, found -> {
+            try {
+                recognizer.recognizeNv21(frame, width, height, rotation, enhance, found -> {
+                    busy.set(false);
+                    if (found != null) onRecognized(found);
+                }, error -> {
+                    busy.set(false);
+                    Log.e("KanziOCR", "OCR failed for " + width + "x" + height, new RuntimeException(error));
+                    runOnUiThread(() -> status.setText("飞桨 OCR 识别异常：" + error));
+                });
+            } catch (Throwable error) {
                 busy.set(false);
-                if (found != null) onRecognized(found);
-            }, error -> {
-                busy.set(false);
-                runOnUiThread(() -> status.setText("飞桨 OCR 识别异常：" + error));
-            });
+                Log.e("KanziOCR", "Could not submit OCR frame", error);
+            }
         }
     };
 
@@ -222,8 +229,6 @@ public class MainActivity extends CameraActivity {
         if (previewRotation != 0 && previewRotation != 90 && previewRotation != 180 && previewRotation != 270) previewRotation = 0;
         previewMirror = prefs.getBoolean(PREF_PREVIEW_MIRROR, false);
         previewVerticalFlip = prefs.getBoolean(PREF_PREVIEW_FLIP, false);
-        previewFill = prefs.getBoolean(PREF_PREVIEW_FILL, false);
-        previewZoom = Math.max(1.0f, Math.min(2.5f, prefs.getFloat(PREF_PREVIEW_ZOOM, 1.0f)));
         enhancedOcr = prefs.getBoolean(PREF_ENHANCED_OCR, false);
         useSmallModel = prefs.getBoolean(PREF_USE_SMALL_MODEL, false) && OcrModelDownloader.isInstalled(this);
     }
@@ -245,59 +250,11 @@ public class MainActivity extends CameraActivity {
         enhancedNote.setTextColor(0xFF667085);
         panel.addView(enhancedNote);
 
-        boolean smallModelInstalled = OcrModelDownloader.isInstalled(this);
-        CheckBox smallModelCheck = new CheckBox(this);
-        smallModelCheck.setText("使用 PP-OCRv6 Small 增强模型");
-        smallModelCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-        smallModelCheck.setChecked(useSmallModel && smallModelInstalled);
-        smallModelCheck.setEnabled(smallModelInstalled);
-        panel.addView(smallModelCheck);
-
-        TextView smallModelStatus = new TextView(this);
-        smallModelStatus.setText(smallModelInstalled
-            ? "Small 模型已下载。勾选后保存，重新打开 App 生效。"
-            : "尚未下载增强模型。下载后可离线使用，模型保存在 App 私有目录。");
-        smallModelStatus.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        smallModelStatus.setTextColor(0xFF667085);
-        panel.addView(smallModelStatus);
-
-        Button smallModelButton = createControlButton(smallModelInstalled ? "删除 PP-OCRv6 Small 模型" : "下载 PP-OCRv6 Small 模型");
-        panel.addView(smallModelButton);
-        smallModelButton.setOnClickListener(v -> {
-            if (OcrModelDownloader.isInstalled(this)) {
-                new androidx.appcompat.app.AlertDialog.Builder(this)
-                    .setTitle("删除增强模型")
-                    .setMessage("删除后将释放存储空间，App 会改用内置 Tiny 模型。")
-                    .setNegativeButton("取消", null)
-                    .setPositiveButton("删除", (d, w) -> {
-                        OcrModelDownloader.deleteSmallModel(this);
-                        smallModelCheck.setChecked(false);
-                        smallModelCheck.setEnabled(false);
-                        smallModelStatus.setText("增强模型已删除，将使用内置 Tiny 模型。");
-                        smallModelButton.setText("下载 PP-OCRv6 Small 模型");
-                    }).show();
-                return;
-            }
-            smallModelButton.setEnabled(false);
-            smallModelStatus.setText("正在下载模型：0%");
-            new OcrModelDownloader(this).downloadSmallModel(new OcrModelDownloader.Listener() {
-                @Override public void onProgress(int percent) {
-                    smallModelStatus.setText("正在下载并校验模型：" + percent + "%");
-                }
-                @Override public void onComplete() {
-                    smallModelStatus.setText("模型下载并校验完成。勾选上方选项，保存后重新打开 App 即可启用。");
-                    smallModelCheck.setEnabled(true);
-                    smallModelCheck.setChecked(true);
-                    smallModelButton.setText("删除 PP-OCRv6 Small 模型");
-                    smallModelButton.setEnabled(true);
-                    Toast.makeText(MainActivity.this, "PP-OCRv6 Small 已下载，可离线使用", Toast.LENGTH_LONG).show();
-                }
-                @Override public void onError(String message) {
-                    smallModelStatus.setText("下载失败：" + message);
-                    smallModelButton.setEnabled(true);
-                }
-            });
-        });
+        TextView modelNote = new TextView(this);
+        modelNote.setText("当前内置 PP-OCRv6 Small 识别模型，默认直接使用，无需额外下载。");
+        modelNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        modelNote.setTextColor(0xFF667085);
+        panel.addView(modelNote);
 
         CheckBox queueCheck = new CheckBox(this);
         queueCheck.setText("完整读完当前文字，再读下一段");
@@ -399,29 +356,6 @@ public class MainActivity extends CameraActivity {
         flipCheck.setChecked(previewVerticalFlip);
         panel.addView(flipCheck);
 
-        CheckBox fillCheck = new CheckBox(this);
-        fillCheck.setText("旋转90°/270°时铺满预览区（可能裁切边缘）");
-        fillCheck.setChecked(previewFill);
-        panel.addView(fillCheck);
-
-        TextView zoomTitle = new TextView(this);
-        zoomTitle.setText("预览画面缩放：" + Math.round(previewZoom * 100) + "%");
-        zoomTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-        zoomTitle.setPadding(0, dp(8), 0, dp(2));
-        panel.addView(zoomTitle);
-
-        SeekBar zoomSeek = new SeekBar(this);
-        zoomSeek.setMax(150);
-        zoomSeek.setProgress(Math.round((previewZoom - 1.0f) * 100));
-        zoomSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                zoomTitle.setText("预览画面缩放：" + (100 + progress) + "%");
-            }
-            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
-            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
-        });
-        panel.addView(zoomSeek);
-
         TextView transformNote = new TextView(this);
         PreviewSize currentSize = getCurrentPreviewSize();
         String actualSizeText = currentSize == null
@@ -429,12 +363,12 @@ public class MainActivity extends CameraActivity {
             : currentSize.getWidth() + "×" + currentSize.getHeight();
         TextView previewQualityNote = new TextView(this);
         previewQualityNote.setText("当前实际预览分辨率：" + actualSizeText
-            + "。新版本会优先选择摄像头支持的最高 16:9 分辨率，最高请求 3840×2160；若摄像头不支持 4K，会自动回退到它支持的最高档。");
+            + "。固定请求 1920×1080；若摄像头不支持，会选择不超过 1080p 的最合适分辨率，不再请求 4K。");
         previewQualityNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         previewQualityNote.setTextColor(0xFF667085);
         panel.addView(previewQualityNote);
 
-        transformNote.setText("旋转和镜像方向同时应用于预览与 OCR；90°/270°默认完整显示整个画面，不裁切、不拉伸，屏幕比例不一致时会出现黑边。勾选上方选项可改为铺满，但可能裁切边缘。预览缩放只影响屏幕显示，不改变 UVC 原始采集帧。");
+        transformNote.setText("画面始终按摄像头实际比例等比显示；旋转 90°/270°后完整显示，不裁切、不拉伸，屏幕比例不一致时保留黑边。镜像和翻转只影响预览，不会把文字镜像后送入 OCR。OCR 使用原始摄像头帧并单独校正旋转方向。");
         transformNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         transformNote.setTextColor(0xFF667085);
         panel.addView(transformNote);
@@ -468,11 +402,7 @@ public class MainActivity extends CameraActivity {
                 previewRotation = rotationSeek.getProgress() * 90;
                 previewMirror = mirrorCheck.isChecked();
                 previewVerticalFlip = flipCheck.isChecked();
-                previewFill = fillCheck.isChecked();
-                previewZoom = 1.0f + zoomSeek.getProgress() / 100.0f;
                 enhancedOcr = enhancedCheck.isChecked();
-                boolean previousSmallModel = useSmallModel;
-                useSmallModel = smallModelCheck.isChecked() && OcrModelDownloader.isInstalled(this);
                 if (tts != null) tts.setSpeechRate(speechRate);
                 applyPreviewTransform();
                 getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
@@ -484,15 +414,11 @@ public class MainActivity extends CameraActivity {
                     .putInt(PREF_PREVIEW_ROTATION, previewRotation)
                     .putBoolean(PREF_PREVIEW_MIRROR, previewMirror)
                     .putBoolean(PREF_PREVIEW_FLIP, previewVerticalFlip)
-                    .putBoolean(PREF_PREVIEW_FILL, previewFill)
-                    .putFloat(PREF_PREVIEW_ZOOM, previewZoom)
                     .putBoolean(PREF_ENHANCED_OCR, enhancedOcr)
                     .putBoolean(PREF_USE_SMALL_MODEL, useSmallModel)
                     .apply();
                 if (wasQueueEnabled && !queueSpeech) clearSpeechQueue(true);
-                Toast.makeText(this, previousSmallModel != useSmallModel
-                    ? "设置已保存，重新打开 App 后切换 OCR 模型"
-                    : "设置已保存", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show();
             })
             .show();
     }
@@ -512,10 +438,13 @@ public class MainActivity extends CameraActivity {
         if (containerWidth <= 0 || containerHeight <= 0) return;
         boolean quarterTurn = previewRotation == 90 || previewRotation == 270;
 
-        // First size the TextureView as a correctly proportioned 16:9 source frame.
-        // A quarter-turn makes its visible bounds 9:16; the optional FILL scale below
-        // then enlarges it proportionally to cover the whole preview container.
-        float displayAspect = quarterTurn ? (9.0f / 16.0f) : (16.0f / 9.0f);
+        // Keep the entire camera frame visible. Use the actual negotiated camera ratio,
+        // so even a fallback mode is letterboxed rather than stretched or cropped.
+        PreviewSize actualSize = getCurrentPreviewSize();
+        float sourceAspect = actualSize != null && actualSize.getHeight() > 0
+            ? actualSize.getWidth() / (float) actualSize.getHeight()
+            : (16.0f / 9.0f);
+        float displayAspect = quarterTurn ? (1.0f / sourceAspect) : sourceAspect;
         float displayWidth = Math.min(containerWidth, containerHeight * displayAspect);
         float displayHeight = displayWidth / displayAspect;
         int wantedWidth = Math.max(1, Math.round(quarterTurn ? displayHeight : displayWidth));
@@ -536,25 +465,11 @@ public class MainActivity extends CameraActivity {
         int viewWidth = cameraTextureView.getWidth();
         int viewHeight = cameraTextureView.getHeight();
 
-        // FIT is the default at every rotation. The rotated image is kept fully inside
-        // the preview container; unused space remains black rather than cropping
-        // the camera image. FILL is an optional user setting for intentional cropping.
-        float fillScale = 1.0f;
-        if (quarterTurn && previewFill) {
-            int sourceWidth = viewWidth > 0 ? viewWidth : wantedWidth;
-            int sourceHeight = viewHeight > 0 ? viewHeight : wantedHeight;
-            float rotatedWidth = sourceHeight;
-            float rotatedHeight = sourceWidth;
-            fillScale = Math.max(
-                containerWidth / rotatedWidth,
-                containerHeight / rotatedHeight
-            );
-        }
-        float scale = previewZoom * fillScale;
         cameraTextureView.setPivotX(viewWidth / 2.0f);
         cameraTextureView.setPivotY(viewHeight / 2.0f);
-        cameraTextureView.setScaleX(scale * (previewMirror ? -1.0f : 1.0f));
-        cameraTextureView.setScaleY(scale * (previewVerticalFlip ? -1.0f : 1.0f));
+        // No zoom/fill scaling: this is a strict full-frame FIT transform.
+        cameraTextureView.setScaleX(previewMirror ? -1.0f : 1.0f);
+        cameraTextureView.setScaleY(previewVerticalFlip ? -1.0f : 1.0f);
     }
 
     @Override protected ViewGroup getCameraViewContainer() { return previewContainer; }
@@ -562,8 +477,8 @@ public class MainActivity extends CameraActivity {
 
     @Override protected CameraRequest getCameraRequest() {
         return new CameraRequest.Builder()
-            .setPreviewWidth(3840)
-            .setPreviewHeight(2160)
+            .setPreviewWidth(1920)
+            .setPreviewHeight(1080)
             .setRenderMode(CameraRequest.RenderMode.OPENGL)
             .setPreviewFormat(CameraRequest.PreviewFormat.FORMAT_MJPEG)
             .setRawPreviewData(true)
@@ -738,8 +653,7 @@ public class MainActivity extends CameraActivity {
         PreviewSize actualPreviewSize = getCurrentPreviewSize();
         info.append("\n实际摄像头预览分辨率：").append(actualPreviewSize == null ? "尚未获取" :
             actualPreviewSize.getWidth() + "×" + actualPreviewSize.getHeight());
-        info.append("\n预览显示：").append(previewFill ? "铺满" : "完整画面")
-            .append("，缩放 ").append(Math.round(previewZoom * 100)).append("%");
+        info.append("\n预览显示：完整画面 FIT（无裁切、无缩放）");
         info.append("\n摄像头视图：").append(cameraTextureView == null ? "未创建" :
             cameraTextureView.getWidth() + "×" + cameraTextureView.getHeight());
         info.append("\nTextureView表面：").append(cameraTextureView == null ? "未知" :
