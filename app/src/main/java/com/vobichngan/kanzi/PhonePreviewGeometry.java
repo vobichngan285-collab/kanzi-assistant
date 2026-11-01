@@ -86,6 +86,54 @@ public final class PhonePreviewGeometry {
         return new Layout(nativeMatrix, textureMatrix, rotatedW * scale, rotatedH * scale);
     }
 
+    /**
+     * Camera2-backed TextureView ALREADY rotates its video to the device's
+     * NATURAL orientation. The application must not apply SENSOR_ORIENTATION
+     * again. Only correct its aspect ratio and optional user/display rotation.
+     */
+    public static int[] naturalBufferSize(int bufferWidth, int bufferHeight,
+                                           int sensorOrientation) {
+        int degrees = ((sensorOrientation % 360) + 360) % 360;
+        if (degrees % 90 != 0) throw new IllegalArgumentException("Bad sensor angle");
+        return degrees % 180 == 0
+            ? new int[]{bufferWidth, bufferHeight}
+            : new int[]{bufferHeight, bufferWidth};
+    }
+
+    public static Layout camera2Preview(int viewWidth, int viewHeight,
+                                        int rawWidth, int rawHeight,
+                                        int sensorOrientation, int extraRotation,
+                                        boolean mirror, boolean flip) {
+        int[] natural = naturalBufferSize(rawWidth, rawHeight, sensorOrientation);
+        return fit(viewWidth, viewHeight, natural[0], natural[1],
+            extraRotation, mirror, flip);
+    }
+
+    /**
+     * OCR processes separately rotated sensor NV21 pixels. Convert an OCR
+     * polygon into the natural-upright camera preview coordinate space.
+     * This is identity when both paths use the sensor's natural orientation.
+     */
+    public static float[] ocrToNatural(float ocrX, float ocrY,
+                                       int sensorWidth, int sensorHeight,
+                                       int ocrClockwiseDegrees, int sensorClockwiseDegrees) {
+        float rawX, rawY;
+        switch ((ocrClockwiseDegrees % 360 + 360) % 360) {
+            case 0: rawX = ocrX; rawY = ocrY; break;
+            case 90: rawX = ocrY; rawY = sensorHeight - ocrX; break;
+            case 180: rawX = sensorWidth - ocrX; rawY = sensorHeight - ocrY; break;
+            case 270: rawX = sensorWidth - ocrY; rawY = ocrX; break;
+            default: throw new IllegalArgumentException("Bad OCR angle");
+        }
+        switch ((sensorClockwiseDegrees % 360 + 360) % 360) {
+            case 0: return new float[]{rawX, rawY};
+            case 90: return new float[]{sensorHeight - rawY, rawX};
+            case 180: return new float[]{sensorWidth - rawX, sensorHeight - rawY};
+            case 270: return new float[]{rawY, sensorWidth - rawX};
+            default: throw new IllegalArgumentException("Bad camera sensor angle");
+        }
+    }
+
     public static int rotation(int sensorToUpright, int extraDisplayRotation) {
         return ((sensorToUpright + extraDisplayRotation) % 360 + 360) % 360;
     }

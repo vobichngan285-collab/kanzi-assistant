@@ -5,7 +5,7 @@ import re
 root=Path(__file__).resolve().parents[1]
 activity=(root/"app/src/main/java/com/vobichngan/kanzi/MainActivity.java").read_text()
 camera=(root/"app/src/main/java/com/vobichngan/kanzi/InternalCameraController.java").read_text()
-assert "APP_VERSION = \"0.9.3\"" in activity
+assert "APP_VERSION = \"0.9.4\"" in activity
 start_method = re.search(r"private void startPhoneCamera\(\) \{([\s\S]*?)\n    \}", activity)
 assert start_method, "missing phone camera startup method"
 assert start_method.group(1).index("phoneTexture.setVisibility(View.VISIBLE);") < start_method.group(1).index("phoneController.start(phoneFrontFacing);"), "camera surface must be made visible before Camera2 start"
@@ -43,7 +43,7 @@ assert "预览控件未挂载" in activity and "手机摄像头启动超时" in 
 overlay=(root/"app/src/main/java/com/vobichngan/kanzi/OcrOverlayView.java").read_text()
 geom=(root/"app/src/main/java/com/vobichngan/kanzi/PhonePreviewGeometry.java").read_text()
 assert "phoneTexture.setTransform(transform);" in activity
-assert "PhonePreviewGeometry.fit(" in activity
+assert "PhonePreviewGeometry.camera2Preview(" in activity
 assert "PhonePreviewGeometry.fit(" in overlay
 assert "phoneFit.mapNative(nx, ny)" in overlay
 assert "previewMirror, previewVerticalFlip);" in activity
@@ -57,6 +57,17 @@ assert "setRotation(phoneOcrRotation)" not in phone_method
 assert "float scale = Math.min(viewWidth / rotatedW, viewHeight / rotatedH);" in geom
 assert "float horizontal = mirror ? -scale : scale" in geom
 assert "float vertical = flip ? -scale : scale" in geom
-assert "int angle = PhonePreviewGeometry.rotation(phoneOcrRotation, previewRotation);" in activity
+assert "int angle = PhonePreviewGeometry.rotation(previewRotation, -displayDegrees);" in activity
+assert "PhonePreviewGeometry.rotation(phoneOcrRotation, previewRotation)" not in activity
+assert "phoneSensorNaturalRotation" in activity
+assert "phoneOcrRotation" in activity
+assert "phoneFit.mapNative(nx, ny)" in overlay
+assert "PhonePreviewGeometry.ocrToNatural(" in overlay
+assert "PhonePreviewGeometry.naturalBufferSize(" in overlay
+assert "PhonePreviewGeometry.camera2Preview(" in geom
+assert "listener.onOpened(activeWidth, activeHeight, sensor, rotationDegrees)" in camera
+assert "rotationDegrees = front ? (sensor - display + 360) % 360" in camera
+assert ": (sensor + display) % 360;" in camera
+
 
 print("PHONE_CAMERA_PREVIEW_LIFECYCLE=PASS")

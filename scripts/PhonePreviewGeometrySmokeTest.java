@@ -56,6 +56,57 @@ public class PhonePreviewGeometrySmokeTest {
         close(sideways.fittedHeight,607.5,"16:9 letterboxes without warp");
         check(PhonePreviewGeometry.rotation(90,270)==0,"manual rotation must work");
         check(PhonePreviewGeometry.rotation(90,90)==180,"rotation composes");
+        // Android Camera2 TextureView already rotates sensor buffers into
+        // device NATURAL orientation. A sensor=90 landscape raw image is
+        // already portrait INSIDE TextureView. Applying sensor90 again was
+        // the 0.9.3 double-rotation regression visible in phone screenshots.
+        for(int sensor: new int[]{90,270}) {
+            PhonePreviewGeometry.Layout auto = PhonePreviewGeometry.camera2Preview(
+                1080,1920,1280,720,sensor,0,false,false);
+            PhonePreviewGeometry.Layout uprightNatural = PhonePreviewGeometry.fit(
+                1080,1920,720,1280,0,false,false);
+            for(float[] xy:new float[][]{{0f,0f},{360f,640f},{720f,1280f}}) {
+                float[] got=auto.mapNative(xy[0],xy[1]);
+                float[] expected=uprightNatural.mapNative(xy[0],xy[1]);
+                close(got[0],expected[0],"camera2 auto orientation X");
+                close(got[1],expected[1],"camera2 auto orientation Y");
+            }
+            float[] tl=auto.mapNative(0,0), tr=auto.mapNative(720,0),
+                bl=auto.mapNative(0,1280);
+            check(tr[0]>tl[0] && bl[1]>tl[1],
+                "default camera preview must be UPRIGHT and not sideways");
+            close(auto.fittedWidth,1080,"natural 16:9 portrait width");
+            close(auto.fittedHeight,1920,"natural 16:9 portrait height");
+        }
+        for(int sensor:new int[]{0,90,180,270}) {
+            int[] naturalSize=PhonePreviewGeometry.naturalBufferSize(1280,720,sensor);
+            for(int extra:new int[]{0,90,180,270})
+                for(boolean mirror:new boolean[]{false,true})
+                    for(boolean flip:new boolean[]{false,true}) {
+                        PhonePreviewGeometry.Layout layout=PhonePreviewGeometry.camera2Preview(
+                            1080,1920,1280,720,sensor,extra,mirror,flip);
+                        verify(1080,1920,naturalSize[0],naturalSize[1],
+                            extra,mirror,flip);
+                        check(layout.fittedWidth>0 && layout.fittedHeight>0,
+                            "all camera angle settings produce a valid FIT");
+                    }
+        }
+        for(int sensor:new int[]{0,90,180,270}) {
+            int sw=1280,sh=720;
+            int ow=sensor%180==0?sw:sh;
+            int oh=sensor%180==0?sh:sw;
+            for(float[] p:new float[][]{{0,0},{ow/2f,oh/2f},{ow,oh}}) {
+                float[] natural=PhonePreviewGeometry.ocrToNatural(
+                    p[0],p[1],sw,sh,sensor,sensor);
+                close(natural[0],p[0],"matching OCR and sensor X");
+                close(natural[1],p[1],"matching OCR and sensor Y");
+            }
+        }
+        // When device display and OCR rotations differ from sensor orientation,
+        // polygons must still land at their sensor-natural position.
+        float[] off=PhonePreviewGeometry.ocrToNatural(50,1180,1280,720,270,90);
+        close(off[0],670,"OCR-to-natural from 270 OCR 90 sensor X");
+        close(off[1],100,"OCR-to-natural from 270 OCR 90 sensor Y");
         System.out.println("PHONE_PREVIEW_GEOMETRY=PASS");
     }
 }

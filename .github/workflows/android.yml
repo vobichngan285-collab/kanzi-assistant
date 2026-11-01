@@ -285,7 +285,7 @@ jobs:
           "$ZIPALIGN" -c -v 4 "$APK"
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           "$AAPT" dump badging "$APK" | tee "$RUNNER_TEMP/apk-manifest.txt"
-          grep -q "package: name='com.vobich.kanzi' versionCode='34' versionName='0.9.3'" "$RUNNER_TEMP/apk-manifest.txt"
+          grep -q "package: name='com.vobich.kanzi' versionCode='35' versionName='0.9.4'" "$RUNNER_TEMP/apk-manifest.txt"
           grep -q "sdkVersion:'26'" "$RUNNER_TEMP/apk-manifest.txt"
           echo "APK_SHA256=$(sha256sum "$APK" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
           echo "APK_SIZE=$(stat -c%s "$APK") bytes" >> "$GITHUB_STEP_SUMMARY"
@@ -293,7 +293,7 @@ jobs:
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kanzi-assistant-0.9.3-phone-16by9-fit-preview-signed
+          name: kanzi-assistant-0.9.4-correct-camera2-natural-orientation-signed
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
@@ -302,6 +302,6 @@ jobs:
         with:
           tag_name: test-build-${{ github.run_number }}
           target_commitish: ${{ github.sha }}
-          name: 看字助手测试版 0.9.3 手机摄像头16:9等比预览与旋转修复 (${{ github.run_number }})
+          name: 看字助手测试版 0.9.4 修复手机摄像头重复旋转与白框映射 (${{ github.run_number }})
           prerelease: true
           files: app/build/outputs/apk/release/app-release.apk

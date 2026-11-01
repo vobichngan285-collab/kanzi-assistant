@@ -33,7 +33,7 @@ public final class InternalCameraController {
     public interface Listener {
         boolean shouldReceiveFrame();
         void onFrame(byte[] nv21, int width, int height);
-        void onOpened(int rawWidth, int rawHeight, int clockwiseOcrRotation);
+        void onOpened(int rawWidth, int rawHeight, int sensorNaturalRotation, int clockwiseOcrRotation);
         void onPreviewStarted();
         void onError(String message);
     }
@@ -136,7 +136,11 @@ public final class InternalCameraController {
             int display = activity.getWindowManager().getDefaultDisplay().getRotation() * 90;
             // Portrait phone sensor orientation. Only internal camera pixels
             // are normalized; USB still gives OCR its untouched original frame.
-            rotationDegrees = front ? (sensor + display) % 360 : (sensor - display + 360) % 360;
+            // OCR operates on YUV sensor pixels (not the automatically oriented
+            // TextureView). Rotate those pixels by the sensor/display relation.
+            // The preview itself must NOT rotate by this value a second time.
+            rotationDegrees = front ? (sensor - display + 360) % 360
+                                    : (sensor + display) % 360;
             StreamConfigurationMap map = selected.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
             if (map == null) { listener.onError("手机摄像头没有可用的图像流"); openRequested = false; return; }
             Size[] yuv = map.getOutputSizes(ImageFormat.YUV_420_888);
@@ -168,7 +172,7 @@ public final class InternalCameraController {
             st.setDefaultBufferSize(activeWidth, activeHeight);
             Log.i(TAG, "Selected phone camera size " + activeWidth + "x" + activeHeight +
                 ", sensor rotation=" + rotationDegrees);
-            listener.onOpened(activeWidth, activeHeight, rotationDegrees);
+            listener.onOpened(activeWidth, activeHeight, sensor, rotationDegrees);
             // Preview layout may change after onOpened: wait for the UI to apply
             // the new aspect ratio before binding Camera2 to the SurfaceTexture.
             final String cameraId = selectedId;

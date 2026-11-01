@@ -54,7 +54,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.9.3";
+    private static final String APP_VERSION = "0.9.4";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -95,6 +95,7 @@ public class MainActivity extends CameraActivity {
     private volatile boolean usingPhoneCamera = false;
     private volatile boolean phoneFrontFacing = false;
     private volatile int phoneOcrRotation = 0;
+    private volatile int phoneSensorNaturalRotation = 90;
     private volatile int phoneRawWidth = 1280, phoneRawHeight = 720;
     private volatile boolean qualityPromptsEnabled = true;
     private long noTextSince = 0L, lastQualityPromptAt = 0L;
@@ -239,7 +240,8 @@ public class MainActivity extends CameraActivity {
                             ocrOverlay.show(found.getBoxes(), found.getFrameWidth(),
                                 found.getFrameHeight(),
                                 isPhoneCamera ? phoneTexture : cameraTextureView,
-                                isPhoneCamera, isPhoneCamera ? phoneOcrRotation : 0);
+                                isPhoneCamera, isPhoneCamera ? phoneSensorNaturalRotation : 0,
+                                isPhoneCamera ? phoneOcrRotation : 0);
                         }
                         onRecognized(found.getText(), oneShot);
                         onReadingQuality(found, quality);
@@ -606,7 +608,7 @@ public class MainActivity extends CameraActivity {
         panel.addView(rotationSeek);
 
         TextView rotationNote = new TextView(this);
-        rotationNote.setText("手机摄像头默认16:9等比显示。旋转、镜像、翻转仅改变预览，不会拉伸文字；USB摄像头的OCR仍使用原始0°画面。");
+        rotationNote.setText("手机预览默认自动保持正向和16:9等比；0°表示不额外旋转。预览旋转不影响OCR输入图像。");
         rotationNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         panel.addView(rotationNote);
 
@@ -891,10 +893,12 @@ public class MainActivity extends CameraActivity {
             @Override public void onFrame(byte[] nv21, int width, int height) {
                 if (usingPhoneCamera) processCameraFrame(nv21, width, height, true);
             }
-            @Override public void onOpened(int rawWidth, int rawHeight, int rotation) {
+            @Override public void onOpened(int rawWidth, int rawHeight,
+                                           int sensorNaturalRotation, int ocrRotation) {
                 phoneRawWidth = rawWidth;
                 phoneRawHeight = rawHeight;
-                phoneOcrRotation = rotation;
+                phoneSensorNaturalRotation = sensorNaturalRotation;
+                phoneOcrRotation = ocrRotation;
                 runOnUiThread(() -> {
                     applyPhonePreviewTransform();
                     updateControlLabels();
@@ -1264,9 +1268,14 @@ public class MainActivity extends CameraActivity {
         final int viewW = phoneTexture.getWidth();
         final int viewH = phoneTexture.getHeight();
         if (viewW <= 0 || viewH <= 0 || phoneRawWidth <= 0 || phoneRawHeight <= 0) return;
-        int angle = PhonePreviewGeometry.rotation(phoneOcrRotation, previewRotation);
-        PhonePreviewGeometry.Layout fit = PhonePreviewGeometry.fit(
-            viewW, viewH, phoneRawWidth, phoneRawHeight, angle,
+        // Camera2's TextureView ALREADY rotates SENSOR_ORIENTATION to device
+        // natural orientation. Do not rotate it by phoneOcrRotation AGAIN.
+        // Manual 0 degrees means zero extra rotation on the phone preview.
+        int displayDegrees = getWindowManager().getDefaultDisplay().getRotation() * 90;
+        int angle = PhonePreviewGeometry.rotation(previewRotation, -displayDegrees);
+        PhonePreviewGeometry.Layout fit = PhonePreviewGeometry.camera2Preview(
+            viewW, viewH, phoneRawWidth, phoneRawHeight,
+            phoneSensorNaturalRotation, angle,
             previewMirror, previewVerticalFlip);
         Matrix transform = new Matrix();
         transform.setValues(fit.textureMatrix);
@@ -1279,10 +1288,11 @@ public class MainActivity extends CameraActivity {
         phoneTexture.setTransform(transform);
         Log.d("KanziPhoneCamera", "FIT 16:9 preview frame=" + phoneRawWidth + "x" +
             phoneRawHeight + " view=" + viewW + "x" + viewH +
-            " angle=" + angle + " fitted=" + fit.fittedWidth + "x" +
-            fit.fittedHeight);
+            " sensor=" + phoneSensorNaturalRotation + " ocr=" + phoneOcrRotation +
+            " display=" + displayDegrees + " previewExtra=" + angle +
+            " fitted=" + fit.fittedWidth + "x" + fit.fittedHeight);
         if (ocrOverlay != null) {
-            ocrOverlay.setPhoneDisplayTransform(previewRotation,
+            ocrOverlay.setPhoneDisplayTransform(angle,
                 previewMirror, previewVerticalFlip);
         }
     }
