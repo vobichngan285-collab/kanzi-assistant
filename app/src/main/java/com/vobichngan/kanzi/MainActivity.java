@@ -48,7 +48,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.7.5";
+    private static final String APP_VERSION = "0.7.6";
     private static final String PREFS_NAME = "kanzi_settings";
     private static final String PREF_AUTO_MODE = "automatic_mode";
     private static final String PREF_INTERVAL = "recognition_interval_ms";
@@ -58,8 +58,8 @@ public class MainActivity extends CameraActivity {
     private static final String PREF_PREVIEW_ROTATION = "preview_rotation";
     private static final String PREF_PREVIEW_MIRROR = "preview_mirror";
     private static final String PREF_PREVIEW_FLIP = "preview_flip";
-    private static final String PREF_PREVIEW_FILL = "preview_fill";
-    private static final String PREF_PREVIEW_ZOOM = "preview_zoom";
+    private static final String PREF_PREVIEW_FILL = "preview_fill_fit_v2";
+    private static final String PREF_PREVIEW_ZOOM = "preview_zoom_fit_v2";
     private static final String PREF_ENHANCED_OCR = "enhanced_ocr";
     private static final String PREF_USE_SMALL_MODEL = "use_small_model";
     private final Handler diagnosticHandler = new Handler(Looper.getMainLooper());
@@ -83,7 +83,7 @@ public class MainActivity extends CameraActivity {
     private volatile int previewRotation = 0;
     private volatile boolean previewMirror = false;
     private volatile boolean previewVerticalFlip = false;
-    private volatile boolean previewFill = true;
+    private volatile boolean previewFill = false;
     private volatile float previewZoom = 1.0f;
     private volatile boolean enhancedOcr = false;
     private volatile boolean useSmallModel = false;
@@ -222,7 +222,7 @@ public class MainActivity extends CameraActivity {
         if (previewRotation != 0 && previewRotation != 90 && previewRotation != 180 && previewRotation != 270) previewRotation = 0;
         previewMirror = prefs.getBoolean(PREF_PREVIEW_MIRROR, false);
         previewVerticalFlip = prefs.getBoolean(PREF_PREVIEW_FLIP, false);
-        previewFill = prefs.getBoolean(PREF_PREVIEW_FILL, true);
+        previewFill = prefs.getBoolean(PREF_PREVIEW_FILL, false);
         previewZoom = Math.max(1.0f, Math.min(2.5f, prefs.getFloat(PREF_PREVIEW_ZOOM, 1.0f)));
         enhancedOcr = prefs.getBoolean(PREF_ENHANCED_OCR, false);
         useSmallModel = prefs.getBoolean(PREF_USE_SMALL_MODEL, false) && OcrModelDownloader.isInstalled(this);
@@ -400,7 +400,7 @@ public class MainActivity extends CameraActivity {
         panel.addView(flipCheck);
 
         CheckBox fillCheck = new CheckBox(this);
-        fillCheck.setText("旋转90°/270°时自动铺满预览区（等比例放大，边缘会适当裁切）");
+        fillCheck.setText("旋转90°/270°时铺满预览区（可能裁切边缘）");
         fillCheck.setChecked(previewFill);
         panel.addView(fillCheck);
 
@@ -434,7 +434,7 @@ public class MainActivity extends CameraActivity {
         previewQualityNote.setTextColor(0xFF667085);
         panel.addView(previewQualityNote);
 
-        transformNote.setText("旋转和镜像方向同时应用于预览与 OCR；0°/180°保持完整显示，90°/270°默认等比例放大并铺满预览区，超出边缘会居中裁切，不会拉伸变形。关闭上方选项可恢复完整显示。此缩放只影响屏幕预览，不改变 UVC 原始采集帧和 OCR 输入。");
+        transformNote.setText("旋转和镜像方向同时应用于预览与 OCR；90°/270°默认完整显示整个画面，不裁切、不拉伸，屏幕比例不一致时会出现黑边。勾选上方选项可改为铺满，但可能裁切边缘。预览缩放只影响屏幕显示，不改变 UVC 原始采集帧。");
         transformNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         transformNote.setTextColor(0xFF667085);
         panel.addView(transformNote);
@@ -536,10 +536,9 @@ public class MainActivity extends CameraActivity {
         int viewWidth = cameraTextureView.getWidth();
         int viewHeight = cameraTextureView.getHeight();
 
-        // FIT remains the default at 0/180 degrees. At 90/270 degrees, FILL uses
-        // center-crop: scale the rotated 9:16 bounds until both container dimensions
-        // are covered. Scaling the TextureView preserves aspect ratio; it never stretches
-        // the camera image or changes the raw UVC/OCR frame dimensions.
+        // FIT is the default at every rotation. The rotated image is kept fully inside
+        // the preview container; unused space remains black rather than cropping
+        // the camera image. FILL is an optional user setting for intentional cropping.
         float fillScale = 1.0f;
         if (quarterTurn && previewFill) {
             int sourceWidth = viewWidth > 0 ? viewWidth : wantedWidth;
