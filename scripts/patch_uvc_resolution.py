@@ -32,12 +32,14 @@ replacement = """        fun getSuitableSize(maxWidth: Int, maxHeight: Int): Pre
             // Do not select a camera mode larger than the requested dimensions.
             // Prefer 16:9 (1920x1080) when available, then the closest supported
             // aspect ratio below the cap. If every advertised mode is larger,
-            // fall back to the smallest one rather than unexpectedly opening 4K.
+            // report the unsupported request instead of unexpectedly opening 4K.
             val withinLimit = sizeList.filter {
                 it.width <= maxWidth && it.height <= maxHeight
             }
             if (withinLimit.isEmpty()) {
-                return sizeList.minBy { it.width.toLong() * it.height.toLong() }
+                // Returning the requested cap makes CameraUVC reject the unsupported mode
+                // explicitly; never silently fall back to a 4K stream.
+                return PreviewSize(maxWidth, maxHeight)
             }
 
             val targetRatio = maxWidth.toDouble() / maxHeight.toDouble()
