@@ -33,18 +33,17 @@ jobs:
           test -s "$SDK/src/main/java/com/paddle/ocr/PaddleOCR.kt"
           rm -f "$SDK/build.gradle.kts"
           mkdir -p "$SDK/src/main/assets/models/det" "$SDK/src/main/assets/models/rec"
-          curl -fL --retry 3 "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv6_small_det_onnx_infer.tar" -o "$RUNNER_TEMP/ppocr-det.tar"
-          curl -fL --retry 3 "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv6_small_rec_onnx_infer.tar" -o "$RUNNER_TEMP/ppocr-rec.tar"
-          mkdir -p "$RUNNER_TEMP/ppocr-det" "$RUNNER_TEMP/ppocr-rec"
-          tar -xf "$RUNNER_TEMP/ppocr-det.tar" -C "$RUNNER_TEMP/ppocr-det"
-          tar -xf "$RUNNER_TEMP/ppocr-rec.tar" -C "$RUNNER_TEMP/ppocr-rec"
-          DET="$(find "$RUNNER_TEMP/ppocr-det" -type f -name inference.onnx | head -n 1)"
-          REC="$(find "$RUNNER_TEMP/ppocr-rec" -type f -name inference.onnx | head -n 1)"
-          CFG="$(find "$RUNNER_TEMP/ppocr-rec" -type f -name inference.yml | head -n 1)"
-          test -n "$DET" && test -n "$REC" && test -n "$CFG"
-          cp "$DET" "$SDK/src/main/assets/models/det/inference.onnx"
-          cp "$REC" "$SDK/src/main/assets/models/rec/inference.onnx"
-          cp "$CFG" "$SDK/src/main/assets/models/rec/inference.yml"
+          DET="$SDK/src/main/assets/models/det/inference.onnx"
+          REC="$SDK/src/main/assets/models/rec/inference.onnx"
+          CFG="$SDK/src/main/assets/models/rec/inference.yml"
+          curl -fL --retry 3 "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/5994b4f/inference.onnx" -o "$DET"
+          curl -fL --retry 3 "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx" -o "$REC"
+          curl -fL --retry 3 "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml?download=true" -o "$CFG"
+          echo "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  $DET" | sha256sum -c -
+          echo "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  $REC" | sha256sum -c -
+          test -s "$CFG"
+          grep -q "PostProcess:" "$CFG"
+          grep -q "character_dict:" "$CFG"
           cat > "$SDK/build.gradle" <<'GRADLE'
           plugins {
               id 'com.android.library'
