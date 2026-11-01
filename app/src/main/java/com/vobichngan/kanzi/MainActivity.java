@@ -141,13 +141,13 @@ public class MainActivity extends CameraActivity {
                     report -> {
                         busy.set(false);
                         String result = "诊断完成\n摄像头帧：已获取 " + width + "×" + height
-                            + "\nOCR 引擎：已就绪\n检测框数量：" + report.boxCount
-                            + "\n平均置信度：" + String.format(Locale.US, "%.3f", report.averageConfidence)
-                            + "\n检测耗时：" + report.detectionTimeMs + " ms"
-                            + "\n识别耗时：" + report.recognitionTimeMs + " ms"
-                            + "\n总耗时：" + report.totalTimeMs + " ms"
+                            + "\nOCR 引擎：已就绪\n检测框数量：" + report.getBoxCount()
+                            + "\n平均置信度：" + String.format(Locale.US, "%.3f", report.getAverageConfidence())
+                            + "\n检测耗时：" + report.getDetectionTimeMs() + " ms"
+                            + "\n识别耗时：" + report.getRecognitionTimeMs() + " ms"
+                            + "\n总耗时：" + report.getTotalTimeMs() + " ms"
                             + "\n诊断总用时：" + (System.currentTimeMillis() - started) + " ms"
-                            + "\n原始识别结果：\n" + (report.text.isEmpty() ? "（未识别到文字）" : report.text);
+                            + "\n原始识别结果：\n" + (report.getText().isEmpty() ? "（未识别到文字）" : report.getText());
                         runOnUiThread(() -> { if (diagnosticReportView != null) diagnosticReportView.setText(result); });
                     },
                     error -> {
