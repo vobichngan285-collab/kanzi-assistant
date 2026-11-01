@@ -124,6 +124,16 @@ jobs:
           PY
           echo "PP-OCRv6 Small model assets prepared; app-private model file loading enabled." >> "$GITHUB_STEP_SUMMARY"
           du -h "$SDK/src/main/assets/models/"*/* >> "$GITHUB_STEP_SUMMARY"
+      - name: Install independent OCR model inspection tools
+        run: |
+          python3 -m pip install --quiet "numpy==1.26.4" "onnxruntime==1.21.1" "PyYAML==6.0.2"
+      - name: Verify all OCR ONNX models against SDK CTC dictionary
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_ocr_models.py \
+            third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/assets | tee "$RUNNER_TEMP/ocr-model-verification.log"
+          grep -q "METADATA_VERIFICATION=PASS" "$RUNNER_TEMP/ocr-model-verification.log"
+          echo "All three ONNX recognizers passed independent real-inference output class vs YAML dictionary checks." >> "$GITHUB_STEP_SUMMARY"
       - name: Checkout AUSBC source
         uses: actions/checkout@v4
         with:
