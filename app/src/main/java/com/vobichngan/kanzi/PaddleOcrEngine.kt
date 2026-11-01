@@ -50,6 +50,7 @@ class PaddleOcrEngine(
 
     private data class PositionedText(
         val item: OCRResult,
+        val text: String,
         val left: Float,
         val top: Float,
         val bottom: Float,
@@ -286,9 +287,10 @@ class PaddleOcrEngine(
     private fun arrangeInReadingOrder(results: List<OCRResult>): String {
         if (results.isEmpty()) return ""
         val positioned = results.mapNotNull { item ->
-            val text = item.text.trim()
-            // Ignore low-confidence detections and punctuation-only fragments. These were
-            // being passed straight to TTS and sounded like random symbols.
+            val rawText = item.text.trim()
+            // Ignore low-confidence detections and symbol-only fragments before they reach TTS.
+            // Also strip OCR hallucinations such as currency signs and stray operators.
+            val text = rawText.replace(Regex("[^\\p{L}\\p{N}，。！？、；：,.!?;:（）()《》“”‘’\\s-]"), "")
             if (text.isEmpty() || item.box.points.size != 4 ||
                 item.confidence < 0.55f || text.none { it.isLetterOrDigit() }) return@mapNotNull null
             val xs = item.box.points.map { it.x }
@@ -296,7 +298,7 @@ class PaddleOcrEngine(
             val left = xs.minOrNull() ?: return@mapNotNull null
             val top = ys.minOrNull() ?: return@mapNotNull null
             val bottom = ys.maxOrNull() ?: return@mapNotNull null
-            PositionedText(item, left, top, bottom, (top + bottom) / 2f, max(1f, bottom - top))
+            PositionedText(item, text, left, top, bottom, (top + bottom) / 2f, max(1f, bottom - top))
         }.sortedWith(compareBy<PositionedText> { it.centerY }.thenBy { it.left })
 
         val rows = mutableListOf<TextLine>()
@@ -327,7 +329,7 @@ class PaddleOcrEngine(
         }
 
         return rows.sortedBy { it.centerY }.joinToString("\n") { row ->
-            row.items.sortedBy { it.left }.map { it.item.text.trim() }
+            row.items.sortedBy { it.left }.map { it.text.trim() }
                 .fold("") { combined, fragment ->
                     if (combined.isEmpty()) fragment
                     else {
