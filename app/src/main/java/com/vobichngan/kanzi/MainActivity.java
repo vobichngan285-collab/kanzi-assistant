@@ -48,7 +48,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.7.4";
+    private static final String APP_VERSION = "0.7.5";
     private static final String PREFS_NAME = "kanzi_settings";
     private static final String PREF_AUTO_MODE = "automatic_mode";
     private static final String PREF_INTERVAL = "recognition_interval_ms";
@@ -423,7 +423,18 @@ public class MainActivity extends CameraActivity {
         panel.addView(zoomSeek);
 
         TextView transformNote = new TextView(this);
-        transformNote.setText("旋转和镜像方向同时应用于预览与 OCR；0°/180°保持完整显示，90°/270°默认等比例放大并铺满预览区，超出边缘会居中裁切，不会拉伸变形。关闭上方选项可恢复完整显示。此缩放只影响屏幕预览，不改变 UVC 原始采集帧和 OCR 输入。预览优先请求 1920×1080，摄像头不支持时由驱动选择可用分辨率。");
+        PreviewSize currentSize = getCurrentPreviewSize();
+        String actualSizeText = currentSize == null
+            ? "当前未连接摄像头"
+            : currentSize.getWidth() + "×" + currentSize.getHeight();
+        TextView previewQualityNote = new TextView(this);
+        previewQualityNote.setText("当前实际预览分辨率：" + actualSizeText
+            + "。新版本会优先选择摄像头支持的最高 16:9 分辨率，最高请求 3840×2160；若摄像头不支持 4K，会自动回退到它支持的最高档。");
+        previewQualityNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        previewQualityNote.setTextColor(0xFF667085);
+        panel.addView(previewQualityNote);
+
+        transformNote.setText("旋转和镜像方向同时应用于预览与 OCR；0°/180°保持完整显示，90°/270°默认等比例放大并铺满预览区，超出边缘会居中裁切，不会拉伸变形。关闭上方选项可恢复完整显示。此缩放只影响屏幕预览，不改变 UVC 原始采集帧和 OCR 输入。");
         transformNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         transformNote.setTextColor(0xFF667085);
         panel.addView(transformNote);
@@ -552,8 +563,8 @@ public class MainActivity extends CameraActivity {
 
     @Override protected CameraRequest getCameraRequest() {
         return new CameraRequest.Builder()
-            .setPreviewWidth(1920)
-            .setPreviewHeight(1080)
+            .setPreviewWidth(3840)
+            .setPreviewHeight(2160)
             .setRenderMode(CameraRequest.RenderMode.OPENGL)
             .setPreviewFormat(CameraRequest.PreviewFormat.FORMAT_MJPEG)
             .setRawPreviewData(true)
