@@ -170,6 +170,18 @@ jobs:
             third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/assets | tee "$RUNNER_TEMP/ocr-model-verification.log"
           grep -q "METADATA_VERIFICATION=PASS" "$RUNNER_TEMP/ocr-model-verification.log"
           echo "All three ONNX recognizers passed independent real-inference output class vs YAML dictionary checks." >> "$GITHUB_STEP_SUMMARY"
+      - name: Run real Chinese text through all three ONNX recognizers
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet "opencv-python-headless==4.10.0.84" "Pillow==11.1.0"
+          if [ ! -f /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc ]; then
+            sudo apt-get -qq update
+            sudo apt-get -qq install -y fonts-noto-cjk
+          fi
+          python3 scripts/check_ocr_chinese_samples.py \
+            third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/assets | tee "$RUNNER_TEMP/chinese-ocr-smoke-test.log"
+          grep -q "SYNTHETIC_RECOGNITION_SMOKE_TEST=PASS" "$RUNNER_TEMP/chinese-ocr-smoke-test.log"
+          grep "^SUMMARY" "$RUNNER_TEMP/chinese-ocr-smoke-test.log" >> "$GITHUB_STEP_SUMMARY"
       - name: Checkout AUSBC source
         uses: actions/checkout@v4
         with:
