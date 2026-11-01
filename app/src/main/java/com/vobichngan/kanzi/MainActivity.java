@@ -357,7 +357,7 @@ public class MainActivity extends CameraActivity {
         panel.addView(flipCheck);
 
         TextView transformNote = new TextView(this);
-        PreviewSize currentSize = getCurrentPreviewSize();
+        PreviewSize currentSize = previewCallbackAdded ? getCurrentPreviewSize() : null;
         String actualSizeText = currentSize == null
             ? "当前未连接摄像头"
             : currentSize.getWidth() + "×" + currentSize.getHeight();
@@ -440,7 +440,7 @@ public class MainActivity extends CameraActivity {
 
         // Keep the entire camera frame visible. Use the actual negotiated camera ratio,
         // so even a fallback mode is letterboxed rather than stretched or cropped.
-        PreviewSize actualSize = getCurrentPreviewSize();
+        PreviewSize actualSize = previewCallbackAdded ? getCurrentPreviewSize() : null;
         float sourceAspect = actualSize != null && actualSize.getHeight() > 0
             ? actualSize.getWidth() / (float) actualSize.getHeight()
             : (16.0f / 9.0f);
@@ -650,7 +650,7 @@ public class MainActivity extends CameraActivity {
             "，子视图 " + previewContainer.getChildCount() + " 个");
         info.append("\n摄像头状态：").append(cameraOpened ? "已打开" : "未打开");
         info.append("\n预览回调：").append(previewCallbackAdded ? "已注册" : "未注册");
-        PreviewSize actualPreviewSize = getCurrentPreviewSize();
+        PreviewSize actualPreviewSize = cameraOpened ? getCurrentPreviewSize() : null;
         info.append("\n实际摄像头预览分辨率：").append(actualPreviewSize == null ? "尚未获取" :
             actualPreviewSize.getWidth() + "×" + actualPreviewSize.getHeight());
         info.append("\n预览显示：完整画面 FIT（无裁切、无缩放）");
