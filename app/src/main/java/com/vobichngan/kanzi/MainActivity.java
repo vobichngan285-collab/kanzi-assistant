@@ -60,6 +60,7 @@ public class MainActivity extends CameraActivity {
     private static final String PREF_INTERVAL = "recognition_interval_ms";
     private static final String PREF_SIMILARITY = "similarity_threshold";
     private static final String PREF_QUEUE_SPEECH = "queue_speech";
+    private static final String PREF_LONG_READING = "reading_mode_long";
     private static final String PREF_SPEECH_RATE = "speech_rate";
     private static final String PREF_PREVIEW_ROTATION = "preview_rotation";
     private static final String PREF_LEGACY_NV21 = "ocr_legacy_nv21_jpeg";
@@ -76,7 +77,7 @@ public class MainActivity extends CameraActivity {
     private TextureView cameraTextureView;
     // Kept as non-visible diagnostic targets so existing USB diagnostics remain available.
     private TextView status, diagnostic;
-    private Button modeButton, captureButton, startButton, settingsButton;
+    private Button modeButton, captureButton, startButton, settingsButton, readingModeButton;
     private TextToSpeech tts;
     private PaddleOcrEngine recognizer;
     private volatile boolean running = false;
@@ -84,6 +85,10 @@ public class MainActivity extends CameraActivity {
     private volatile long recognitionIntervalMs = 500L;
     private volatile int similarityThreshold = 88;
     private volatile boolean queueSpeech = true;
+    private volatile boolean longReadingMode = true;
+    private volatile boolean speechPageActive = false;
+    private final FrameChangeGate frameChangeGate = new FrameChangeGate();
+    private final java.util.concurrent.atomic.AtomicInteger readingEpoch = new java.util.concurrent.atomic.AtomicInteger(0);
     private volatile float speechRate = 1.0f;
     private volatile int previewRotation = 0;
     private volatile boolean legacyNv21Jpeg = false;
@@ -100,10 +105,10 @@ public class MainActivity extends CameraActivity {
     private volatile long diagnosticStartedAt = 0;
     private boolean ttsReady = false;
     private boolean previewCallbackAdded = false;
-    private String lastSpoken = "";
+    private volatile String lastSpoken = "";
     private String candidateText = "";
     private String candidateNormalized = "";
-    private int candidateCount = 0;
+    private volatile int candidateCount = 0;
     private long lastNonEmptyAt = 0;
     private long lastProcess = 0;
     private final AtomicBoolean busy = new AtomicBoolean(false);
@@ -170,25 +175,38 @@ public class MainActivity extends CameraActivity {
                 return;
             }
             if (!running) return;
+            // Long reading owns OCR until the entire spoken page has completed.
+            // Manual capture remains an explicit override below.
             long now = System.currentTimeMillis();
             boolean oneShot = manualCaptureRequested.get();
             if (oneShot) {
                 if (!manualCaptureRequested.compareAndSet(true, false)) return;
             } else {
                 if (!automaticMode || now - lastProcess < recognitionIntervalMs) return;
+                if (longReadingMode && speechPageActive) return;
             }
             if (!busy.compareAndSet(false, true)) {
                 if (oneShot) manualCaptureRequested.set(true);
                 return;
             }
+            // Long reading needs a SECOND OCR pass to confirm the first candidate,
+            // even when the image has not moved. Once spoken, avoid re-reading it.
+            boolean needsConfirmation = longReadingMode && candidateCount > 0;
+            boolean samePageLocked = longReadingMode && !lastSpoken.isEmpty();
+            if (!oneShot && !needsConfirmation &&
+                !frameChangeGate.accept(data, width, height, now, samePageLocked)) {
+                busy.set(false);
+                return;
+            }
             lastProcess = now;
+            final int recognizedEpoch = readingEpoch.get();
             byte[] frame = data.clone();
             final boolean enhance = enhancedOcr;
             final boolean legacyDecode = legacyNv21Jpeg;
             try {
                 recognizer.recognizeNv21(frame, width, height, enhance, legacyDecode, found -> {
                     busy.set(false);
-                    if (found != null) onRecognized(found, oneShot);
+                    if (found != null && recognizedEpoch == readingEpoch.get()) onRecognized(found, oneShot);
                 }, error -> {
                     busy.set(false);
                     Log.e("KanziOCR", "OCR failed for " + width + "x" + height, new RuntimeException(error));
@@ -230,6 +248,16 @@ public class MainActivity extends CameraActivity {
         controls.setPadding(dp(4), dp(4), dp(4), dp(4));
         controls.setBackgroundColor(0xAA151515);
 
+        readingModeButton = createControlButton("阅读：长文（完整读）");
+        readingModeButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
+        readingModeButton.setMinHeight(dp(50));
+        readingModeButton.setContentDescription("切换长文阅读和快速扫读模式");
+        LinearLayout controlDock = new LinearLayout(this);
+        controlDock.setOrientation(LinearLayout.VERTICAL);
+        readingModeButton.setBackgroundTintList(ColorStateList.valueOf(0xFF154A5B));
+        controlDock.addView(readingModeButton, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(52)
+        ));
         modeButton = createControlButton("模式：自动");
         controls.addView(modeButton, new LinearLayout.LayoutParams(0, dp(54), 1f));
         captureButton = createControlButton("识别一次");
@@ -239,11 +267,14 @@ public class MainActivity extends CameraActivity {
         settingsButton = createControlButton("设置");
         controls.addView(settingsButton, new LinearLayout.LayoutParams(0, dp(54), 1f));
 
+        controlDock.addView(controls, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(62)
+        ));
         FrameLayout.LayoutParams controlsParams = new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(62), Gravity.BOTTOM
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(114), Gravity.BOTTOM
         );
-        root.addView(controls, controlsParams);
-        controls.bringToFront();
+        root.addView(controlDock, controlsParams);
+        controlDock.bringToFront();
         return root;
     }
 
@@ -261,6 +292,14 @@ public class MainActivity extends CameraActivity {
     }
 
     private void updateControlLabels() {
+        if (readingModeButton != null) {
+            readingModeButton.setText(longReadingMode
+                ? "长文阅读｜完整读完，不打断"
+                : "快速扫读｜移动即读新内容");
+            readingModeButton.setContentDescription(longReadingMode
+                ? "当前是长文阅读模式。点击切换到快速扫读"
+                : "当前是快速扫读模式。点击切换到长文阅读");
+        }
         if (modeButton != null) modeButton.setText(automaticMode ? "模式：自动" : "模式：手动");
         if (startButton != null) startButton.setText(running ? "暂停识别" : "开始识别");
         if (captureButton != null) captureButton.setEnabled(previewCallbackAdded && !automaticMode);
@@ -274,6 +313,7 @@ public class MainActivity extends CameraActivity {
         similarityThreshold = Math.max(0, Math.min(100,
             prefs.getInt(PREF_SIMILARITY, 88)));
         queueSpeech = prefs.getBoolean(PREF_QUEUE_SPEECH, true);
+        longReadingMode = prefs.getBoolean(PREF_LONG_READING, queueSpeech);
         speechRate = Math.max(0.5f, Math.min(2.0f, prefs.getFloat(PREF_SPEECH_RATE, 1.0f)));
         previewRotation = prefs.getInt(PREF_PREVIEW_ROTATION, 0);
         if (previewRotation != 0 && previewRotation != 90 && previewRotation != 180 && previewRotation != 270) previewRotation = 0;
@@ -295,6 +335,8 @@ public class MainActivity extends CameraActivity {
     }
 
     private void switchOcrModel(String modelId) {
+        readingEpoch.incrementAndGet();
+        frameChangeGate.reset();
         running = false;
         manualCaptureRequested.set(false);
         clearSpeechQueue(true);
@@ -377,9 +419,9 @@ public class MainActivity extends CameraActivity {
         panel.addView(modelManagementInfo);
 
         CheckBox queueCheck = new CheckBox(this);
-        queueCheck.setText("连续识别时优先读完整段（推荐开启）");
+        queueCheck.setText("默认使用长文阅读（读完再识别）；快速扫读会自动打断旧内容");
         queueCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        queueCheck.setChecked(queueSpeech);
+        queueCheck.setChecked(longReadingMode);
         panel.addView(queueCheck);
 
         TextView intervalTitle = new TextView(this);
@@ -608,6 +650,7 @@ public class MainActivity extends CameraActivity {
                 similarityThreshold = similaritySeek.getProgress();
                 boolean wasQueueEnabled = queueSpeech;
                 queueSpeech = queueCheck.isChecked();
+                boolean changeReadingMode = longReadingMode != queueSpeech;
                 speechRate = 0.5f + speechRateSeek.getProgress() / 100f;
                 speechNoEnglish = noEnglishCheck.isChecked();
                 speechNoNumbers = noNumbersCheck.isChecked();
@@ -625,6 +668,7 @@ public class MainActivity extends CameraActivity {
                     .putLong(PREF_INTERVAL, recognitionIntervalMs)
                     .putInt(PREF_SIMILARITY, similarityThreshold)
                     .putBoolean(PREF_QUEUE_SPEECH, queueSpeech)
+                    .putBoolean(PREF_LONG_READING, queueSpeech)
                     .putFloat(PREF_SPEECH_RATE, speechRate)
                     .putInt(PREF_PREVIEW_ROTATION, previewRotation)
                     .putBoolean(PREF_LEGACY_NV21, legacyNv21Jpeg)
@@ -636,7 +680,8 @@ public class MainActivity extends CameraActivity {
                     .putBoolean(PREF_NO_NUMBERS, speechNoNumbers)
                     .putInt(PREF_MAX_SPEECH_CHARS, maxSpeechChars)
                     .apply();
-                if (wasQueueEnabled && !queueSpeech) clearSpeechQueue(true);
+                if (changeReadingMode) setLongReadingMode(queueSpeech);
+                else if (wasQueueEnabled && !queueSpeech) clearSpeechQueue(true);
                 if (modelChanged) switchOcrModel(selectedModelId);
                 Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show();
             })
@@ -760,6 +805,8 @@ public class MainActivity extends CameraActivity {
             }
         });
 
+        readingModeButton.setOnClickListener(v -> setLongReadingMode(!longReadingMode));
+
         modeButton.setOnClickListener(v -> {
             automaticMode = !automaticMode;
             manualCaptureRequested.set(false);
@@ -777,6 +824,10 @@ public class MainActivity extends CameraActivity {
             }
             running = true;
             manualCaptureRequested.set(true);
+            readingEpoch.incrementAndGet();
+            // Explicit capture replaces old speech even during a long reading session.
+            clearSpeechQueue(true);
+            frameChangeGate.reset();
             updateControlLabels();
             Toast.makeText(this, "正在抓取当前画面识别", Toast.LENGTH_SHORT).show();
         });
@@ -790,6 +841,13 @@ public class MainActivity extends CameraActivity {
             if (!running) {
                 manualCaptureRequested.set(false);
                 clearSpeechQueue(true);
+                readingEpoch.incrementAndGet();
+            } else {
+                frameChangeGate.reset();
+                lastSpoken = ""; // Explicit resume must be able to re-read the current paper.
+                candidateCount = 0;
+                candidateNormalized = "";
+                candidateText = "";
             }
             updateControlLabels();
         });
@@ -923,8 +981,34 @@ public class MainActivity extends CameraActivity {
     }
 
     /**
-     * Automatic mode waits for two consistent frames; a deliberate manual capture
-     * reads the one selected frame in full without requiring a second capture.
+     * Switch modes immediately, without reinitializing the OCR models or camera.
+     * The epoch invalidates results from the previous mode that finish asynchronously.
+     */
+    private void setLongReadingMode(boolean enableLong) {
+        if (longReadingMode == enableLong) return;
+        readingEpoch.incrementAndGet();
+        longReadingMode = enableLong;
+        queueSpeech = enableLong; // keep legacy preference consistent
+        manualCaptureRequested.set(false);
+        frameChangeGate.reset();
+        candidateText = "";
+        candidateNormalized = "";
+        candidateCount = 0;
+        lastSpoken = "";
+        clearSpeechQueue(true);
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putBoolean(PREF_LONG_READING, enableLong)
+            .putBoolean(PREF_QUEUE_SPEECH, enableLong)
+            .apply();
+        updateControlLabels();
+        String announcement = enableLong ? "已切换长文阅读，读完再识别" : "已切换快速扫读，新内容会打断旧内容";
+        Toast.makeText(this, announcement, Toast.LENGTH_SHORT).show();
+        if (readingModeButton != null) readingModeButton.announceForAccessibility(announcement);
+    }
+
+    /**
+     * Full reading confirms two matching frames; rapid scanning acts on one
+     * current frame. An explicit manual request reads its own complete capture.
      */
     private void onRecognized(String found, boolean manualCapture) {
         final long now = System.currentTimeMillis();
@@ -939,7 +1023,7 @@ public class MainActivity extends CameraActivity {
         lastNonEmptyAt = now;
         if (!running || !ttsReady) return;
         String confirmed;
-        if (manualCapture) {
+        if (manualCapture || !longReadingMode) {
             candidateText = "";
             candidateNormalized = "";
             candidateCount = 0;
@@ -967,7 +1051,7 @@ public class MainActivity extends CameraActivity {
         if (speechNoEnglish) speechText = speechText.replaceAll("[A-Za-z]+", " ");
         if (speechNoNumbers) speechText = speechText.replaceAll("[0-9]+", " ");
         // Keep line/paragraph boundaries for natural reading instead of flattening to spaces.
-        speechText = speechText.replaceAll("[\\t ]+", " ").replaceAll(" *\\n *", "\\n").trim();
+        speechText = speechText.replaceAll("[\\t ]+", " ").replaceAll(" *\\n *", "\n").trim();
         if (maxSpeechChars > 0 && speechText.length() > maxSpeechChars)
             speechText = speechText.substring(0, maxSpeechChars).trim();
         if (speechText.isEmpty()) return;
@@ -983,20 +1067,23 @@ public class MainActivity extends CameraActivity {
     /** Read one complete frame, splitting into bounded utterances but never dropping its tail. */
     private void queueSpeechText(String text, String normalized, boolean force) {
         if (tts == null || !ttsReady || normalized.isEmpty()) return;
-        if (force) {
-            // Explicit manual capture / diagnostic read takes precedence.
-            clearSpeechQueue(true);
-            lastSpoken = "";
-        } else {
-            // Do not accumulate camera frames while a page is still being read.
-            if (currentSpeech != null || !speechQueue.isEmpty()) return;
-            if (isAlreadyQueuedOrRecentlySpoken(normalized, similarityThreshold / 100.0f)) return;
-            if (!queueSpeech) clearSpeechQueue(true);
+        // Compare the ACTUAL text being spoken, not unspoken tail content.
+        String spokenText = (!force && !longReadingMode) ? SpeechText.scanExcerpt(text) : text;
+        String spokenNormalized = normalizeOcrText(spokenText);
+        if (spokenNormalized.isEmpty()) return;
+        if (!force) {
+            if (longReadingMode && (speechPageActive || currentSpeech != null || !speechQueue.isEmpty())) return;
+            if (isAlreadyQueuedOrRecentlySpoken(spokenNormalized, similarityThreshold / 100.0f)) return;
         }
-        List<String> chunks = SpeechText.chunks(text);
+        if (force || !longReadingMode) {
+            // Latest-content-wins in scan mode. A manual request always takes priority.
+            clearSpeechQueue(true);
+        }
+        List<String> chunks = SpeechText.chunks(spokenText);
         if (chunks.isEmpty()) return;
+        speechPageActive = true;
         for (String chunk : chunks) {
-            speechQueue.addLast(new SpeechItem(chunk, normalized, "ocr-" + (++utteranceSequence)));
+            speechQueue.addLast(new SpeechItem(chunk, spokenNormalized, "ocr-" + (++utteranceSequence)));
         }
         speakNextQueued();
     }
@@ -1026,10 +1113,12 @@ public class MainActivity extends CameraActivity {
         if (currentSpeech == null || !currentSpeech.utteranceId.equals(utteranceId)) return;
         currentSpeech = null;
         speakingQueued = false;
+        if (speechQueue.isEmpty()) speechPageActive = false;
         speakNextQueued();
     }
 
     private void clearSpeechQueue(boolean stopCurrent) {
+        speechPageActive = false;
         speechQueue.clear();
         currentSpeech = null;
         speakingQueued = false;
@@ -1074,6 +1163,7 @@ public class MainActivity extends CameraActivity {
         manualCaptureRequested.set(false);
         speechQueue.clear();
         currentSpeech = null;
+        speechPageActive = false;
         if (tts != null) { tts.stop(); tts.shutdown(); }
         if (recognizer != null) recognizer.release();
         diagnosticHandler.removeCallbacksAndMessages(null);

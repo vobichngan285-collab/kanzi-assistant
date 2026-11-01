@@ -28,6 +28,27 @@ public final class SpeechText {
         return result;
     }
 
+    /**
+     * A mobile sign/product scanner should read what's in front of the camera now,
+     * not queue a whole page that is already out of view.
+     */
+    public static String scanExcerpt(String text) {
+        if (text == null || text.trim().isEmpty()) return "";
+        String[] lines = text.replace("\r\n", "\n").replace('\r', '\n').split("\n");
+        StringBuilder excerpt = new StringBuilder();
+        int pickedLines = 0;
+        for (String line : lines) {
+            String part = line.trim().replaceAll("[\\t ]+", " ");
+            if (part.isEmpty()) continue;
+            if (pickedLines > 0) excerpt.append('。');
+            excerpt.append(part);
+            pickedLines++;
+            if (pickedLines >= 2 || excerpt.length() >= 110) break;
+        }
+        if (excerpt.length() > 120) return excerpt.substring(0, 120);
+        return excerpt.toString();
+    }
+
     private static boolean isEnding(char c) {
         return c == '。' || c == '！' || c == '？' || c == '；' || c == '!' || c == '?' || c == ';';
     }
