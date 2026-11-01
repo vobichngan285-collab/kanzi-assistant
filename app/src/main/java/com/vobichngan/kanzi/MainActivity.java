@@ -51,7 +51,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.8.0";
+    private static final String APP_VERSION = "0.8.1";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -145,12 +145,16 @@ public class MainActivity extends CameraActivity {
                         busy.set(false);
                         String result = "诊断完成\n摄像头帧：已获取 " + width + "×" + height
                             + "\nOCR 引擎：已就绪\n检测框数量：" + report.getBoxCount()
+                            + "\n当前模型：" + report.getModelId()
                             + "\n平均置信度：" + String.format(Locale.US, "%.3f", report.getAverageConfidence())
+                            + "\n检测输入尺寸：" + report.getDetectorInputShape()
+                            + "\n识别输入尺寸：" + report.getRecognitionInputShapes()
                             + "\n检测耗时：" + report.getDetectionTimeMs() + " ms"
                             + "\n识别耗时：" + report.getRecognitionTimeMs() + " ms"
                             + "\n总耗时：" + report.getTotalTimeMs() + " ms"
                             + "\n诊断总用时：" + (System.currentTimeMillis() - started) + " ms"
-                            + "\n识别结果（低置信度及纯符号片段已过滤）：\n" + (report.getText().isEmpty() ? "（未识别到文字）" : report.getText());
+                            + "\n逐框原始识别（未做低置信度过滤）：\n" + report.getRawDetails()
+                            + "\n\n整理后的识别结果：\n" + (report.getText().isEmpty() ? "（未识别到文字）" : report.getText());
                         lastDiagnosticText = report.getText();
                         runOnUiThread(() -> { if (diagnosticReportView != null) diagnosticReportView.setText(result); });
                     },
