@@ -207,20 +207,34 @@ public final class InternalCameraController {
     }
 
     private static Size chooseCommonSize(Size[] yuv, Size[] surface) {
-        Size best = null;
-        double bestScore = Double.POSITIVE_INFINITY;
+        Size bestWide = null;
+        double bestWideScore = Double.POSITIVE_INFINITY;
+        Size fallback = null;
+        double fallbackScore = Double.POSITIVE_INFINITY;
         for (Size y : yuv) {
             if ((y.getWidth() & 1) != 0 || (y.getHeight() & 1) != 0) continue;
             boolean shared = false;
             for (Size s : surface) if (y.equals(s)) { shared = true; break; }
             if (!shared) continue;
-            // Prefer 1280x720: enough for ordinary text and less CPU than 1080p.
-            double aspect = y.getWidth() / (double)y.getHeight();
-            double score = Math.abs(y.getWidth() * y.getHeight() - 1280.0 * 720.0) / 10000.0;
-            score += Math.abs(aspect - 16.0 / 9.0) * 500;
-            if (score < bestScore) { bestScore = score; best = y; }
+            double aspect = y.getWidth() / (double) y.getHeight();
+            double deviation = Math.abs(aspect - 16.0 / 9.0);
+            // Prefer 1280x720 for fast OCR, but only after the 16:9 shape
+            // is assured. 4:3 640x480 must NOT outrank 16:9 1920x1080.
+            double areaScore = Math.abs(y.getWidth() * (double)y.getHeight() -
+                1280.0 * 720.0) / (1280.0 * 720.0);
+            if (deviation < .03 && areaScore < bestWideScore) {
+                bestWide = y;
+                bestWideScore = areaScore;
+            }
+            double score = deviation * 1000 + areaScore;
+            if (score < fallbackScore) { fallback = y; fallbackScore = score; }
         }
-        if (best != null) return best;
+        if (bestWide != null) return bestWide;
+        if (fallback != null) {
+            Log.w(TAG, "16:9 unsupported; preserving camera's native " +
+                fallback.getWidth() + "x" + fallback.getHeight() + " without distortion");
+            return fallback;
+        }
         throw new IllegalArgumentException("摄像头没有可同时用于预览和OCR的图像尺寸");
     }
 

@@ -30,6 +30,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.graphics.Color;
+import android.graphics.Matrix;
 import android.util.TypedValue;
 import android.util.Log;
 
@@ -53,7 +54,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.9.2";
+    private static final String APP_VERSION = "0.9.3";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -284,8 +285,12 @@ public class MainActivity extends CameraActivity {
         controls.setBackgroundColor(0xAA151515);
 
         phoneTexture = new TextureView(this);
-        phoneTexture.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) ->
-            applyPhonePreviewTransform());
+        // Letterbox areas show the previewContainer's black background.
+        phoneTexture.setOpaque(false);
+        phoneTexture.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+            if (l != ol || t != ot || r != or || b != ob)
+                applyPhonePreviewTransform();
+        });
         phoneTexture.setVisibility(View.GONE);
         // Do NOT add the phone preview to previewContainer here.
         // CameraActivity.initView() invokes previewContainer.removeAllViews()
@@ -601,7 +606,7 @@ public class MainActivity extends CameraActivity {
         panel.addView(rotationSeek);
 
         TextView rotationNote = new TextView(this);
-        rotationNote.setText("只旋转屏幕预览；OCR 始终使用未经旋转或镜像的原始摄像头帧（固定 0°）。");
+        rotationNote.setText("手机摄像头默认16:9等比显示。旋转、镜像、翻转仅改变预览，不会拉伸文字；USB摄像头的OCR仍使用原始0°画面。");
         rotationNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         panel.addView(rotationNote);
 
@@ -637,7 +642,7 @@ public class MainActivity extends CameraActivity {
         previewQualityNote.setTextColor(0xFF667085);
         panel.addView(previewQualityNote);
 
-        transformNote.setText("预览旋转、镜像、翻转均只改变屏幕显示。诊断与自动识别固定使用摄像头原始方向，无法通过界面旋转 OCR。");
+        transformNote.setText("旋转、镜像和翻转会同时作用于当前选择的预览画面；不改变USB摄像头原始OCR输入，也不改变手机摄像头为识别而进行的传感器方向校正。");
         transformNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         transformNote.setTextColor(0xFF667085);
         panel.addView(transformNote);
@@ -755,6 +760,8 @@ public class MainActivity extends CameraActivity {
                 enhancedOcr = enhancedCheck.isChecked();
                 if (tts != null) tts.setSpeechRate(speechRate);
                 applyPreviewTransform();
+                applyPhonePreviewTransform();
+                if (ocrOverlay != null) ocrOverlay.clear();
                 getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
                     .putBoolean(PREF_AUTO_MODE, automaticMode)
                     .putLong(PREF_INTERVAL, recognitionIntervalMs)
@@ -1246,30 +1253,38 @@ public class MainActivity extends CameraActivity {
         else Toast.makeText(this, "请允许相机权限后使用手机摄像头", Toast.LENGTH_LONG).show();
     }
 
+    /**
+     * Full-screen camera SURFACE with a content-only FIT_CENTER matrix.
+     * Unlike rotating/resizing the TextureView itself, this cannot squeeze
+     * a 16:9 camera image into the phone screen's taller proportions.
+     * Only the preview transforms; OCR's source pixel orientation is untouched.
+     */
     private void applyPhonePreviewTransform() {
-        if (phoneTexture == null || previewContainer == null || !usingPhoneCamera) return;
-        int cw = previewContainer.getWidth(), ch = previewContainer.getHeight();
-        if (cw <= 0 || ch <= 0 || phoneRawHeight <= 0) return;
-        boolean quarter = phoneOcrRotation == 90 || phoneOcrRotation == 270;
-        float nativeAspect = phoneRawWidth / (float) phoneRawHeight;
-        float shownAspect = quarter ? 1f / nativeAspect : nativeAspect;
-        float shownW = Math.min(cw, ch * shownAspect);
-        float shownH = shownW / shownAspect;
-        int tw = Math.max(1, Math.round(quarter ? shownH : shownW));
-        int th = Math.max(1, Math.round(quarter ? shownW : shownH));
-        ViewGroup.LayoutParams existing = phoneTexture.getLayoutParams();
-        if (existing instanceof FrameLayout.LayoutParams) {
-            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) existing;
-            if (lp.width != tw || lp.height != th || lp.gravity != Gravity.CENTER) {
-                lp.width = tw; lp.height = th; lp.gravity = Gravity.CENTER;
-                phoneTexture.setLayoutParams(lp);
-            }
-        }
-        phoneTexture.setPivotX(phoneTexture.getWidth() / 2f);
-        phoneTexture.setPivotY(phoneTexture.getHeight() / 2f);
-        phoneTexture.setRotation(phoneOcrRotation);
+        if (phoneTexture == null || !usingPhoneCamera) return;
+        final int viewW = phoneTexture.getWidth();
+        final int viewH = phoneTexture.getHeight();
+        if (viewW <= 0 || viewH <= 0 || phoneRawWidth <= 0 || phoneRawHeight <= 0) return;
+        int angle = PhonePreviewGeometry.rotation(phoneOcrRotation, previewRotation);
+        PhonePreviewGeometry.Layout fit = PhonePreviewGeometry.fit(
+            viewW, viewH, phoneRawWidth, phoneRawHeight, angle,
+            previewMirror, previewVerticalFlip);
+        Matrix transform = new Matrix();
+        transform.setValues(fit.textureMatrix);
+        // Keep the outer TextureView fixed to full-screen; only its image moves.
+        phoneTexture.setPivotX(viewW / 2f);
+        phoneTexture.setPivotY(viewH / 2f);
+        phoneTexture.setRotation(0f);
         phoneTexture.setScaleX(1f);
         phoneTexture.setScaleY(1f);
+        phoneTexture.setTransform(transform);
+        Log.d("KanziPhoneCamera", "FIT 16:9 preview frame=" + phoneRawWidth + "x" +
+            phoneRawHeight + " view=" + viewW + "x" + viewH +
+            " angle=" + angle + " fitted=" + fit.fittedWidth + "x" +
+            fit.fittedHeight);
+        if (ocrOverlay != null) {
+            ocrOverlay.setPhoneDisplayTransform(previewRotation,
+                previewMirror, previewVerticalFlip);
+        }
     }
 
     /** Speak a warning only after the scene remains unclear; never interrupt a page. */

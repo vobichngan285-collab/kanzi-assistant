@@ -18,6 +18,9 @@ public final class OcrOverlayView extends View {
     private View videoView;
     private boolean phoneCamera;
     private int phoneSensorRotation;
+    private int phoneDisplayExtraRotation;
+    private boolean phoneDisplayMirror;
+    private boolean phoneDisplayFlip;
 
     public OcrOverlayView(Context context) {
         super(context);
@@ -42,6 +45,13 @@ public final class OcrOverlayView extends View {
         invalidate();
     }
 
+    public void setPhoneDisplayTransform(int extraRotation, boolean mirror, boolean flip) {
+        phoneDisplayExtraRotation = extraRotation;
+        phoneDisplayMirror = mirror;
+        phoneDisplayFlip = flip;
+        invalidate();
+    }
+
     public void clear() {
         polygons.clear();
         invalidate();
@@ -56,6 +66,7 @@ public final class OcrOverlayView extends View {
         float sx = videoView.getScaleX(), sy = videoView.getScaleY();
         float videoW = videoView.getWidth(), videoH = videoView.getHeight();
         if (videoW <= 0 || videoH <= 0) return;
+        PhonePreviewGeometry.Layout phoneFit = null;
 
         // USB: frame coordinates match pre-rotation TextureView.
         // Phone: OCR normalized the sensor picture, invert its sensor rotation
@@ -64,6 +75,14 @@ public final class OcrOverlayView extends View {
         if (phoneCamera && phoneSensorRotation % 180 != 0) {
             nativeWidth = frameHeight;
             nativeHeight = frameWidth;
+        }
+        if (phoneCamera) {
+            // Apply exactly the same native-camera -> view geometry as the
+            // TextureView content matrix, not the USB view-rotation formula.
+            phoneFit = PhonePreviewGeometry.fit(
+                (int) videoW, (int) videoH, nativeWidth, nativeHeight,
+                PhonePreviewGeometry.rotation(phoneSensorRotation, phoneDisplayExtraRotation),
+                phoneDisplayMirror, phoneDisplayFlip);
         }
         for (float[] coords : polygons) {
             if (coords == null || coords.length != 8) continue;
@@ -76,11 +95,18 @@ public final class OcrOverlayView extends View {
                     else if (phoneSensorRotation == 180) { nx = nativeWidth - x; ny = nativeHeight - y; }
                     else if (phoneSensorRotation == 270) { nx = nativeWidth - y; ny = x; }
                 }
-                float vx = (nx / nativeWidth - .5f) * videoW * sx;
-                float vy = (ny / nativeHeight - .5f) * videoH * sy;
-                double radians = Math.toRadians(rotation);
-                float px = cx + (float)(vx * Math.cos(radians) - vy * Math.sin(radians));
-                float py = cy + (float)(vx * Math.sin(radians) + vy * Math.cos(radians));
+                float px, py;
+                if (phoneCamera) {
+                    float[] mapped = phoneFit.mapNative(nx, ny);
+                    px = videoView.getX() + mapped[0];
+                    py = videoView.getY() + mapped[1];
+                } else {
+                    float vx = (nx / nativeWidth - .5f) * videoW * sx;
+                    float vy = (ny / nativeHeight - .5f) * videoH * sy;
+                    double radians = Math.toRadians(rotation);
+                    px = cx + (float)(vx * Math.cos(radians) - vy * Math.sin(radians));
+                    py = cy + (float)(vx * Math.sin(radians) + vy * Math.cos(radians));
+                }
                 if (i == 0) path.moveTo(px, py);
                 else path.lineTo(px, py);
             }

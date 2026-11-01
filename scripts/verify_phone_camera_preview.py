@@ -5,7 +5,7 @@ import re
 root=Path(__file__).resolve().parents[1]
 activity=(root/"app/src/main/java/com/vobichngan/kanzi/MainActivity.java").read_text()
 camera=(root/"app/src/main/java/com/vobichngan/kanzi/InternalCameraController.java").read_text()
-assert "APP_VERSION = \"0.9.2\"" in activity
+assert "APP_VERSION = \"0.9.3\"" in activity
 start_method = re.search(r"private void startPhoneCamera\(\) \{([\s\S]*?)\n    \}", activity)
 assert start_method, "missing phone camera startup method"
 assert start_method.group(1).index("phoneTexture.setVisibility(View.VISIBLE);") < start_method.group(1).index("phoneController.start(phoneFrontFacing);"), "camera surface must be made visible before Camera2 start"
@@ -36,5 +36,27 @@ start_block = activity.split("private void startPhoneCamera()", 1)[1].split(
 assert start_block.index("mainHandler.postDelayed(") < start_block.index(
     "phoneTexture.post("), "camera timeout must not depend on an attached phone view"
 assert "预览控件未挂载" in activity and "手机摄像头启动超时" in activity
+
+
+# 0.9.3: fixed full-screen TextureView with aspect-preserving content matrix,
+# sharing its geometry with the white OCR boxes on the overlay.
+overlay=(root/"app/src/main/java/com/vobichngan/kanzi/OcrOverlayView.java").read_text()
+geom=(root/"app/src/main/java/com/vobichngan/kanzi/PhonePreviewGeometry.java").read_text()
+assert "phoneTexture.setTransform(transform);" in activity
+assert "PhonePreviewGeometry.fit(" in activity
+assert "PhonePreviewGeometry.fit(" in overlay
+assert "phoneFit.mapNative(nx, ny)" in overlay
+assert "previewMirror, previewVerticalFlip);" in activity
+assert "applyPreviewTransform();\n                applyPhonePreviewTransform();" in activity
+assert "phoneTexture.setOpaque(false);" in activity
+assert "phoneTexture.setRotation(0f);" in activity
+phone_method=activity.split("private void applyPhonePreviewTransform()",1)[1].split(
+    "/** Speak a warning",1)[0]
+assert "setLayoutParams(" not in phone_method
+assert "setRotation(phoneOcrRotation)" not in phone_method
+assert "float scale = Math.min(viewWidth / rotatedW, viewHeight / rotatedH);" in geom
+assert "float horizontal = mirror ? -scale : scale" in geom
+assert "float vertical = flip ? -scale : scale" in geom
+assert "int angle = PhonePreviewGeometry.rotation(phoneOcrRotation, previewRotation);" in activity
 
 print("PHONE_CAMERA_PREVIEW_LIFECYCLE=PASS")
