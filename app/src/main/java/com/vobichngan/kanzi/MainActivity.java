@@ -306,8 +306,16 @@ public class MainActivity extends CameraActivity {
             }
             @Override public void onError(String message) {
                 runOnUiThread(() -> {
-                    status.setText(ocrModelDisplayName(modelId) + " 初始化失败：" + message);
-                    Toast.makeText(MainActivity.this, "OCR 模型初始化失败，请切回 PP-OCRv6 Small。", Toast.LENGTH_LONG).show();
+                    if (!"ppocrv6_small".equals(modelId)) {
+                        Toast.makeText(MainActivity.this, ocrModelDisplayName(modelId) + " 初始化失败，已自动回退到 PP-OCRv6 Small。", Toast.LENGTH_LONG).show();
+                        ocrModelId = "ppocrv6_small";
+                        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                            .putString(PREF_OCR_MODEL, ocrModelId).apply();
+                        switchOcrModel("ppocrv6_small");
+                    } else {
+                        status.setText(ocrModelDisplayName(modelId) + " 初始化失败：" + message);
+                        Toast.makeText(MainActivity.this, "默认 OCR 模型初始化失败：" + message, Toast.LENGTH_LONG).show();
+                    }
                 });
             }
         }, modelId);
@@ -684,7 +692,17 @@ public class MainActivity extends CameraActivity {
                 runOnUiThread(() -> status.setText(ocrModelDisplayName(ocrModelId) + " 已加载，等待 USB 摄像头…"));
             }
             @Override public void onError(String message) {
-                runOnUiThread(() -> status.setText("飞桨 OCR 初始化失败：" + message));
+                runOnUiThread(() -> {
+                    if (!"ppocrv6_small".equals(ocrModelId)) {
+                        Toast.makeText(MainActivity.this, ocrModelDisplayName(ocrModelId) + " 启动失败，自动恢复 PP-OCRv6 Small。", Toast.LENGTH_LONG).show();
+                        ocrModelId = "ppocrv6_small";
+                        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                            .putString(PREF_OCR_MODEL, ocrModelId).apply();
+                        switchOcrModel("ppocrv6_small");
+                    } else {
+                        status.setText("默认 PP-OCRv6 Small 初始化失败：" + message);
+                    }
+                });
             }
         }, ocrModelId);
         recognizer.initialize();
