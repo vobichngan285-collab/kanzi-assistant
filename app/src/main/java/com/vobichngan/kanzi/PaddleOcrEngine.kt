@@ -4,7 +4,6 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
-import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.YuvImage
 import android.util.Log
@@ -84,7 +83,7 @@ class PaddleOcrEngine(
     fun isReady(): Boolean = engine != null && !released
 
     fun diagnoseNv21(
-        data: ByteArray, width: Int, height: Int, rotationDegrees: Int,
+        data: ByteArray, width: Int, height: Int,
         enhancedPreprocessing: Boolean, legacyNv21Jpeg: Boolean,
         onResult: OcrDiagnosticCallback, onError: OcrErrorCallback
     ) {
@@ -101,7 +100,7 @@ class PaddleOcrEngine(
                 require(width.toLong() * height.toLong() * 3L / 2L == data.size.toLong()) {
                     "摄像头 NV21 帧长度不正确"
                 }
-                var bitmap = nv21ToBitmap(data, width, height, rotationDegrees, legacyNv21Jpeg)
+                var bitmap = nv21ToBitmap(data, width, height, legacyNv21Jpeg)
                 try {
                     if (enhancedPreprocessing) {
                         val enhanced = enhanceForOcr(bitmap)
@@ -190,7 +189,6 @@ class PaddleOcrEngine(
         data: ByteArray,
         width: Int,
         height: Int,
-        rotationDegrees: Int,
         enhancedPreprocessing: Boolean,
         legacyNv21Jpeg: Boolean,
         onResult: OcrResultCallback,
@@ -213,7 +211,7 @@ class PaddleOcrEngine(
                 require(expectedBytes == data.size.toLong()) {
                     "NV21 数据长度不匹配：收到 ${data.size} 字节，预期 ${expectedBytes} 字节"
                 }
-                var bitmap = nv21ToBitmap(data, width, height, rotationDegrees, legacyNv21Jpeg)
+                var bitmap = nv21ToBitmap(data, width, height, legacyNv21Jpeg)
                 try {
                     if (enhancedPreprocessing) {
                         val enhanced = enhanceForOcr(bitmap)
@@ -241,7 +239,7 @@ class PaddleOcrEngine(
                     val text = arrangeInReadingOrder(result.results)
                     val averageConfidence = if (result.results.isEmpty()) 0.0
                         else result.results.map { it.confidence }.average()
-                    val message = "frame=${width}x${height}, rotation=${rotationDegrees}, " +
+                    val message = "frame=${width}x${height}, ocrInputDirection=raw0, " +
                         "bitmap=${bitmap.width}x${bitmap.height}, boxes=${result.results.size}, " +
                         "avgConfidence=${"%.3f".format(java.util.Locale.US, averageConfidence)}, " +
                         "det=${result.detectionTimeMs}ms, rec=${result.recognitionTimeMs}ms, " +
@@ -376,49 +374,29 @@ class PaddleOcrEngine(
     private fun Char.isAsciiWordChar(): Boolean =
         this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9'
 
-    private fun nv21ToBitmap(data: ByteArray, width: Int, height: Int, rotationDegrees: Int, legacyNv21Jpeg: Boolean): Bitmap {
+    /** Decode the camera's unrotated NV21 pixels; TextureView handles display transforms. */
+    private fun nv21ToBitmap(data: ByteArray, width: Int, height: Int, legacyNv21Jpeg: Boolean): Bitmap {
         if (legacyNv21Jpeg) {
-            // 0.7.0 reference path: NV21 -> JPEG(82) -> Bitmap -> Matrix rotation.
-            // Used only for A/B comparison against the new lossless OpenCV path.
-            val out = ByteArrayOutputStream()
+            val output = ByteArrayOutputStream()
             check(YuvImage(data, ImageFormat.NV21, width, height, null)
-                .compressToJpeg(Rect(0, 0, width, height), 82, out)) {
+                .compressToJpeg(Rect(0, 0, width, height), 82, output)) {
                 "0.7.0 兼容图像转换失败"
             }
-            val encoded = out.toByteArray()
-            val decoded = BitmapFactory.decodeByteArray(encoded, 0, encoded.size)
+            val bytes = output.toByteArray()
+            return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                 ?: error("0.7.0 兼容图像解码失败")
-            if (rotationDegrees == 0) return decoded
-            val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
-            val rotated = Bitmap.createBitmap(
-                decoded, 0, 0, decoded.width, decoded.height, matrix, true
-            )
-            if (rotated !== decoded) decoded.recycle()
-            return rotated
-        }
-        require(rotationDegrees == 0 || rotationDegrees == 90 ||
-            rotationDegrees == 180 || rotationDegrees == 270) {
-            "不支持的 OCR 旋转角度：${rotationDegrees}"
         }
         val yuv = Mat(height + height / 2, width, CvType.CV_8UC1)
         val rgba = Mat()
-        val oriented = Mat()
         try {
             yuv.put(0, 0, data)
             Imgproc.cvtColor(yuv, rgba, Imgproc.COLOR_YUV2RGBA_NV21)
-            when (rotationDegrees) {
-                90 -> Core.rotate(rgba, oriented, Core.ROTATE_90_CLOCKWISE)
-                180 -> Core.rotate(rgba, oriented, Core.ROTATE_180)
-                270 -> Core.rotate(rgba, oriented, Core.ROTATE_90_COUNTERCLOCKWISE)
-                else -> rgba.copyTo(oriented)
+            return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also {
+                Utils.matToBitmap(rgba, it)
             }
-            return Bitmap.createBitmap(
-                oriented.cols(), oriented.rows(), Bitmap.Config.ARGB_8888
-            ).also { Utils.matToBitmap(oriented, it) }
         } finally {
             yuv.release()
             rgba.release()
-            oriented.release()
         }
     }
 

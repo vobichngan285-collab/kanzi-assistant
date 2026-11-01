@@ -51,7 +51,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.8.3";
+    private static final String APP_VERSION = "0.8.4";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -62,7 +62,6 @@ public class MainActivity extends CameraActivity {
     private static final String PREF_QUEUE_SPEECH = "queue_speech";
     private static final String PREF_SPEECH_RATE = "speech_rate";
     private static final String PREF_PREVIEW_ROTATION = "preview_rotation";
-    private static final String PREF_OCR_ROTATION = "ocr_input_rotation";
     private static final String PREF_LEGACY_NV21 = "ocr_legacy_nv21_jpeg";
     private static final String PREF_PREVIEW_MIRROR = "preview_mirror";
     private static final String PREF_PREVIEW_FLIP = "preview_flip";
@@ -87,7 +86,6 @@ public class MainActivity extends CameraActivity {
     private volatile boolean queueSpeech = true;
     private volatile float speechRate = 1.0f;
     private volatile int previewRotation = 0;
-    private volatile int ocrRotation = 0;
     private volatile boolean legacyNv21Jpeg = false;
     private volatile boolean previewMirror = false;
     private volatile boolean previewVerticalFlip = false;
@@ -143,15 +141,14 @@ public class MainActivity extends CameraActivity {
                 }
                 final byte[] diagnosticFrame = data.clone();
                 final long started = diagnosticStartedAt;
-                final int rotationForDiagnostic = ocrRotation;
                 final boolean legacyForDiagnostic = legacyNv21Jpeg;
-                recognizer.diagnoseNv21(diagnosticFrame, width, height, rotationForDiagnostic, enhancedOcr, legacyForDiagnostic,
+                recognizer.diagnoseNv21(diagnosticFrame, width, height, enhancedOcr, legacyForDiagnostic,
                     report -> {
                         busy.set(false);
                         String result = "诊断完成\n摄像头帧：已获取 " + width + "×" + height
                             + "\nOCR 引擎：已就绪\n检测框数量：" + report.getBoxCount()
                             + "\n当前模型：" + report.getModelId()
-                            + "\nOCR 输入旋转：" + rotationForDiagnostic + "°"
+                            + "\nOCR 输入方向：原始摄像头帧（固定 0°）"
                             + "\n图像解码：" + (legacyForDiagnostic ? "0.7.0 JPEG 兼容方式" : "OpenCV NV21 方式")
                             + "\n平均置信度：" + String.format(Locale.US, "%.3f", report.getAverageConfidence())
                             + "\n检测输入尺寸：" + report.getDetectorInputShape()
@@ -186,11 +183,10 @@ public class MainActivity extends CameraActivity {
             }
             lastProcess = now;
             byte[] frame = data.clone();
-            final int rotation = ocrRotation;
             final boolean enhance = enhancedOcr;
             final boolean legacyDecode = legacyNv21Jpeg;
             try {
-                recognizer.recognizeNv21(frame, width, height, rotation, enhance, legacyDecode, found -> {
+                recognizer.recognizeNv21(frame, width, height, enhance, legacyDecode, found -> {
                     busy.set(false);
                     if (found != null) onRecognized(found);
                 }, error -> {
@@ -281,8 +277,6 @@ public class MainActivity extends CameraActivity {
         speechRate = Math.max(0.5f, Math.min(2.0f, prefs.getFloat(PREF_SPEECH_RATE, 1.0f)));
         previewRotation = prefs.getInt(PREF_PREVIEW_ROTATION, 0);
         if (previewRotation != 0 && previewRotation != 90 && previewRotation != 180 && previewRotation != 270) previewRotation = 0;
-        ocrRotation = prefs.getInt(PREF_OCR_ROTATION, 0);
-        if (ocrRotation != 0 && ocrRotation != 90 && ocrRotation != 180 && ocrRotation != 270) ocrRotation = 0;
         legacyNv21Jpeg = prefs.getBoolean(PREF_LEGACY_NV21, false);
         previewMirror = prefs.getBoolean(PREF_PREVIEW_MIRROR, false);
         previewVerticalFlip = prefs.getBoolean(PREF_PREVIEW_FLIP, false);
@@ -474,26 +468,10 @@ public class MainActivity extends CameraActivity {
         panel.addView(rotationSeek);
 
         TextView rotationNote = new TextView(this);
-        rotationNote.setText("屏幕预览旋转只调整显示，不再改变送入 OCR 的图像方向。若摄像头原始画面里的文字端正，请保持 OCR 输入旋转为 0°。");
+        rotationNote.setText("只旋转屏幕预览；OCR 始终使用未经旋转或镜像的原始摄像头帧（固定 0°）。");
         rotationNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         panel.addView(rotationNote);
 
-        TextView ocrRotationTitle = new TextView(this);
-        ocrRotationTitle.setText("OCR 输入旋转：" + ocrRotation + "°（建议先选 0°）");
-        ocrRotationTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-        ocrRotationTitle.setPadding(0, dp(12), 0, dp(4));
-        panel.addView(ocrRotationTitle);
-        SeekBar ocrRotationSeek = new SeekBar(this);
-        ocrRotationSeek.setMax(3);
-        ocrRotationSeek.setProgress(ocrRotation / 90);
-        ocrRotationSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                ocrRotationTitle.setText("OCR 输入旋转：" + (progress * 90) + "°（建议先选 0°）");
-            }
-            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
-            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
-        });
-        panel.addView(ocrRotationSeek);
 
         CheckBox legacyDecodeCheck = new CheckBox(this);
         legacyDecodeCheck.setText("使用 0.7.0 的 NV21→JPEG 图像解码方式（对照测试）");
@@ -526,7 +504,7 @@ public class MainActivity extends CameraActivity {
         previewQualityNote.setTextColor(0xFF667085);
         panel.addView(previewQualityNote);
 
-        transformNote.setText("预览画面的旋转、镜像及翻转只影响屏幕显示；OCR 输入旋转独立设置。OCR 默认为 0°，以避免仅调整屏幕预览时把正确中文旋转成侧向文字。");
+        transformNote.setText("预览旋转、镜像、翻转均只改变屏幕显示。诊断与自动识别固定使用摄像头原始方向，无法通过界面旋转 OCR。");
         transformNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         transformNote.setTextColor(0xFF667085);
         panel.addView(transformNote);
@@ -637,7 +615,6 @@ public class MainActivity extends CameraActivity {
                 try { maxSpeechChars = Math.max(0, Math.min(5000, Integer.parseInt(maxCharsInput.getText().toString().trim()))); }
                 catch (NumberFormatException ignored) { maxSpeechChars = 0; }
                 previewRotation = rotationSeek.getProgress() * 90;
-                ocrRotation = ocrRotationSeek.getProgress() * 90;
                 legacyNv21Jpeg = legacyDecodeCheck.isChecked();
                 previewMirror = mirrorCheck.isChecked();
                 previewVerticalFlip = flipCheck.isChecked();
@@ -651,7 +628,6 @@ public class MainActivity extends CameraActivity {
                     .putBoolean(PREF_QUEUE_SPEECH, queueSpeech)
                     .putFloat(PREF_SPEECH_RATE, speechRate)
                     .putInt(PREF_PREVIEW_ROTATION, previewRotation)
-                    .putInt(PREF_OCR_ROTATION, ocrRotation)
                     .putBoolean(PREF_LEGACY_NV21, legacyNv21Jpeg)
                     .putBoolean(PREF_PREVIEW_MIRROR, previewMirror)
                     .putBoolean(PREF_PREVIEW_FLIP, previewVerticalFlip)
