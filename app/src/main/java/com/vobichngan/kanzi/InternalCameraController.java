@@ -50,7 +50,10 @@ public final class InternalCameraController {
     private boolean active;
     private int rotationDegrees;
     private int activeWidth, activeHeight;
-    private final Object mutex = new Object();
+    private Surface previewSurface;
+    private int generation;
+    private boolean openRequested;
+    private boolean previewDelivered;
 
     public InternalCameraController(Activity activity, TextureView textureView, Listener listener) {
         this.activity = activity;
@@ -63,26 +66,51 @@ public final class InternalCameraController {
     }
 
     public void start(boolean frontFacing) {
-        if (!hasPermission()) { listener.onError("需要授予手机摄像头权限"); return; }
+        if (!hasPermission()) { listener.onError("未获得手机摄像头权限"); return; }
         stop();
         front = frontFacing;
         active = true;
+        final int token = generation;
+        openRequested = false;
+        previewDelivered = false;
         worker = new HandlerThread("KanziCamera2");
         worker.start();
         handler = new Handler(worker.getLooper());
-        if (textureView.isAvailable()) openCamera();
-        else textureView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
+
+        // TextureView has to be VISIBLE and attached before any Camera2 output
+        // surface can be allocated. This listener waits for real availability.
+        textureView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             @Override public void onSurfaceTextureAvailable(SurfaceTexture surface, int w, int h) {
-                if (active) openCamera();
+                if (active && generation == token) openCamera();
             }
             @Override public void onSurfaceTextureSizeChanged(SurfaceTexture surface, int w, int h) {}
-            @Override public boolean onSurfaceTextureDestroyed(SurfaceTexture surface) { stop(); return true; }
-            @Override public void onSurfaceTextureUpdated(SurfaceTexture surface) {}
+            @Override public boolean onSurfaceTextureDestroyed(SurfaceTexture surface) {
+                if (active && generation == token) stop();
+                return true;
+            }
+            @Override public void onSurfaceTextureUpdated(SurfaceTexture surface) {
+                if (active && generation == token && !previewDelivered) {
+                    previewDelivered = true;
+                    listener.onPreviewStarted();
+                    Log.i(TAG, "Camera2 preview frame displayed");
+                }
+            }
         });
+        if (textureView.isAvailable()) {
+            // Let layout, visibility and the phone preview transform settle
+            // before opening the camera. Surface remains attached during normal
+            // frame delivery, regardless of OCR's recognition interval.
+            textureView.post(() -> {
+                if (active && generation == token) openCamera();
+            });
+        }
     }
 
     private void openCamera() {
-        if (!active || handler == null || !textureView.isAvailable()) return;
+        if (!active || handler == null || !textureView.isAvailable() || openRequested) return;
+        if (textureView.getWidth() < 2 || textureView.getHeight() < 2) return;
+        openRequested = true;
+        final int token = generation;
         try {
             CameraManager manager = (CameraManager) activity.getSystemService(Context.CAMERA_SERVICE);
             if (manager == null) { listener.onError("没有找到系统摄像头管理器"); return; }
@@ -97,9 +125,11 @@ public final class InternalCameraController {
                 }
             }
             if (selectedId == null || selected == null) {
-                listener.onError(front ? "这台设备没有可用的前置摄像头" : "这台设备没有可用的后置摄像头");
+                listener.onError(front ? "没有找到前置摄像头设备" : "没有找到后置摄像头设备");
+                openRequested = false;
                 return;
             }
+            Log.i(TAG, "Opening phone camera ID=" + selectedId + " front=" + front);
             Integer orientation = selected.get(CameraCharacteristics.SENSOR_ORIENTATION);
             int sensor = orientation == null ? 90 : orientation;
             int display = activity.getWindowManager().getDefaultDisplay().getRotation() * 90;
@@ -107,10 +137,14 @@ public final class InternalCameraController {
             // are normalized; USB still gives OCR its untouched original frame.
             rotationDegrees = front ? (sensor + display) % 360 : (sensor - display + 360) % 360;
             StreamConfigurationMap map = selected.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-            if (map == null) { listener.onError("手机摄像头没有可用的图像流"); return; }
+            if (map == null) { listener.onError("手机摄像头没有可用的图像流"); openRequested = false; return; }
             Size[] yuv = map.getOutputSizes(ImageFormat.YUV_420_888);
             Size[] surface = map.getOutputSizes(SurfaceTexture.class);
-            if (yuv == null || surface == null) { listener.onError("手机摄像头不支持实时分析图像"); return; }
+            if (yuv == null || yuv.length == 0 || surface == null || surface.length == 0) {
+                openRequested = false;
+                listener.onError("摄像头不支持预览及图像分析格式");
+                return;
+            }
             Size chosen = chooseCommonSize(yuv, surface);
             activeWidth = chosen.getWidth(); activeHeight = chosen.getHeight();
             reader = ImageReader.newInstance(activeWidth, activeHeight, ImageFormat.YUV_420_888, 2);
@@ -131,26 +165,43 @@ public final class InternalCameraController {
             SurfaceTexture st = textureView.getSurfaceTexture();
             if (st == null) { listener.onError("手机摄像头预览未就绪"); return; }
             st.setDefaultBufferSize(activeWidth, activeHeight);
+            Log.i(TAG, "Selected phone camera size " + activeWidth + "x" + activeHeight +
+                ", sensor rotation=" + rotationDegrees);
             listener.onOpened(activeWidth, activeHeight, rotationDegrees);
-            manager.openCamera(selectedId, new CameraDevice.StateCallback() {
-                @Override public void onOpened(CameraDevice device) {
-                    if (!active) { device.close(); return; }
-                    camera = device;
-                    configureSession();
+            // Preview layout may change after onOpened: wait for the UI to apply
+            // the new aspect ratio before binding Camera2 to the SurfaceTexture.
+            final String cameraId = selectedId;
+            textureView.post(() -> {
+                if (!active || token != generation || !textureView.isAvailable()) return;
+                try {
+                    manager.openCamera(cameraId, new CameraDevice.StateCallback() {
+                        @Override public void onOpened(CameraDevice device) {
+                            if (!active || token != generation) { device.close(); return; }
+                            camera = device;
+                            Log.i(TAG, "Phone Camera2 device opened");
+                            configureSession(token);
+                        }
+                        @Override public void onDisconnected(CameraDevice device) {
+                            device.close();
+                            if (token != generation) return;
+                            camera = null;
+                            listener.onError("摄像头连接中断");
+                        }
+                        @Override public void onError(CameraDevice device, int error) {
+                            device.close();
+                            if (token != generation) return;
+                            camera = null;
+                            listener.onError("相机设备错误码 " + error);
+                        }
+                    }, handler);
+                } catch (CameraAccessException | SecurityException | IllegalArgumentException ex) {
+                    if (token == generation)
+                        listener.onError("无法打开摄像头：" + ex.getMessage());
                 }
-                @Override public void onDisconnected(CameraDevice device) {
-                    device.close();
-                    camera = null;
-                    listener.onError("手机摄像头已断开");
-                }
-                @Override public void onError(CameraDevice device, int error) {
-                    device.close();
-                    camera = null;
-                    listener.onError("手机摄像头启动失败，错误码：" + error);
-                }
-            }, handler);
-        } catch (CameraAccessException | SecurityException error) {
-            listener.onError("无法打开手机摄像头：" + error.getMessage());
+            });
+        } catch (CameraAccessException | SecurityException | IllegalArgumentException error) {
+            openRequested = false;
+            listener.onError("摄像头初始化失败：" + error.getMessage());
         }
     }
 
@@ -169,36 +220,49 @@ public final class InternalCameraController {
             if (score < bestScore) { bestScore = score; best = y; }
         }
         if (best != null) return best;
-        return yuv[0];
+        throw new IllegalArgumentException("摄像头没有可同时用于预览和OCR的图像尺寸");
     }
 
-    private void configureSession() {
-        if (camera == null || reader == null || !active) return;
+    private void configureSession(final int token) {
+        if (camera == null || reader == null || !active || token != generation) return;
         SurfaceTexture st = textureView.getSurfaceTexture();
-        if (st == null) return;
-        Surface video = new Surface(st);
+        if (st == null || !textureView.isAvailable()) {
+            listener.onError("预览SurfaceTexture未准备好");
+            return;
+        }
+        previewSurface = new Surface(st);
         Surface analysis = reader.getSurface();
         try {
             CaptureRequest.Builder builder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
-            builder.addTarget(video);
+            builder.addTarget(previewSurface);
             builder.addTarget(analysis);
-            builder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
-            builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
-            camera.createCaptureSession(Arrays.asList(video, analysis), new CameraCaptureSession.StateCallback() {
-                @Override public void onConfigured(CameraCaptureSession configured) {
-                    if (!active || camera == null) { configured.close(); video.release(); return; }
-                    session = configured;
-                    try { configured.setRepeatingRequest(builder.build(), null, handler); }
-                    catch (CameraAccessException ex) { listener.onError("手机摄像头无法启动预览：" + ex.getMessage()); }
-                }
-                @Override public void onConfigureFailed(CameraCaptureSession failed) {
-                    failed.close();
-                    listener.onError("手机摄像头预览配置失败");
-                }
-            }, handler);
-        } catch (CameraAccessException ex) {
-            video.release();
-            listener.onError("手机摄像头配置异常：" + ex.getMessage());
+            builder.set(CaptureRequest.CONTROL_AF_MODE,
+                CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+            builder.set(CaptureRequest.CONTROL_AE_MODE,
+                CaptureRequest.CONTROL_AE_MODE_ON);
+            camera.createCaptureSession(Arrays.asList(previewSurface, analysis),
+                new CameraCaptureSession.StateCallback() {
+                    @Override public void onConfigured(CameraCaptureSession configured) {
+                        if (!active || camera == null || token != generation) {
+                            configured.close();
+                            return;
+                        }
+                        session = configured;
+                        try {
+                            configured.setRepeatingRequest(builder.build(), null, handler);
+                            Log.i(TAG, "Camera2 repeating preview request active");
+                        } catch (CameraAccessException | IllegalStateException ex) {
+                            listener.onError("无法启动手机摄像头预览：" + ex.getMessage());
+                        }
+                    }
+                    @Override public void onConfigureFailed(CameraCaptureSession failed) {
+                        failed.close();
+                        if (token == generation)
+                            listener.onError("Camera2预览会话配置失败，请尝试切换摄像头");
+                    }
+                }, handler);
+        } catch (CameraAccessException | IllegalArgumentException | IllegalStateException ex) {
+            listener.onError("手机摄像头预览配置异常：" + ex.getMessage());
         }
     }
 
@@ -226,10 +290,17 @@ public final class InternalCameraController {
     }
 
     public void stop() {
+        generation++;
         active = false;
+        openRequested = false;
+        previewDelivered = false;
         if (session != null) { try { session.close(); } catch (Exception ignored) {} session = null; }
         if (camera != null) { try { camera.close(); } catch (Exception ignored) {} camera = null; }
         if (reader != null) { try { reader.close(); } catch (Exception ignored) {} reader = null; }
+        if (previewSurface != null) {
+            try { previewSurface.release(); } catch (Exception ignored) {}
+            previewSurface = null;
+        }
         if (worker != null) { worker.quitSafely(); worker = null; }
         handler = null;
     }

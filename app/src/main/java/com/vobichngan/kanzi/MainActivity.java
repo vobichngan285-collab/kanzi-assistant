@@ -53,7 +53,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.9.0";
+    private static final String APP_VERSION = "0.9.1";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -86,6 +86,9 @@ public class MainActivity extends CameraActivity {
     private Button modeButton, captureButton, startButton, settingsButton, readingModeButton;
     private Button cameraSourceButton, lensButton;
     private TextureView phoneTexture;
+    private TextView phonePreviewStatus;
+    private int phoneStartSequence = 0;
+    private boolean phonePreviewReceived = false;
     private InternalCameraController phoneController;
     private OcrOverlayView ocrOverlay;
     private volatile boolean usingPhoneCamera = false;
@@ -284,10 +287,25 @@ public class MainActivity extends CameraActivity {
         phoneTexture.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) ->
             applyPhonePreviewTransform());
         phoneTexture.setVisibility(View.GONE);
-        previewContainer.addView(phoneTexture, new FrameLayout.LayoutParams(1, 1, Gravity.CENTER));
+        // A 1x1 GONE TextureView may never obtain a SurfaceTexture. Use a real
+        // full-size view; show it before starting the phone camera.
+        previewContainer.addView(phoneTexture, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER));
         ocrOverlay = new OcrOverlayView(this);
         root.addView(ocrOverlay, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        phonePreviewStatus = new TextView(this);
+        phonePreviewStatus.setTextColor(Color.WHITE);
+        phonePreviewStatus.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
+        phonePreviewStatus.setGravity(Gravity.CENTER);
+        phonePreviewStatus.setPadding(dp(20), dp(10), dp(20), dp(10));
+        phonePreviewStatus.setBackgroundColor(0xA9000000);
+        phonePreviewStatus.setVisibility(View.GONE);
+        phonePreviewStatus.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+        phonePreviewStatus.setClickable(false);
+        FrameLayout.LayoutParams phoneStatusParams = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(104), Gravity.CENTER);
+        root.addView(phonePreviewStatus, phoneStatusParams);
 
         cameraSourceButton = createControlButton("摄像头：USB 外接");
         lensButton = createControlButton("切换前后");
@@ -871,9 +889,20 @@ public class MainActivity extends CameraActivity {
                     updateControlLabels();
                 });
             }
+            @Override public void onPreviewStarted() {
+                runOnUiThread(() -> {
+                    if (!usingPhoneCamera) return;
+                    phonePreviewReceived = true;
+                    if (phonePreviewStatus != null) phonePreviewStatus.setVisibility(View.GONE);
+                });
+            }
             @Override public void onError(String message) {
                 Log.w("KanziPhoneCamera", message);
-                runOnUiThread(() -> Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show());
+                runOnUiThread(() -> {
+                    if (!usingPhoneCamera) return;
+                    showPhonePreviewStatus("手机摄像头启动失败：" + message +
+                        "\n请尝试切换前后摄像头。", true);
+                });
             }
         });
         tts = new TextToSpeech(this, code -> {
@@ -996,7 +1025,10 @@ public class MainActivity extends CameraActivity {
         diagnosticAttempts = 0;
         diagnosticHandler.removeCallbacks(diagnosticRunnable);
         diagnosticHandler.post(diagnosticRunnable);
-        if (usingPhoneCamera && phoneController != null) startPhoneCamera();
+        if (usingPhoneCamera && phoneController != null) {
+            // Restore the saved camera choice to the actual view state too.
+            startPhoneCamera();
+        }
     }
 
     private void diagnoseUsbDevices() {
@@ -1104,33 +1136,64 @@ public class MainActivity extends CameraActivity {
         usingPhoneCamera = phone;
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
             .putBoolean(PREF_PHONE_CAMERA, phone).apply();
+        phoneStartSequence++;
         if (phoneController != null) phoneController.stop();
-        if (phoneTexture != null) {
-            phoneTexture.setVisibility(phone ? View.VISIBLE : View.GONE);
-            if (phone) phoneTexture.bringToFront();
-        }
+        if (phoneTexture != null) phoneTexture.setVisibility(phone ? View.VISIBLE : View.GONE);
         if (cameraTextureView != null)
             cameraTextureView.setVisibility(phone ? View.INVISIBLE : View.VISIBLE);
-        if (phone) startPhoneCamera();
-        else applyPreviewTransform();
+        if (phone) {
+            startPhoneCamera();
+        } else {
+            phonePreviewReceived = false;
+            if (phonePreviewStatus != null) phonePreviewStatus.setVisibility(View.GONE);
+            applyPreviewTransform();
+        }
         updateControlLabels();
         String message = phone ? (phoneFrontFacing ? "已切换手机前置摄像头" : "已切换手机后置摄像头")
                                : "已切换USB外接摄像头";
         if (cameraSourceButton != null) cameraSourceButton.announceForAccessibility(message);
     }
 
+    private void showPhonePreviewStatus(String message, boolean speakError) {
+        if (!usingPhoneCamera || phonePreviewStatus == null) return;
+        phonePreviewStatus.setText(message);
+        phonePreviewStatus.setVisibility(View.VISIBLE);
+        if (speakError) {
+            phonePreviewStatus.announceForAccessibility(message);
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+        }
+    }
+
     private void startPhoneCamera() {
-        if (!usingPhoneCamera || phoneController == null) return;
+        if (!usingPhoneCamera || phoneController == null || phoneTexture == null) return;
         if (!phoneController.hasPermission()) {
+            showPhonePreviewStatus("请允许看字助手使用手机摄像头", false);
             requestPermissions(new String[]{Manifest.permission.CAMERA}, REQUEST_PHONE_CAMERA);
             return;
         }
-        phoneController.start(phoneFrontFacing);
-        if (phoneTexture != null) {
-            phoneTexture.setVisibility(View.VISIBLE);
-            phoneTexture.bringToFront();
-        }
+        // Visibility must be established BEFORE Camera2 waits for SurfaceTexture.
+        phoneTexture.setVisibility(View.VISIBLE);
+        phoneTexture.bringToFront();
         if (cameraTextureView != null) cameraTextureView.setVisibility(View.INVISIBLE);
+        phonePreviewReceived = false;
+        showPhonePreviewStatus(phoneFrontFacing
+            ? "正在打开手机前置摄像头…" : "正在打开手机后置摄像头…", false);
+        final int sequence = ++phoneStartSequence;
+        // Post until the TextureView is attached and laid out. Ignore stale
+        // requests if the user toggles camera source/lens before it can open.
+        phoneTexture.post(() -> {
+            if (!usingPhoneCamera || phoneController == null ||
+                sequence != phoneStartSequence || !phoneTexture.isAttachedToWindow()) return;
+            phoneController.start(phoneFrontFacing);
+            mainHandler.postDelayed(() -> {
+                if (sequence == phoneStartSequence && usingPhoneCamera && !phonePreviewReceived &&
+                    phonePreviewStatus != null && phonePreviewStatus.getVisibility() == View.VISIBLE &&
+                    phonePreviewStatus.getText().toString().startsWith("正在打开")) {
+                    showPhonePreviewStatus(
+                        "没有收到手机摄像头画面。请尝试切换前后摄像头，或退出重新进入应用。", true);
+                }
+            }, 5500L);
+        });
     }
 
     @Override public void onRequestPermissionsResult(int requestCode,
@@ -1374,11 +1437,13 @@ public class MainActivity extends CameraActivity {
     private int dp(int value) { return (int) (value * getResources().getDisplayMetrics().density); }
 
     @Override protected void onPause() {
+        phoneStartSequence++;
         if (phoneController != null) phoneController.stop();
         super.onPause();
     }
 
     @Override protected void onDestroy() {
+        phoneStartSequence++;
         if (phoneController != null) phoneController.stop();
         running = false;
         manualCaptureRequested.set(false);
