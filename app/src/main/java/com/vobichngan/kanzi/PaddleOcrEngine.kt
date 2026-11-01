@@ -2,13 +2,10 @@ package com.vobichngan.kanzi
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.ImageFormat
-import android.graphics.Matrix
-import android.graphics.Rect
-import android.graphics.YuvImage
+import android.util.Log
 import org.opencv.android.Utils
 import org.opencv.core.Core
+import org.opencv.core.CvType
 import org.opencv.core.Mat
 import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
@@ -23,12 +20,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.math.abs
-import kotlin.math.max
-import kotlin.math.min
 
 fun interface OcrResultCallback { fun onResult(text: String?) }
 fun interface OcrErrorCallback { fun onError(message: String) }
@@ -43,22 +36,6 @@ class PaddleOcrEngine(
         fun onError(message: String)
     }
 
-    private data class PositionedText(
-        val item: OCRResult,
-        val left: Float,
-        val top: Float,
-        val bottom: Float,
-        val centerY: Float,
-        val height: Float
-    )
-
-    private data class TextLine(
-        val items: MutableList<PositionedText>,
-        var top: Float,
-        var bottom: Float,
-        var centerY: Float
-    )
-
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val busy = AtomicBoolean(false)
@@ -69,7 +46,16 @@ class PaddleOcrEngine(
         scope.launch {
             try {
                 check(OpenCVUtils.init(appContext)) { "OpenCV 初始化失败" }
-                val ocrConfig = PaddleOCRConfig(recBatchSize = 1)
+                // Keep detector input bounded for mobile devices. The previous SDK defaults
+                // (64/min, 4000 max) left a 1080p frame almost untouched, creating a very
+                // large detector tensor and unnecessary CPU/memory pressure.
+                val ocrConfig = PaddleOCRConfig(
+                    detLimitSideLen = 1600,
+                    detLimitType = "max",
+                    detMaxSideLimit = 1600,
+                    recScoreThresh = 0.30f,
+                    recBatchSize = 1
+                )
                 val engineConfig = EngineConfig(numThreads = 2)
                 val created = if (useSmallModel && OcrModelDownloader.isInstalled(appContext)) {
                     val dir = OcrModelDownloader.modelDirectory(appContext)
@@ -108,8 +94,6 @@ class PaddleOcrEngine(
         width: Int,
         height: Int,
         rotationDegrees: Int,
-        mirrorHorizontal: Boolean,
-        flipVertical: Boolean,
         enhancedPreprocessing: Boolean,
         onResult: OcrResultCallback,
         onError: OcrErrorCallback
@@ -124,40 +108,25 @@ class PaddleOcrEngine(
         }
         scope.launch {
             try {
-                val output = ByteArrayOutputStream()
-                YuvImage(data, ImageFormat.NV21, width, height, null)
-                    .compressToJpeg(Rect(0, 0, width, height), 82, output)
-                val bytes = output.toByteArray()
-                var bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                    ?: error("摄像头画面解码失败")
-                if (rotationDegrees != 0 || mirrorHorizontal || flipVertical) {
-                    val matrix = Matrix()
-                    if (rotationDegrees != 0) matrix.postRotate(rotationDegrees.toFloat())
-                    if (mirrorHorizontal || flipVertical) {
-                        matrix.postScale(
-                            if (mirrorHorizontal) -1f else 1f,
-                            if (flipVertical) -1f else 1f
-                        )
-                    }
-                    val transformed = Bitmap.createBitmap(
-                        bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true
-                    )
-                    if (transformed !== bitmap) {
-                        bitmap.recycle()
-                        bitmap = transformed
-                    }
+                require(width > 0 && height > 0 && (width and 1) == 0 && (height and 1) == 0) {
+                    "无效的摄像头画面尺寸：${width}×${height}"
                 }
-                if (enhancedPreprocessing) {
-                    val enhanced = enhanceForOcr(bitmap)
-                    if (enhanced !== bitmap) {
-                        bitmap.recycle()
-                        bitmap = enhanced
-                    }
+                val expectedBytes = width.toLong() * height.toLong() * 3L / 2L
+                require(expectedBytes == data.size.toLong()) {
+                    "NV21 数据长度不匹配：收到 ${data.size} 字节，预期 ${expectedBytes} 字节"
                 }
+                var bitmap = nv21ToBitmap(data, width, height, rotationDegrees)
                 try {
+                    if (enhancedPreprocessing) {
+                        val enhanced = enhanceForOcr(bitmap)
+                        if (enhanced !== bitmap) {
+                            bitmap.recycle()
+                            bitmap = enhanced
+                        }
+                    }
                     var result = current.recognize(bitmap)
-                    // In normal mode, retry only low-confidence text frames with enhanced preprocessing.
-                    // Empty frames are not retried, avoiding extra work when the camera sees no text.
+                    // Retry only low-confidence frames. This avoids paying for enhancement
+                    // on every frame while giving difficult text a second preprocessing pass.
                     if (!enhancedPreprocessing && shouldRetryWithEnhancement(result.results)) {
                         val retryBitmap = enhanceForOcr(bitmap)
                         if (retryBitmap !== bitmap) {
@@ -172,11 +141,24 @@ class PaddleOcrEngine(
                         }
                     }
                     val text = arrangeInReadingOrder(result.results)
+                    val averageConfidence = if (result.results.isEmpty()) 0.0
+                        else result.results.map { it.confidence }.average()
+                    val message = "frame=${width}x${height}, rotation=${rotationDegrees}, " +
+                        "bitmap=${bitmap.width}x${bitmap.height}, boxes=${result.results.size}, " +
+                        "avgConfidence=${"%.3f".format(java.util.Locale.US, averageConfidence)}, " +
+                        "det=${result.detectionTimeMs}ms, rec=${result.recognitionTimeMs}ms, " +
+                        "total=${result.totalTimeMs}ms"
+                    if (averageConfidence < 0.55 || result.results.isEmpty()) {
+                        Log.w(TAG, message)
+                    } else {
+                        Log.i(TAG, message)
+                    }
                     withContext(Dispatchers.Main) { onResult.onResult(text) }
                 } finally {
                     bitmap.recycle()
                 }
             } catch (t: Throwable) {
+                Log.e(TAG, "OCR frame processing failed", t)
                 withContext(Dispatchers.Main) { onError.onError(t.message ?: t.javaClass.simpleName) }
             } finally {
                 busy.set(false)
@@ -231,64 +213,45 @@ class PaddleOcrEngine(
         }
     }
 
-    // Rebuild lines from text-box coordinates; do not rely only on result-list order.
-    private fun arrangeInReadingOrder(results: List<OCRResult>): String {
-        if (results.isEmpty()) return ""
+    // PaddleOCR's SDK already sorts detection boxes top-to-bottom and left-to-right.
+    // Preserve that order. Re-clustering boxes here used a loose vertical threshold and
+    // could merge neighboring rows or scramble compact game UI text.
+    private fun arrangeInReadingOrder(results: List<OCRResult>): String =
+        results.asSequence()
+            .map { it.text.trim() }
+            .filter { it.isNotEmpty() }
+            .joinToString("\n")
 
-        val positioned = results.mapNotNull { item ->
-            val text = item.text.trim()
-            if (text.isEmpty() || item.box.points.size != 4) return@mapNotNull null
-            val xs = item.box.points.map { it.x }
-            val ys = item.box.points.map { it.y }
-            val left = xs.minOrNull() ?: return@mapNotNull null
-            val top = ys.minOrNull() ?: return@mapNotNull null
-            val bottom = ys.maxOrNull() ?: return@mapNotNull null
-            PositionedText(item, left, top, bottom, (top + bottom) / 2f, max(1f, bottom - top))
-        }.sortedWith(compareBy<PositionedText> { it.centerY }.thenBy { it.left })
-
-        val rows = mutableListOf<TextLine>()
-        for (entry in positioned) {
-            var bestRow: TextLine? = null
-            var bestDistance = Float.MAX_VALUE
-            for (row in rows) {
-                val overlap = max(0f, min(row.bottom, entry.bottom) - max(row.top, entry.top))
-                val smallerHeight = max(1f, min(row.bottom - row.top, entry.height))
-                val overlapRatio = overlap / smallerHeight
-                val distance = abs(row.centerY - entry.centerY)
-                val sameRow = overlapRatio >= 0.30f ||
-                    distance <= max(7f, smallerHeight * 0.48f)
-                if (sameRow && distance < bestDistance) {
-                    bestRow = row
-                    bestDistance = distance
-                }
-            }
-
-            if (bestRow == null) {
-                rows.add(TextLine(mutableListOf(entry), entry.top, entry.bottom, entry.centerY))
-            } else {
-                bestRow.items.add(entry)
-                bestRow.top = min(bestRow.top, entry.top)
-                bestRow.bottom = max(bestRow.bottom, entry.bottom)
-                bestRow.centerY = (bestRow.top + bestRow.bottom) / 2f
-            }
+    private fun nv21ToBitmap(data: ByteArray, width: Int, height: Int, rotationDegrees: Int): Bitmap {
+        require(rotationDegrees == 0 || rotationDegrees == 90 ||
+            rotationDegrees == 180 || rotationDegrees == 270) {
+            "不支持的 OCR 旋转角度：${rotationDegrees}"
         }
-
-        return rows.sortedBy { it.centerY }.joinToString("\n") { row ->
-            val fragments = row.items.sortedBy { it.left }.map { it.item.text.trim() }
-            fragments.fold("") { combined, fragment ->
-                if (combined.isEmpty()) fragment
-                else {
-                    val previous = combined.last()
-                    val next = fragment.firstOrNull() ?: ' '
-                    val needsSpace = previous.isAsciiWordChar() && next.isAsciiWordChar()
-                    combined + (if (needsSpace) " " else "") + fragment
-                }
+        val yuv = Mat(height + height / 2, width, CvType.CV_8UC1)
+        val rgba = Mat()
+        val oriented = Mat()
+        try {
+            yuv.put(0, 0, data)
+            Imgproc.cvtColor(yuv, rgba, Imgproc.COLOR_YUV2RGBA_NV21)
+            when (rotationDegrees) {
+                90 -> Core.rotate(rgba, oriented, Core.ROTATE_90_CLOCKWISE)
+                180 -> Core.rotate(rgba, oriented, Core.ROTATE_180)
+                270 -> Core.rotate(rgba, oriented, Core.ROTATE_90_COUNTERCLOCKWISE)
+                else -> rgba.copyTo(oriented)
             }
-        }.trim()
+            return Bitmap.createBitmap(
+                oriented.cols(), oriented.rows(), Bitmap.Config.ARGB_8888
+            ).also { Utils.matToBitmap(oriented, it) }
+        } finally {
+            yuv.release()
+            rgba.release()
+            oriented.release()
+        }
     }
 
-    private fun Char.isAsciiWordChar(): Boolean =
-        this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9'
+    companion object {
+        private const val TAG = "KanziOCR"
+    }
 
     fun release() {
         released = true
