@@ -1,6 +1,10 @@
-name: Android APK (PP-OCRv6 + patched USB permission)
+name: Android APK (PP-OCRv6 Small + 1080p UVC)
 # Manual workflow_dispatch is enabled for clean rebuilds after stalled runs.
 on:
+  push:
+    branches: [ main, feature/v0.7.0-accessibility-upgrades ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 concurrency:
   # Keep each run independent so a newer commit cannot cancel an active APK build.
@@ -22,15 +26,15 @@ jobs:
           repository: PaddlePaddle/PaddleOCR
           ref: v3.7.0
           path: third_party/PaddleOCR
-      - name: Prepare official PP-OCRv6 Android SDK and tiny models
+      - name: Prepare official PP-OCRv6 Android SDK and Small models
         run: |
           set -euo pipefail
           SDK="third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk"
           test -s "$SDK/src/main/java/com/paddle/ocr/PaddleOCR.kt"
           rm -f "$SDK/build.gradle.kts"
           mkdir -p "$SDK/src/main/assets/models/det" "$SDK/src/main/assets/models/rec"
-          curl -fL --retry 3 "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv6_tiny_det_onnx_infer.tar" -o "$RUNNER_TEMP/ppocr-det.tar"
-          curl -fL --retry 3 "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv6_tiny_rec_onnx_infer.tar" -o "$RUNNER_TEMP/ppocr-rec.tar"
+          curl -fL --retry 3 "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv6_small_det_onnx_infer.tar" -o "$RUNNER_TEMP/ppocr-det.tar"
+          curl -fL --retry 3 "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv6_small_rec_onnx_infer.tar" -o "$RUNNER_TEMP/ppocr-rec.tar"
           mkdir -p "$RUNNER_TEMP/ppocr-det" "$RUNNER_TEMP/ppocr-rec"
           tar -xf "$RUNNER_TEMP/ppocr-det.tar" -C "$RUNNER_TEMP/ppocr-det"
           tar -xf "$RUNNER_TEMP/ppocr-rec.tar" -C "$RUNNER_TEMP/ppocr-rec"
@@ -92,7 +96,7 @@ jobs:
           cfg.write_text(src)
           print("PP-OCR SDK supports app-private ONNX/YAML model files.")
           PY
-          echo "PP-OCRv6 tiny model assets prepared; app-private model file loading enabled." >> "$GITHUB_STEP_SUMMARY"
+          echo "PP-OCRv6 Small model assets prepared; app-private model file loading enabled." >> "$GITHUB_STEP_SUMMARY"
           du -h "$SDK/src/main/assets/models/"*/* >> "$GITHUB_STEP_SUMMARY"
       - name: Checkout AUSBC source
         uses: actions/checkout@v4
@@ -100,6 +104,10 @@ jobs:
           repository: ernestp/AndroidUSBCamera
           ref: 3.6.0
           path: third_party/AndroidUSBCamera
+      - name: Cap UVC camera mode at 1080p
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_uvc_resolution.py third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/MultiCameraClient.kt
       - name: Patch Android USB permission PendingIntent
         run: |
           set -euo pipefail
@@ -159,15 +167,15 @@ jobs:
           "$ZIPALIGN" -c -v 4 "$APK"
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           "$AAPT" dump badging "$APK" | tee "$RUNNER_TEMP/apk-manifest.txt"
-          grep -q "package: name='com.vobich.kanzi' versionCode='22' versionName='0.7.6'" "$RUNNER_TEMP/apk-manifest.txt"
+          grep -q "package: name='com.vobich.kanzi' versionCode='23' versionName='0.7.7'" "$RUNNER_TEMP/apk-manifest.txt"
           grep -q "sdkVersion:'26'" "$RUNNER_TEMP/apk-manifest.txt"
           echo "APK_SHA256=$(sha256sum "$APK" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
           echo "APK_SIZE=$(stat -c%s "$APK") bytes" >> "$GITHUB_STEP_SUMMARY"
-          echo "PP-OCRv6 tiny, original V2 signature, certificate, package/version/minSdk and zipalign checks passed." >> "$GITHUB_STEP_SUMMARY"
+          echo "PP-OCRv6 Small, original V2 signature, certificate, package/version/minSdk and zipalign checks passed." >> "$GITHUB_STEP_SUMMARY"
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kanzi-assistant-0.7.6-ppocrv6-signed
+          name: kanzi-assistant-0.7.7-ppocrv6-small-signed
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
@@ -175,6 +183,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: test-build-${{ github.run_number }}
-          name: 看字助手测试版 0.7.6 PP-OCRv6 (${{ github.run_number }})
+          name: 看字助手测试版 0.7.7 PP-OCRv6 Small (${{ github.run_number }})
           prerelease: true
           files: app/build/outputs/apk/release/app-release.apk
