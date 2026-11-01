@@ -49,7 +49,10 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.7.7";
+    private static final String APP_VERSION = "0.7.8";
+    private static final String PREF_NO_ENGLISH = "speech_no_english";
+    private static final String PREF_NO_NUMBERS = "speech_no_numbers";
+    private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
     private static final String PREFS_NAME = "kanzi_settings";
     private static final String PREF_AUTO_MODE = "automatic_mode";
     private static final String PREF_INTERVAL = "recognition_interval_ms";
@@ -84,6 +87,12 @@ public class MainActivity extends CameraActivity {
     private volatile boolean previewVerticalFlip = false;
     private volatile boolean enhancedOcr = false;
     private volatile boolean useSmallModel = false;
+    private volatile boolean speechNoEnglish = false;
+    private volatile boolean speechNoNumbers = false;
+    private volatile int maxSpeechChars = 0;
+    private final AtomicBoolean diagnosticCaptureRequested = new AtomicBoolean(false);
+    private volatile TextView diagnosticReportView;
+    private volatile long diagnosticStartedAt = 0;
     private boolean ttsReady = false;
     private boolean previewCallbackAdded = false;
     private String lastSpoken = "";
@@ -113,13 +122,42 @@ public class MainActivity extends CameraActivity {
 
     private final IPreviewDataCallBack previewCallback = new IPreviewDataCallBack() {
         @Override public void onPreviewData(byte[] data, int width, int height, DataFormat format) {
-            if (!running || data == null || format != DataFormat.NV21) return;
+            if (data == null || format != DataFormat.NV21) return;
             if (width <= 0 || height <= 0 || (width & 1) != 0 || (height & 1) != 0 ||
                 data.length != ((long) width * height * 3L) / 2L) {
                 Log.w("KanziCamera", "Discard invalid NV21 frame: " + width + "x" + height +
                     ", bytes=" + data.length);
                 return;
             }
+            if (diagnosticCaptureRequested.compareAndSet(true, false)) {
+                if (!busy.compareAndSet(false, true)) {
+                    diagnosticCaptureRequested.set(true);
+                    return;
+                }
+                final byte[] diagnosticFrame = data.clone();
+                final long started = diagnosticStartedAt;
+                final int rotationForDiagnostic = previewRotation;
+                recognizer.diagnoseNv21(diagnosticFrame, width, height, rotationForDiagnostic, enhancedOcr,
+                    report -> {
+                        busy.set(false);
+                        String result = "诊断完成\n摄像头帧：已获取 " + width + "×" + height
+                            + "\nOCR 引擎：已就绪\n检测框数量：" + report.boxCount
+                            + "\n平均置信度：" + String.format(Locale.US, "%.3f", report.averageConfidence)
+                            + "\n检测耗时：" + report.detectionTimeMs + " ms"
+                            + "\n识别耗时：" + report.recognitionTimeMs + " ms"
+                            + "\n总耗时：" + report.totalTimeMs + " ms"
+                            + "\n诊断总用时：" + (System.currentTimeMillis() - started) + " ms"
+                            + "\n原始识别结果：\n" + (report.text.isEmpty() ? "（未识别到文字）" : report.text);
+                        runOnUiThread(() -> { if (diagnosticReportView != null) diagnosticReportView.setText(result); });
+                    },
+                    error -> {
+                        busy.set(false);
+                        runOnUiThread(() -> { if (diagnosticReportView != null) diagnosticReportView.setText(
+                            "诊断失败\n摄像头帧：" + width + "×" + height + "\n原因：" + error); });
+                    });
+                return;
+            }
+            if (!running) return;
             long now = System.currentTimeMillis();
             boolean oneShot = manualCaptureRequested.get();
             if (oneShot) {
@@ -231,6 +269,9 @@ public class MainActivity extends CameraActivity {
         previewVerticalFlip = prefs.getBoolean(PREF_PREVIEW_FLIP, false);
         enhancedOcr = prefs.getBoolean(PREF_ENHANCED_OCR, false);
         useSmallModel = prefs.getBoolean(PREF_USE_SMALL_MODEL, false) && OcrModelDownloader.isInstalled(this);
+        speechNoEnglish = prefs.getBoolean(PREF_NO_ENGLISH, false);
+        speechNoNumbers = prefs.getBoolean(PREF_NO_NUMBERS, false);
+        maxSpeechChars = Math.max(0, Math.min(5000, prefs.getInt(PREF_MAX_SPEECH_CHARS, 0)));
     }
 
     private void showSettingsDialog() {
@@ -255,6 +296,17 @@ public class MainActivity extends CameraActivity {
         modelNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         modelNote.setTextColor(0xFF667085);
         panel.addView(modelNote);
+
+        TextView modelManagementTitle = new TextView(this);
+        modelManagementTitle.setText("OCR 模型管理");
+        modelManagementTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        modelManagementTitle.setPadding(0, dp(14), 0, dp(4));
+        panel.addView(modelManagementTitle);
+        TextView modelManagementInfo = new TextView(this);
+        modelManagementInfo.setText("当前使用内置 PP-OCRv6 Small。此版本已验证该模型与当前安卓 OCR 引擎兼容。PP-OCR Tiny 和 PP-OCRv5 Mobile 尚未完成兼容性及模型文件校验，因此暂不提供切换，避免下载后无法识别。");
+        modelManagementInfo.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        modelManagementInfo.setTextColor(0xFF667085);
+        panel.addView(modelManagementInfo);
 
         CheckBox queueCheck = new CheckBox(this);
         queueCheck.setText("完整读完当前文字，再读下一段");
@@ -373,6 +425,66 @@ public class MainActivity extends CameraActivity {
         transformNote.setTextColor(0xFF667085);
         panel.addView(transformNote);
 
+        TextView speechFilterTitle = new TextView(this);
+        speechFilterTitle.setText("朗读内容筛选（只影响语音，不改变 OCR 识别结果）");
+        speechFilterTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        speechFilterTitle.setPadding(0, dp(18), 0, dp(4));
+        panel.addView(speechFilterTitle);
+
+        CheckBox noEnglishCheck = new CheckBox(this);
+        noEnglishCheck.setText("不读英文（移除英文字母及英文单词）");
+        noEnglishCheck.setChecked(speechNoEnglish);
+        panel.addView(noEnglishCheck);
+        CheckBox noNumbersCheck = new CheckBox(this);
+        noNumbersCheck.setText("不读数字（移除阿拉伯数字）");
+        noNumbersCheck.setChecked(speechNoNumbers);
+        panel.addView(noNumbersCheck);
+
+        TextView maxCharsTitle = new TextView(this);
+        maxCharsTitle.setText("单次最多朗读字符数（0 表示不限）");
+        maxCharsTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        maxCharsTitle.setPadding(0, dp(8), 0, dp(3));
+        panel.addView(maxCharsTitle);
+        EditText maxCharsInput = new EditText(this);
+        maxCharsInput.setSingleLine(true);
+        maxCharsInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        maxCharsInput.setText(String.valueOf(maxSpeechChars));
+        maxCharsInput.setHint("0 = 不限，最大 5000");
+        panel.addView(maxCharsInput);
+
+        TextView diagnosticTitle = new TextView(this);
+        diagnosticTitle.setText("OCR 诊断");
+        diagnosticTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        diagnosticTitle.setPadding(0, dp(18), 0, dp(4));
+        panel.addView(diagnosticTitle);
+        TextView diagnosticNote = new TextView(this);
+        diagnosticNote.setText("点击后自动抓取摄像头下一帧并执行一次 OCR。诊断不受朗读筛选、字数限制、自动识别间隔和连续识别条件影响，也不会朗读。请先连接外接摄像头。");
+        diagnosticNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        diagnosticNote.setTextColor(0xFF667085);
+        panel.addView(diagnosticNote);
+        diagnosticReportView = new TextView(this);
+        diagnosticReportView.setText("尚未运行诊断");
+        diagnosticReportView.setTextIsSelectable(true);
+        diagnosticReportView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        diagnosticReportView.setPadding(dp(8), dp(8), dp(8), dp(8));
+        diagnosticReportView.setBackgroundColor(0xFFF1F3F5);
+        panel.addView(diagnosticReportView);
+        Button runDiagnosticButton = createControlButton("开始 OCR 诊断");
+        runDiagnosticButton.setOnClickListener(v -> {
+            if (!previewCallbackAdded) {
+                diagnosticReportView.setText("诊断失败：尚未检测到外接摄像头预览回调。请检查 USB 连接和摄像头权限。");
+                return;
+            }
+            if (recognizer == null || !recognizer.isReady()) {
+                diagnosticReportView.setText("正在等待 OCR 引擎初始化，或引擎初始化失败。请稍后重试；如果持续如此，请检查应用日志。");
+                return;
+            }
+            diagnosticStartedAt = System.currentTimeMillis();
+            diagnosticReportView.setText("正在等待摄像头下一帧并执行 OCR……");
+            diagnosticCaptureRequested.set(true);
+        });
+        panel.addView(runDiagnosticButton);
+
         TextView similarityNote = new TextView(this);
         similarityNote.setText("数值越高，判断越严格；设为 0 时关闭相似度去重，但仍要求连续两次识别后才朗读。");
         similarityNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
@@ -399,6 +511,10 @@ public class MainActivity extends CameraActivity {
                 boolean wasQueueEnabled = queueSpeech;
                 queueSpeech = queueCheck.isChecked();
                 speechRate = 0.5f + speechRateSeek.getProgress() / 100f;
+                speechNoEnglish = noEnglishCheck.isChecked();
+                speechNoNumbers = noNumbersCheck.isChecked();
+                try { maxSpeechChars = Math.max(0, Math.min(5000, Integer.parseInt(maxCharsInput.getText().toString().trim()))); }
+                catch (NumberFormatException ignored) { maxSpeechChars = 0; }
                 previewRotation = rotationSeek.getProgress() * 90;
                 previewMirror = mirrorCheck.isChecked();
                 previewVerticalFlip = flipCheck.isChecked();
@@ -416,6 +532,9 @@ public class MainActivity extends CameraActivity {
                     .putBoolean(PREF_PREVIEW_FLIP, previewVerticalFlip)
                     .putBoolean(PREF_ENHANCED_OCR, enhancedOcr)
                     .putBoolean(PREF_USE_SMALL_MODEL, useSmallModel)
+                    .putBoolean(PREF_NO_ENGLISH, speechNoEnglish)
+                    .putBoolean(PREF_NO_NUMBERS, speechNoNumbers)
+                    .putInt(PREF_MAX_SPEECH_CHARS, maxSpeechChars)
                     .apply();
                 if (wasQueueEnabled && !queueSpeech) clearSpeechQueue(true);
                 Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show();
@@ -706,6 +825,14 @@ public class MainActivity extends CameraActivity {
         lastNonEmptyAt = now;
         final String normalized = normalizeOcrText(recognizedText);
         if (!running || !ttsReady || normalized.length() < 2) return;
+        String speechText = recognizedText;
+        if (speechNoEnglish) speechText = speechText.replaceAll("[A-Za-z]+", " ");
+        if (speechNoNumbers) speechText = speechText.replaceAll("[0-9]+", " ");
+        speechText = speechText.replaceAll("\\s+", " ").trim();
+        if (maxSpeechChars > 0 && speechText.length() > maxSpeechChars)
+            speechText = speechText.substring(0, maxSpeechChars).trim();
+        if (speechText.length() < 1) return;
+        final String filteredSpeechText = speechText;
 
         final float threshold = similarityThreshold / 100.0f;
         if (!candidateNormalized.isEmpty() && (threshold <= 0f || textSimilarity(candidateNormalized, normalized) >= threshold)) {
@@ -720,7 +847,7 @@ public class MainActivity extends CameraActivity {
 
         // Confirm the same content in two consecutive OCR passes before speaking.
         if (candidateCount < 2) return;
-        final String textToSpeak = candidateText;
+        final String textToSpeak = filteredSpeechText;
         candidateCount = 0;
 
         runOnUiThread(() -> {

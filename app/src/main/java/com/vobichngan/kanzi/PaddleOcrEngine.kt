@@ -28,6 +28,15 @@ import kotlin.math.min
 
 fun interface OcrResultCallback { fun onResult(text: String?) }
 fun interface OcrErrorCallback { fun onError(message: String) }
+data class OcrDiagnosticResult(
+    val text: String,
+    val boxCount: Int,
+    val averageConfidence: Double,
+    val detectionTimeMs: Long,
+    val recognitionTimeMs: Long,
+    val totalTimeMs: Long
+)
+fun interface OcrDiagnosticCallback { fun onResult(result: OcrDiagnosticResult) }
 
 class PaddleOcrEngine(
     context: Context,
@@ -60,6 +69,47 @@ class PaddleOcrEngine(
     private val busy = AtomicBoolean(false)
     @Volatile private var engine: PaddleOCR? = null
     @Volatile private var released = false
+
+    fun isReady(): Boolean = engine != null && !released
+
+    fun diagnoseNv21(
+        data: ByteArray, width: Int, height: Int, rotationDegrees: Int,
+        enhancedPreprocessing: Boolean, onResult: OcrDiagnosticCallback, onError: OcrErrorCallback
+    ) {
+        val current = engine ?: run { onError.onError("OCR 引擎尚未初始化"); return }
+        if (released || !busy.compareAndSet(false, true)) {
+            onError.onError("OCR 引擎正忙，请稍后重试")
+            return
+        }
+        scope.launch {
+            try {
+                require(width > 0 && height > 0 && (width and 1) == 0 && (height and 1) == 0) {
+                    "摄像头画面尺寸无效：${width}×${height}"
+                }
+                require(width.toLong() * height.toLong() * 3L / 2L == data.size.toLong()) {
+                    "摄像头 NV21 帧长度不正确"
+                }
+                var bitmap = nv21ToBitmap(data, width, height, rotationDegrees)
+                try {
+                    if (enhancedPreprocessing) {
+                        val enhanced = enhanceForOcr(bitmap)
+                        if (enhanced !== bitmap) { bitmap.recycle(); bitmap = enhanced }
+                    }
+                    val result = current.recognize(bitmap)
+                    val text = arrangeInReadingOrder(result.results)
+                    val confidence = if (result.results.isEmpty()) 0.0
+                        else result.results.map { it.confidence.toDouble() }.average()
+                    val report = OcrDiagnosticResult(text, result.results.size, confidence,
+                        result.detectionTimeMs.toLong(), result.recognitionTimeMs.toLong(),
+                        result.totalTimeMs.toLong())
+                    withContext(Dispatchers.Main) { onResult.onResult(report) }
+                } finally { bitmap.recycle() }
+            } catch (t: Throwable) {
+                Log.e(TAG, "OCR diagnostic failed", t)
+                withContext(Dispatchers.Main) { onError.onError(t.message ?: t.javaClass.simpleName) }
+            } finally { busy.set(false) }
+        }
+    }
 
     fun initialize() {
         scope.launch {
