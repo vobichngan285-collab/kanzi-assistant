@@ -193,15 +193,15 @@ jobs:
           "$ZIPALIGN" -c -v 4 "$APK"
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           "$AAPT" dump badging "$APK" | tee "$RUNNER_TEMP/apk-manifest.txt"
-          grep -q "package: name='com.vobich.kanzi' versionCode='25' versionName='0.8.0'" "$RUNNER_TEMP/apk-manifest.txt"
+          grep -q "package: name='com.vobich.kanzi' versionCode='26' versionName='0.8.1'" "$RUNNER_TEMP/apk-manifest.txt"
           grep -q "sdkVersion:'26'" "$RUNNER_TEMP/apk-manifest.txt"
           echo "APK_SHA256=$(sha256sum "$APK" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
           echo "APK_SIZE=$(stat -c%s "$APK") bytes" >> "$GITHUB_STEP_SUMMARY"
-          echo "PP-OCRv6 Small/Tiny + PP-OCRv5 Mobile, original V2 signature, certificate, package/version/minSdk and zipalign checks passed." >> "$GITHUB_STEP_SUMMARY"
+          echo "PP-OCRv6 Small/Tiny + PP-OCRv5 Mobile model-specific detector config, expanded raw OCR diagnostics, original V2 signature, certificate, package/version/minSdk and zipalign checks passed." >> "$GITHUB_STEP_SUMMARY"
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kanzi-assistant-0.8.0-three-ocr-engines-signed
+          name: kanzi-assistant-0.8.1-ocr-diagnostics-signed
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
@@ -209,6 +209,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: test-build-${{ github.run_number }}
-          name: 看字助手测试版 0.8.0 三套 OCR 引擎 (${{ github.run_number }})
+          name: 看字助手测试版 0.8.1 OCR 修复与诊断 (${{ github.run_number }})
           prerelease: true
           files: app/build/outputs/apk/release/app-release.apk
