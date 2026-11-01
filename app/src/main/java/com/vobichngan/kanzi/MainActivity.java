@@ -1,6 +1,8 @@
 package com.vobichngan.kanzi;
 
 import android.app.Activity;
+import android.Manifest;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -51,7 +53,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.8.5";
+    private static final String APP_VERSION = "0.9.0";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -60,6 +62,7 @@ public class MainActivity extends CameraActivity {
     private static final String PREF_INTERVAL = "recognition_interval_ms";
     private static final String PREF_SIMILARITY = "similarity_threshold";
     private static final String PREF_QUEUE_SPEECH = "queue_speech";
+    private static final String PREF_LONG_READING = "reading_mode_long";
     private static final String PREF_SPEECH_RATE = "speech_rate";
     private static final String PREF_PREVIEW_ROTATION = "preview_rotation";
     private static final String PREF_LEGACY_NV21 = "ocr_legacy_nv21_jpeg";
@@ -67,6 +70,10 @@ public class MainActivity extends CameraActivity {
     private static final String PREF_PREVIEW_FLIP = "preview_flip";
     private static final String PREF_ENHANCED_OCR = "enhanced_ocr";
     private static final String PREF_OCR_MODEL = "ocr_model_id";
+    private static final String PREF_PHONE_CAMERA = "phone_camera_source";
+    private static final String PREF_FRONT_CAMERA = "phone_camera_front";
+    private static final String PREF_QUALITY_PROMPTS = "quality_voice_prompts";
+    private static final int REQUEST_PHONE_CAMERA = 4051;
     private final Handler diagnosticHandler = new Handler(Looper.getMainLooper());
     private int diagnosticAttempts = 0;
     private final Runnable diagnosticRunnable = new Runnable() {
@@ -76,7 +83,17 @@ public class MainActivity extends CameraActivity {
     private TextureView cameraTextureView;
     // Kept as non-visible diagnostic targets so existing USB diagnostics remain available.
     private TextView status, diagnostic;
-    private Button modeButton, captureButton, startButton, settingsButton;
+    private Button modeButton, captureButton, startButton, settingsButton, readingModeButton;
+    private Button cameraSourceButton, lensButton;
+    private TextureView phoneTexture;
+    private InternalCameraController phoneController;
+    private OcrOverlayView ocrOverlay;
+    private volatile boolean usingPhoneCamera = false;
+    private volatile boolean phoneFrontFacing = false;
+    private volatile int phoneOcrRotation = 0;
+    private volatile int phoneRawWidth = 1280, phoneRawHeight = 720;
+    private volatile boolean qualityPromptsEnabled = true;
+    private long noTextSince = 0L, lastQualityPromptAt = 0L;
     private TextToSpeech tts;
     private PaddleOcrEngine recognizer;
     private volatile boolean running = false;
@@ -84,6 +101,10 @@ public class MainActivity extends CameraActivity {
     private volatile long recognitionIntervalMs = 500L;
     private volatile int similarityThreshold = 88;
     private volatile boolean queueSpeech = true;
+    private volatile boolean longReadingMode = true;
+    private volatile boolean speechPageActive = false;
+    private final FrameChangeGate frameChangeGate = new FrameChangeGate();
+    private final java.util.concurrent.atomic.AtomicInteger readingEpoch = new java.util.concurrent.atomic.AtomicInteger(0);
     private volatile float speechRate = 1.0f;
     private volatile int previewRotation = 0;
     private volatile boolean legacyNv21Jpeg = false;
@@ -100,10 +121,10 @@ public class MainActivity extends CameraActivity {
     private volatile long diagnosticStartedAt = 0;
     private boolean ttsReady = false;
     private boolean previewCallbackAdded = false;
-    private String lastSpoken = "";
+    private volatile String lastSpoken = "";
     private String candidateText = "";
     private String candidateNormalized = "";
-    private int candidateCount = 0;
+    private volatile int candidateCount = 0;
     private long lastNonEmptyAt = 0;
     private long lastProcess = 0;
     private final AtomicBoolean busy = new AtomicBoolean(false);
@@ -127,7 +148,14 @@ public class MainActivity extends CameraActivity {
 
     private final IPreviewDataCallBack previewCallback = new IPreviewDataCallBack() {
         @Override public void onPreviewData(byte[] data, int width, int height, DataFormat format) {
-            if (data == null || format != DataFormat.NV21) return;
+            if (format == DataFormat.NV21 && !usingPhoneCamera)
+                processCameraFrame(data, width, height, false);
+        }
+    };
+
+    /** Both camera drivers feed one single-slot OCR pipeline. */
+    private void processCameraFrame(byte[] data, int width, int height, boolean isPhoneCamera) {
+            if (data == null || (isPhoneCamera != usingPhoneCamera)) return;
             if (width <= 0 || height <= 0 || (width & 1) != 0 || (height & 1) != 0 ||
                 data.length != ((long) width * height * 3L) / 2L) {
                 Log.w("KanziCamera", "Discard invalid NV21 frame: " + width + "x" + height +
@@ -170,25 +198,48 @@ public class MainActivity extends CameraActivity {
                 return;
             }
             if (!running) return;
+            // Long reading owns OCR until the entire spoken page has completed.
+            // Manual capture remains an explicit override below.
             long now = System.currentTimeMillis();
             boolean oneShot = manualCaptureRequested.get();
             if (oneShot) {
                 if (!manualCaptureRequested.compareAndSet(true, false)) return;
             } else {
                 if (!automaticMode || now - lastProcess < recognitionIntervalMs) return;
+                if (longReadingMode && speechPageActive) return;
             }
             if (!busy.compareAndSet(false, true)) {
                 if (oneShot) manualCaptureRequested.set(true);
                 return;
             }
+            // Long reading needs a SECOND OCR pass to confirm the first candidate,
+            // even when the image has not moved. Once spoken, avoid re-reading it.
+            boolean needsConfirmation = longReadingMode && candidateCount > 0;
+            boolean samePageLocked = longReadingMode && !lastSpoken.isEmpty();
+            if (!oneShot && !needsConfirmation &&
+                !frameChangeGate.accept(data, width, height, now, samePageLocked)) {
+                busy.set(false);
+                return;
+            }
             lastProcess = now;
+            final int recognizedEpoch = readingEpoch.get();
             byte[] frame = data.clone();
             final boolean enhance = enhancedOcr;
+            final FrameQuality.Assessment quality = FrameQuality.assess(frame, width, height);
             final boolean legacyDecode = legacyNv21Jpeg;
             try {
                 recognizer.recognizeNv21(frame, width, height, enhance, legacyDecode, found -> {
                     busy.set(false);
-                    if (found != null) onRecognized(found, oneShot);
+                    if (found != null && recognizedEpoch == readingEpoch.get()) {
+                        if (ocrOverlay != null) {
+                            ocrOverlay.show(found.getBoxes(), found.getFrameWidth(),
+                                found.getFrameHeight(),
+                                isPhoneCamera ? phoneTexture : cameraTextureView,
+                                isPhoneCamera, isPhoneCamera ? phoneOcrRotation : 0);
+                        }
+                        onRecognized(found.getText(), oneShot);
+                        onReadingQuality(found, quality);
+                    }
                 }, error -> {
                     busy.set(false);
                     Log.e("KanziOCR", "OCR failed for " + width + "x" + height, new RuntimeException(error));
@@ -198,8 +249,7 @@ public class MainActivity extends CameraActivity {
                 busy.set(false);
                 Log.e("KanziOCR", "Could not submit OCR frame", error);
             }
-        }
-    };
+    }
 
     @Override protected View getRootView(LayoutInflater inflater) {
         // Use a full-screen overlay root: the control row must not consume preview height.
@@ -230,6 +280,36 @@ public class MainActivity extends CameraActivity {
         controls.setPadding(dp(4), dp(4), dp(4), dp(4));
         controls.setBackgroundColor(0xAA151515);
 
+        phoneTexture = new TextureView(this);
+        phoneTexture.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) ->
+            applyPhonePreviewTransform());
+        phoneTexture.setVisibility(View.GONE);
+        previewContainer.addView(phoneTexture, new FrameLayout.LayoutParams(1, 1, Gravity.CENTER));
+        ocrOverlay = new OcrOverlayView(this);
+        root.addView(ocrOverlay, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        cameraSourceButton = createControlButton("摄像头：USB 外接");
+        lensButton = createControlButton("切换前后");
+        lensButton.setContentDescription("切换手机前置和后置摄像头");
+        LinearLayout cameraRow = new LinearLayout(this);
+        cameraRow.setOrientation(LinearLayout.HORIZONTAL);
+        cameraRow.addView(cameraSourceButton, new LinearLayout.LayoutParams(0, dp(48), 2f));
+        cameraRow.addView(lensButton, new LinearLayout.LayoutParams(0, dp(48), 1f));
+
+        readingModeButton = createControlButton("阅读：长文（完整读）");
+        readingModeButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
+        readingModeButton.setMinHeight(dp(50));
+        readingModeButton.setContentDescription("切换长文阅读和快速扫读模式");
+        LinearLayout controlDock = new LinearLayout(this);
+        controlDock.setOrientation(LinearLayout.VERTICAL);
+        readingModeButton.setBackgroundTintList(ColorStateList.valueOf(0xFF154A5B));
+        controlDock.addView(cameraRow, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(48)
+        ));
+        controlDock.addView(readingModeButton, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(52)
+        ));
         modeButton = createControlButton("模式：自动");
         controls.addView(modeButton, new LinearLayout.LayoutParams(0, dp(54), 1f));
         captureButton = createControlButton("识别一次");
@@ -239,11 +319,14 @@ public class MainActivity extends CameraActivity {
         settingsButton = createControlButton("设置");
         controls.addView(settingsButton, new LinearLayout.LayoutParams(0, dp(54), 1f));
 
+        controlDock.addView(controls, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(62)
+        ));
         FrameLayout.LayoutParams controlsParams = new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(62), Gravity.BOTTOM
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(162), Gravity.BOTTOM
         );
-        root.addView(controls, controlsParams);
-        controls.bringToFront();
+        root.addView(controlDock, controlsParams);
+        controlDock.bringToFront();
         return root;
     }
 
@@ -261,9 +344,27 @@ public class MainActivity extends CameraActivity {
     }
 
     private void updateControlLabels() {
+        if (cameraSourceButton != null) {
+            cameraSourceButton.setText(usingPhoneCamera ? "摄像头：手机" : "摄像头：USB 外接");
+            cameraSourceButton.setContentDescription(usingPhoneCamera
+                ? "当前手机摄像头，点击切换到USB外接摄像头"
+                : "当前USB摄像头，点击切换到手机摄像头");
+        }
+        if (lensButton != null) {
+            lensButton.setVisibility(usingPhoneCamera ? View.VISIBLE : View.GONE);
+            lensButton.setText(phoneFrontFacing ? "前置→后置" : "后置→前置");
+        }
+        if (readingModeButton != null) {
+            readingModeButton.setText(longReadingMode
+                ? "长文阅读｜完整读完，不打断"
+                : "快速扫读｜移动即读新内容");
+            readingModeButton.setContentDescription(longReadingMode
+                ? "当前是长文阅读模式。点击切换到快速扫读"
+                : "当前是快速扫读模式。点击切换到长文阅读");
+        }
         if (modeButton != null) modeButton.setText(automaticMode ? "模式：自动" : "模式：手动");
         if (startButton != null) startButton.setText(running ? "暂停识别" : "开始识别");
-        if (captureButton != null) captureButton.setEnabled(previewCallbackAdded && !automaticMode);
+        if (captureButton != null) captureButton.setEnabled((usingPhoneCamera || previewCallbackAdded) && !automaticMode);
     }
 
     private void loadSettings() {
@@ -274,6 +375,10 @@ public class MainActivity extends CameraActivity {
         similarityThreshold = Math.max(0, Math.min(100,
             prefs.getInt(PREF_SIMILARITY, 88)));
         queueSpeech = prefs.getBoolean(PREF_QUEUE_SPEECH, true);
+        usingPhoneCamera = prefs.getBoolean(PREF_PHONE_CAMERA, false);
+        phoneFrontFacing = prefs.getBoolean(PREF_FRONT_CAMERA, false);
+        qualityPromptsEnabled = prefs.getBoolean(PREF_QUALITY_PROMPTS, true);
+        longReadingMode = prefs.getBoolean(PREF_LONG_READING, queueSpeech);
         speechRate = Math.max(0.5f, Math.min(2.0f, prefs.getFloat(PREF_SPEECH_RATE, 1.0f)));
         previewRotation = prefs.getInt(PREF_PREVIEW_ROTATION, 0);
         if (previewRotation != 0 && previewRotation != 90 && previewRotation != 180 && previewRotation != 270) previewRotation = 0;
@@ -295,6 +400,8 @@ public class MainActivity extends CameraActivity {
     }
 
     private void switchOcrModel(String modelId) {
+        readingEpoch.incrementAndGet();
+        frameChangeGate.reset();
         running = false;
         manualCaptureRequested.set(false);
         clearSpeechQueue(true);
@@ -328,6 +435,7 @@ public class MainActivity extends CameraActivity {
                 });
             }
         }, modelId);
+        recognizer.setFastScanMode(!longReadingMode);
         recognizer.initialize();
     }
 
@@ -376,10 +484,16 @@ public class MainActivity extends CameraActivity {
         modelManagementInfo.setTextColor(0xFF667085);
         panel.addView(modelManagementInfo);
 
+        CheckBox qualityCheck = new CheckBox(this);
+        qualityCheck.setText("识别失败或画面模糊时给出简短语音提示");
+        qualityCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        qualityCheck.setChecked(qualityPromptsEnabled);
+        panel.addView(qualityCheck);
+
         CheckBox queueCheck = new CheckBox(this);
-        queueCheck.setText("连续识别时优先读完整段（推荐开启）");
+        queueCheck.setText("默认使用长文阅读（读完再识别）；快速扫读会自动打断旧内容");
         queueCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        queueCheck.setChecked(queueSpeech);
+        queueCheck.setChecked(longReadingMode);
         panel.addView(queueCheck);
 
         TextView intervalTitle = new TextView(this);
@@ -608,7 +722,9 @@ public class MainActivity extends CameraActivity {
                 similarityThreshold = similaritySeek.getProgress();
                 boolean wasQueueEnabled = queueSpeech;
                 queueSpeech = queueCheck.isChecked();
+                boolean changeReadingMode = longReadingMode != queueSpeech;
                 speechRate = 0.5f + speechRateSeek.getProgress() / 100f;
+                qualityPromptsEnabled = qualityCheck.isChecked();
                 speechNoEnglish = noEnglishCheck.isChecked();
                 speechNoNumbers = noNumbersCheck.isChecked();
                 try { maxSpeechChars = Math.max(0, Math.min(5000, Integer.parseInt(maxCharsInput.getText().toString().trim()))); }
@@ -625,6 +741,8 @@ public class MainActivity extends CameraActivity {
                     .putLong(PREF_INTERVAL, recognitionIntervalMs)
                     .putInt(PREF_SIMILARITY, similarityThreshold)
                     .putBoolean(PREF_QUEUE_SPEECH, queueSpeech)
+                    .putBoolean(PREF_LONG_READING, queueSpeech)
+                    .putBoolean(PREF_QUALITY_PROMPTS, qualityPromptsEnabled)
                     .putFloat(PREF_SPEECH_RATE, speechRate)
                     .putInt(PREF_PREVIEW_ROTATION, previewRotation)
                     .putBoolean(PREF_LEGACY_NV21, legacyNv21Jpeg)
@@ -636,7 +754,8 @@ public class MainActivity extends CameraActivity {
                     .putBoolean(PREF_NO_NUMBERS, speechNoNumbers)
                     .putInt(PREF_MAX_SPEECH_CHARS, maxSpeechChars)
                     .apply();
-                if (wasQueueEnabled && !queueSpeech) clearSpeechQueue(true);
+                if (changeReadingMode) setLongReadingMode(queueSpeech);
+                else if (wasQueueEnabled && !queueSpeech) clearSpeechQueue(true);
                 if (modelChanged) switchOcrModel(selectedModelId);
                 Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show();
             })
@@ -731,7 +850,32 @@ public class MainActivity extends CameraActivity {
                 });
             }
         }, ocrModelId);
+        recognizer.setFastScanMode(!longReadingMode);
         recognizer.initialize();
+        phoneController = new InternalCameraController(this, phoneTexture, new InternalCameraController.Listener() {
+            @Override public boolean shouldReceiveFrame() {
+                if (!usingPhoneCamera || !running) return diagnosticCaptureRequested.get();
+                if (manualCaptureRequested.get() || diagnosticCaptureRequested.get()) return true;
+                if (!automaticMode || busy.get() || (longReadingMode && speechPageActive)) return false;
+                return System.currentTimeMillis() - lastProcess >= recognitionIntervalMs;
+            }
+            @Override public void onFrame(byte[] nv21, int width, int height) {
+                if (usingPhoneCamera) processCameraFrame(nv21, width, height, true);
+            }
+            @Override public void onOpened(int rawWidth, int rawHeight, int rotation) {
+                phoneRawWidth = rawWidth;
+                phoneRawHeight = rawHeight;
+                phoneOcrRotation = rotation;
+                runOnUiThread(() -> {
+                    applyPhonePreviewTransform();
+                    updateControlLabels();
+                });
+            }
+            @Override public void onError(String message) {
+                Log.w("KanziPhoneCamera", message);
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show());
+            }
+        });
         tts = new TextToSpeech(this, code -> {
             if (code == TextToSpeech.SUCCESS) {
                 int language = tts.setLanguage(Locale.SIMPLIFIED_CHINESE);
@@ -760,6 +904,15 @@ public class MainActivity extends CameraActivity {
             }
         });
 
+        cameraSourceButton.setOnClickListener(v -> switchCameraSource(!usingPhoneCamera));
+        lensButton.setOnClickListener(v -> {
+            phoneFrontFacing = !phoneFrontFacing;
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                .putBoolean(PREF_FRONT_CAMERA, phoneFrontFacing).apply();
+            switchCameraSource(true);
+        });
+        readingModeButton.setOnClickListener(v -> setLongReadingMode(!longReadingMode));
+
         modeButton.setOnClickListener(v -> {
             automaticMode = !automaticMode;
             manualCaptureRequested.set(false);
@@ -771,18 +924,22 @@ public class MainActivity extends CameraActivity {
         });
 
         captureButton.setOnClickListener(v -> {
-            if (!previewCallbackAdded) {
+            if (!(usingPhoneCamera || previewCallbackAdded)) {
                 Toast.makeText(this, "请先连接并打开摄像头", Toast.LENGTH_SHORT).show();
                 return;
             }
             running = true;
             manualCaptureRequested.set(true);
+            readingEpoch.incrementAndGet();
+            // Explicit capture replaces old speech even during a long reading session.
+            clearSpeechQueue(true);
+            frameChangeGate.reset();
             updateControlLabels();
             Toast.makeText(this, "正在抓取当前画面识别", Toast.LENGTH_SHORT).show();
         });
 
         startButton.setOnClickListener(v -> {
-            if (!previewCallbackAdded) {
+            if (!(usingPhoneCamera || previewCallbackAdded)) {
                 Toast.makeText(this, "请先连接并打开摄像头", Toast.LENGTH_SHORT).show();
                 return;
             }
@@ -790,6 +947,13 @@ public class MainActivity extends CameraActivity {
             if (!running) {
                 manualCaptureRequested.set(false);
                 clearSpeechQueue(true);
+                readingEpoch.incrementAndGet();
+            } else {
+                frameChangeGate.reset();
+                lastSpoken = ""; // Explicit resume must be able to re-read the current paper.
+                candidateCount = 0;
+                candidateNormalized = "";
+                candidateText = "";
             }
             updateControlLabels();
         });
@@ -923,8 +1087,142 @@ public class MainActivity extends CameraActivity {
     }
 
     /**
-     * Automatic mode waits for two consistent frames; a deliberate manual capture
-     * reads the one selected frame in full without requiring a second capture.
+     * Switch modes immediately, without reinitializing the OCR models or camera.
+     * The epoch invalidates results from the previous mode that finish asynchronously.
+     */
+    private void switchCameraSource(boolean phone) {
+        readingEpoch.incrementAndGet();
+        frameChangeGate.reset();
+        clearSpeechQueue(true);
+        candidateText = "";
+        candidateNormalized = "";
+        candidateCount = 0;
+        lastSpoken = "";
+        noTextSince = 0L;
+        if (ocrOverlay != null) ocrOverlay.clear();
+        usingPhoneCamera = phone;
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putBoolean(PREF_PHONE_CAMERA, phone).apply();
+        if (phoneController != null) phoneController.stop();
+        if (phoneTexture != null) {
+            phoneTexture.setVisibility(phone ? View.VISIBLE : View.GONE);
+            if (phone) phoneTexture.bringToFront();
+        }
+        if (cameraTextureView != null)
+            cameraTextureView.setVisibility(phone ? View.INVISIBLE : View.VISIBLE);
+        if (phone) startPhoneCamera();
+        else applyPreviewTransform();
+        updateControlLabels();
+        String message = phone ? (phoneFrontFacing ? "已切换手机前置摄像头" : "已切换手机后置摄像头")
+                               : "已切换USB外接摄像头";
+        if (cameraSourceButton != null) cameraSourceButton.announceForAccessibility(message);
+    }
+
+    private void startPhoneCamera() {
+        if (!usingPhoneCamera || phoneController == null) return;
+        if (!phoneController.hasPermission()) {
+            requestPermissions(new String[]{Manifest.permission.CAMERA}, REQUEST_PHONE_CAMERA);
+            return;
+        }
+        phoneController.start(phoneFrontFacing);
+        if (phoneTexture != null) {
+            phoneTexture.setVisibility(View.VISIBLE);
+            phoneTexture.bringToFront();
+        }
+        if (cameraTextureView != null) cameraTextureView.setVisibility(View.INVISIBLE);
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode,
+            String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQUEST_PHONE_CAMERA) return;
+        if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED)
+            startPhoneCamera();
+        else Toast.makeText(this, "请允许相机权限后使用手机摄像头", Toast.LENGTH_LONG).show();
+    }
+
+    private void applyPhonePreviewTransform() {
+        if (phoneTexture == null || previewContainer == null || !usingPhoneCamera) return;
+        int cw = previewContainer.getWidth(), ch = previewContainer.getHeight();
+        if (cw <= 0 || ch <= 0 || phoneRawHeight <= 0) return;
+        boolean quarter = phoneOcrRotation == 90 || phoneOcrRotation == 270;
+        float nativeAspect = phoneRawWidth / (float) phoneRawHeight;
+        float shownAspect = quarter ? 1f / nativeAspect : nativeAspect;
+        float shownW = Math.min(cw, ch * shownAspect);
+        float shownH = shownW / shownAspect;
+        int tw = Math.max(1, Math.round(quarter ? shownH : shownW));
+        int th = Math.max(1, Math.round(quarter ? shownW : shownH));
+        ViewGroup.LayoutParams existing = phoneTexture.getLayoutParams();
+        if (existing instanceof FrameLayout.LayoutParams) {
+            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) existing;
+            if (lp.width != tw || lp.height != th || lp.gravity != Gravity.CENTER) {
+                lp.width = tw; lp.height = th; lp.gravity = Gravity.CENTER;
+                phoneTexture.setLayoutParams(lp);
+            }
+        }
+        phoneTexture.setPivotX(phoneTexture.getWidth() / 2f);
+        phoneTexture.setPivotY(phoneTexture.getHeight() / 2f);
+        phoneTexture.setRotation(phoneOcrRotation);
+        phoneTexture.setScaleX(1f);
+        phoneTexture.setScaleY(1f);
+    }
+
+    /** Speak a warning only after the scene remains unclear; never interrupt a page. */
+    private void onReadingQuality(OcrReadResult result, FrameQuality.Assessment quality) {
+        if (!qualityPromptsEnabled || !running) return;
+        if (!result.getText().trim().isEmpty()) {
+            noTextSince = 0L;
+            if (result.getAverageConfidence() < 0.50 && quality.possiblyBlurry)
+                tryVoiceHint("文字可能模糊，请保持摄像头稳定");
+            return;
+        }
+        final long now = System.currentTimeMillis();
+        if (noTextSince == 0L) noTextSince = now;
+        mainHandler.postDelayed(() -> {
+            if (!running || !qualityPromptsEnabled || noTextSince == 0L ||
+                System.currentTimeMillis() - noTextSince < 1300L) return;
+            String warning = quality.dark ? "光线不足，请增加照明" : "未拾取到文字";
+            tryVoiceHint(warning);
+        }, 1350L);
+    }
+
+    private void tryVoiceHint(String message) {
+        long now = System.currentTimeMillis();
+        if (!ttsReady || tts == null || speechPageActive || speakingQueued ||
+            currentSpeech != null || !speechQueue.isEmpty() ||
+            now - lastQualityPromptAt < 6000L) return;
+        lastQualityPromptAt = now;
+        tts.speak(message, TextToSpeech.QUEUE_FLUSH, null, "quality-" + (++utteranceSequence));
+    }
+
+    private void setLongReadingMode(boolean enableLong) {
+        if (longReadingMode == enableLong) return;
+        readingEpoch.incrementAndGet();
+        longReadingMode = enableLong;
+        queueSpeech = enableLong; // keep legacy preference consistent
+        if (recognizer != null) recognizer.setFastScanMode(!enableLong);
+        manualCaptureRequested.set(false);
+        frameChangeGate.reset();
+        candidateText = "";
+        candidateNormalized = "";
+        candidateCount = 0;
+        lastSpoken = "";
+        clearSpeechQueue(true);
+        noTextSince = 0L;
+        if (ocrOverlay != null) ocrOverlay.clear();
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putBoolean(PREF_LONG_READING, enableLong)
+            .putBoolean(PREF_QUEUE_SPEECH, enableLong)
+            .apply();
+        updateControlLabels();
+        String announcement = enableLong ? "已切换长文阅读，读完再识别" : "已切换快速扫读，新内容会打断旧内容";
+        Toast.makeText(this, announcement, Toast.LENGTH_SHORT).show();
+        if (readingModeButton != null) readingModeButton.announceForAccessibility(announcement);
+    }
+
+    /**
+     * Full reading confirms two matching frames; rapid scanning acts on one
+     * current frame. An explicit manual request reads its own complete capture.
      */
     private void onRecognized(String found, boolean manualCapture) {
         final long now = System.currentTimeMillis();
@@ -939,7 +1237,7 @@ public class MainActivity extends CameraActivity {
         lastNonEmptyAt = now;
         if (!running || !ttsReady) return;
         String confirmed;
-        if (manualCapture) {
+        if (manualCapture || !longReadingMode) {
             candidateText = "";
             candidateNormalized = "";
             candidateCount = 0;
@@ -967,7 +1265,7 @@ public class MainActivity extends CameraActivity {
         if (speechNoEnglish) speechText = speechText.replaceAll("[A-Za-z]+", " ");
         if (speechNoNumbers) speechText = speechText.replaceAll("[0-9]+", " ");
         // Keep line/paragraph boundaries for natural reading instead of flattening to spaces.
-        speechText = speechText.replaceAll("[\\t ]+", " ").replaceAll(" *\\n *", "\\n").trim();
+        speechText = speechText.replaceAll("[\\t ]+", " ").replaceAll(" *\\n *", "\n").trim();
         if (maxSpeechChars > 0 && speechText.length() > maxSpeechChars)
             speechText = speechText.substring(0, maxSpeechChars).trim();
         if (speechText.isEmpty()) return;
@@ -983,20 +1281,23 @@ public class MainActivity extends CameraActivity {
     /** Read one complete frame, splitting into bounded utterances but never dropping its tail. */
     private void queueSpeechText(String text, String normalized, boolean force) {
         if (tts == null || !ttsReady || normalized.isEmpty()) return;
-        if (force) {
-            // Explicit manual capture / diagnostic read takes precedence.
-            clearSpeechQueue(true);
-            lastSpoken = "";
-        } else {
-            // Do not accumulate camera frames while a page is still being read.
-            if (currentSpeech != null || !speechQueue.isEmpty()) return;
-            if (isAlreadyQueuedOrRecentlySpoken(normalized, similarityThreshold / 100.0f)) return;
-            if (!queueSpeech) clearSpeechQueue(true);
+        // Compare the ACTUAL text being spoken, not unspoken tail content.
+        String spokenText = (!force && !longReadingMode) ? SpeechText.scanExcerpt(text) : text;
+        String spokenNormalized = normalizeOcrText(spokenText);
+        if (spokenNormalized.isEmpty()) return;
+        if (!force) {
+            if (longReadingMode && (speechPageActive || currentSpeech != null || !speechQueue.isEmpty())) return;
+            if (isAlreadyQueuedOrRecentlySpoken(spokenNormalized, similarityThreshold / 100.0f)) return;
         }
-        List<String> chunks = SpeechText.chunks(text);
+        if (force || !longReadingMode) {
+            // Latest-content-wins in scan mode. A manual request always takes priority.
+            clearSpeechQueue(true);
+        }
+        List<String> chunks = SpeechText.chunks(spokenText);
         if (chunks.isEmpty()) return;
+        speechPageActive = true;
         for (String chunk : chunks) {
-            speechQueue.addLast(new SpeechItem(chunk, normalized, "ocr-" + (++utteranceSequence)));
+            speechQueue.addLast(new SpeechItem(chunk, spokenNormalized, "ocr-" + (++utteranceSequence)));
         }
         speakNextQueued();
     }
@@ -1026,10 +1327,12 @@ public class MainActivity extends CameraActivity {
         if (currentSpeech == null || !currentSpeech.utteranceId.equals(utteranceId)) return;
         currentSpeech = null;
         speakingQueued = false;
+        if (speechQueue.isEmpty()) speechPageActive = false;
         speakNextQueued();
     }
 
     private void clearSpeechQueue(boolean stopCurrent) {
+        speechPageActive = false;
         speechQueue.clear();
         currentSpeech = null;
         speakingQueued = false;
@@ -1069,11 +1372,23 @@ public class MainActivity extends CameraActivity {
 
     private int dp(int value) { return (int) (value * getResources().getDisplayMetrics().density); }
 
+    @Override protected void onResume() {
+        super.onResume();
+        if (usingPhoneCamera && phoneController != null) startPhoneCamera();
+    }
+
+    @Override protected void onPause() {
+        if (phoneController != null) phoneController.stop();
+        super.onPause();
+    }
+
     @Override protected void onDestroy() {
+        if (phoneController != null) phoneController.stop();
         running = false;
         manualCaptureRequested.set(false);
         speechQueue.clear();
         currentSpeech = null;
+        speechPageActive = false;
         if (tts != null) { tts.stop(); tts.shutdown(); }
         if (recognizer != null) recognizer.release();
         diagnosticHandler.removeCallbacksAndMessages(null);

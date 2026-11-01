@@ -28,6 +28,16 @@ public final class SpeechText {
         return result;
     }
 
+    /**
+     * A mobile sign/product scanner should read what's in front of the camera now,
+     * not queue a whole page that is already out of view.
+     */
+    public static String scanExcerpt(String text) {
+        // Preserve all detected text in reading order. Fast scan prioritizes
+        // the newest FRAME, not an arbitrary first-two-line truncation.
+        return text == null ? "" : text.trim();
+    }
+
     private static boolean isEnding(char c) {
         return c == '。' || c == '！' || c == '？' || c == '；' || c == '!' || c == '?' || c == ';';
     }

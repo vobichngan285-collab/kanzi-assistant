@@ -31,7 +31,16 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
-fun interface OcrResultCallback { fun onResult(text: String?) }
+data class OcrReadResult(
+    val text: String,
+    val boxes: List<FloatArray>,
+    val frameWidth: Int,
+    val frameHeight: Int,
+    val boxCount: Int,
+    val averageConfidence: Double,
+    val totalTimeMs: Long
+)
+fun interface OcrResultCallback { fun onResult(result: OcrReadResult?) }
 fun interface OcrErrorCallback { fun onError(message: String) }
 data class OcrDiagnosticResult(
     val text: String,
@@ -79,6 +88,8 @@ class PaddleOcrEngine(
     private val busy = AtomicBoolean(false)
     @Volatile private var engine: PaddleOCR? = null
     @Volatile private var released = false
+    @Volatile private var fastScanMode = false
+    fun setFastScanMode(enabled: Boolean) { fastScanMode = enabled }
 
     fun isReady(): Boolean = engine != null && !released
 
@@ -223,7 +234,7 @@ class PaddleOcrEngine(
                     var result = current.recognize(bitmap)
                     // Retry only low-confidence frames. This avoids paying for enhancement
                     // on every frame while giving difficult text a second preprocessing pass.
-                    if (!enhancedPreprocessing && shouldRetryWithEnhancement(result.results)) {
+                    if (!fastScanMode && !enhancedPreprocessing && shouldRetryWithEnhancement(result.results)) {
                         val retryBitmap = enhanceForOcr(bitmap)
                         if (retryBitmap !== bitmap) {
                             try {
@@ -249,7 +260,24 @@ class PaddleOcrEngine(
                     } else {
                         Log.i(TAG, message)
                     }
-                    withContext(Dispatchers.Main) { onResult.onResult(text) }
+                    val boxed = result.results.mapNotNull { item ->
+                        if (item.box.points.size != 4) null
+                        else {
+                            val p = item.box.points
+                            floatArrayOf(p[0].x, p[0].y, p[1].x, p[1].y,
+                                p[2].x, p[2].y, p[3].x, p[3].y)
+                        }
+                    }
+                    val response = OcrReadResult(
+                        text = text,
+                        boxes = boxed,
+                        frameWidth = bitmap.width,
+                        frameHeight = bitmap.height,
+                        boxCount = result.results.size,
+                        averageConfidence = averageConfidence,
+                        totalTimeMs = result.totalTimeMs.toLong()
+                    )
+                    withContext(Dispatchers.Main) { onResult.onResult(response) }
                 } finally {
                     bitmap.recycle()
                 }

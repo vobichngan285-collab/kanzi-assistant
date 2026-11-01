@@ -194,9 +194,18 @@ jobs:
           javac -encoding UTF-8 -d "$RUNNER_TEMP/reading-flow-classes" \
             app/src/main/java/com/vobichngan/kanzi/ReadingOrder.java \
             app/src/main/java/com/vobichngan/kanzi/SpeechText.java \
-            scripts/ReadingFlowSmokeTest.java
+            app/src/main/java/com/vobichngan/kanzi/FrameChangeGate.java \
+            app/src/main/java/com/vobichngan/kanzi/Nv21Rotation.java \
+            app/src/main/java/com/vobichngan/kanzi/FrameQuality.java \
+            scripts/ReadingFlowSmokeTest.java \
+            scripts/ReadingModesSmokeTest.java \
+            scripts/CameraReadingFeatureSmokeTest.java
           java -cp "$RUNNER_TEMP/reading-flow-classes" ReadingFlowSmokeTest | tee "$RUNNER_TEMP/reading-flow-test.log"
+          java -cp "$RUNNER_TEMP/reading-flow-classes" ReadingModesSmokeTest | tee -a "$RUNNER_TEMP/reading-flow-test.log"
+          java -cp "$RUNNER_TEMP/reading-flow-classes" CameraReadingFeatureSmokeTest | tee -a "$RUNNER_TEMP/reading-flow-test.log"
           grep -q "READING_FLOW_SMOKE_TEST=PASS" "$RUNNER_TEMP/reading-flow-test.log"
+          grep -q "DUAL_READING_MODES_SMOKE_TEST=PASS" "$RUNNER_TEMP/reading-flow-test.log"
+          grep -q "CAMERA_READING_FEATURES=PASS" "$RUNNER_TEMP/reading-flow-test.log"
           echo "Reading order, columns, slanted rows, punctuation and nontruncated TTS chunks passed." >> "$GITHUB_STEP_SUMMARY"
       - name: Checkout AUSBC source
         uses: actions/checkout@v4
@@ -267,7 +276,7 @@ jobs:
           "$ZIPALIGN" -c -v 4 "$APK"
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           "$AAPT" dump badging "$APK" | tee "$RUNNER_TEMP/apk-manifest.txt"
-          grep -q "package: name='com.vobich.kanzi' versionCode='30' versionName='0.8.5'" "$RUNNER_TEMP/apk-manifest.txt"
+          grep -q "package: name='com.vobich.kanzi' versionCode='31' versionName='0.9.0'" "$RUNNER_TEMP/apk-manifest.txt"
           grep -q "sdkVersion:'26'" "$RUNNER_TEMP/apk-manifest.txt"
           echo "APK_SHA256=$(sha256sum "$APK" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
           echo "APK_SIZE=$(stat -c%s "$APK") bytes" >> "$GITHUB_STEP_SUMMARY"
@@ -275,7 +284,7 @@ jobs:
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kanzi-assistant-0.8.5-natural-reading-signed
+          name: kanzi-assistant-0.9.0-dual-camera-reading-signed
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
@@ -284,6 +293,6 @@ jobs:
         with:
           tag_name: test-build-${{ github.run_number }}
           target_commitish: ${{ github.sha }}
-          name: 看字助手测试版 0.8.5 完整顺序朗读优化 (${{ github.run_number }})
+          name: 看字助手测试版 0.9.0 双摄像头双模式竖排和语音提示 (${{ github.run_number }})
           prerelease: true
           files: app/build/outputs/apk/release/app-release.apk

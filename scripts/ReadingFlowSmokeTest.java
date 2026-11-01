@@ -30,6 +30,16 @@ public class ReadingFlowSmokeTest {
             "5元 50% ￥", "preserve numeric punctuation");
         equals(ReadingOrder.arrange(Arrays.asList(box("清晰文字", 10, 10, 130, 25))),
             "清晰文字", "preserve low-confidence but readable content");
+        equals(ReadingOrder.arrange(Arrays.asList(
+            box("商", 180, 10, 23, 24), box("品", 180, 39, 23, 24),
+            box("名", 180, 68, 23, 24), box("称", 180, 97, 23, 24),
+            box("生", 110, 10, 23, 24), box("产", 110, 39, 23, 24),
+            box("日", 110, 68, 23, 24), box("期", 110, 97, 23, 24)
+        )), "商品名称\n生产日期", "traditional vertical columns right-to-left");
+        equals(ReadingOrder.arrange(Arrays.asList(
+            box("保", 85, 10, 23, 24), box("质", 85, 39, 23, 24),
+            box("期", 85, 68, 23, 24)
+        )), "保质期", "packaging short upright vertical column");
         StringBuilder page = new StringBuilder();
         for (int i = 0; i < 50; i++) page.append("完整阅读不能中途截断。");
         List<String> chunks = SpeechText.chunks(page.toString());
