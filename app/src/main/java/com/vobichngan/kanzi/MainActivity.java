@@ -18,6 +18,8 @@ import android.view.ViewGroup;
 import android.view.TextureView;
 import android.widget.Button;
 import android.widget.CheckBox;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -49,7 +51,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.7.8";
+    private static final String APP_VERSION = "0.8.0";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -63,7 +65,7 @@ public class MainActivity extends CameraActivity {
     private static final String PREF_PREVIEW_MIRROR = "preview_mirror";
     private static final String PREF_PREVIEW_FLIP = "preview_flip";
     private static final String PREF_ENHANCED_OCR = "enhanced_ocr";
-    private static final String PREF_USE_SMALL_MODEL = "use_small_model";
+    private static final String PREF_OCR_MODEL = "ocr_model_id";
     private final Handler diagnosticHandler = new Handler(Looper.getMainLooper());
     private int diagnosticAttempts = 0;
     private final Runnable diagnosticRunnable = new Runnable() {
@@ -86,7 +88,8 @@ public class MainActivity extends CameraActivity {
     private volatile boolean previewMirror = false;
     private volatile boolean previewVerticalFlip = false;
     private volatile boolean enhancedOcr = false;
-    private volatile boolean useSmallModel = false;
+    private volatile String ocrModelId = "ppocrv6_small";
+    private volatile String lastDiagnosticText = "";
     private volatile boolean speechNoEnglish = false;
     private volatile boolean speechNoNumbers = false;
     private volatile int maxSpeechChars = 0;
@@ -147,7 +150,8 @@ public class MainActivity extends CameraActivity {
                             + "\n识别耗时：" + report.getRecognitionTimeMs() + " ms"
                             + "\n总耗时：" + report.getTotalTimeMs() + " ms"
                             + "\n诊断总用时：" + (System.currentTimeMillis() - started) + " ms"
-                            + "\n原始识别结果：\n" + (report.getText().isEmpty() ? "（未识别到文字）" : report.getText());
+                            + "\n识别结果（低置信度及纯符号片段已过滤）：\n" + (report.getText().isEmpty() ? "（未识别到文字）" : report.getText());
+                        lastDiagnosticText = report.getText();
                         runOnUiThread(() -> { if (diagnosticReportView != null) diagnosticReportView.setText(result); });
                     },
                     error -> {
@@ -268,10 +272,46 @@ public class MainActivity extends CameraActivity {
         previewMirror = prefs.getBoolean(PREF_PREVIEW_MIRROR, false);
         previewVerticalFlip = prefs.getBoolean(PREF_PREVIEW_FLIP, false);
         enhancedOcr = prefs.getBoolean(PREF_ENHANCED_OCR, false);
-        useSmallModel = prefs.getBoolean(PREF_USE_SMALL_MODEL, false) && OcrModelDownloader.isInstalled(this);
+        ocrModelId = prefs.getString(PREF_OCR_MODEL, "ppocrv6_small");
+        if (!ocrModelId.equals("ppocrv6_small") && !ocrModelId.equals("ppocrv6_tiny") && !ocrModelId.equals("ppocrv5_mobile")) ocrModelId = "ppocrv6_small";
         speechNoEnglish = prefs.getBoolean(PREF_NO_ENGLISH, false);
         speechNoNumbers = prefs.getBoolean(PREF_NO_NUMBERS, false);
         maxSpeechChars = Math.max(0, Math.min(5000, prefs.getInt(PREF_MAX_SPEECH_CHARS, 0)));
+    }
+
+    private String ocrModelDisplayName(String modelId) {
+        if ("ppocrv6_tiny".equals(modelId)) return "PP-OCRv6 Tiny";
+        if ("ppocrv5_mobile".equals(modelId)) return "PP-OCRv5 Mobile";
+        return "PP-OCRv6 Small";
+    }
+
+    private void switchOcrModel(String modelId) {
+        running = false;
+        manualCaptureRequested.set(false);
+        clearSpeechQueue(true);
+        candidateText = "";
+        candidateNormalized = "";
+        candidateCount = 0;
+        lastSpoken = "";
+        lastDiagnosticText = "";
+        busy.set(false);
+        if (recognizer != null) recognizer.release();
+        status.setText("正在切换到 " + ocrModelDisplayName(modelId) + "…");
+        recognizer = new PaddleOcrEngine(getApplicationContext(), new PaddleOcrEngine.Listener() {
+            @Override public void onReady() {
+                runOnUiThread(() -> {
+                    status.setText(ocrModelDisplayName(modelId) + " 已加载，可以开始识别");
+                    Toast.makeText(MainActivity.this, ocrModelDisplayName(modelId) + " 已切换", Toast.LENGTH_SHORT).show();
+                });
+            }
+            @Override public void onError(String message) {
+                runOnUiThread(() -> {
+                    status.setText(ocrModelDisplayName(modelId) + " 初始化失败：" + message);
+                    Toast.makeText(MainActivity.this, "OCR 模型初始化失败，请切回 PP-OCRv6 Small。", Toast.LENGTH_LONG).show();
+                });
+            }
+        }, modelId);
+        recognizer.initialize();
     }
 
     private void showSettingsDialog() {
@@ -291,19 +331,30 @@ public class MainActivity extends CameraActivity {
         enhancedNote.setTextColor(0xFF667085);
         panel.addView(enhancedNote);
 
-        TextView modelNote = new TextView(this);
-        modelNote.setText("当前内置 PP-OCRv6 Small 识别模型，默认直接使用，无需额外下载。");
-        modelNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        modelNote.setTextColor(0xFF667085);
-        panel.addView(modelNote);
-
         TextView modelManagementTitle = new TextView(this);
-        modelManagementTitle.setText("OCR 模型管理");
+        modelManagementTitle.setText("OCR 引擎选择");
         modelManagementTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         modelManagementTitle.setPadding(0, dp(14), 0, dp(4));
         panel.addView(modelManagementTitle);
+        RadioGroup modelGroup = new RadioGroup(this);
+        modelGroup.setOrientation(RadioGroup.VERTICAL);
+        String[][] modelOptions = new String[][] {
+            {"ppocrv6_small", "PP-OCRv6 Small（默认，优先推荐）"},
+            {"ppocrv6_tiny", "PP-OCRv6 Tiny（轻量，速度优先）"},
+            {"ppocrv5_mobile", "PP-OCRv5 Mobile（上一代移动端模型）"}
+        };
+        for (String[] option : modelOptions) {
+            RadioButton radio = new RadioButton(this);
+            radio.setId(View.generateViewId());
+            radio.setTag(option[0]);
+            radio.setText(option[1]);
+            radio.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            radio.setChecked(ocrModelId.equals(option[0]));
+            modelGroup.addView(radio);
+        }
+        panel.addView(modelGroup);
         TextView modelManagementInfo = new TextView(this);
-        modelManagementInfo.setText("当前使用内置 PP-OCRv6 Small。此版本已验证该模型与当前安卓 OCR 引擎兼容。PP-OCR Tiny 和 PP-OCRv5 Mobile 尚未完成兼容性及模型文件校验，因此暂不提供切换，避免下载后无法识别。");
+        modelManagementInfo.setText("三套模型均使用 PaddleOCR 官方 Android SDK 支持的 ONNX 模型格式，随安装包一起提供，无需在手机上另行下载。切换后会重新初始化 OCR 引擎；若新模型初始化失败，会显示明确错误。");
         modelManagementInfo.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         modelManagementInfo.setTextColor(0xFF667085);
         panel.addView(modelManagementInfo);
@@ -458,7 +509,7 @@ public class MainActivity extends CameraActivity {
         diagnosticTitle.setPadding(0, dp(18), 0, dp(4));
         panel.addView(diagnosticTitle);
         TextView diagnosticNote = new TextView(this);
-        diagnosticNote.setText("点击后自动抓取摄像头下一帧并执行一次 OCR。诊断不受朗读筛选、字数限制、自动识别间隔和连续识别条件影响，也不会朗读。请先连接外接摄像头。");
+        diagnosticNote.setText("点击后抓取摄像头下一帧并执行一次 OCR。诊断不受自动识别间隔和连续识别条件影响；完成后可让中文语音实际朗读这次识别结果。请先连接外接摄像头。");
         diagnosticNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         diagnosticNote.setTextColor(0xFF667085);
         panel.addView(diagnosticNote);
@@ -484,6 +535,17 @@ public class MainActivity extends CameraActivity {
             diagnosticCaptureRequested.set(true);
         });
         panel.addView(runDiagnosticButton);
+        Button speakDiagnosticButton = createControlButton("朗读这次诊断识别出的文字");
+        speakDiagnosticButton.setOnClickListener(v -> {
+            String textToRead = lastDiagnosticText == null ? "" : lastDiagnosticText.trim();
+            if (textToRead.isEmpty()) Toast.makeText(this, "这次诊断没有得到可朗读的文字", Toast.LENGTH_SHORT).show();
+            else if (tts == null || !ttsReady) Toast.makeText(this, "中文语音尚未准备好", Toast.LENGTH_SHORT).show();
+            else {
+                int result = tts.speak(textToRead, TextToSpeech.QUEUE_FLUSH, null, "diagnostic-read-" + (++utteranceSequence));
+                if (result == TextToSpeech.ERROR) Toast.makeText(this, "语音引擎拒绝了这次朗读请求", Toast.LENGTH_SHORT).show();
+            }
+        });
+        panel.addView(speakDiagnosticButton);
 
         TextView similarityNote = new TextView(this);
         similarityNote.setText("数值越高，判断越严格；设为 0 时关闭相似度去重，但仍要求连续两次识别后才朗读。");
@@ -507,6 +569,10 @@ public class MainActivity extends CameraActivity {
                     interval = Long.parseLong(intervalInput.getText().toString().trim());
                 } catch (NumberFormatException ignored) {}
                 recognitionIntervalMs = Math.max(1L, Math.min(10000L, interval));
+                RadioButton selectedModel = modelGroup.findViewById(modelGroup.getCheckedRadioButtonId());
+                String selectedModelId = selectedModel != null && selectedModel.getTag() != null ? selectedModel.getTag().toString() : ocrModelId;
+                boolean modelChanged = !selectedModelId.equals(ocrModelId);
+                ocrModelId = selectedModelId;
                 similarityThreshold = similaritySeek.getProgress();
                 boolean wasQueueEnabled = queueSpeech;
                 queueSpeech = queueCheck.isChecked();
@@ -531,12 +597,13 @@ public class MainActivity extends CameraActivity {
                     .putBoolean(PREF_PREVIEW_MIRROR, previewMirror)
                     .putBoolean(PREF_PREVIEW_FLIP, previewVerticalFlip)
                     .putBoolean(PREF_ENHANCED_OCR, enhancedOcr)
-                    .putBoolean(PREF_USE_SMALL_MODEL, useSmallModel)
+                    .putString(PREF_OCR_MODEL, ocrModelId)
                     .putBoolean(PREF_NO_ENGLISH, speechNoEnglish)
                     .putBoolean(PREF_NO_NUMBERS, speechNoNumbers)
                     .putInt(PREF_MAX_SPEECH_CHARS, maxSpeechChars)
                     .apply();
                 if (wasQueueEnabled && !queueSpeech) clearSpeechQueue(true);
+                if (modelChanged) switchOcrModel(selectedModelId);
                 Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show();
             })
             .show();
@@ -614,12 +681,12 @@ public class MainActivity extends CameraActivity {
         diagnosticHandler.postDelayed(diagnosticRunnable, 1200);
         recognizer = new PaddleOcrEngine(getApplicationContext(), new PaddleOcrEngine.Listener() {
             @Override public void onReady() {
-                runOnUiThread(() -> status.setText("PP-OCRv6 已加载，等待 USB 摄像头…"));
+                runOnUiThread(() -> status.setText(ocrModelDisplayName(ocrModelId) + " 已加载，等待 USB 摄像头…"));
             }
             @Override public void onError(String message) {
                 runOnUiThread(() -> status.setText("飞桨 OCR 初始化失败：" + message));
             }
-        }, useSmallModel);
+        }, ocrModelId);
         recognizer.initialize();
         tts = new TextToSpeech(this, code -> {
             if (code == TextToSpeech.SUCCESS) {
@@ -643,6 +710,9 @@ public class MainActivity extends CameraActivity {
                 } else {
                     status.setText("系统没有可用的中文语音，请先安装中文语音包");
                 }
+            } else {
+                ttsReady = false;
+                status.setText("系统中文语音引擎初始化失败，状态码：" + code);
             }
         });
 
@@ -881,7 +951,7 @@ public class MainActivity extends CameraActivity {
         currentSpeech = speechQueue.pollFirst();
         speakingQueued = true;
         lastSpoken = currentSpeech.normalized;
-        int result = tts.speak(currentSpeech.text, TextToSpeech.QUEUE_FLUSH, null,
+        int result = tts.speak(currentSpeech.text, TextToSpeech.QUEUE_ADD, null,
             currentSpeech.utteranceId);
         if (result == TextToSpeech.ERROR) finishQueuedUtterance(currentSpeech.utteranceId);
     }
