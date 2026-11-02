@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
+import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.YuvImage
 import android.util.Log
@@ -98,6 +99,9 @@ class PaddleOcrEngine(
     @Volatile private var engine: PaddleOCR? = null
     @Volatile private var released = false
     @Volatile private var fastScanMode = false
+    // Optional 90/270 degree correction in the live text scanner.
+    // Manual correction performs just ONE normal OCR inference.
+    @Volatile private var liveTextRotationDegrees = 0
     @Volatile private var readingFocusMode = ReadingFocus.Mode.AUTO
     private val focusTracker = ReadingFocus.Tracker()
     private val layoutAi = LayoutAiEngine(appContext)
@@ -108,6 +112,9 @@ class PaddleOcrEngine(
         aiLayoutEnabled = enabled
     }
     fun setFastScanMode(enabled: Boolean) { fastScanMode = enabled }
+    fun setLiveTextRotationDegrees(degrees: Int) {
+        liveTextRotationDegrees = if (degrees == 90 || degrees == 270) degrees else 0
+    }
     fun setReadingFocusMode(mode: String) {
         readingFocusMode = try { ReadingFocus.Mode.valueOf(mode) }
             catch (_: IllegalArgumentException) { ReadingFocus.Mode.AUTO }
@@ -180,7 +187,8 @@ class PaddleOcrEngine(
                         candidateDetails = candidate.second,
                         // Exactly the geometry-only order used by the new
                         // real-time scanner; no additional ONNX inference.
-                        realtimeText = ReadingOrder.arrangeRealtime(toReadingBoxes(result.results))
+                        realtimeText = RealtimeTextOrientation.arrange(
+                            toReadingBoxes(result.results), bitmap.width, bitmap.height)
                     )
                     withContext(Dispatchers.Main) { onResult.onResult(report) }
                 } finally { bitmap.recycle() }
@@ -266,7 +274,18 @@ class PaddleOcrEngine(
                     "NV21 数据长度不匹配：收到 ${data.size} 字节，预期 ${expectedBytes} 字节"
                 }
                 var bitmap = nv21ToBitmap(data, width, height, legacyNv21Jpeg)
+                val liveAngle = if (fastScanMode) liveTextRotationDegrees else 0
                 try {
+                    if (liveAngle != 0) {
+                        val transform = Matrix()
+                        transform.postRotate(liveAngle.toFloat())
+                        val rotated = Bitmap.createBitmap(bitmap, 0, 0,
+                            bitmap.width, bitmap.height, transform, true)
+                        if (rotated !== bitmap) {
+                            bitmap.recycle()
+                            bitmap = rotated
+                        }
+                    }
                     if (enhancedPreprocessing) {
                         val enhanced = enhanceForOcr(bitmap)
                         if (enhanced !== bitmap) {
@@ -302,8 +321,9 @@ class PaddleOcrEngine(
                     val text: String
                     val flowDescription: String
                     if (realtime) {
-                        text = ReadingOrder.arrangeRealtime(toReadingBoxes(result.results))
-                        flowDescription = "实时文字：自上而下按独立文字流连续朗读"
+                        text = RealtimeTextOrientation.arrange(
+                            toReadingBoxes(result.results), bitmap.width, bitmap.height)
+                        flowDescription = "实时文字：按文字方向、从上至下连续朗读（输入旋转${liveAngle}°）"
                     } else {
                         val focus = arrangeInReadingOrder(result.results, bitmap.width,
                             bitmap.height, layout.regions)
@@ -317,7 +337,7 @@ class PaddleOcrEngine(
                         "layoutMs=${layout.elapsedMs}; ordering=$verification")
                     val averageConfidence = if (result.results.isEmpty()) 0.0
                         else result.results.map { it.confidence }.average()
-                    val message = "frame=${width}x${height}, ocrInputDirection=raw0, " +
+                    val message = "frame=${width}x${height}, ocrInputRotation=${liveAngle}, " +
                         "bitmap=${bitmap.width}x${bitmap.height}, boxes=${result.results.size}, " +
                         "avgConfidence=${"%.3f".format(java.util.Locale.US, averageConfidence)}, " +
                         "det=${result.detectionTimeMs}ms, rec=${result.recognitionTimeMs}ms, " +
@@ -331,15 +351,31 @@ class PaddleOcrEngine(
                         if (item.box.points.size != 4) null
                         else {
                             val p = item.box.points
-                            floatArrayOf(p[0].x, p[0].y, p[1].x, p[1].y,
-                                p[2].x, p[2].y, p[3].x, p[3].y)
+                            val coordinates = FloatArray(8)
+                            for (i in 0..3) {
+                                val x = p[i].x
+                                val y = p[i].y
+                                // OCR polygons are on a rotated bitmap.
+                                // Map them back to native camera coordinates.
+                                coordinates[2 * i] = when (liveAngle) {
+                                    90 -> y
+                                    270 -> width - y
+                                    else -> x
+                                }
+                                coordinates[2 * i + 1] = when (liveAngle) {
+                                    90 -> height - x
+                                    270 -> x
+                                    else -> y
+                                }
+                            }
+                            coordinates
                         }
                     }
                     val response = OcrReadResult(
                         text = text,
                         boxes = boxed,
-                        frameWidth = bitmap.width,
-                        frameHeight = bitmap.height,
+                        frameWidth = width,
+                        frameHeight = height,
                         boxCount = result.results.size,
                         averageConfidence = averageConfidence,
                         totalTimeMs = result.totalTimeMs.toLong()
