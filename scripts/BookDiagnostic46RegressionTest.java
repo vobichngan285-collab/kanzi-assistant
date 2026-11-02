@@ -90,7 +90,7 @@ public final class BookDiagnostic46RegressionTest {
     }
     public static void main(String[] args) {
         List<LayoutRegion> broad=Collections.singletonList(
-            new LayoutRegion(2,.98f,0,380,540,1150));
+            new LayoutRegion(2,.98f,30,380,540,1150));
         for (List<LayoutRegion> region:Arrays.asList(broad,Collections.<LayoutRegion>emptyList())) {
             LayoutReadingPlanner.Plan p=execute(region);
             check(p.verified.accepted,"Strict OCR ID permutation check failed");
@@ -108,8 +108,18 @@ public final class BookDiagnostic46RegressionTest {
                 "second footnote block must not interrupt main body");
             check(pos(p,44)<pos(p,45),
                 "bottom-right page number must not precede last body line");
-            if (!region.isEmpty()) check(p.distinctAssignedRegions==1,
-                "One broad region must not be described as separate page zones");
+            check(pos(p,4)<pos(p,45) && pos(p,30)<pos(p,45),
+                "page number must follow the marginal annotation");
+            check(pos(p,3)<pos(p,22) && pos(p,22)<pos(p,25),
+                "left-edge OCR glyph should stay near its original body line");
+            check(pos(p,22)<pos(p,24) && pos(p,24)<pos(p,25),
+                "edge fragments must not lead the entire page");
+            if (!region.isEmpty()) {
+                check(p.distinctAssignedRegions==1,
+                    "One broad region must not be described as separate page zones");
+                check(p.assignedBoxes==44,
+                    "Real single broad region must cover 44 of the 46 OCR boxes");
+            }
         }
         System.out.println("REAL_SINGLE_PAGE_46_ORDER=PASS");
     }
