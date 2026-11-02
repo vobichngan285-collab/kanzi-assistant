@@ -27,6 +27,8 @@ on:
       - 'scripts/RealtimeSceneTrackerSmokeTest.java'
       - 'app/src/main/java/com/vobichngan/kanzi/RealtimeSpeechGuard.java'
       - 'scripts/RealtimeSpeechGuardSmokeTest.java'
+      - 'scripts/RealCoverDiagnosticsRegressionTest.java'
+      - 'scripts/verify_removed_decoder_setting.py'
       - 'scripts/verify_live_speech_delivery.py'
       - 'app/src/main/java/com/vobichngan/kanzi/MainActivity.java'
       - 'scripts/LayoutSceneFingerprintSmokeTest.java'
@@ -45,6 +47,8 @@ jobs:
           java-version: '17'
       - name: Verify successful OCR can reach speech even if the camera moves
         run: python3 scripts/verify_live_speech_delivery.py
+      - name: Verify obsolete decoder toggle is gone
+        run: python3 scripts/verify_removed_decoder_setting.py
       - name: Compile pure Java reading-order components
         run: |
           mkdir -p build/order-tests
@@ -67,6 +71,7 @@ jobs:
             scripts/BookDiagnostic46RegressionTest.java \
             scripts/RealtimeSceneTrackerSmokeTest.java \
             scripts/RealtimeSpeechGuardSmokeTest.java \
+            scripts/RealCoverDiagnosticsRegressionTest.java \
             scripts/RealtimeTextFlowSmokeTest.java \
             scripts/RealtimeTextOrientationSmokeTest.java \
             scripts/LayoutFrameSchedulerSmokeTest.java \
@@ -85,6 +90,8 @@ jobs:
         run: java -cp build/order-tests BookDiagnostic46RegressionTest
       - name: Protect long cover reading from same-page live OCR restarts
         run: java -cp build/order-tests RealtimeSpeechGuardSmokeTest
+      - name: Regress both user-provided Jane Eyre cover OCR recordings
+        run: java -cp build/order-tests RealCoverDiagnosticsRegressionTest
       - name: Verify new-target acquisition and same-target suppression
         run: java -cp build/order-tests RealtimeSceneTrackerSmokeTest
       - name: Verify real-time top-first coherent text flows
