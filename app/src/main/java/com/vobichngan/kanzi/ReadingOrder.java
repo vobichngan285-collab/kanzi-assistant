@@ -220,6 +220,11 @@ public final class ReadingOrder {
 
     private static boolean asciiWord(char c) { return c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'; }
 
+    /** Return raw horizontal text regions for page-focus selection. */
+    public static List<List<Box>> horizontalColumns(List<Box> boxes) {
+        return splitColumns(boxes);
+    }
+
     /**
      * Recover parallel reading streams even when a camera perspective leaves
      * only a VERY SMALL gutter (or lightly skewed quadrilaterals touch it).

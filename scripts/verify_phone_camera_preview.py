@@ -5,7 +5,7 @@ import re
 root=Path(__file__).resolve().parents[1]
 activity=(root/"app/src/main/java/com/vobichngan/kanzi/MainActivity.java").read_text()
 camera=(root/"app/src/main/java/com/vobichngan/kanzi/InternalCameraController.java").read_text()
-assert "APP_VERSION = \"0.9.5\"" in activity
+assert "APP_VERSION = \"0.9.6\"" in activity
 start_method = re.search(r"private void startPhoneCamera\(\) \{([\s\S]*?)\n    \}", activity)
 assert start_method, "missing phone camera startup method"
 assert start_method.group(1).index("phoneTexture.setVisibility(View.VISIBLE);") < start_method.group(1).index("phoneController.start(phoneFrontFacing);"), "camera surface must be made visible before Camera2 start"

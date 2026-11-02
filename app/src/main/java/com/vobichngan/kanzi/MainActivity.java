@@ -54,7 +54,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.9.5";
+    private static final String APP_VERSION = "0.9.6";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -74,6 +74,7 @@ public class MainActivity extends CameraActivity {
     private static final String PREF_PHONE_CAMERA = "phone_camera_source";
     private static final String PREF_FRONT_CAMERA = "phone_camera_front";
     private static final String PREF_QUALITY_PROMPTS = "quality_voice_prompts";
+    private static final String PREF_READING_FOCUS = "reading_page_focus";
     private static final int REQUEST_PHONE_CAMERA = 4051;
     private final Handler diagnosticHandler = new Handler(Looper.getMainLooper());
     private int diagnosticAttempts = 0;
@@ -117,6 +118,7 @@ public class MainActivity extends CameraActivity {
     private volatile boolean previewVerticalFlip = false;
     private volatile boolean enhancedOcr = false;
     private volatile String ocrModelId = "ppocrv6_small";
+    private volatile String readingFocusMode = "AUTO";
     private volatile String lastDiagnosticText = "";
     private volatile boolean speechNoEnglish = false;
     private volatile boolean speechNoNumbers = false;
@@ -184,6 +186,7 @@ public class MainActivity extends CameraActivity {
                             + "\nOCR 输入方向：原始摄像头帧（固定 0°）"
                             + "\n图像解码：" + (legacyForDiagnostic ? "0.7.0 JPEG 兼容方式" : "OpenCV NV21 方式")
                             + "\n平均置信度：" + String.format(Locale.US, "%.3f", report.getAverageConfidence())
+                            + "\n实际朗读区域：" + report.getFocusDescription()
                             + "\n检测输入尺寸：" + report.getDetectorInputShape()
                             + "\n识别输入尺寸：" + report.getRecognitionInputShapes()
                             + "\n检测耗时：" + report.getDetectionTimeMs() + " ms"
@@ -191,7 +194,9 @@ public class MainActivity extends CameraActivity {
                             + "\n总耗时：" + report.getTotalTimeMs() + " ms"
                             + "\n诊断总用时：" + (System.currentTimeMillis() - started) + " ms"
                             + "\n逐框原始识别（未做低置信度过滤）：\n" + report.getRawDetails()
-                            + "\n\n整理后的识别结果：\n" + (report.getText().isEmpty() ? "（未识别到文字）" : report.getText());
+                            + "\n\n实际朗读内容（智能正文/手动选页）：\n" +
+                                (report.getText().isEmpty() ? "（未识别到文字）" : report.getText()) +
+                            "\n\n全部可见文字（不用于智能朗读，仅供对照）：\n" + report.getFullPageText();
                         lastDiagnosticText = report.getText();
                         runOnUiThread(() -> { if (diagnosticReportView != null) diagnosticReportView.setText(result); });
                     },
@@ -415,6 +420,10 @@ public class MainActivity extends CameraActivity {
         previewMirror = prefs.getBoolean(PREF_PREVIEW_MIRROR, false);
         previewVerticalFlip = prefs.getBoolean(PREF_PREVIEW_FLIP, false);
         enhancedOcr = prefs.getBoolean(PREF_ENHANCED_OCR, false);
+        readingFocusMode = prefs.getString(PREF_READING_FOCUS, "AUTO");
+        if (!readingFocusMode.equals("AUTO") && !readingFocusMode.equals("ALL") &&
+            !readingFocusMode.equals("LEFT") && !readingFocusMode.equals("RIGHT"))
+            readingFocusMode = "AUTO";
         ocrModelId = prefs.getString(PREF_OCR_MODEL, "ppocrv6_small");
         if (!ocrModelId.equals("ppocrv6_small") && !ocrModelId.equals("ppocrv6_tiny") && !ocrModelId.equals("ppocrv5_mobile")) ocrModelId = "ppocrv6_small";
         speechNoEnglish = prefs.getBoolean(PREF_NO_ENGLISH, false);
@@ -465,6 +474,7 @@ public class MainActivity extends CameraActivity {
             }
         }, modelId);
         recognizer.setFastScanMode(!longReadingMode);
+        recognizer.setReadingFocusMode(readingFocusMode);
         recognizer.initialize();
     }
 
@@ -484,6 +494,35 @@ public class MainActivity extends CameraActivity {
         enhancedNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         enhancedNote.setTextColor(0xFF667085);
         panel.addView(enhancedNote);
+
+        TextView pageFocusTitle = new TextView(this);
+        pageFocusTitle.setText("书籍朗读区域（横排书页）");
+        pageFocusTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        pageFocusTitle.setPadding(0, dp(12), 0, dp(4));
+        panel.addView(pageFocusTitle);
+        RadioGroup pageFocusGroup = new RadioGroup(this);
+        pageFocusGroup.setOrientation(RadioGroup.VERTICAL);
+        String[][] pageFocusOptions = new String[][] {
+            {"AUTO", "智能正文优先（推荐，跳过旁边的残页和窄注释）"},
+            {"LEFT", "优先读左侧书页"},
+            {"RIGHT", "优先读右侧书页"},
+            {"ALL", "朗读全部可见文字（旧版行为）"}
+        };
+        for (String[] option : pageFocusOptions) {
+            RadioButton radio = new RadioButton(this);
+            radio.setId(View.generateViewId());
+            radio.setTag(option[0]);
+            radio.setText(option[1]);
+            radio.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            radio.setChecked(readingFocusMode.equals(option[0]));
+            pageFocusGroup.addView(radio);
+        }
+        panel.addView(pageFocusGroup);
+        TextView pageFocusNote = new TextView(this);
+        pageFocusNote.setText("只有检测到多片连续横排书页时才筛选阅读区域；普通单页、竖排字和招牌保持原有朗读。白色文字框继续显示全画面检测结果。");
+        pageFocusNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        pageFocusNote.setTextColor(0xFF667085);
+        panel.addView(pageFocusNote);
 
         TextView modelManagementTitle = new TextView(this);
         modelManagementTitle.setText("OCR 引擎选择");
@@ -748,6 +787,11 @@ public class MainActivity extends CameraActivity {
                 String selectedModelId = selectedModel != null && selectedModel.getTag() != null ? selectedModel.getTag().toString() : ocrModelId;
                 boolean modelChanged = !selectedModelId.equals(ocrModelId);
                 ocrModelId = selectedModelId;
+                RadioButton selectedFocus = pageFocusGroup.findViewById(pageFocusGroup.getCheckedRadioButtonId());
+                String requestedFocus = selectedFocus != null && selectedFocus.getTag() != null
+                    ? selectedFocus.getTag().toString() : readingFocusMode;
+                boolean focusChanged = !readingFocusMode.equals(requestedFocus);
+                readingFocusMode = requestedFocus;
                 similarityThreshold = similaritySeek.getProgress();
                 boolean wasQueueEnabled = queueSpeech;
                 queueSpeech = queueCheck.isChecked();
@@ -781,12 +825,21 @@ public class MainActivity extends CameraActivity {
                     .putBoolean(PREF_PREVIEW_FLIP, previewVerticalFlip)
                     .putBoolean(PREF_ENHANCED_OCR, enhancedOcr)
                     .putString(PREF_OCR_MODEL, ocrModelId)
+                    .putString(PREF_READING_FOCUS, readingFocusMode)
                     .putBoolean(PREF_NO_ENGLISH, speechNoEnglish)
                     .putBoolean(PREF_NO_NUMBERS, speechNoNumbers)
                     .putInt(PREF_MAX_SPEECH_CHARS, maxSpeechChars)
                     .apply();
                 if (changeReadingMode) setLongReadingMode(queueSpeech);
                 else if (wasQueueEnabled && !queueSpeech) clearSpeechQueue(true);
+                if (focusChanged) {
+                    readingEpoch.incrementAndGet();
+                    frameChangeGate.reset();
+                    lastSpoken = "";
+                    clearSpeechQueue(true);
+                    if (recognizer != null) recognizer.setReadingFocusMode(readingFocusMode);
+                    Toast.makeText(this, "已更新书籍阅读区域，将按新设置识别", Toast.LENGTH_SHORT).show();
+                }
                 if (modelChanged) switchOcrModel(selectedModelId);
                 Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show();
             })
@@ -887,6 +940,7 @@ public class MainActivity extends CameraActivity {
             }
         }, ocrModelId);
         recognizer.setFastScanMode(!longReadingMode);
+        recognizer.setReadingFocusMode(readingFocusMode);
         recognizer.initialize();
         phoneController = new InternalCameraController(this, phoneTexture, new InternalCameraController.Listener() {
             @Override public boolean shouldReceiveFrame() {
@@ -1157,6 +1211,7 @@ public class MainActivity extends CameraActivity {
         lastSpoken = "";
         noTextSince = 0L;
         if (ocrOverlay != null) ocrOverlay.clear();
+        if (recognizer != null) recognizer.setReadingFocusMode(readingFocusMode);
         usingPhoneCamera = phone;
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
             .putBoolean(PREF_PHONE_CAMERA, phone).apply();
@@ -1372,8 +1427,8 @@ public class MainActivity extends CameraActivity {
         }
         lastNonEmptyAt = now;
         if (!running || !ttsReady) return;
-        // No arbitrary 88%-similarity confirmation of a second full page.
-        // Box grouping now produces a stable left-to-right page order.
+        // No mandatory second OCR; focused text already targets the intended
+        // page and leaves neighboring partial pages out of spoken content.
         final String confirmed = recognizedText;
         String speechText = confirmed;
         if (speechNoEnglish) speechText = speechText.replaceAll("[A-Za-z]+", " ");

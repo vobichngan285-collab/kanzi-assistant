@@ -52,7 +52,9 @@ data class OcrDiagnosticResult(
     val recognitionTimeMs: Long,
     val totalTimeMs: Long,
     val detectorInputShape: String,
-    val recognitionInputShapes: String
+    val recognitionInputShapes: String,
+    val focusDescription: String,
+    val fullPageText: String
 )
 fun interface OcrDiagnosticCallback { fun onResult(result: OcrDiagnosticResult) }
 
@@ -89,7 +91,14 @@ class PaddleOcrEngine(
     @Volatile private var engine: PaddleOCR? = null
     @Volatile private var released = false
     @Volatile private var fastScanMode = false
+    @Volatile private var readingFocusMode = ReadingFocus.Mode.AUTO
+    private val focusTracker = ReadingFocus.Tracker()
     fun setFastScanMode(enabled: Boolean) { fastScanMode = enabled }
+    fun setReadingFocusMode(mode: String) {
+        readingFocusMode = try { ReadingFocus.Mode.valueOf(mode) }
+            catch (_: IllegalArgumentException) { ReadingFocus.Mode.AUTO }
+        focusTracker.reset()
+    }
 
     fun isReady(): Boolean = engine != null && !released
 
@@ -118,7 +127,8 @@ class PaddleOcrEngine(
                         if (enhanced !== bitmap) { bitmap.recycle(); bitmap = enhanced }
                     }
                     val result = current.recognize(bitmap)
-                    val text = arrangeInReadingOrder(result.results)
+                    val focus = arrangeInReadingOrder(result.results, bitmap.width, bitmap.height)
+                    val text = focus.text
                     val confidence = if (result.results.isEmpty()) 0.0
                         else result.results.map { it.confidence.toDouble() }.average()
                     val rawDetails = result.results.mapIndexed { index, item ->
@@ -137,7 +147,9 @@ class PaddleOcrEngine(
                         recognitionTimeMs = result.recognitionTimeMs.toLong(),
                         totalTimeMs = result.totalTimeMs.toLong(),
                         detectorInputShape = result.detInputShape.joinToString("×"),
-                        recognitionInputShapes = result.recInputShapes.joinToString("；") { it.joinToString("×") }
+                        recognitionInputShapes = result.recInputShapes.joinToString("；") { it.joinToString("×") },
+                        focusDescription = focus.description,
+                        fullPageText = ReadingOrder.arrange(toReadingBoxes(result.results))
                     )
                     withContext(Dispatchers.Main) { onResult.onResult(report) }
                 } finally { bitmap.recycle() }
@@ -247,7 +259,9 @@ class PaddleOcrEngine(
                             }
                         }
                     }
-                    val text = arrangeInReadingOrder(result.results)
+                    val focus = arrangeInReadingOrder(result.results, bitmap.width, bitmap.height)
+                    val text = focus.text
+                    Log.i(TAG, "Reading focus: ${focus.description}")
                     val averageConfidence = if (result.results.isEmpty()) 0.0
                         else result.results.map { it.confidence }.average()
                     val message = "frame=${width}x${height}, ocrInputDirection=raw0, " +
@@ -337,12 +351,9 @@ class PaddleOcrEngine(
         }
     }
 
-    /**
-     * Do not silently discard recognized lines on a fixed confidence threshold.
-     * The reading-order helper handles slanted quadrilaterals and clear two-column pages.
-     */
-    private fun arrangeInReadingOrder(results: List<OCRResult>): String {
-        val boxes = results.mapNotNull { item ->
+    /** OCR sees all pixels; only the final spoken text is focused. */
+    private fun toReadingBoxes(results: List<OCRResult>): List<ReadingOrder.Box> =
+        results.mapNotNull { item ->
             val p = item.box.points
             if (p.size != 4 || item.text.isBlank()) null
             else ReadingOrder.Box(
@@ -351,7 +362,11 @@ class PaddleOcrEngine(
                 floatArrayOf(p[0].y, p[1].y, p[2].y, p[3].y)
             )
         }
-        return ReadingOrder.arrange(boxes)
+
+    private fun arrangeInReadingOrder(
+        results: List<OCRResult>, width: Int, height: Int
+    ): ReadingFocus.Selection {
+        return focusTracker.choose(toReadingBoxes(results), width, height, readingFocusMode)
     }
 
     /** Decode the camera's unrotated NV21 pixels; TextureView handles display transforms. */
