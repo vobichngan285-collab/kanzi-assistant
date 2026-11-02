@@ -1,0 +1,55 @@
+name: Ephemeral visual review plates for unknown OCR candidates
+on:
+  push:
+    branches: [test/ocr-111-boxes-audit-20261103]
+    paths:
+      - scripts/render_box_review_contact_sheets.py
+      - .github/workflows/ocr-low-box-visual-audit.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  visual-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install public scene-photo preview client
+        run: python3 -m pip install --quiet requests Pillow
+      - name: Retrieve candidate order and recognized bounding boxes
+        uses: actions/download-artifact@v4
+        with:
+          name: unknown-111-boxes-research-queue
+          run-id: 41495698627
+          github-token: ${{ github.token }}
+          path: /tmp/review-queue
+      - name: Retrieve existing #315 OCR box and text references
+        uses: actions/download-artifact@v4
+        with:
+          name: ocr-315-true-box-value-data
+          run-id: 41492030817
+          github-token: ${{ github.token }}
+          path: /tmp/baseline-boxes
+      - name: Create preview sheets of original scene crops with color-marked boxes
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ocr-visual-review
+          python3 -u scripts/render_box_review_contact_sheets.py \
+            --review-queue /tmp/review-queue/priority_review_queue.csv \
+            --baseline /tmp/baseline-boxes/all_boxes_ocr.csv \
+            --out /tmp/ocr-visual-review \
+            | tee /tmp/ocr-visual-review/build.log
+          grep -q 'VISUAL_AUDIT_PLATES_CREATED=PASS' /tmp/ocr-visual-review/build.log
+          echo 'Ephemeral public dataset sample crops, NO user photos. NOT a complete audit of 111 boxes.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Save temporary visual samples for human reviewer (2-day retention)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: transient-ocr-unmatched-visual-plates
+          path: /tmp/ocr-visual-review/
+          retention-days: 2
+          if-no-files-found: warn
