@@ -1,0 +1,65 @@
+name: Four OCR recognizers on identical 100 actual restaurant receipts
+on:
+  push:
+    branches: [test/ocr-model-swap-ab-20261103]
+    paths:
+      - scripts/ocr_model_swap_receipts_ab.py
+      - .github/workflows/ocr-model-swap-receipts.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  receipt-models:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install ONNX matching earlier #315 CPU benchmark
+        run: |
+          set -euo pipefail
+          pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
+      - name: Retrieve licensed CORD-v2 sample of 100 real restaurant receipt photos
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 4 --max-time 140 \
+            'https://raw.githubusercontent.com/Nextia-Intelligence/nextia-learning-labs/main/C13/read-real-receipts/data/cord-v2-test-sample.zip' \
+            -o /tmp/cord100.zip
+          echo '2dd48e2cc1412d4cdcb41314f1ccad70901fc0c3f8126f7cf1554ed3fab3a900  /tmp/cord100.zip' | sha256sum -c -
+      - name: Download four ONNX recognition models AND their own dictionaries
+        run: |
+          set -euo pipefail
+          for item in 'v6_small:PP-OCRv6_small_rec_onnx' 'v6_medium:PP-OCRv6_medium_rec_onnx' 'v6_tiny:PP-OCRv6_tiny_rec_onnx' 'v5_mobile:PP-OCRv5_mobile_rec_onnx'; do
+            dir=${item%%:*}
+            name=${item#*:}
+            mkdir -p "/tmp/receipt-models/$dir"
+            for file in inference.onnx inference.yml; do
+              curl --fail --location --retry 4 --retry-delay 3 --max-time 260 \
+                "https://huggingface.co/PaddlePaddle/$name/resolve/main/$file" \
+                -o "/tmp/receipt-models/$dir/$file"
+            done
+          done
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/receipt-models/v6_small/inference.onnx' | sha256sum -c -
+          echo '9c09abf0957f7968c7586464b7397b84ad2387a0497a351af40e9acc71b673ba  /tmp/receipt-models/v6_medium/inference.onnx' | sha256sum -c -
+      - name: Benchmark identical food item names and prices with all four recognizers
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/receipt-model-swap
+          python3 -u scripts/ocr_model_swap_receipts_ab.py \
+            --zip /tmp/cord100.zip \
+            --models /tmp/receipt-models \
+            --out /tmp/receipt-model-swap \
+            | tee /tmp/receipt-model-swap/console.log
+          grep -q 'CORD_FOUR_RECOGNIZER_MODELS_PASS' /tmp/receipt-model-swap/console.log
+          cat /tmp/receipt-model-swap/metrics.csv >> "$GITHUB_STEP_SUMMARY"
+          echo 'Real Indonesian/English food receipts, NOT Chinese menus; same annotated crops; no Android USB timing.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload numerical report only
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: food-price-4-recognizers-paired-comparison
+          path: /tmp/receipt-model-swap/
+          retention-days: 10
+          if-no-files-found: warn
