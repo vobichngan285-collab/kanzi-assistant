@@ -26,11 +26,12 @@ android {
             minifyEnabled false
         }
     }
-    // The sherpa-onnx AAR and PaddleOCR's ONNX dependency can share
-    // runtime C++ sonames. Keep a single copy for each target ABI.
+    // The neural TTS runtime has been renamed to a private ELF SONAME in
+    // CI. Never pickFirst libonnxruntime.so: doing so broke OCR in #303.
+    // The NDK runtime uses the SDK's already-known-good shared C++ binary.
     packaging {
         jniLibs {
-            pickFirsts += ['**/libonnxruntime.so', '**/libc++_shared.so']
+            pickFirsts += ['**/libc++_shared.so']
         }
     }
     defaultConfig {
