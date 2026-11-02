@@ -10,7 +10,10 @@ assert "recognizedScene == realtimeScene.generation()" not in ocr_callback, "sce
 assert "sceneGeneration != realtimeScene.generation()" not in source, "luma noise silently suppressed successful OCR"
 assert 'if (!running || !ttsReady)' in source
 assert "OCR recognized text but speech skipped" in source
-assert "tts.speak(currentSpeech.text, TextToSpeech.QUEUE_FLUSH" in source
+assert "speakSystemItem(currentSpeech)" in source, "system voice fallback must stay wired"
+assert "tts.speak(item.text, TextToSpeech.QUEUE_FLUSH" in source
+assert "offlineVoicePlayback.speak(" in source
+assert "finishQueuedUtterance(utteranceId)" in source
 assert "recognitionTone.startTone" in source and "catch (RuntimeException error)" in source
 assert "showSpeechFailure" in source
 assert "实时朗读状态：" in source
