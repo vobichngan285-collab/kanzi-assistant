@@ -14,6 +14,7 @@ on:
       - 'app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt'
       - 'scripts/StrictOcrOrderGuardSmokeTest.java'
       - 'scripts/LayoutReadingPlannerSmokeTest.java'
+      - 'scripts/LayoutOrderingDeterminismSmokeTest.java'
       - 'scripts/DenseTwoPageReadingSmokeTest.java'
       - 'scripts/LayoutSceneFingerprintSmokeTest.java'
       - 'scripts/LayoutFrameSchedulerSmokeTest.java'
@@ -42,6 +43,7 @@ jobs:
             app/src/main/java/com/vobichngan/kanzi/LayoutSceneFingerprint.java \
             scripts/StrictOcrOrderGuardSmokeTest.java \
             scripts/LayoutReadingPlannerSmokeTest.java \
+            scripts/LayoutOrderingDeterminismSmokeTest.java \
             scripts/DenseTwoPageReadingSmokeTest.java \
             scripts/LayoutFrameSchedulerSmokeTest.java \
             scripts/LayoutSceneFingerprintSmokeTest.java
@@ -49,6 +51,8 @@ jobs:
         run: java -cp build/order-tests StrictOcrOrderGuardSmokeTest
       - name: Run layout reading-order test
         run: java -cp build/order-tests LayoutReadingPlannerSmokeTest
+      - name: Test deterministic region order and repeated OCR box objects
+        run: java -cp build/order-tests LayoutOrderingDeterminismSmokeTest
       - name: Test dense double-page OCR order
         run: java -cp build/order-tests DenseTwoPageReadingSmokeTest
       - name: Run layout frame scheduler test
