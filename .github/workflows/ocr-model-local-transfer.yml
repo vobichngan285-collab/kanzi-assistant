@@ -18,9 +18,19 @@ jobs:
           curl -fL --retry 3 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml?download=true' -o /tmp/ocr-model/inference.yml
           echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/ocr-model/inference.onnx' | sha256sum -c -
           echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/ocr-model/inference.yml' | sha256sum -c -
-      - name: Export model and dictionary only (no photographs)
+      - name: Download offline Python 3.13 OCR runtime wheel packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ocr-model/wheels
+          python -m pip download \
+            --only-binary=:all: --implementation cp --python-version 313 \
+            --abi cp313 --platform manylinux_2_28_x86_64 \
+            --dest /tmp/ocr-model/wheels 'onnxruntime==1.31.1'
+          ls -lah /tmp/ocr-model/wheels
+      - name: Export model, dictionary and public runtime wheels only (no photographs)
         uses: actions/upload-artifact@v4
         with:
-          name: original-apk315-matched-rec-model
+          name: original-apk315-matched-rec-model-local
           path: /tmp/ocr-model/
           retention-days: 1
