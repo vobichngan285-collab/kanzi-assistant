@@ -162,7 +162,8 @@ public final class StableShortTextGate {
             return Decision.skip(Reason.INVALID_OBSERVATION);
         }
 
-        if (pendingFrame == input.frameSequence) {
+        if (pendingFrame >= 0L && input.frameSequence <= pendingFrame) {
+            // Never count replayed or out-of-order camera frames as confirmation.
             return Decision.waiting(Reason.NEED_MORE_OBSERVATIONS, consecutive);
         }
         boolean same = normalized.equals(pendingNormalized) &&
