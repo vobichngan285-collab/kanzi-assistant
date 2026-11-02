@@ -65,18 +65,37 @@ public final class LayoutReadingPlanner {
     private static void sortVisualRows(List<Integer> indices, List<ReadingOrder.Box> boxes) {
         if (indices.size() < 2) return;
         float referenceX=0f;
-        for(int id:indices)referenceX+=boxes.get(id).centerX();
+        List<Float> reliableSlopes=new ArrayList<>();
+        for(int id:indices) {
+            ReadingOrder.Box b=boxes.get(id);
+            referenceX+=b.centerX();
+            // A short piece of punctuation has little reliable orientation.
+            // Use the median slope of substantial lines in this reading stream.
+            if(b.confidence >= .45f &&
+                b.right()-b.left() >= Math.max(35f,b.actualHeight()*2.8f)) {
+                reliableSlopes.add(b.slope());
+            }
+        }
         referenceX/=indices.size();
+        reliableSlopes.sort(Float::compare);
+        final float commonSlope=reliableSlopes.isEmpty() ? 0f :
+            reliableSlopes.get(reliableSlopes.size()/2);
         final float xRef=referenceX;
+        // Project ALL boxes with the same local-page slope. Previously using
+        // each box's individual (noisy) angle made right-page short fragments
+        // jump ahead of preceding lines in real 720x1280 book diagnostics.
         List<Integer> byBaseline=new ArrayList<>(indices);
         byBaseline.sort((a,b)->{
-            int y=Float.compare(boxes.get(a).alignedY(xRef),boxes.get(b).alignedY(xRef));
-            return y!=0?y:Float.compare(boxes.get(a).left(),boxes.get(b).left());
+            ReadingOrder.Box aa=boxes.get(a), bb=boxes.get(b);
+            float ay=aa.centerY()+commonSlope*(xRef-aa.centerX());
+            float by=bb.centerY()+commonSlope*(xRef-bb.centerX());
+            int y=Float.compare(ay,by);
+            return y!=0?y:Float.compare(aa.left(),bb.left());
         });
         List<VisualRow> rows=new ArrayList<>();
         for(int id:byBaseline) {
             ReadingOrder.Box box=boxes.get(id);
-            float y=box.alignedY(xRef);
+            float y=box.centerY()+commonSlope*(xRef-box.centerX());
             VisualRow closest=null;
             float best=Float.MAX_VALUE;
             for(VisualRow row:rows) {
