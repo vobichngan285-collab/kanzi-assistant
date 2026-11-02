@@ -124,7 +124,7 @@ public class MainActivity extends CameraActivity {
     private volatile long lastQuickScanGeneration = -1L;
     private volatile long lastQuickScanAt = 0L;
     private volatile boolean lastQuickScanReliable = false;
-    private long lastSpokenSceneGeneration = -1L;
+    private final RealtimeSpeechGuard liveSpeechGuard = new RealtimeSpeechGuard();
     private long speechPromptSerial = 0L;
     private ToneGenerator recognitionTone;
     private final java.util.concurrent.atomic.AtomicInteger readingEpoch = new java.util.concurrent.atomic.AtomicInteger(0);
@@ -1018,7 +1018,7 @@ public class MainActivity extends CameraActivity {
                     frameChangeGate.reset();
                     realtimeScene.reset();
                     lastQuickScanGeneration = -1L;
-                    lastSpokenSceneGeneration = -1L;
+                    liveSpeechGuard.reset();
                     lastSpoken = "";
                     clearSpeechQueue(true);
                     if (recognizer != null) {
@@ -1250,7 +1250,7 @@ public class MainActivity extends CameraActivity {
             realtimeScene.reset();
             frameChangeGate.reset();
             lastQuickScanGeneration = -1L;
-            lastSpokenSceneGeneration = -1L;
+            liveSpeechGuard.reset();
             manualCaptureRequested.set(false);
             clearSpeechQueue(true);
             getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
@@ -1295,7 +1295,7 @@ public class MainActivity extends CameraActivity {
             realtimeScene.reset();
             lastQuickScanGeneration = -1L;
             lastQuickScanReliable = false;
-            lastSpokenSceneGeneration = -1L;
+            liveSpeechGuard.reset();
             if (!running) {
                 manualCaptureRequested.set(false);
                 clearSpeechQueue(true);
@@ -1452,7 +1452,7 @@ public class MainActivity extends CameraActivity {
         frameChangeGate.reset();
         realtimeScene.reset();
         lastQuickScanGeneration = -1L;
-        lastSpokenSceneGeneration = -1L;
+        liveSpeechGuard.reset();
         clearSpeechQueue(true);
         candidateText = "";
         candidateNormalized = "";
@@ -1646,7 +1646,7 @@ public class MainActivity extends CameraActivity {
         realtimeScene.reset();
         lastQuickScanGeneration = -1L;
         lastQuickScanReliable = false;
-        lastSpokenSceneGeneration = -1L;
+        liveSpeechGuard.reset();
         if (recognizer != null) recognizer.setFastScanMode(!enableLong);
         manualCaptureRequested.set(false);
         frameChangeGate.reset();
@@ -1724,13 +1724,19 @@ public class MainActivity extends CameraActivity {
         String spokenNormalized = normalizeOcrText(spokenText);
         if (spokenNormalized.isEmpty()) return;
         if (!force) {
-            if (longReadingMode && (speechPageActive || currentSpeech != null || !speechQueue.isEmpty())) return;
-            // Revisit of A after leaving A is a new intentional scan, even
-            // if B was passed too fast for a full OCR. Within one target,
-            // small OCR fluctuations must not replay the same text.
-            if ((longReadingMode || lastSpokenSceneGeneration == sceneGeneration) &&
-                isAlreadyQueuedOrRecentlySpoken(spokenNormalized, similarityThreshold / 100.0f))
-                return;
+            if (longReadingMode) {
+                // Dedicated book mode keeps its existing one-page queue.
+                if (speechPageActive || currentSpeech != null || !speechQueue.isEmpty()) return;
+                if (isAlreadyQueuedOrRecentlySpoken(spokenNormalized,
+                    similarityThreshold / 100.0f)) return;
+            } else {
+                // A luma change does not establish a new object. Compare
+                // recognized content BEFORE clearing current TTS and dinging.
+                if (!liveSpeechGuard.accept(spokenNormalized)) {
+                    Log.d("KanziTTS", "Duplicate live text; preserve unfinished speech");
+                    return;
+                }
+            }
         }
         if (force || !longReadingMode) {
             // Latest-content-wins in scan mode. A manual request always takes priority.
@@ -1739,7 +1745,7 @@ public class MainActivity extends CameraActivity {
         List<String> chunks = SpeechText.chunks(spokenText);
         if (chunks.isEmpty()) return;
         speechPageActive = true;
-        lastSpokenSceneGeneration = sceneGeneration;
+        // Live target identity is maintained by liveSpeechGuard.
         for (String chunk : chunks) {
             speechQueue.addLast(new SpeechItem(chunk, spokenNormalized, "ocr-" + (++utteranceSequence)));
         }
