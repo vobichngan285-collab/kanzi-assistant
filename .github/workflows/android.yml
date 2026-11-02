@@ -286,6 +286,19 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
+      - name: Fetch official sherpa-onnx Android TTS runtime (no voice models)
+        run: |
+          set -euo pipefail
+          mkdir -p app/libs
+          curl -fL --retry 4 --retry-delay 3 \
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-2.0.1.aar" \
+            -o "app/libs/sherpa-onnx-2.0.1.aar"
+          echo "a8d09d1d32f3eb8520482c6d3d43fae674681c5b050385967c70a3c2c9bf0ee7  app/libs/sherpa-onnx-2.0.1.aar" | sha256sum -c -
+          echo "Official native TTS runtime sha256 verified; no voice models are bundled." >> "$GITHUB_STEP_SUMMARY"
+      - name: Validate voice download UI and safe settings cleanup
+        run: |
+          python3 scripts/verify_voice_pack_integration.py
+          python3 scripts/verify_removed_decoder_setting.py
       - name: Decode and validate signing keystore
         env:
           KANZI_KEYSTORE_BASE64: ${{ secrets.KANZI_KEYSTORE_BASE64 }}
