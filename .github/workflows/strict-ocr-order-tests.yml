@@ -17,6 +17,7 @@ on:
       - 'scripts/LayoutOrderingDeterminismSmokeTest.java'
       - 'scripts/DenseTwoPageReadingSmokeTest.java'
       - 'scripts/BookDiagnostic52RegressionTest.java'
+      - 'scripts/BookDiagnostic46RegressionTest.java'
       - 'scripts/LayoutSceneFingerprintSmokeTest.java'
       - 'scripts/LayoutFrameSchedulerSmokeTest.java'
       - '.github/workflows/strict-ocr-order-tests.yml'
@@ -47,6 +48,7 @@ jobs:
             scripts/LayoutOrderingDeterminismSmokeTest.java \
             scripts/DenseTwoPageReadingSmokeTest.java \
             scripts/BookDiagnostic52RegressionTest.java \
+            scripts/BookDiagnostic46RegressionTest.java \
             scripts/LayoutFrameSchedulerSmokeTest.java \
             scripts/LayoutSceneFingerprintSmokeTest.java
       - name: Run strict OCR preservation test
@@ -59,6 +61,8 @@ jobs:
         run: java -cp build/order-tests DenseTwoPageReadingSmokeTest
       - name: Test real 52-box book geometry without copying book text
         run: java -cp build/order-tests BookDiagnostic52RegressionTest
+      - name: Test real single-page 46 boxes with footnotes and page number
+        run: java -cp build/order-tests BookDiagnostic46RegressionTest
       - name: Run layout frame scheduler test
         run: java -cp build/order-tests LayoutFrameSchedulerSmokeTest
       - name: Verify layout scene fingerprint
