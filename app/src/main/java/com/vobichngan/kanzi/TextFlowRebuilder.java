@@ -99,10 +99,28 @@ public final class TextFlowRebuilder {
         for (int i=0;i<n;i++)
             flows.computeIfAbsent(root(flowParent,i), k->new Flow(k)).add(boxes.get(i));
         List<Flow> ordered = new ArrayList<>(flows.values());
+        // A stand-alone wide heading ABOVE all repeated streams is read first,
+        // not between the left and right columns based on its center X.
+        float earliestRepeated = Float.MAX_VALUE, widestRepeated = 0f;
+        for (Flow f : ordered) if (f.boxes.size() >= 2) {
+            earliestRepeated = Math.min(earliestRepeated,f.top);
+            widestRepeated = Math.max(widestRepeated,f.maxRight-f.minLeft);
+        }
+        final float firstRepeatedTop = earliestRepeated;
+        final float repeatedMaxWidth = widestRepeated;
         // Separate text regions (including small annotations) can all be
         // spoken, but never mixed INTO a different region's sentence.
-        ordered.sort(Comparator.comparingDouble(Flow::centerX)
-            .thenComparingDouble(f -> f.top));
+        ordered.sort((aFlow,bFlow) -> {
+            boolean aTitle = aFlow.boxes.size()==1 &&
+                aFlow.maxRight-aFlow.minLeft > repeatedMaxWidth*1.45f &&
+                aFlow.top+aFlow.maxHeight*1.25f < firstRepeatedTop;
+            boolean bTitle = bFlow.boxes.size()==1 &&
+                bFlow.maxRight-bFlow.minLeft > repeatedMaxWidth*1.45f &&
+                bFlow.top+bFlow.maxHeight*1.25f < firstRepeatedTop;
+            if(aTitle != bTitle) return aTitle?-1:1;
+            int cmp = Float.compare(aFlow.centerX(),bFlow.centerX());
+            return cmp!=0?cmp:Float.compare(aFlow.top,bFlow.top);
+        });
         StringBuilder output = new StringBuilder();
         for (Flow flow : ordered) {
             // Convert global connected row IDs into this stream's local rows.
