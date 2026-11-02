@@ -23,7 +23,7 @@ import pyclipper
 from ocr_public_real_scene_ab import get_json,read_img
 
 DATASET="Yesianrohn/OCR-Data"
-SLICES={"ReCTS":[(0,12),(101,12)],"RCTW":[(0,12),(135,12)],"ART":[(0,12),(125,12)]}
+SLICES={"ReCTS":[(0,24),(101,24),(310,24)],"RCTW":[(0,24),(135,24),(315,24)],"ART":[(0,24),(125,24),(295,24)]}
 MODEL_SHA="d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e"
 BOX_THRESHES=[0.45,0.50,0.60,0.70]
 DET_THRESH=0.3
