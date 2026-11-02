@@ -1,0 +1,43 @@
+name: Selective OCR rescue policy (isolated JDK test)
+on:
+  push:
+    branches: [feature/ocr-selective-rescue-20261103]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  policy-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile pure Java decision gate and standalone tests
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-ocr-policy-classes
+          javac -Xlint:all -encoding UTF-8 \
+            -d /tmp/kanzi-ocr-policy-classes \
+            app/src/main/java/com/vobichngan/kanzi/SelectiveOcrRescuePolicy.java \
+            scripts/SelectiveOcrRescuePolicySmokeTest.java
+      - name: Run safety, geometry, budget and cooldown regression tests
+        run: |
+          set -euo pipefail
+          java -ea -cp /tmp/kanzi-ocr-policy-classes SelectiveOcrRescuePolicySmokeTest \
+            | tee /tmp/kanzi-ocr-policy-test-summary.txt
+          grep -q 'SELECTIVE_OCR_RESCUE_POLICY=PASS' /tmp/kanzi-ocr-policy-test-summary.txt
+      - name: Protect current app's existing realtime frame gate
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_book_reading_fast_path.py
+          python3 scripts/verify_preview_ocr_isolation.py
+          git diff --quiet origin/release/v0.8.0-ocr-engine-rework -- app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt app/src/main/java/com/vobichngan/kanzi/FrameChangeGate.java
+      - name: Upload test summary
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: selective-ocr-policy-tests
+          path: /tmp/kanzi-ocr-policy-test-summary.txt
