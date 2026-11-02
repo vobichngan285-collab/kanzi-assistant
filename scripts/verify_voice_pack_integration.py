@@ -38,6 +38,23 @@ for pack in ["kokoro", "piper", "melo"]:
 assert "OfflineTts(config = buildConfig(voice))" in synth
 assert "generateWithConfig(text, cfg)" in synth
 assert "AudioTrack" in playback and "generation.incrementAndGet()" in playback
+# #303 marked a model active before it ever emitted an audio sample.
+# The next version must *synthesize and audibly play a test sentence* before
+# changing persisted selection, preserving the last usable voice on failure.
+assert "正在生成并试听" in main
+assert "你好，欢迎使用看字助手" in main
+assert "voiceStore.activate(selected)" in main
+assert "void activate(Voice voice)" in store
+install = store.split("public void choose(",1)[1].split("private void notifyStatus",1)[0]
+assert "persist(voice)" not in install, "unverified model cannot be activated"
+assert "语音模型仅生成静音" in synth
+assert "releaseModelWhenIdle" in playback and main.count("releaseModelWhenIdle()") >= 2
+assert "lastOcrEngineError = message" in main
+assert "OCR 引擎初始化失败：" in main
+# Never again use Gradle's pickFirst() to mix two incompatible ONNX runtimes.
+assert "'**/libonnxruntime.so'" not in gradle
+assert "scripts/isolate_sherpa_onnx_runtime.py" in workflow
+assert "scripts/verify_isolated_onnx_libraries.py" in workflow
 
 # Do not accidentally bundle enormous model archives with the APK.
 assert "releases/download/tts-models/" in store
