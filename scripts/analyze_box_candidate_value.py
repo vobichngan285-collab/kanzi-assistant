@@ -36,9 +36,11 @@ for row in boxes:
     counts[k].append(row)
 assert len(imgs)>=100, len(imgs)
 
-def sample(selected):
+def sample(selected,processed):
+    # Every processed candidate already cost a model call, even if confidence
+    # filtering subsequently suppresses speaking it. Never claim cost saved.
     per=collections.defaultdict(lambda:{"ms":0.,"n":0})
-    for r in selected:
+    for r in processed:
         x=per[r["split"],r["image"]]
         x["ms"]+=r["ocr_ms"];x["n"]+=1
     all_ms=[round(per[k]["ms"],3) for k in imgs]
@@ -49,7 +51,9 @@ def sample(selected):
     highconfwrong=sum(r["gt_matched"] and not r["ocr_exact_when_matched"] and
                       r["ocr_conf"]>=.85 for r in selected)
     return {
-      "n_images":len(imgs),"n_extra_boxes":len(selected),"n_images_with_extra":sum(x>0 for x in n_per),
+      "n_images":len(imgs),"n_candidates_forwarded_after_filter":len(selected),
+      "n_new_recognitions_before_filter":len(processed),
+      "n_images_with_extra_recognition":sum(x>0 for x in n_per),
       "n_gt_overlaps":matched,"n_gt_exact":exact,
       "n_gt_overlap_wrong_or_incomplete":matched-exact,
       "n_unmatched_annotation_status_unknown":unknown,
@@ -72,10 +76,10 @@ policies={
 out=[]
 for low in [.40,.35,.30]:
     for name,func in policies.items():
-        selected=[r for rows in counts.values() for r in rows if
-                  r["is_new_below_045"] and low<=r["box_score"]<.45
-                  and func(r)]
-        result={"threshold":low,"policy":name,**sample(selected)}
+        all_processed=[r for rows in counts.values() for r in rows if
+                       r["is_new_below_045"] and low<=r["box_score"]<.45]
+        selected=[r for r in all_processed if func(r)]
+        result={"threshold":low,"policy":name,**sample(selected,all_processed)}
         out.append(result)
         print("GATE_POLICY_AB",json.dumps(result,ensure_ascii=False),flush=True)
 
@@ -98,6 +102,8 @@ with (dest/"policies.csv").open("w",newline="",encoding="utf-8-sig") as fd:
     "Unmatched candidate boxes are UNKNOWN; can include unannotated real text.\n"
     "Matched GT is AABB IoU>=0.4 and annotated text exact OCR, not Android guarantee.\n"
     "Confidence gates are diagnostic and not automatically accepted release policy.\n"
+    "Post-recognition confidence filtering DOES NOT save inference calls: all low-score candidates were processed.\n"
+    "Only a pre-recognition candidate gate at the detector/crop stage can avoid extra recognition work.\n"
     "OCR additional milliseconds: offline cloud CPU recognition inference only.\n",
     encoding="utf-8")
 print("REAL_BOX_VALUE_GATE_POLICY_REVIEW=PASS",len(out),flush=True)
