@@ -20,6 +20,18 @@ public final class LayoutSceneFingerprintSmokeTest {
         for(int i=0;i<w*h;i++)mild[i]=(byte)Math.min(255,(mild[i]&0xff)+1);
         check(a.isStationaryComparedWith(LayoutSceneFingerprint.fromNv21(mild,w,h)),
             "small global luma noise must match");
+        // Text strokes can change away from the one former center pixel.
+        // The strengthened 3x3 sampling must catch a local dark stroke.
+        byte[] local=src.clone();
+        for(int y=1;y<=3;y++)for(int x=1;x<=3;x++)local[y*w+x]=(byte)20;
+        check(!a.isStationaryComparedWith(LayoutSceneFingerprint.fromNv21(local,w,h)),
+            "local text/graphic change between old sample centers must invalidate cache");
+        // A single luma sample flipping strongly must not hide behind the
+        // low average difference across a mostly unchanged page.
+        byte[] tiny=src.clone();
+        tiny[1*w+1]=(byte)0;
+        check(!a.isStationaryComparedWith(LayoutSceneFingerprint.fromNv21(tiny,w,h)),
+            "strong local stroke change must invalidate cache");
         byte[] replaced=new byte[src.length];
         Arrays.fill(replaced,(byte)120);
         check(!a.isStationaryComparedWith(LayoutSceneFingerprint.fromNv21(replaced,w,h)),
