@@ -32,7 +32,7 @@ public final class ContinuousReadingSmokeTest {
         // and a narrow independent right-hand note.
         List<ReadingOrder.Box> diag=new ArrayList<>();
         for(int i=0;i<15;i++)
-            diag.add(box("左侧残句"+i,1,644+i*25,145-i%4*6,22,.89f));
+            diag.add(box("左侧残句("+i+")结束",1,644+i*25,145-i%4*6,22,.89f));
         diag.add(box("“对不起，小姐，”萨姆说，“我在厅里等你，要是她吓着你了。",
             213,810,287,23,.9827f));
         diag.add(box("你就叫一下，我会进来的。”",197,836,121,20,.9872f));
@@ -42,7 +42,7 @@ public final class ContinuousReadingSmokeTest {
             193,874,197,21,.9923f));
         diag.add(box("这也是继续叙述的一整行文字。",209,899,290,22,.971f));
         for(int i=0;i<11;i++)
-            diag.add(box("独立注释"+i,506,741+i*15,66,12,.82f));
+            diag.add(box("独立注释("+i+")末尾",506,741+i*15,66,12,.82f));
         diag.add(box("很低的孤立内容",336,730,68,12,.13f));
         ReadingFocus.Selection focused=ReadingFocus.choose(diag,720,1280,
             ReadingFocus.Mode.AUTO,Float.NaN);
