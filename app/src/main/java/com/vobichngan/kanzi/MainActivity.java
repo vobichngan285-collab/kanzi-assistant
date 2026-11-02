@@ -196,6 +196,7 @@ public class MainActivity extends CameraActivity {
                             + "\n版面 AI 状态：" + report.getLayoutStatus()
                             + "\nAI 有效版面区域：" + report.getLayoutRegions()
                             + "\nAI 推理耗时：" + report.getLayoutElapsedMs() + " ms"
+                            + "\n版面缓存统计：" + report.getLayoutReuseStats()
                             + "\n检测输入尺寸：" + report.getDetectorInputShape()
                             + "\n识别输入尺寸：" + report.getRecognitionInputShapes()
                             + "\n检测耗时：" + report.getDetectionTimeMs() + " ms"
@@ -753,7 +754,7 @@ public class MainActivity extends CameraActivity {
         diagnosticTitle.setPadding(0, dp(18), 0, dp(4));
         panel.addView(diagnosticTitle);
         TextView diagnosticNote = new TextView(this);
-        diagnosticNote.setText("抓取手机或 USB 摄像头的下一帧，进行一次独立的原始 OCR 与版面诊断。完成后可以分别朗读当前顺序和实验候选顺序，或复制完整日志。候选顺序不会自动取代正式朗读。");
+        diagnosticNote.setText("抓取手机或 USB 摄像头的下一帧，进行一次独立的原始 OCR 与版面诊断。可试听当前顺序、候选顺序或复制完整日志。编号完整性通过不代表顺序正确。注意诊断可能包含私人文字，分享前请检查。实验排序不会自动取代正式朗读。");
         diagnosticNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         diagnosticNote.setTextColor(0xFF667085);
         panel.addView(diagnosticNote);
