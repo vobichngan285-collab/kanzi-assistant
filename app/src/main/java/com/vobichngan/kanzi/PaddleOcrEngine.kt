@@ -444,7 +444,16 @@ class PaddleOcrEngine(
             val state = if (plan.verified.accepted)
                 "OCR框编号完整性校验通过（不代表候选阅读顺序正确）" else
                 "OCR框编号完整性校验未通过，已退回OCR输入顺序"
-            Pair(plan.verified.exactText(), state + "\n" + lines)
+            val strategy = if (plan.geometryGroupOrder)
+                "几何分组排序（包含标题/边缘辅助分组）共${plan.geometryGroups}组"
+                else "单区域/逐行几何排序（尚未可靠识别左右页）"
+            val membership =
+                "AI区域归属${plan.assignedBoxes}/${valid.size}个框，" +
+                "实际使用${plan.distinctAssignedRegions}个独立AI区域。" +
+                if (plan.distinctAssignedRegions < 2)
+                    "仅一大区不能证明识别出双页。" else ""
+            Pair(plan.verified.exactText(), state + "\n" +
+                membership + "\n" + strategy + "\n" + lines)
         } catch (error: RuntimeException) {
             Pair("", "候选排序异常（${error.javaClass.simpleName}），保留原有阅读顺序")
         }
@@ -466,9 +475,13 @@ class PaddleOcrEngine(
             val boxes = toReadingBoxes(results)
             val ids = boxes.mapIndexed { i, b -> StrictOcrOrderGuard.Item(i, b.text) }
             val plan = LayoutReadingPlanner.plan(ids, boxes, regions)
-            val assigned = plan.placements.count { it.regionId >= 0 }
-            "｜阅读编号校验=${if (plan.verified.accepted) "通过" else "回退"}，" +
-                "区域归属=${assigned}/${boxes.size}，候选顺序仅诊断"
+            val strategy = if (plan.geometryGroupOrder)
+                "几何${plan.geometryGroups}组" else "几何单区"
+            val regionState = if (plan.distinctAssignedRegions < 2)
+                "AI未成功分出双页" else "AI分出${plan.distinctAssignedRegions}区"
+            "｜OCR框编号=${if (plan.verified.accepted) "完整" else "回退"}，" +
+                "归属=${plan.assignedBoxes}/${boxes.size}，${regionState}，" +
+                "${strategy}，候选顺序仅诊断"
         } catch (error: RuntimeException) {
             "｜阅读编号校验异常：${error.javaClass.simpleName}，维持原排序"
         }
