@@ -32,12 +32,22 @@ public final class LayoutReadingPlanner {
     public static final class Plan {
         public final List<Placement> placements;
         public final StrictOcrOrderGuard.Result verified;
+        // A box covered by one giant region is NOT evidence of page separation.
         public final boolean usedLayout;
+        public final int assignedBoxes;
+        public final int distinctAssignedRegions;
+        public final int geometryGroups;
+        public final boolean geometryGroupOrder;
         private Plan(List<Placement> placements, StrictOcrOrderGuard.Result verified,
-                     boolean usedLayout) {
+                     boolean usedLayout, int assignedBoxes, int distinctAssignedRegions,
+                     int geometryGroups, boolean geometryGroupOrder) {
             this.placements = Collections.unmodifiableList(new ArrayList<>(placements));
             this.verified = verified;
             this.usedLayout = usedLayout;
+            this.assignedBoxes = assignedBoxes;
+            this.distinctAssignedRegions = distinctAssignedRegions;
+            this.geometryGroups = geometryGroups;
+            this.geometryGroupOrder = geometryGroupOrder;
         }
     }
 
@@ -282,8 +292,14 @@ public final class LayoutReadingPlanner {
             placements.clear();
             for(int i=0;i<n;i++) placements.add(new Placement(source.get(i).id,-1,i));
         }
-        boolean used=false;
-        for(int id:membership) if(id>=0) used=true;
-        return new Plan(placements,checked,used);
+        java.util.Set<Integer> distinct=new java.util.HashSet<>();
+        int covered=0;
+        for(int id:membership) if(id>=0) {
+            covered++;
+            distinct.add(id);
+        }
+        return new Plan(placements,checked,covered>0,
+            covered,distinct.size(),groupedByGeometry ? groups.size() : 0,
+            groupedByGeometry);
     }
 }
