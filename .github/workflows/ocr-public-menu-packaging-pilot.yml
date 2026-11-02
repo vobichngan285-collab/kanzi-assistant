@@ -1,0 +1,44 @@
+name: Qualitative OCR of real Chinese snack package and restaurant menu
+on:
+  push:
+    branches: [test/ocr-real-world-benchmark-20261103]
+    paths:
+      - scripts/ocr_public_menu_packaging_qualitative.py
+      - .github/workflows/ocr-public-menu-packaging-pilot.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pilot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install exact #315 recognizer dependencies
+        run: |
+          pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests
+      - name: Download sha-verified public recognition model
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ocr-public-model
+          curl -fL --retry 3 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx' -o /tmp/ocr-public-model/inference.onnx
+          curl -fL --retry 3 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml?download=true' -o /tmp/ocr-public-model/inference.yml
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/ocr-public-model/inference.onnx' | sha256sum -c -
+      - name: Run photo examples but do not claim machine-readable gold accuracy
+        run: |
+          set -euo pipefail
+          python3 -u scripts/ocr_public_menu_packaging_qualitative.py \
+            /tmp/ocr-public-model/inference.onnx /tmp/ocr-public-model/inference.yml \
+            | tee /tmp/qualitative-menu-package.log
+          grep -q 'CURATED_PUBLIC_IMAGE_REVIEW=PASS' /tmp/qualitative-menu-package.log
+          echo 'Reference image text/bounding boxes are visually approximate. Qualitative observations only, NOT strict OCR CER metrics.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-menu-snack-qualitative-log-no-photos
+          path: /tmp/qualitative-menu-package.log
+          retention-days: 7
+          if-no-files-found: warn
