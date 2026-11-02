@@ -49,6 +49,24 @@ jobs:
           for m in result['model_files']:
             print('APK_ASSET',m['path'],'bytes='+str(m['bytes']),'sha256='+m['sha256'],flush=True)
           PY
+      - name: Compare original #315 recognition files to synthetic test references
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx' -o /tmp/reference-rec.onnx
+          curl -fL --retry 3 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml?download=true' -o /tmp/reference-rec.yml
+          python - <<'PY'
+          import zipfile,hashlib,pathlib
+          apk='/tmp/kanzi-315-original.apk'
+          pairs=[('assets/models/rec/inference.onnx','/tmp/reference-rec.onnx'),
+                 ('assets/models/rec/inference.yml','/tmp/reference-rec.yml')]
+          with zipfile.ZipFile(apk) as z:
+            for entry,path in pairs:
+              a=hashlib.sha256(z.read(entry)).hexdigest()
+              b=hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
+              result='IDENTICAL' if a==b else 'DIFFERENT'
+              print('APK_VS_TEST_REFERENCE',entry,result,'apk_sha256='+a,'reference_sha256='+b,flush=True)
+          PY
       - name: Upload audit metadata only (never upload APK or model)
         uses: actions/upload-artifact@v4
         if: always()
