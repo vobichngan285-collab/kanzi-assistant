@@ -222,10 +222,14 @@ public final class InternalCameraController {
             if (!shared) continue;
             double aspect = y.getWidth() / (double) y.getHeight();
             double deviation = Math.abs(aspect - 16.0 / 9.0);
-            // Prefer 1280x720 for fast OCR, but only after the 16:9 shape
-            // is assured. 4:3 640x480 must NOT outrank 16:9 1920x1080.
-            double areaScore = Math.abs(y.getWidth() * (double)y.getHeight() -
-                1280.0 * 720.0) / (1280.0 * 720.0);
+            // OCR was frequently given only 8-10 source pixels per Chinese
+            // character at 720p. Prefer a SHARED 1080p preview/YUV stream
+            // to preserve fine strokes before the detector downsamples it.
+            // Never silently choose 4K or a mismatched preview/analysis size.
+            double area = y.getWidth() * (double)y.getHeight();
+            double targetArea = 1920.0 * 1080.0;
+            if (area > targetArea * 1.05) continue;
+            double areaScore = Math.abs(area - targetArea) / targetArea;
             if (deviation < .03 && areaScore < bestWideScore) {
                 bestWide = y;
                 bestWideScore = areaScore;
@@ -259,6 +263,10 @@ public final class InternalCameraController {
                 CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
             builder.set(CaptureRequest.CONTROL_AE_MODE,
                 CaptureRequest.CONTROL_AE_MODE_ON);
+            // Handle flickering indoor lighting without expensive
+            // per-frame enhancement or disturbing the continuous AF loop.
+            builder.set(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE,
+                CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_AUTO);
             camera.createCaptureSession(Arrays.asList(previewSurface, analysis),
                 new CameraCaptureSession.StateCallback() {
                     @Override public void onConfigured(CameraCaptureSession configured) {

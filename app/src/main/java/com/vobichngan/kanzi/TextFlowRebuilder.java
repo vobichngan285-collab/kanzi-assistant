@@ -36,12 +36,23 @@ public final class TextFlowRebuilder {
             projectedY /= Math.max(1f, totalWeight);
             boxes.sort(Comparator.comparingDouble(ReadingOrder.Box::left));
         }
-        String text() {
+        String text(boolean realtime) {
             StringBuilder s = new StringBuilder();
             ReadingOrder.Box prev = null;
             for (ReadingOrder.Box b : boxes) {
-                if (prev != null && ascii(prev.text.charAt(prev.text.length() - 1)) &&
-                    ascii(b.text.charAt(0)) && b.left() - prev.right() > 1f) s.append(' ');
+                if (prev != null) {
+                    float gap = b.left() - prev.right();
+                    boolean separatedLatin = ascii(prev.text.charAt(prev.text.length() - 1)) &&
+                        ascii(b.text.charAt(0)) && gap > 1f;
+                    // Adjacent Chinese OCR boxes may be separate cover labels,
+                    // names, or receipt fields. Never concatenate them into a
+                    // fabricated single word when a visible gap separates them.
+                    // Only LIVE text adds a whitespace boundary; the legacy
+                    // book reconstruction remains byte-for-byte unchanged.
+                    boolean separateLiveLabels = realtime && gap >=
+                        Math.max(2.5f, Math.min(prev.actualHeight(), b.actualHeight()) * .25f);
+                    if (separatedLatin || separateLiveLabels) s.append(' ');
+                }
                 s.append(b.text);
                 prev = b;
             }
@@ -77,6 +88,21 @@ public final class TextFlowRebuilder {
     }
 
     public static String arrange(List<ReadingOrder.Box> input, List<LayoutRegion> regions) {
+        return arrangeInternal(input, regions, false);
+    }
+
+    /**
+     * Live camera: process coherent text flows from TOP to BOTTOM; inside
+     * each flow preserve its original line order. Do not read every left-side
+     * strip before a visibly higher product title or receipt heading.
+     * No semantic model, additional OCR call, or confidence-based deletion.
+     */
+    public static String arrangeRealtime(List<ReadingOrder.Box> input) {
+        return arrangeInternal(input, java.util.Collections.emptyList(), true);
+    }
+
+    private static String arrangeInternal(List<ReadingOrder.Box> input,
+                                         List<LayoutRegion> regions, boolean realtime) {
         if (input == null || input.isEmpty()) return "";
         List<ReadingOrder.Box> boxes = new ArrayList<>(input);
         int[] layoutId = LayoutRegion.assign(boxes, regions);
@@ -174,8 +200,13 @@ public final class TextFlowRebuilder {
                 bFlow.maxRight-bFlow.minLeft > repeatedMaxWidth*1.45f &&
                 bFlow.top+bFlow.maxHeight*1.25f < firstRepeatedTop;
             if(aTitle != bTitle) return aTitle?-1:1;
-            int cmp = Float.compare(aFlow.centerX(),bFlow.centerX());
-            return cmp!=0?cmp:Float.compare(aFlow.top,bFlow.top);
+            // Live OCR starts from the uppermost coherent region, not
+            // always from the leftmost column. The dedicated book path keeps
+            // its original column-first behavior.
+            int cmp = realtime ? Float.compare(aFlow.top,bFlow.top)
+                               : Float.compare(aFlow.centerX(),bFlow.centerX());
+            return cmp!=0?cmp:(realtime ? Float.compare(aFlow.minLeft,bFlow.minLeft)
+                                        : Float.compare(aFlow.top,bFlow.top));
         });
         StringBuilder output = new StringBuilder();
         for (Flow flow : ordered) {
@@ -194,7 +225,7 @@ public final class TextFlowRebuilder {
             if (output.length() > 0) output.append("\n\n");
             for (int i=0;i<list.size();i++) {
                 if (i>0) output.append("\n");
-                output.append(list.get(i).text());
+                output.append(list.get(i).text(realtime));
             }
         }
         return output.toString().trim();

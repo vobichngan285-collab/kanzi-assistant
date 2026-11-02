@@ -89,9 +89,11 @@ public final class ReadingFocus {
         // silently discarded merely for being shorter, left/right or smaller.
         // LEFT/RIGHT remain explicit user-directed filters only.
         if (mode == Mode.AUTO || mode == Mode.ALL || width <= 0 || height <= 0)
-            return new Selection(entire, (mode == Mode.AUTO && regions != null && !regions.isEmpty() ?
-                    "AI版面辅助+文字流（不丢弃有效识别框）" :
-                    "连续文字流（不丢弃有效识别框）"),
+            return new Selection(entire, (mode == Mode.AUTO && regions != null && regions.size() >= 2 ?
+                    "AI多区域辅助+文字流（不丢弃有效识别框）" :
+                    (mode == Mode.AUTO && regions != null && regions.size() == 1 ?
+                        "AI只找到1区，实际采用几何文字流（不丢弃有效识别框）" :
+                        "连续文字流（不丢弃有效识别框）")),
                 boxes.size(), boxes.size(), .5f, false);
 
         // A horizontal book body has repeated LONG recognized lines. Exclude

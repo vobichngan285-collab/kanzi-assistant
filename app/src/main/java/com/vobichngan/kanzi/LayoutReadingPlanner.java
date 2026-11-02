@@ -1,0 +1,388 @@
+package com.vobichngan.kanzi;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.IdentityHashMap;
+import java.util.ArrayDeque;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Standalone, deterministic OCR box -> layout region -> reading-order planner.
+ * It NEVER generates text; final output must pass StrictOcrOrderGuard.
+ * This is a candidate planner, not yet connected to camera/TTS.
+ */
+public final class LayoutReadingPlanner {
+    private LayoutReadingPlanner() {}
+
+    /**
+     * BOOK opts into chapter/column grouping. Other modes must not assume a
+     * narrow right-side text is a footnote: it may be a price, ingredients,
+     * opening hours, or a product warning.
+     */
+    public enum SceneMode { AUTO, BOOK, PACKAGING, RECEIPT, SIGNAGE }
+
+    public static SceneMode parseSceneMode(String value) {
+        if (value == null) return SceneMode.AUTO;
+        try { return SceneMode.valueOf(value); }
+        catch (IllegalArgumentException ex) { return SceneMode.AUTO; }
+    }
+
+    public static final class Placement {
+        public final int ocrId;
+        public final int regionId; // -1 means geometric fallback
+        public final int readingIndex; // 0-based
+        public Placement(int ocrId, int regionId, int readingIndex) {
+            this.ocrId = ocrId;
+            this.regionId = regionId;
+            this.readingIndex = readingIndex;
+        }
+    }
+
+    public static final class Plan {
+        public final List<Placement> placements;
+        public final StrictOcrOrderGuard.Result verified;
+        // A box covered by one giant region is NOT evidence of page separation.
+        public final boolean usedLayout;
+        public final int assignedBoxes;
+        public final int distinctAssignedRegions;
+        public final int geometryGroups;
+        public final boolean geometryGroupOrder;
+        public final SceneMode requestedScene;
+        public final boolean bookStreamStrategy;
+        private Plan(List<Placement> placements, StrictOcrOrderGuard.Result verified,
+                     boolean usedLayout, int assignedBoxes, int distinctAssignedRegions,
+                     int geometryGroups, boolean geometryGroupOrder,
+                     SceneMode requestedScene, boolean bookStreamStrategy) {
+            this.placements = Collections.unmodifiableList(new ArrayList<>(placements));
+            this.verified = verified;
+            this.usedLayout = usedLayout;
+            this.assignedBoxes = assignedBoxes;
+            this.distinctAssignedRegions = distinctAssignedRegions;
+            this.geometryGroups = geometryGroups;
+            this.geometryGroupOrder = geometryGroupOrder;
+            this.requestedScene = requestedScene;
+            this.bookStreamStrategy = bookStreamStrategy;
+        }
+    }
+
+    private static final class VisualRow {
+        final List<Integer> indices = new ArrayList<>();
+        float projectedY;
+        float averageHeight;
+        VisualRow(int index, float y, float h) {
+            indices.add(index);
+            projectedY=y;
+            averageHeight=h;
+        }
+        void add(int index, float y, float h) {
+            int n=indices.size();
+            projectedY=(projectedY*n+y)/(n+1);
+            averageHeight=(averageHeight*n+h)/(n+1);
+            indices.add(index);
+        }
+    }
+
+    /**
+     * Order by projected baselines rather than raw centerY. Perspective skew can
+     * make the right half of line 1 lower than the left half of line 2.
+     */
+    private static void sortVisualRows(List<Integer> indices, List<ReadingOrder.Box> boxes) {
+        if (indices.size() < 2) return;
+        float referenceX=0f;
+        List<Float> reliableSlopes=new ArrayList<>();
+        for(int id:indices) {
+            ReadingOrder.Box b=boxes.get(id);
+            referenceX+=b.centerX();
+            // A short piece of punctuation has little reliable orientation.
+            // Use the median slope of substantial lines in this reading stream.
+            if(b.confidence >= .45f &&
+                b.right()-b.left() >= Math.max(35f,b.actualHeight()*2.8f)) {
+                reliableSlopes.add(b.slope());
+            }
+        }
+        referenceX/=indices.size();
+        reliableSlopes.sort(Float::compare);
+        final float commonSlope=reliableSlopes.isEmpty() ? 0f :
+            reliableSlopes.get(reliableSlopes.size()/2);
+        final float xRef=referenceX;
+        // Project ALL boxes with the same local-page slope. Previously using
+        // each box's individual (noisy) angle made right-page short fragments
+        // jump ahead of preceding lines in real 720x1280 book diagnostics.
+        List<Integer> byBaseline=new ArrayList<>(indices);
+        byBaseline.sort((a,b)->{
+            ReadingOrder.Box aa=boxes.get(a), bb=boxes.get(b);
+            float ay=aa.centerY()+commonSlope*(xRef-aa.centerX());
+            float by=bb.centerY()+commonSlope*(xRef-bb.centerX());
+            int y=Float.compare(ay,by);
+            return y!=0?y:Float.compare(aa.left(),bb.left());
+        });
+        List<VisualRow> rows=new ArrayList<>();
+        for(int id:byBaseline) {
+            ReadingOrder.Box box=boxes.get(id);
+            float y=box.centerY()+commonSlope*(xRef-box.centerX());
+            VisualRow closest=null;
+            float best=Float.MAX_VALUE;
+            for(VisualRow row:rows) {
+                float d=Math.abs(y-row.projectedY);
+                float tolerance=Math.max(3f,Math.min(row.averageHeight,box.actualHeight())*.43f);
+                if(d<=tolerance && d<best){best=d;closest=row;}
+            }
+            if(closest==null)rows.add(new VisualRow(id,y,box.actualHeight()));
+            else closest.add(id,y,box.actualHeight());
+        }
+        rows.sort(Comparator.comparingDouble(r->r.projectedY));
+        indices.clear();
+        for(VisualRow row:rows) {
+            row.indices.sort(Comparator.comparingDouble((Integer id)->boxes.get(id).left())
+                .thenComparingInt(id->id));
+            indices.addAll(row.indices);
+        }
+    }
+
+    /**
+     * AUTO page separation requires two independently coherent body columns,
+     * not a body plus short marginal annotations or receipt price fragments.
+     * If any measurement is ambiguous, return false and retain row-wise order.
+     */
+    private static boolean confidentParallelBookStreams(
+            List<List<Integer>> groups,List<ReadingOrder.Box> boxes) {
+        if(groups.size()<2)return false;
+        List<float[]> candidates=new ArrayList<>();
+        for(List<Integer> g:groups) {
+            List<Float> widths=new ArrayList<>();
+            float minY=Float.MAX_VALUE,maxY=-Float.MAX_VALUE;
+            float center=0f;
+            float averageHeight=0f;
+            for(int i:g) {
+                ReadingOrder.Box b=boxes.get(i);
+                float w=b.right()-b.left();
+                if(w>=Math.max(80f,b.actualHeight()*5f) && b.confidence>=.4f)
+                    widths.add(w);
+                minY=Math.min(minY,b.top());
+                maxY=Math.max(maxY,b.bottom());
+                center+=b.centerX();
+                averageHeight+=b.actualHeight();
+            }
+            if(widths.size()<4)continue;
+            widths.sort(Float::compare);
+            float median=widths.get(widths.size()/2);
+            float height=(maxY-minY);
+            if(height<Math.max(80f,averageHeight/g.size()*5f))continue;
+            candidates.add(new float[]{center/g.size(),minY,maxY,median,widths.size()});
+        }
+        for(int i=0;i<candidates.size();i++)for(int j=i+1;j<candidates.size();j++) {
+            float[] a=candidates.get(i),b=candidates.get(j);
+            float widthRatio=Math.min(a[3],b[3])/Math.max(1f,Math.max(a[3],b[3]));
+            float overlapY=Math.min(a[2],b[2])-Math.max(a[1],b[1]);
+            float shorterSpan=Math.min(a[2]-a[1],b[2]-b[1]);
+            if(widthRatio>=.48f &&
+                Math.abs(a[0]-b[0])>=Math.max(95f,Math.min(a[3],b[3])*.95f) &&
+                overlapY>=Math.max(70f,shorterSpan*.42f))
+                return true;
+        }
+        return false;
+    }
+
+    private static float area(float l, float t, float r, float b) {
+        return Math.max(0, r-l)*Math.max(0,b-t);
+    }
+
+    /**
+     * Default AUTO is deliberately conservative: only split a book into page
+     * streams when BOTH columns show substantial, comparable running text.
+     * Ambiguous one-page layouts retain side information in spatial order.
+     */
+    public static Plan plan(List<StrictOcrOrderGuard.Item> source,
+                            List<ReadingOrder.Box> boxes,
+                            List<LayoutRegion> regions) {
+        return plan(source,boxes,regions,SceneMode.AUTO);
+    }
+
+    public static Plan plan(List<StrictOcrOrderGuard.Item> source,
+                            List<ReadingOrder.Box> boxes,
+                            List<LayoutRegion> regions, SceneMode requested) {
+        SceneMode mode=requested==null?SceneMode.AUTO:requested;
+        if (source == null || boxes == null || source.size() != boxes.size())
+            throw new IllegalArgumentException("OCR IDs and boxes must align");
+        // Validate IDs even if layout is empty.
+        StrictOcrOrderGuard.apply(source, null);
+        List<LayoutRegion> safeRegions = regions == null ?
+            Collections.<LayoutRegion>emptyList() : regions;
+        final int n = boxes.size();
+        int[] membership = new int[n];
+        Arrays.fill(membership,-1);
+        for (int i=0;i<n;i++) {
+            ReadingOrder.Box b = boxes.get(i);
+            if (b == null) throw new IllegalArgumentException("null OCR box");
+            float boxArea = area(b.left(),b.top(),b.right(),b.bottom());
+            if (boxArea <= 0) continue;
+            float best = -1;
+            for (int j=0;j<safeRegions.size();j++) {
+                LayoutRegion r = safeRegions.get(j);
+                if (r == null || !Float.isFinite(r.confidence) || r.confidence < .53f) continue;
+                float regionArea = area(r.left,r.top,r.right,r.bottom);
+                if (regionArea <= 0) continue;
+                float intersection = area(Math.max(b.left(),r.left),
+                    Math.max(b.top(),r.top),Math.min(b.right(),r.right),
+                    Math.min(b.bottom(),r.bottom));
+                float coverage = intersection/boxArea;
+                if (coverage < .60f) continue;
+                // Prefer the tightest covering region, rather than a page-wide parent.
+                float score = coverage + .15f*r.confidence +
+                    .10f*(boxArea/Math.max(boxArea,regionArea));
+                if (score > best) { best=score; membership[i]=j; }
+            }
+        }
+
+        // Geometric fallback: detect persistent left/right page columns.
+        // A single layout region must not suppress this split.
+        List<List<ReadingOrder.Box>> columns = ReadingOrder.horizontalColumns(boxes);
+        // A detector can yield multiple entries sharing the same Box object.
+        // Keep a queue per object identity so every original OCR ID survives.
+        Map<ReadingOrder.Box,ArrayDeque<Integer>> indexByBox = new IdentityHashMap<>();
+        for (int i=0;i<n;i++) {
+            indexByBox.computeIfAbsent(boxes.get(i),k->new ArrayDeque<Integer>()).add(i);
+        }
+        final List<List<Integer>> groups = new ArrayList<>();
+        if (columns.size() > 1) {
+            for (List<ReadingOrder.Box> column: columns) {
+                List<Integer> group = new ArrayList<>();
+                for (ReadingOrder.Box b: column) {
+                    ArrayDeque<Integer> remaining=indexByBox.get(b);
+                    Integer id=remaining == null ? null : remaining.pollFirst();
+                    if (id != null) group.add(id);
+                }
+                if (!group.isEmpty()) groups.add(group);
+            }
+            // Reject incomplete/duplicated grouping: preserve every OCR box.
+            boolean[] seen = new boolean[n];
+            int count=0;
+            boolean valid=true;
+            for (List<Integer> group:groups) for(int i:group) {
+                if(seen[i]) valid=false;
+                else {seen[i]=true;count++;}
+            }
+            if(!valid || count!=n) groups.clear();
+        }
+        // ReadingOrder.horizontalColumns already places full-width headings
+        // ahead of left/right page streams and trailing footers last. Preserve
+        // that order instead of applying a non-transitive rectangle comparator.
+        final boolean wasGeometricallyGrouped = !groups.isEmpty();
+        final boolean bookLike=mode==SceneMode.BOOK ||
+            (mode==SceneMode.AUTO && confidentParallelBookStreams(groups,boxes));
+        // A one-page book with marginal comments, a milk carton, a restaurant
+        // sign and a receipt can all have narrow side-by-side OCR strips.
+        // Only a confirmed BOOK or a strong TWO-body-stream AUTO is permitted
+        // to send one entire strip after another. Never silently treat every
+        // right-hand strip as a marginal annotation.
+        if (!bookLike) groups.clear();
+        if (groups.isEmpty()) {
+            if (bookLike) {
+                Map<Integer,List<Integer>> byRegion = new HashMap<>();
+                for(int i=0;i<n;i++) {
+                    int key=membership[i];
+                    byRegion.computeIfAbsent(key,k->new ArrayList<Integer>()).add(i);
+                }
+                groups.addAll(byRegion.values());
+            } else {
+                List<Integer> whole=new ArrayList<>();
+                for(int i=0;i<n;i++) whole.add(i);
+                groups.add(whole);
+            }
+        }
+        final boolean groupedByGeometry=bookLike && wasGeometricallyGrouped;
+        if (!groupedByGeometry) {
+            // Region groups are not necessarily in any meaningful HashMap order.
+            // Choose ONE global reading mode before sorting. Mixing pairwise
+            // 'above' and 'left-of' precedence can create comparison cycles.
+            final Map<List<Integer>,float[]> bounds = new IdentityHashMap<>();
+            for(List<Integer> g:groups) {
+                float left=Float.MAX_VALUE, right=-Float.MAX_VALUE;
+                float top=Float.MAX_VALUE, bottom=-Float.MAX_VALUE;
+                for(int i:g) {
+                    ReadingOrder.Box box=boxes.get(i);
+                    left=Math.min(left,box.left());
+                    right=Math.max(right,box.right());
+                    top=Math.min(top,box.top());
+                    bottom=Math.max(bottom,box.bottom());
+                }
+                bounds.put(g,new float[]{left,top,right,bottom});
+            }
+            boolean hasParallelRegions=false;
+            for(int a=0;a<groups.size();a++) for(int b=a+1;b<groups.size();b++) {
+                float[] x=bounds.get(groups.get(a)), y=bounds.get(groups.get(b));
+                float commonY=Math.min(x[3],y[3])-Math.max(x[1],y[1]);
+                float smallerHeight=Math.max(1f,Math.min(x[3]-x[1],y[3]-y[1]));
+                if(commonY >= .35f*smallerHeight &&
+                    (x[2]<=y[0] || y[2]<=x[0])) hasParallelRegions=true;
+            }
+            final boolean parallel=hasParallelRegions;
+            final Map<List<Integer>,Integer> priority=new IdentityHashMap<>();
+            for(List<Integer> g:groups) {
+                float[] b=bounds.get(g);
+                int p=1;
+                if(parallel && groups.size()>2) {
+                    boolean entirelyAboveAll=true, entirelyBelowAll=true;
+                    for(List<Integer> other:groups) {
+                        if(g==other)continue;
+                        float[] o=bounds.get(other);
+                        if(b[3]>o[1])entirelyAboveAll=false;
+                        if(b[1]<o[3])entirelyBelowAll=false;
+                    }
+                    // Only promote a page-spanning banner; narrow side notes
+                    // should not leap ahead of an entire opposite page.
+                    float minWidth=Float.MAX_VALUE;
+                    for(List<Integer> other:groups) if(g!=other) {
+                        float[] o=bounds.get(other);
+                        minWidth=Math.min(minWidth,o[2]-o[0]);
+                    }
+                    boolean wide=b[2]-b[0]>=minWidth*1.35f;
+                    if(wide && entirelyAboveAll)p=0;
+                    else if(wide && entirelyBelowAll)p=2;
+                }
+                priority.put(g,p);
+            }
+            groups.sort((a,b)->{
+                int p=Integer.compare(priority.get(a),priority.get(b));
+                if(p!=0)return p;
+                float[] x=bounds.get(a),y=bounds.get(b);
+                int primary=parallel ? Float.compare(x[0],y[0])
+                                     : Float.compare(x[1],y[1]);
+                if(primary!=0)return primary;
+                int secondary=parallel ? Float.compare(x[1],y[1])
+                                       : Float.compare(x[0],y[0]);
+                if(secondary!=0)return secondary;
+                // Deterministic tie-break, independent of HashMap iteration.
+                return Integer.compare(a.get(0),b.get(0));
+            });
+        }
+        List<Integer> orderedIds = new ArrayList<>();
+        List<Placement> placements = new ArrayList<>();
+        for(List<Integer> group:groups) {
+            sortVisualRows(group,boxes);
+            for(int i:group) {
+                int id=source.get(i).id;
+                orderedIds.add(id);
+                placements.add(new Placement(id,membership[i],placements.size()));
+            }
+        }
+        StrictOcrOrderGuard.Result checked=StrictOcrOrderGuard.apply(source,orderedIds);
+        if (!checked.accepted) {
+            placements.clear();
+            for(int i=0;i<n;i++) placements.add(new Placement(source.get(i).id,-1,i));
+        }
+        java.util.Set<Integer> distinct=new java.util.HashSet<>();
+        int covered=0;
+        for(int id:membership) if(id>=0) {
+            covered++;
+            distinct.add(id);
+        }
+        return new Plan(placements,checked,covered>0,
+            covered,distinct.size(),groupedByGeometry ? groups.size() : 0,
+            groupedByGeometry,mode,bookLike);
+    }
+}

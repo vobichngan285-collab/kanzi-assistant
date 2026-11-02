@@ -26,6 +26,14 @@ android {
             minifyEnabled false
         }
     }
+    // The neural TTS runtime has been renamed to a private ELF SONAME in
+    // CI. Never pickFirst libonnxruntime.so: doing so broke OCR in #303.
+    // The NDK runtime uses the SDK's already-known-good shared C++ binary.
+    packaging {
+        jniLibs {
+            pickFirsts += ['**/libc++_shared.so']
+        }
+    }
     defaultConfig {
         applicationId 'com.vobich.kanzi'
         minSdk 26
@@ -47,4 +55,9 @@ dependencies {
     // Optional locally bundled PP-DocLayout-S; matches OCR SDK version.
     implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.21.1'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
+    // JNI runtime only; all voice MODEL files are downloaded on user request.
+    // CI fetches the official, SHA256-pinned sherpa-onnx AAR before Gradle.
+    implementation files('libs/sherpa-onnx-2.0.1.aar')
+    implementation 'org.apache.commons:commons-compress:1.27.1'
+    implementation 'commons-io:commons-io:2.16.1'
 }

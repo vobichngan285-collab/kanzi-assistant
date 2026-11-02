@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
+import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.YuvImage
 import android.util.Log
@@ -57,7 +58,11 @@ data class OcrDiagnosticResult(
     val fullPageText: String,
     val layoutStatus: String,
     val layoutRegions: Int,
-    val layoutElapsedMs: Long
+    val layoutElapsedMs: Long,
+    val layoutReuseStats: String,
+    val candidateText: String,
+    val candidateDetails: String,
+    val realtimeText: String
 )
 fun interface OcrDiagnosticCallback { fun onResult(result: OcrDiagnosticResult) }
 
@@ -94,16 +99,27 @@ class PaddleOcrEngine(
     @Volatile private var engine: PaddleOCR? = null
     @Volatile private var released = false
     @Volatile private var fastScanMode = false
+    // Optional 90/270 degree correction in the live text scanner.
+    // Manual correction performs just ONE normal OCR inference.
+    @Volatile private var liveTextRotationDegrees = 0
     @Volatile private var readingFocusMode = ReadingFocus.Mode.AUTO
     private val focusTracker = ReadingFocus.Tracker()
     private val layoutAi = LayoutAiEngine(appContext)
+    private val layoutReuse = LayoutAiReuseCoordinator(layoutAi)
     @Volatile private var aiLayoutEnabled = false
-    fun setAiLayoutEnabled(enabled: Boolean) { aiLayoutEnabled = enabled }
+    fun setAiLayoutEnabled(enabled: Boolean) {
+        if (aiLayoutEnabled != enabled) layoutReuse.reset()
+        aiLayoutEnabled = enabled
+    }
     fun setFastScanMode(enabled: Boolean) { fastScanMode = enabled }
+    fun setLiveTextRotationDegrees(degrees: Int) {
+        liveTextRotationDegrees = if (degrees == 90 || degrees == 270) degrees else 0
+    }
     fun setReadingFocusMode(mode: String) {
         readingFocusMode = try { ReadingFocus.Mode.valueOf(mode) }
             catch (_: IllegalArgumentException) { ReadingFocus.Mode.AUTO }
         focusTracker.reset()
+        layoutReuse.reset()
     }
 
     fun isReady(): Boolean = engine != null && !released
@@ -133,10 +149,14 @@ class PaddleOcrEngine(
                         if (enhanced !== bitmap) { bitmap.recycle(); bitmap = enhanced }
                     }
                     val result = current.recognize(bitmap)
+                    // A diagnostic must measure fresh model inference, not a cached result.
+                    layoutReuse.reset()
                     val layout = layoutAi.analyze(bitmap, aiLayoutEnabled &&
                         readingFocusMode == ReadingFocus.Mode.AUTO, result.results.size)
                     val focus = arrangeInReadingOrder(result.results, bitmap.width,
                         bitmap.height, layout.regions)
+                    // Candidate ordering is diagnostic only. Never change live TTS here.
+                    val candidate = inspectCandidateOrder(result.results, layout.regions)
                     val text = focus.text
                     val confidence = if (result.results.isEmpty()) 0.0
                         else result.results.map { it.confidence.toDouble() }.average()
@@ -157,11 +177,18 @@ class PaddleOcrEngine(
                         totalTimeMs = result.totalTimeMs.toLong(),
                         detectorInputShape = result.detInputShape.joinToString("×"),
                         recognitionInputShapes = result.recInputShapes.joinToString("；") { it.joinToString("×") },
-                        focusDescription = focus.description,
+                        focusDescription = focus.description + inspectVerifiedOrder(result.results, layout.regions),
                         fullPageText = ReadingOrder.arrange(toReadingBoxes(result.results)),
                         layoutStatus = layout.status,
                         layoutRegions = layout.regions.size,
-                        layoutElapsedMs = layout.elapsedMs
+                        layoutElapsedMs = layout.elapsedMs,
+                        layoutReuseStats = layoutReuse.statistics(),
+                        candidateText = candidate.first,
+                        candidateDetails = candidate.second,
+                        // Exactly the geometry-only order used by the new
+                        // real-time scanner; no additional ONNX inference.
+                        realtimeText = RealtimeTextOrientation.arrange(
+                            toReadingBoxes(result.results), bitmap.width, bitmap.height)
                     )
                     withContext(Dispatchers.Main) { onResult.onResult(report) }
                 } finally { bitmap.recycle() }
@@ -247,7 +274,18 @@ class PaddleOcrEngine(
                     "NV21 数据长度不匹配：收到 ${data.size} 字节，预期 ${expectedBytes} 字节"
                 }
                 var bitmap = nv21ToBitmap(data, width, height, legacyNv21Jpeg)
+                val liveAngle = if (fastScanMode) liveTextRotationDegrees else 0
                 try {
+                    if (liveAngle != 0) {
+                        val transform = Matrix()
+                        transform.postRotate(liveAngle.toFloat())
+                        val rotated = Bitmap.createBitmap(bitmap, 0, 0,
+                            bitmap.width, bitmap.height, transform, true)
+                        if (rotated !== bitmap) {
+                            bitmap.recycle()
+                            bitmap = rotated
+                        }
+                    }
                     if (enhancedPreprocessing) {
                         val enhanced = enhanceForOcr(bitmap)
                         if (enhanced !== bitmap) {
@@ -271,15 +309,35 @@ class PaddleOcrEngine(
                             }
                         }
                     }
-                    val layout = layoutAi.analyze(bitmap, aiLayoutEnabled &&
-                        readingFocusMode == ReadingFocus.Mode.AUTO, result.results.size)
-                    val focus = arrangeInReadingOrder(result.results, bitmap.width,
-                        bitmap.height, layout.regions)
-                    val text = focus.text
-                    Log.i(TAG, "Reading focus: ${focus.description}; layout=${layout.status}; layoutMs=${layout.elapsedMs}")
+                    // Fast real-time recognition must not wait for a
+                    // separate document-layout model. It uses just OCR's
+                    // existing quadrilaterals and top-first coherent flows.
+                    // Keep the old BOOK/diagnostic flow available separately.
+                    val realtime = fastScanMode
+                    val layout = layoutReuse.analyze(data, width, height, bitmap,
+                        !realtime && aiLayoutEnabled &&
+                            readingFocusMode == ReadingFocus.Mode.AUTO,
+                        result.results.size)
+                    val text: String
+                    val flowDescription: String
+                    if (realtime) {
+                        text = RealtimeTextOrientation.arrange(
+                            toReadingBoxes(result.results), bitmap.width, bitmap.height)
+                        flowDescription = "实时文字：按文字方向、从上至下连续朗读（输入旋转${liveAngle}°）"
+                    } else {
+                        val focus = arrangeInReadingOrder(result.results, bitmap.width,
+                            bitmap.height, layout.regions)
+                        text = focus.text
+                        flowDescription = focus.description
+                    }
+                    val verification = if (!realtime && aiLayoutEnabled &&
+                        readingFocusMode == ReadingFocus.Mode.AUTO)
+                        inspectVerifiedOrder(result.results, layout.regions) else ""
+                    Log.i(TAG, "Reading focus: $flowDescription; layout=${layout.status}; " +
+                        "layoutMs=${layout.elapsedMs}; ordering=$verification")
                     val averageConfidence = if (result.results.isEmpty()) 0.0
                         else result.results.map { it.confidence }.average()
-                    val message = "frame=${width}x${height}, ocrInputDirection=raw0, " +
+                    val message = "frame=${width}x${height}, ocrInputRotation=${liveAngle}, " +
                         "bitmap=${bitmap.width}x${bitmap.height}, boxes=${result.results.size}, " +
                         "avgConfidence=${"%.3f".format(java.util.Locale.US, averageConfidence)}, " +
                         "det=${result.detectionTimeMs}ms, rec=${result.recognitionTimeMs}ms, " +
@@ -293,15 +351,31 @@ class PaddleOcrEngine(
                         if (item.box.points.size != 4) null
                         else {
                             val p = item.box.points
-                            floatArrayOf(p[0].x, p[0].y, p[1].x, p[1].y,
-                                p[2].x, p[2].y, p[3].x, p[3].y)
+                            val coordinates = FloatArray(8)
+                            for (i in 0..3) {
+                                val x = p[i].x
+                                val y = p[i].y
+                                // OCR polygons are on a rotated bitmap.
+                                // Map them back to native camera coordinates.
+                                coordinates[2 * i] = when (liveAngle) {
+                                    90 -> y
+                                    270 -> width - y
+                                    else -> x
+                                }
+                                coordinates[2 * i + 1] = when (liveAngle) {
+                                    90 -> height - x
+                                    270 -> x
+                                    else -> y
+                                }
+                            }
+                            coordinates
                         }
                     }
                     val response = OcrReadResult(
                         text = text,
                         boxes = boxed,
-                        frameWidth = bitmap.width,
-                        frameHeight = bitmap.height,
+                        frameWidth = width,
+                        frameHeight = height,
                         boxCount = result.results.size,
                         averageConfidence = averageConfidence,
                         totalTimeMs = result.totalTimeMs.toLong()
@@ -386,6 +460,88 @@ class PaddleOcrEngine(
             readingFocusMode, layoutRegions)
     }
 
+    /**
+     * Produce a human-auditable candidate. All characters come from OCR and
+     * each entry retains the original OCR index even if invalid boxes are skipped.
+     */
+    private fun inspectCandidateOrder(
+        results: List<OCRResult>, regions: List<LayoutRegion>
+    ): Pair<String, String> {
+        return try {
+            // Do not certify completeness after silently dropping a nonempty
+            // OCR result whose quadrilateral is absent or has invalid numbers.
+            val unpositioned = results.count { item ->
+                item.text.isNotBlank() && (item.box.points.size != 4 ||
+                    item.box.points.any { !it.x.isFinite() || !it.y.isFinite() })
+            }
+            if (unpositioned > 0) {
+                return Pair("", "候选排序不可用：有${unpositioned}个非空OCR文字框坐标异常，不能保证全部原文保留")
+            }
+            val valid = results.mapIndexedNotNull { originalIndex, item ->
+                val p = item.box.points
+                if (p.size != 4 || item.text.isBlank()) null
+                else Pair(originalIndex, ReadingOrder.Box(
+                    item.text, item.confidence,
+                    floatArrayOf(p[0].x, p[1].x, p[2].x, p[3].x),
+                    floatArrayOf(p[0].y, p[1].y, p[2].y, p[3].y)
+                ))
+            }
+            val raw = valid.map { (originalIndex, box) ->
+                StrictOcrOrderGuard.Item(originalIndex, box.text)
+            }
+            val plan = LayoutReadingPlanner.plan(raw, valid.map { it.second }, regions)
+            val lines = plan.placements.joinToString("\n") { placement ->
+                val region = if (placement.regionId < 0) "几何回退"
+                    else "区域#${placement.regionId + 1}"
+                "${placement.readingIndex + 1}. 原始OCR框#${placement.ocrId + 1}" +
+                    " [${region}] " + results[placement.ocrId].text
+            }
+            val state = if (plan.verified.accepted)
+                "OCR框编号完整性校验通过（不代表候选阅读顺序正确）" else
+                "OCR框编号完整性校验未通过，已退回OCR输入顺序"
+            val strategy = if (plan.geometryGroupOrder)
+                "几何分组排序（包含标题/边缘辅助分组）共${plan.geometryGroups}组"
+                else "单区域/逐行几何排序（尚未可靠识别左右页）"
+            val membership =
+                "AI区域归属${plan.assignedBoxes}/${valid.size}个框，" +
+                "实际使用${plan.distinctAssignedRegions}个独立AI区域。" +
+                if (plan.distinctAssignedRegions < 2)
+                    "仅一大区不能证明识别出双页。" else ""
+            Pair(plan.verified.exactText(), state + "\n" +
+                membership + "\n" + strategy + "\n" + lines)
+        } catch (error: RuntimeException) {
+            Pair("", "候选排序异常（${error.javaClass.simpleName}），保留原有阅读顺序")
+        }
+    }
+
+    /**
+     * Shadow-mode inspection. The planner may only return IDs of existing OCR
+     * boxes. Do not change live speech before the actual camera samples pass.
+     */
+    private fun inspectVerifiedOrder(
+        results: List<OCRResult>, regions: List<LayoutRegion>
+    ): String {
+        return try {
+            val invalidCoordinates = results.count { item ->
+                item.text.isNotBlank() && (item.box.points.size != 4 ||
+                    item.box.points.any { !it.x.isFinite() || !it.y.isFinite() })
+            }
+            if (invalidCoordinates > 0) return "｜候选编号不完整：有${invalidCoordinates}个原始OCR框不可定位，未通过完整性审查"
+            val boxes = toReadingBoxes(results)
+            val ids = boxes.mapIndexed { i, b -> StrictOcrOrderGuard.Item(i, b.text) }
+            val plan = LayoutReadingPlanner.plan(ids, boxes, regions)
+            val strategy = if (plan.geometryGroupOrder)
+                "几何${plan.geometryGroups}组" else "几何单区"
+            val regionState = if (plan.distinctAssignedRegions < 2)
+                "AI未成功分出双页" else "AI分出${plan.distinctAssignedRegions}区"
+            "｜OCR框编号=${if (plan.verified.accepted) "完整" else "回退"}，" +
+                "归属=${plan.assignedBoxes}/${boxes.size}，${regionState}，" +
+                "${strategy}，候选顺序仅诊断"
+        } catch (error: RuntimeException) {
+            "｜阅读编号校验异常：${error.javaClass.simpleName}，维持原排序"
+        }
+    }
+
     /** Decode the camera's unrotated NV21 pixels; TextureView handles display transforms. */
     private fun nv21ToBitmap(data: ByteArray, width: Int, height: Int, legacyNv21Jpeg: Boolean): Bitmap {
         if (legacyNv21Jpeg) {
@@ -420,6 +576,7 @@ class PaddleOcrEngine(
         released = true
         scope.launch {
             try { engine?.release() } catch (_: Throwable) {}
+            layoutReuse.reset()
             try { layoutAi.release() } catch (_: Throwable) {}
             engine = null
             scope.cancel()
