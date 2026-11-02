@@ -34,7 +34,7 @@ public final class LayoutOrderingDeterminismSmokeTest {
             for(ReadingOrder.Box item:boxes) {
                 source.add(new StrictOcrOrderGuard.Item(item==a?11:item==b?12:13,item.text));
             }
-            LayoutReadingPlanner.Plan p=LayoutReadingPlanner.plan(source,boxes,regions);
+            LayoutReadingPlanner.Plan p=LayoutReadingPlanner.plan(source,boxes,regions,LayoutReadingPlanner.SceneMode.BOOK);
             expect(p.verified.accepted,"strict OCR ID permutation rejected");
             if(reference==null)reference=p.verified.exactText();
             else expect(reference.equals(p.verified.exactText()),
