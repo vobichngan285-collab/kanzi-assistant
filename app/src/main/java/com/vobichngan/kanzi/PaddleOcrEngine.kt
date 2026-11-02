@@ -290,7 +290,7 @@ class PaddleOcrEngine(
                     // separate document-layout model. It uses just OCR's
                     // existing quadrilaterals and top-first coherent flows.
                     // Keep the old BOOK/diagnostic flow available separately.
-                    val realtime = fastScanMode && readingFocusMode == ReadingFocus.Mode.AUTO
+                    val realtime = fastScanMode
                     val layout = layoutReuse.analyze(data, width, height, bitmap,
                         !realtime && aiLayoutEnabled &&
                             readingFocusMode == ReadingFocus.Mode.AUTO,
