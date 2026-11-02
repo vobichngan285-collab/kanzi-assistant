@@ -119,14 +119,17 @@ def main():
     p.add_argument("--boxes",required=True)
     p.add_argument("--per-image",required=True)
     p.add_argument("--out",required=True)
+    p.add_argument("--holdout",action="store_true",help="evaluate 132 previously unseen scene images")
     args=p.parse_args()
     out=Path(args.out);out.mkdir(parents=True,exist_ok=True)
     proposals=load(args.boxes)
     lows=annotate(proposals)
-    assert len(lows)==137,len(lows)
+    expected_boxes=90 if args.holdout else 137
+    assert len(lows)==expected_boxes,len(lows)
     images={(z["split"],z["image"]) for z in load(args.per_image)
             if float(z["threshold"])==.45}
-    assert len(images)==216,len(images)
+    expected_images=132 if args.holdout else 216
+    assert len(images)==expected_images,len(images)
     grouped={}
     for region,lower,upper in [(".40-.45",.40,.45),(".35-.40",.35,.40),(".30-.35",.30,.35)]:
         data=[r for r in lows if lower<=r["score"]<upper]
@@ -164,6 +167,7 @@ def main():
        "GT-unmatched boxes are UNKNOWN; some may contain real unlabeled words.\n"
        "P95 is cloud CPU recognizer inference, not USB Android latency.\n"
        "Threshold changes are not enabled in any software build.\n")
+    print("DATA_SPLIT", "INDEPENDENT_HOLDOUT" if args.holdout else "EXPLORATORY",flush=True)
     print("BASELINE_OVERLAP_AND_PRE_REC_FILTER_AB=PASS",len(lows),flush=True)
 
 if __name__=="__main__":main()
