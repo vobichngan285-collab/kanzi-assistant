@@ -39,6 +39,61 @@ public final class LayoutReadingPlanner {
         }
     }
 
+    private static final class VisualRow {
+        final List<Integer> indices = new ArrayList<>();
+        float projectedY;
+        float averageHeight;
+        VisualRow(int index, float y, float h) {
+            indices.add(index);
+            projectedY=y;
+            averageHeight=h;
+        }
+        void add(int index, float y, float h) {
+            int n=indices.size();
+            projectedY=(projectedY*n+y)/(n+1);
+            averageHeight=(averageHeight*n+h)/(n+1);
+            indices.add(index);
+        }
+    }
+
+    /**
+     * Order by projected baselines rather than raw centerY. Perspective skew can
+     * make the right half of line 1 lower than the left half of line 2.
+     */
+    private static void sortVisualRows(List<Integer> indices, List<ReadingOrder.Box> boxes) {
+        if (indices.size() < 2) return;
+        float referenceX=0f;
+        for(int id:indices)referenceX+=boxes.get(id).centerX();
+        referenceX/=indices.size();
+        final float xRef=referenceX;
+        List<Integer> byBaseline=new ArrayList<>(indices);
+        byBaseline.sort((a,b)->{
+            int y=Float.compare(boxes.get(a).alignedY(xRef),boxes.get(b).alignedY(xRef));
+            return y!=0?y:Float.compare(boxes.get(a).left(),boxes.get(b).left());
+        });
+        List<VisualRow> rows=new ArrayList<>();
+        for(int id:byBaseline) {
+            ReadingOrder.Box box=boxes.get(id);
+            float y=box.alignedY(xRef);
+            VisualRow closest=null;
+            float best=Float.MAX_VALUE;
+            for(VisualRow row:rows) {
+                float d=Math.abs(y-row.projectedY);
+                float tolerance=Math.max(3f,Math.min(row.averageHeight,box.actualHeight())*.43f);
+                if(d<=tolerance && d<best){best=d;closest=row;}
+            }
+            if(closest==null)rows.add(new VisualRow(id,y,box.actualHeight()));
+            else closest.add(id,y,box.actualHeight());
+        }
+        rows.sort(Comparator.comparingDouble(r->r.projectedY));
+        indices.clear();
+        for(VisualRow row:rows) {
+            row.indices.sort(Comparator.comparingDouble((Integer id)->boxes.get(id).left())
+                .thenComparingInt(id->id));
+            indices.addAll(row.indices);
+        }
+    }
+
     private static float area(float l, float t, float r, float b) {
         return Math.max(0, r-l)*Math.max(0,b-t);
     }
@@ -129,6 +184,13 @@ public final class LayoutReadingPlanner {
                 float bLeft=Float.MAX_VALUE,bRight=-Float.MAX_VALUE;
                 for(int i:a){aLeft=Math.min(aLeft,boxes.get(i).left());aRight=Math.max(aRight,boxes.get(i).right());}
                 for(int i:b){bLeft=Math.min(bLeft,boxes.get(i).left());bRight=Math.max(bRight,boxes.get(i).right());}
+                float aTop=Float.MAX_VALUE,aBottom=-Float.MAX_VALUE;
+                float bTop=Float.MAX_VALUE,bBottom=-Float.MAX_VALUE;
+                for(int i:a){aTop=Math.min(aTop,boxes.get(i).top());aBottom=Math.max(aBottom,boxes.get(i).bottom());}
+                for(int i:b){bTop=Math.min(bTop,boxes.get(i).top());bBottom=Math.max(bBottom,boxes.get(i).bottom());}
+                // A page-wide heading above all columns must be read before either page.
+                if (aBottom <= bTop) return -1;
+                if (bBottom <= aTop) return 1;
                 if(aRight<=bLeft) return -1;
                 if(bRight<=aLeft) return 1;
                 int y=Float.compare(ay,by);
@@ -138,12 +200,7 @@ public final class LayoutReadingPlanner {
         List<Integer> orderedIds = new ArrayList<>();
         List<Placement> placements = new ArrayList<>();
         for(List<Integer> group:groups) {
-            Collections.sort(group,new Comparator<Integer>() {
-                public int compare(Integer a,Integer b) {
-                    int y=Float.compare(boxes.get(a).centerY(),boxes.get(b).centerY());
-                    return y!=0?y:Float.compare(boxes.get(a).centerX(),boxes.get(b).centerX());
-                }
-            });
+            sortVisualRows(group,boxes);
             for(int i:group) {
                 int id=source.get(i).id;
                 orderedIds.add(id);
