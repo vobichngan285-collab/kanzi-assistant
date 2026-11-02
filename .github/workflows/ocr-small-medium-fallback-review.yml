@@ -1,0 +1,48 @@
+name: Conditional Medium OCR on Small uncertain text - paired results
+on:
+  push:
+    branches: [test/ocr-small-det-medium-rec-20261103]
+    paths:
+      - scripts/ocr_small_medium_conditional_fallback.py
+      - .github/workflows/ocr-small-medium-fallback-review.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  posthoc-fallback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        cohort: [dev, holdout]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download SHA-verified full-frame Small/Medium OCR predictions, no images
+        uses: actions/download-artifact@v4
+        with:
+          name: small-det-medium-rec-fullframe-${{ matrix.cohort }}
+          run-id: 41505548463
+          github-token: ${{ github.token }}
+          path: /tmp/ocr-hybrid-source
+      - name: Compare predeclared Medium fallback policies on ${{ matrix.cohort }} cohort
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/hybrid-policies
+          python3 -u scripts/ocr_small_medium_conditional_fallback.py \
+            --box-csv /tmp/ocr-hybrid-source/per_box_ocr.csv \
+            --photo-csv /tmp/ocr-hybrid-source/per_photo_timing.csv \
+            --cohort ${{ matrix.cohort }} --out /tmp/hybrid-policies \
+            | tee /tmp/hybrid-policies/log.txt
+          grep -q 'SELECTIVE_MEDIUM_COUNTERFACTUAL=PASS' /tmp/hybrid-policies/log.txt
+          cat /tmp/hybrid-policies/policy_sweep.csv >> "$GITHUB_STEP_SUMMARY"
+          echo 'Posthoc simulator uses independently predeclared thresholds; Android model switching/TTS not implemented or timed.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Save just numerical results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hybrid-medium-fallback-counterfactual-${{ matrix.cohort }}
+          path: /tmp/hybrid-policies/
+          retention-days: 10
+          if-no-files-found: warn
