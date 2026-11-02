@@ -1,0 +1,48 @@
+name: Audit 111 low-confidence boxes against full scene-text annotations
+on:
+  push:
+    branches: [test/ocr-111-boxes-audit-20261103]
+    paths:
+      - scripts/audit_111_unmatched_boxes.py
+      - .github/workflows/ocr-111-box-audit.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install metadata client
+        run: python3 -m pip install --quiet requests
+      - name: Retrieve earlier exact #315 model predictions (no images)
+        uses: actions/download-artifact@v4
+        with:
+          name: ocr-315-true-box-value-data
+          run-id: 41492030817
+          github-token: ${{ github.token }}
+          path: /tmp/original-model-results
+      - name: Audit 111 boxes against all real GT polygons and OCR text
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ocr-111-audit
+          python3 -u scripts/audit_111_unmatched_boxes.py \
+            --boxes /tmp/original-model-results/all_boxes_ocr.csv \
+            --out /tmp/ocr-111-audit \
+            | tee /tmp/ocr-111-audit/audit.log
+          grep -q 'ALL_111_UNMATCHED_BOXES_AUDITED=PASS 111' /tmp/ocr-111-audit/audit.log
+          echo "### Low-score candidate geometry, not verified false-positive labels" >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/ocr-111-audit/summary.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish only per-box OCR text and diagnostic metadata, no photos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-111-unmatched-box-audit-data
+          path: /tmp/ocr-111-audit/
+          retention-days: 10
+          if-no-files-found: warn
