@@ -25,6 +25,8 @@ on:
       - 'app/src/main/java/com/vobichngan/kanzi/RealtimeTextOrientation.java'
       - 'scripts/RealtimeTextOrientationSmokeTest.java'
       - 'scripts/RealtimeSceneTrackerSmokeTest.java'
+      - 'app/src/main/java/com/vobichngan/kanzi/RealtimeSpeechGuard.java'
+      - 'scripts/RealtimeSpeechGuardSmokeTest.java'
       - 'scripts/verify_live_speech_delivery.py'
       - 'app/src/main/java/com/vobichngan/kanzi/MainActivity.java'
       - 'scripts/LayoutSceneFingerprintSmokeTest.java'
@@ -55,6 +57,7 @@ jobs:
             app/src/main/java/com/vobichngan/kanzi/LayoutFrameScheduler.java \
             app/src/main/java/com/vobichngan/kanzi/LayoutSceneFingerprint.java \
             app/src/main/java/com/vobichngan/kanzi/RealtimeSceneTracker.java \
+            app/src/main/java/com/vobichngan/kanzi/RealtimeSpeechGuard.java \
             app/src/main/java/com/vobichngan/kanzi/RealtimeTextOrientation.java \
             scripts/StrictOcrOrderGuardSmokeTest.java \
             scripts/LayoutReadingPlannerSmokeTest.java \
@@ -63,6 +66,7 @@ jobs:
             scripts/BookDiagnostic52RegressionTest.java \
             scripts/BookDiagnostic46RegressionTest.java \
             scripts/RealtimeSceneTrackerSmokeTest.java \
+            scripts/RealtimeSpeechGuardSmokeTest.java \
             scripts/RealtimeTextFlowSmokeTest.java \
             scripts/RealtimeTextOrientationSmokeTest.java \
             scripts/LayoutFrameSchedulerSmokeTest.java \
@@ -79,6 +83,8 @@ jobs:
         run: java -cp build/order-tests BookDiagnostic52RegressionTest
       - name: Test real single-page 46 boxes with footnotes and page number
         run: java -cp build/order-tests BookDiagnostic46RegressionTest
+      - name: Protect long cover reading from same-page live OCR restarts
+        run: java -cp build/order-tests RealtimeSpeechGuardSmokeTest
       - name: Verify new-target acquisition and same-target suppression
         run: java -cp build/order-tests RealtimeSceneTrackerSmokeTest
       - name: Verify real-time top-first coherent text flows
