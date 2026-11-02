@@ -78,6 +78,10 @@ public final class TextFlowRebuilder {
         int n = boxes.size();
         int[] flowParent = new int[n];
         int[] rowParent = new int[n];
+        // Repeated tightly stacked small-font boxes form annotation strips.
+        // A single baseline intersection must not bridge such a strip into
+        // a bigger-font slanted line running across it.
+        boolean[] dense = denseTextStrips(boxes);
         for (int i = 0; i < n; i++) { flowParent[i] = i; rowParent[i] = i; }
 
         // Horizontal continuation: compare the two ENDPOINT baselines, not
@@ -87,7 +91,7 @@ public final class TextFlowRebuilder {
             ReadingOrder.Box a = boxes.get(i);
             for (int j = i + 1; j < n; j++) {
                 ReadingOrder.Box b = boxes.get(j);
-                if (sameVisualRow(a,b)) {
+                if (sameVisualRow(a,b,dense[i],dense[j])) {
                     unite(rowParent,i,j);
                     unite(flowParent,i,j);
                 }
@@ -179,11 +183,14 @@ public final class TextFlowRebuilder {
         return output.toString().trim();
     }
 
-    private static boolean sameVisualRow(ReadingOrder.Box aa,ReadingOrder.Box bb) {
+    private static boolean sameVisualRow(ReadingOrder.Box aa,ReadingOrder.Box bb,
+                                         boolean crowdedA, boolean crowdedB) {
         ReadingOrder.Box a=aa.left()<=bb.left()?aa:bb;
         ReadingOrder.Box b=a==aa?bb:aa;
         float widthA=a.right()-a.left(), widthB=b.right()-b.left();
         if (widthA<=0 || widthB<=0) return false;
+        if (crowdedA != crowdedB &&
+            Math.abs(aa.slope()-bb.slope())>.070f) return false;
         float ha=a.actualHeight(),hb=b.actualHeight();
         float heightRatio=Math.min(ha,hb)/Math.max(ha,hb);
         if (heightRatio < .72f) return false;
@@ -194,6 +201,30 @@ public final class TextFlowRebuilder {
         float seamX=(a.right()+b.left())/2f;
         float dy=Math.abs(a.alignedY(seamX)-b.alignedY(seamX));
         return dy < Math.max(3.2f,Math.min(ha,hb)*.39f);
+    }
+
+    private static boolean[] denseTextStrips(List<ReadingOrder.Box> boxes) {
+        boolean[] result=new boolean[boxes.size()];
+        for(int i=0;i<boxes.size();i++) {
+            ReadingOrder.Box a=boxes.get(i);
+            int tightlyPacked=0;
+            for(int j=0;j<boxes.size();j++) {
+                if(i==j)continue;
+                ReadingOrder.Box b=boxes.get(j);
+                float wa=a.right()-a.left(),wb=b.right()-b.left();
+                if(wa<=0 || wb<=0)continue;
+                float overlap=Math.min(a.right(),b.right())-Math.max(a.left(),b.left());
+                if(overlap<Math.min(wa,wb)*.65f)continue;
+                float h=Math.min(a.actualHeight(),b.actualHeight());
+                if(h/Math.max(a.actualHeight(),b.actualHeight())<.70f)continue;
+                float pivot=(Math.max(a.left(),b.left())+
+                             Math.min(a.right(),b.right()))/2f;
+                float d=Math.abs(a.alignedY(pivot)-b.alignedY(pivot));
+                if(d>h*.25f && d<h*.96f) tightlyPacked++;
+            }
+            result[i]=tightlyPacked>=2;
+        }
+        return result;
     }
 
     private static boolean adjacentVertical(ReadingOrder.Box a,ReadingOrder.Box b) {
