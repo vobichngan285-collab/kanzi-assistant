@@ -29,7 +29,10 @@ jobs:
           mkdir -p /tmp/ocr-ab
           set -o pipefail
           python scripts/ocr_ab_synthetic.py /tmp/ocr-assets /tmp/ocr-ab | tee /tmp/ocr-ab/summary.txt
-      - name: Test clipped text recovery using full-resolution source\n        run: |\n          python scripts/ocr_roi_recovery.py /tmp/ocr-assets /tmp/ocr-ab | tee /tmp/ocr-ab/roi-summary.txt\n      - uses: actions/upload-artifact@v4
+      - name: Test clipped text recovery using full-resolution source
+        run: |
+          python scripts/ocr_roi_recovery.py /tmp/ocr-assets /tmp/ocr-ab | tee /tmp/ocr-ab/roi-summary.txt
+      - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: offline-ocr-ab-results
