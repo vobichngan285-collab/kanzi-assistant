@@ -683,12 +683,6 @@ public class MainActivity extends CameraActivity {
         qualityCheck.setChecked(qualityPromptsEnabled);
         panel.addView(qualityCheck);
 
-        CheckBox queueCheck = new CheckBox(this);
-        queueCheck.setText("默认使用长文阅读（读完再识别）；快速扫读会自动打断旧内容");
-        queueCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        queueCheck.setChecked(longReadingMode);
-        panel.addView(queueCheck);
-
         TextView intervalTitle = new TextView(this);
         intervalTitle.setText("自动 OCR 识别间隔（毫秒）");
         intervalTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
@@ -919,7 +913,7 @@ public class MainActivity extends CameraActivity {
         panel.addView(diagnosticReportView);
 
         TextView similarityNote = new TextView(this);
-        similarityNote.setText("长文阅读按当前画面一次识别后即开始按顺序朗读，读完前不重复识别。快速扫读直接响应最新画面；相似度用于防止重复朗读，不要求两次整页OCR确认。0关闭相似度去重。");
+        similarityNote.setText("主界面可切换长文阅读与快速扫读：长文模式优先读完当前内容，快速扫读只在确认为新目标时切换，避免反复从头朗读。相似度阈值仅用于长文去重。");
         similarityNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         similarityNote.setTextColor(0xFF667085);
         panel.addView(similarityNote);
@@ -961,9 +955,6 @@ public class MainActivity extends CameraActivity {
                 boolean aiLayoutChanged = aiLayoutEnabled != layoutAiCheck.isChecked();
                 aiLayoutEnabled = layoutAiCheck.isChecked();
                 similarityThreshold = similaritySeek.getProgress();
-                boolean wasQueueEnabled = queueSpeech;
-                queueSpeech = queueCheck.isChecked();
-                boolean changeReadingMode = longReadingMode != queueSpeech;
                 speechRate = 0.5f + speechRateSeek.getProgress() / 100f;
                 qualityPromptsEnabled = qualityCheck.isChecked();
                 speechNoEnglish = noEnglishCheck.isChecked();
@@ -982,8 +973,6 @@ public class MainActivity extends CameraActivity {
                     .putBoolean(PREF_AUTO_MODE, automaticMode)
                     .putLong(PREF_INTERVAL, recognitionIntervalMs)
                     .putInt(PREF_SIMILARITY, similarityThreshold)
-                    .putBoolean(PREF_QUEUE_SPEECH, queueSpeech)
-                    .putBoolean(PREF_LONG_READING, queueSpeech)
                     .putBoolean(PREF_QUALITY_PROMPTS, qualityPromptsEnabled)
                     .putFloat(PREF_SPEECH_RATE, speechRate)
                     .putInt(PREF_PREVIEW_ROTATION, previewRotation)
@@ -998,8 +987,6 @@ public class MainActivity extends CameraActivity {
                     .putBoolean(PREF_NO_NUMBERS, speechNoNumbers)
                     .putInt(PREF_MAX_SPEECH_CHARS, maxSpeechChars)
                     .apply();
-                if (changeReadingMode) setLongReadingMode(queueSpeech);
-                else if (wasQueueEnabled && !queueSpeech) clearSpeechQueue(true);
                 if (focusChanged || aiLayoutChanged || textRotationChanged) {
                     readingEpoch.incrementAndGet();
                     frameChangeGate.reset();
