@@ -1,0 +1,39 @@
+name: Strict OCR reading-order JVM tests
+
+on:
+  push:
+    branches:
+      - feature/strict-offline-ocr-order-guard
+  pull_request:
+    paths:
+      - 'app/src/main/java/com/vobichngan/kanzi/StrictOcrOrderGuard.java'
+      - 'app/src/main/java/com/vobichngan/kanzi/LayoutReadingPlanner.java'
+      - 'scripts/StrictOcrOrderGuardSmokeTest.java'
+      - 'scripts/LayoutReadingPlannerSmokeTest.java'
+      - '.github/workflows/strict-ocr-order-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile pure Java reading-order components
+        run: |
+          mkdir -p build/order-tests
+          javac -encoding UTF-8 -d build/order-tests \
+            app/src/main/java/com/vobichngan/kanzi/ReadingOrder.java \
+            app/src/main/java/com/vobichngan/kanzi/TextFlowRebuilder.java \
+            app/src/main/java/com/vobichngan/kanzi/LayoutRegion.java \
+            app/src/main/java/com/vobichngan/kanzi/StrictOcrOrderGuard.java \
+            app/src/main/java/com/vobichngan/kanzi/LayoutReadingPlanner.java \
+            scripts/StrictOcrOrderGuardSmokeTest.java \
+            scripts/LayoutReadingPlannerSmokeTest.java
+      - name: Run strict OCR preservation test
+        run: java -cp build/order-tests StrictOcrOrderGuardSmokeTest
+      - name: Run layout reading-order test
+        run: java -cp build/order-tests LayoutReadingPlannerSmokeTest
