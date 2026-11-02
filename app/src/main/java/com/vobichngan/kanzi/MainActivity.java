@@ -831,15 +831,54 @@ public class MainActivity extends CameraActivity {
                         voiceStatus.setText("准备切换到：" + target.title);
                     }
                     @Override public void onSelected(DownloadableVoiceStore.Voice selected) {
-                        // An explicit user voice change may preempt current speech.
+                        // A complete download does NOT establish that the
+                        // native model can generate and play audio on this
+                        // phone. Validate real output before persisting it.
                         clearSpeechQueue(true);
-                        voiceStatus.setText("当前语音：" + selected.title);
-                        for (DownloadableVoiceStore.Voice item : DownloadableVoiceStore.VOICES) {
-                            TextView row = voiceRows.get(item.id);
-                            if (row != null) row.setText(voiceRowLabel(item));
+                        if (selected.isSystem()) {
+                            voiceStore.activate(selected);
+                            voiceStatus.setText("当前语音：系统中文语音");
+                            for (DownloadableVoiceStore.Voice item : DownloadableVoiceStore.VOICES) {
+                                TextView row = voiceRows.get(item.id);
+                                if (row != null) row.setText(voiceRowLabel(item));
+                            }
+                            return;
                         }
-                        Toast.makeText(MainActivity.this,
-                            "已选择：" + selected.title + "（离线使用）", Toast.LENGTH_SHORT).show();
+                        voiceStatus.setText("正在生成并试听：" + selected.title);
+                        TextView selectedRow = voiceRows.get(selected.id);
+                        if (selectedRow != null) selectedRow.setText(
+                            selected.title + " · 正在验证声音，请留意手机是否发声…");
+                        if (offlineVoicePlayback == null) {
+                            onFailure(selected, "本地语音播放引擎尚未初始化");
+                            return;
+                        }
+                        offlineVoicePlayback.speak(selected, "你好，欢迎使用看字助手。",
+                            speechRate, "voice-verify-" + System.nanoTime(),
+                            new OfflineVoicePlayback.Callback() {
+                                @Override public void completed(String id) {
+                                    // Do not undo a newer voice choice.
+                                    if (!voiceStore.isInstalled(selected)) return;
+                                    voiceStore.activate(selected);
+                                    voiceStatus.setText("已试听并选用：" + selected.title);
+                                    for (DownloadableVoiceStore.Voice item : DownloadableVoiceStore.VOICES) {
+                                        TextView row = voiceRows.get(item.id);
+                                        if (row != null) row.setText(voiceRowLabel(item));
+                                    }
+                                    Toast.makeText(MainActivity.this,
+                                        "已启用自然语音：" + selected.title,
+                                        Toast.LENGTH_SHORT).show();
+                                }
+                                @Override public void failed(String id, String reason) {
+                                    voiceStatus.setText("语音验证失败，保留：" +
+                                        voiceStore.selectedVoice().title);
+                                    TextView row = voiceRows.get(selected.id);
+                                    if (row != null) row.setText(selected.title +
+                                        " · 语音播放失败，点击重试");
+                                    Toast.makeText(MainActivity.this,
+                                        "模型不能正常发声：" + reason,
+                                        Toast.LENGTH_LONG).show();
+                                }
+                            });
                     }
                     @Override public void onFailure(DownloadableVoiceStore.Voice failed, String reason) {
                         voiceStatus.setText("安装未完成，仍使用：" + voiceStore.selectedVoice().title);
