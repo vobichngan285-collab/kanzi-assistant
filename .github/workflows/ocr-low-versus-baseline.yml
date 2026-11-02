@@ -1,0 +1,43 @@
+name: Evaluate extra text boxes versus existing high-confidence OCR boxes
+on:
+  push:
+    branches: [test/ocr-111-boxes-audit-20261103]
+    paths:
+      - scripts/analyze_low_boxes_vs_baseline.py
+      - .github/workflows/ocr-low-versus-baseline.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve labeled OCR detector/crop model outputs (numerical text only)
+        uses: actions/download-artifact@v4
+        with:
+          name: ocr-315-true-box-value-data
+          run-id: 41492030817
+          github-token: ${{ github.token }}
+          path: /tmp/original-ocr
+      - name: Compare overlap and selective pre-recognition processing cost
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ocr-box-baseline-overlap
+          python3 -u scripts/analyze_low_boxes_vs_baseline.py \
+            --boxes /tmp/original-ocr/all_boxes_ocr.csv \
+            --per-image /tmp/original-ocr/per_image.csv \
+            --out /tmp/ocr-box-baseline-overlap \
+            | tee /tmp/ocr-box-baseline-overlap/console.log
+          grep -q 'BASELINE_OVERLAP_AND_PRE_REC_FILTER_AB=PASS 137' /tmp/ocr-box-baseline-overlap/console.log
+          cat /tmp/ocr-box-baseline-overlap/pre_recognition_policies.csv >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload metadata only; no photos or binaries
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: low-box-versus-baseline-geometry-policies
+          path: /tmp/ocr-box-baseline-overlap/
+          retention-days: 10
+          if-no-files-found: warn
