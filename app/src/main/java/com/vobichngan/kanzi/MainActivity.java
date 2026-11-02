@@ -802,6 +802,26 @@ public class MainActivity extends CameraActivity {
             voiceRows.put(voice.id, entry);
             voiceOptions.addView(entry, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            entry.setOnLongClickListener(v -> {
+                if (voice.isSystem() || !voiceStore.isInstalled(voice)) return false;
+                new androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("移除离线语音包")
+                    .setMessage("确定移除 " + voice.title + " 的模型文件以释放空间？" +
+                        ("kokoro".equals(voice.pack) ? "Kokoro 男声与女声共用同一语音包。" : ""))
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton("移除", (dialog, which) -> {
+                        clearSpeechQueue(true);
+                        voiceStore.remove(voice, () -> {
+                            voiceStatus.setText("当前语音：" + voiceStore.selectedVoice().title);
+                            for (DownloadableVoiceStore.Voice item : DownloadableVoiceStore.VOICES) {
+                                TextView row=voiceRows.get(item.id);
+                                if(row!=null) row.setText(voiceRowLabel(item));
+                            }
+                            Toast.makeText(this,"已移除离线语音包",Toast.LENGTH_SHORT).show();
+                        });
+                    }).show();
+                return true;
+            });
             entry.setOnClickListener(v -> {
                 entry.setText(voice.title + " · 正在准备…");
                 voiceStore.choose(voice, new DownloadableVoiceStore.Listener() {
@@ -1893,7 +1913,8 @@ public class MainActivity extends CameraActivity {
         String suffix = voice.isSystem() ? "已就绪" :
             (voiceStore.isInstalled(voice) ? "已安装 · 点击切换" :
                 "未安装 · 点击自动下载安装");
-        return (chosen ? "✓ " : "○ ") + voice.title + "　" + suffix;
+        String size = voice.isSystem() ? "" : ("（约 " + voice.approxMb + " MB）");
+        return (chosen ? "✓ " : "○ ") + voice.title + size + "　" + suffix;
     }
 
     private void showSpeechFailure(String message) {
