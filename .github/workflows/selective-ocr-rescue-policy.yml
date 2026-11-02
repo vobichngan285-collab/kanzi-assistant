@@ -32,7 +32,8 @@ jobs:
             scripts/SinglePassLumaConfirmGateSmokeTest.java \
             scripts/SinglePassLumaConfirmBenchmark.java \
             scripts/SinglePassLumaPipelineSimulation.java \
-            scripts/CloudCameraConditionReplay.java
+            scripts/CloudCameraConditionReplay.java \
+            scripts/SinglePassLumaWorstCaseBenchmark.java
       - name: Run safety, geometry, budget and cooldown regression tests
         run: |
           set -euo pipefail
@@ -51,6 +52,10 @@ jobs:
           java -ea -Xmx512m -cp /tmp/kanzi-ocr-policy-classes CloudCameraConditionReplay \
             | tee /tmp/kanzi-cloud-replay.csv \
             | tee -a /tmp/kanzi-ocr-policy-test-summary.txt
+          java -ea -Xmx512m -cp /tmp/kanzi-ocr-policy-classes SinglePassLumaWorstCaseBenchmark \
+            | tee /tmp/kanzi-cloud-cost.txt \
+            | tee -a /tmp/kanzi-ocr-policy-test-summary.txt
+          grep -q 'CLOUD_WORST_CASE_BENCH=PASS' /tmp/kanzi-cloud-cost.txt
           grep -q 'CLOUD_CONDITION_REPLAY=PASS' /tmp/kanzi-cloud-replay.csv
           grep -q 'SINGLE_PASS_TIMELINE=PASS' /tmp/kanzi-ocr-policy-test-summary.txt
           grep -q 'SINGLE_PASS_MOVED_SCENE=PASS' /tmp/kanzi-ocr-policy-test-summary.txt
@@ -74,3 +79,4 @@ jobs:
           path: |
             /tmp/kanzi-ocr-policy-test-summary.txt
             /tmp/kanzi-cloud-replay.csv
+            /tmp/kanzi-cloud-cost.txt
