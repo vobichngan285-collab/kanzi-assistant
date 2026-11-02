@@ -577,7 +577,7 @@ public class MainActivity extends CameraActivity {
         }
         panel.addView(pageFocusGroup);
         TextView pageFocusNote = new TextView(this);
-        pageFocusNote.setText("默认不会因文字位于边缘、较短或置信度低而丢弃内容。按文字行与文字流整理顺序，避免不同区域互相插入。需要限定范围时才手动选左侧或右侧。");
+        pageFocusNote.setText("实时文字会保留所有检测到的文字，按从上到下的连续文字区域整理；左侧/右侧筛选只用于长文阅读模式。");
         pageFocusNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         pageFocusNote.setTextColor(0xFF667085);
         panel.addView(pageFocusNote);
@@ -588,7 +588,7 @@ public class MainActivity extends CameraActivity {
         layoutAiCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         panel.addView(layoutAiCheck);
         TextView layoutAiNote = new TextView(this);
-        layoutAiNote.setText("仅在自动连续朗读且检测到较多文字时运行设备端 PP-DocLayout-S。AI 只判断区域边界，不改写文字；可能增加识别耗时。失败自动使用原有几何规则。建议先通过诊断比较。");
+        layoutAiNote.setText("实时文字不运行额外的版面 AI，优先保证速度。此实验选项仅用于长文阅读；不修改原始 OCR 文字。");
         layoutAiNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         layoutAiNote.setTextColor(0xFF667085);
         panel.addView(layoutAiNote);
@@ -1147,7 +1147,13 @@ public class MainActivity extends CameraActivity {
 
         modeButton.setOnClickListener(v -> {
             automaticMode = !automaticMode;
+            readingEpoch.incrementAndGet();
+            realtimeScene.reset();
+            frameChangeGate.reset();
+            lastQuickScanGeneration = -1L;
+            lastSpokenSceneGeneration = -1L;
             manualCaptureRequested.set(false);
+            clearSpeechQueue(true);
             getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
                 .putBoolean(PREF_AUTO_MODE, automaticMode).apply();
             updateControlLabels();
@@ -1583,6 +1589,7 @@ public class MainActivity extends CameraActivity {
         if (normalizedSpeech.isEmpty()) return;
         runOnUiThread(() -> {
             if (!running || tts == null || !ttsReady ||
+                (!manualCapture && !automaticMode) ||
                 resultEpoch != readingEpoch.get() ||
                 (!longReadingMode && !manualCapture &&
                  sceneGeneration != realtimeScene.generation())) return;
@@ -1719,6 +1726,7 @@ public class MainActivity extends CameraActivity {
         lastQuickScanGeneration = -1L;
         clearSpeechQueue(true);
         if (ocrOverlay != null) ocrOverlay.clear();
+        updateControlLabels();
         phoneStartSequence++;
         if (phoneController != null) phoneController.stop();
         super.onPause();
