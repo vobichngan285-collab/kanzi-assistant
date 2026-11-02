@@ -55,16 +55,20 @@ public final class TextFlowRebuilder {
         Flow(int id) { this.id = id; }
         float minLeft = Float.MAX_VALUE;
         float maxRight = -Float.MAX_VALUE;
-        float top = Float.MAX_VALUE;
+        float top = Float.MAX_VALUE, bottom = -Float.MAX_VALUE;
         float maxHeight = 0;
+        float totalHeight = 0;
         void add(ReadingOrder.Box b) {
             boxes.add(b);
             minLeft = Math.min(minLeft, b.left());
             maxRight = Math.max(maxRight, b.right());
             top = Math.min(top, b.top());
+            bottom = Math.max(bottom, b.bottom());
             maxHeight = Math.max(maxHeight, b.actualHeight());
+            totalHeight += b.actualHeight();
         }
         float centerX() { return (minLeft + maxRight) / 2f; }
+        float typicalHeight() { return totalHeight / Math.max(1, boxes.size()); }
     }
 
     /** Default order is left-to-right by independent stream, then down. */
@@ -95,6 +99,37 @@ public final class TextFlowRebuilder {
             }
         }
 
+        // Adjacent paragraphs of the SAME region may have a large gap.
+        // The first graph intentionally uses conservative local edges; merge
+        // separate pieces only when their X corridors, font scale and Y
+        // intervals agree. This fixes runs of prose that jumped backwards
+        // after a blank line, without joining nearby marginal notes.
+        Map<Integer,Flow> prelim = new HashMap<>();
+        Map<Integer,Integer> firstIndex = new HashMap<>();
+        for (int i=0;i<n;i++) {
+            int id=root(flowParent,i);
+            prelim.computeIfAbsent(id,k->new Flow(k)).add(boxes.get(i));
+            firstIndex.putIfAbsent(id,i);
+        }
+        List<Flow> parts = new ArrayList<>(prelim.values());
+        for(int i=0;i<parts.size();i++) for(int j=i+1;j<parts.size();j++) {
+            Flow a=parts.get(i),b=parts.get(j);
+            // Never use a singleton title, page number or isolated noisy
+            // fragment as a bridge joining two unrelated columns.
+            if (a.boxes.size()<2 || b.boxes.size()<2) continue;
+            float widthA=a.maxRight-a.minLeft,widthB=b.maxRight-b.minLeft;
+            float overlap=Math.min(a.maxRight,b.maxRight)-Math.max(a.minLeft,b.minLeft);
+            if (overlap < Math.min(widthA,widthB)*.54f) continue;
+            float hRatio=Math.min(a.typicalHeight(),b.typicalHeight())/
+                Math.max(a.typicalHeight(),b.typicalHeight());
+            if (hRatio<.73f) continue;
+            float overlapY=Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top);
+            float spanA=a.bottom-a.top,spanB=b.bottom-b.top;
+            if(overlapY>Math.min(spanA,spanB)*.46f) continue;
+            float gap=Math.max(0f,Math.max(a.top-b.bottom,b.top-a.bottom));
+            if(gap>Math.max(a.typicalHeight(),b.typicalHeight())*8f) continue;
+            unite(flowParent,firstIndex.get(a.id),firstIndex.get(b.id));
+        }
         Map<Integer,Flow> flows = new HashMap<>();
         for (int i=0;i<n;i++)
             flows.computeIfAbsent(root(flowParent,i), k->new Flow(k)).add(boxes.get(i));
