@@ -764,7 +764,8 @@ public class MainActivity extends CameraActivity {
         diagnosticReportView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         diagnosticReportView.setPadding(dp(8), dp(8), dp(8), dp(8));
         diagnosticReportView.setBackgroundColor(0xFFF1F3F5);
-        panel.addView(diagnosticReportView);
+        // Controls stay above the potentially very long diagnostic output, so
+        // users do not need to scroll past hundreds of OCR boxes to compare A/B.
         Button runDiagnosticButton = createControlButton("开始 OCR 诊断");
         runDiagnosticButton.setOnClickListener(v -> {
             if (!(usingPhoneCamera || previewCallbackAdded)) {
@@ -826,6 +827,7 @@ public class MainActivity extends CameraActivity {
             Toast.makeText(this, "诊断文字已复制，可以粘贴发送", Toast.LENGTH_SHORT).show();
         });
         panel.addView(copyDiagnosticButton);
+        panel.addView(diagnosticReportView);
 
         TextView similarityNote = new TextView(this);
         similarityNote.setText("长文阅读按当前画面一次识别后即开始按顺序朗读，读完前不重复识别。快速扫读直接响应最新画面；相似度用于防止重复朗读，不要求两次整页OCR确认。0关闭相似度去重。");
