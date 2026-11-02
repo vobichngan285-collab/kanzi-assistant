@@ -204,6 +204,8 @@ public class MainActivity extends CameraActivity {
                             + "\nOCR 引擎：已就绪\n检测框数量：" + report.getBoxCount()
                             + "\n当前模型：" + report.getModelId()
                             + "\nOCR 输入方向：原始摄像头帧（固定 0°）"
+                            + "\n实时文字输入旋转设置：" + liveTextRotationDegrees +
+                                "°（仅用于正式实时扫描；独立诊断保持原始0°画面）"
                             + "\n图像解码：" + (legacyForDiagnostic ? "0.7.0 JPEG 兼容方式" : "OpenCV NV21 方式")
                             + "\n平均置信度：" + String.format(Locale.US, "%.3f", report.getAverageConfidence())
                             + "\n文字流组织方式：" + report.getFocusDescription()
