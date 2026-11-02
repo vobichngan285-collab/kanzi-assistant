@@ -9,9 +9,12 @@ does not modify app code, and confidence is not proof of correctness.
 The thresholds are predeclared (no use of GT when picking a policy).
 Ground-truth text is consulted solely for paired error evaluation.
 """
-import argparse,collections,csv,json
+import argparse,collections,csv,json,unicodedata
 from pathlib import Path
-from ocr_box_value_deep_dive import normalize,distance
+
+def normalize(text):
+    return "".join(ch for ch in unicodedata.normalize("NFKC",str(text)).lower()
+                   if not ch.isspace())
 
 def load_csv(p):
     with open(p,encoding="utf-8-sig",newline="") as f:
