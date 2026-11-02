@@ -296,7 +296,10 @@ public class MainActivity extends CameraActivity {
             final int recognizedEpoch = readingEpoch.get();
             final long recognizedScene = scene;
             byte[] frame = data.clone();
-            final boolean enhance = enhancedOcr;
+            // For very dark AND low-detail frames, one enhanced OCR pass is
+            // preferable to reading unreadable pixels. Never add an extra
+            // inference to the fast path just because the page moves.
+            final boolean enhance = enhancedOcr || (quality.dark && quality.possiblyBlurry);
             final FrameQuality.Assessment quality = FrameQuality.assess(frame, width, height);
             final boolean legacyDecode = false;
             try {
@@ -1732,7 +1735,7 @@ public class MainActivity extends CameraActivity {
     private void onRecognized(String found, boolean manualCapture,
                               long sceneGeneration, int resultEpoch) {
         final long now = System.currentTimeMillis();
-        final String recognizedText = found == null ? "" : found.trim();
+        final String recognizedText = found == null ? "" : OcrContextRefiner.refine(found.trim());
         if (recognizedText.isEmpty()) {
             if (longReadingMode && lastNonEmptyAt > 0 &&
                 now - lastNonEmptyAt >= 2800) lastSpoken = "";
