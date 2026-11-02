@@ -1,0 +1,34 @@
+name: Probe CORD v2 food receipt real photos and labels
+on:
+  push:
+    branches: [test/ocr-real-world-benchmark-20261103]
+    paths:
+      - .github/workflows/ocr-food-receipt-probe.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Download credited CORD v2 100 real receipt photos privately to runner
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --connect-timeout 20 \
+            'https://raw.githubusercontent.com/Nextia-Intelligence/nextia-learning-labs/main/C13/read-real-receipts/data/cord-v2-test-sample.zip' \
+            -o /tmp/cord100.zip
+          echo '2dd48e2cc1412d4cdcb41314f1ccad70901fc0c3f8126f7cf1554ed3fab3a900  /tmp/cord100.zip' | sha256sum -c -
+          python3 - <<'PY'
+          import zipfile,json,io
+          with zipfile.ZipFile('/tmp/cord100.zip') as z:
+              print("ZIP_FILE_COUNT",len(z.namelist()))
+              print("ZIP_FILES_SAMPLE",z.namelist()[:20])
+              name=next(n for n in z.namelist() if n.endswith('labels.jsonl'))
+              lines=z.read(name).splitlines()
+              print("LABEL_ROWS",len(lines))
+              for l in lines[:2]:
+                  d=json.loads(l)
+                  print("LABEL_KEYS",list(d))
+                  print("LABEL_DATA_SNIPPET",str(d)[:4000])
+          PY
