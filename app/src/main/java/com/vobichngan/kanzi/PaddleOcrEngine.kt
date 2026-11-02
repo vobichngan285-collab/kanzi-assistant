@@ -57,7 +57,9 @@ data class OcrDiagnosticResult(
     val fullPageText: String,
     val layoutStatus: String,
     val layoutRegions: Int,
-    val layoutElapsedMs: Long
+    val layoutElapsedMs: Long,
+    val candidateText: String,
+    val candidateDetails: String
 )
 fun interface OcrDiagnosticCallback { fun onResult(result: OcrDiagnosticResult) }
 
@@ -144,6 +146,8 @@ class PaddleOcrEngine(
                         readingFocusMode == ReadingFocus.Mode.AUTO, result.results.size)
                     val focus = arrangeInReadingOrder(result.results, bitmap.width,
                         bitmap.height, layout.regions)
+                    // Candidate ordering is diagnostic only. Never change live TTS here.
+                    val candidate = inspectCandidateOrder(result.results, layout.regions)
                     val text = focus.text
                     val confidence = if (result.results.isEmpty()) 0.0
                         else result.results.map { it.confidence.toDouble() }.average()
@@ -168,7 +172,9 @@ class PaddleOcrEngine(
                         fullPageText = ReadingOrder.arrange(toReadingBoxes(result.results)),
                         layoutStatus = layout.status,
                         layoutRegions = layout.regions.size,
-                        layoutElapsedMs = layout.elapsedMs
+                        layoutElapsedMs = layout.elapsedMs,
+                        candidateText = candidate.first,
+                        candidateDetails = candidate.second
                     )
                     withContext(Dispatchers.Main) { onResult.onResult(report) }
                 } finally { bitmap.recycle() }
@@ -395,6 +401,41 @@ class PaddleOcrEngine(
     ): ReadingFocus.Selection {
         return focusTracker.choose(toReadingBoxes(results), width, height,
             readingFocusMode, layoutRegions)
+    }
+
+    /**
+     * Produce a human-auditable candidate. All characters come from OCR and
+     * each entry retains the original OCR index even if invalid boxes are skipped.
+     */
+    private fun inspectCandidateOrder(
+        results: List<OCRResult>, regions: List<LayoutRegion>
+    ): Pair<String, String> {
+        return try {
+            val valid = results.mapIndexedNotNull { originalIndex, item ->
+                val p = item.box.points
+                if (p.size != 4 || item.text.isBlank()) null
+                else Pair(originalIndex, ReadingOrder.Box(
+                    item.text, item.confidence,
+                    floatArrayOf(p[0].x, p[1].x, p[2].x, p[3].x),
+                    floatArrayOf(p[0].y, p[1].y, p[2].y, p[3].y)
+                ))
+            }
+            val raw = valid.map { (originalIndex, box) ->
+                StrictOcrOrderGuard.Item(originalIndex, box.text)
+            }
+            val plan = LayoutReadingPlanner.plan(raw, valid.map { it.second }, regions)
+            val lines = plan.placements.joinToString("\n") { placement ->
+                val region = if (placement.regionId < 0) "几何回退"
+                    else "区域#${placement.regionId + 1}"
+                "${placement.readingIndex + 1}. 原始OCR框#${placement.ocrId + 1}" +
+                    " [${region}] " + results[placement.ocrId].text
+            }
+            val state = if (plan.verified.accepted) "严格编号校验通过" else
+                "严格编号校验未通过，已退回OCR输入顺序"
+            Pair(plan.verified.exactText(), state + "\n" + lines)
+        } catch (error: RuntimeException) {
+            Pair("", "候选排序异常（${error.javaClass.simpleName}），保留原有阅读顺序")
+        }
     }
 
     /**
