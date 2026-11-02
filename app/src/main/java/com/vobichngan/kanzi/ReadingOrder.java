@@ -219,7 +219,9 @@ public final class ReadingOrder {
                 // boundary. Ordinary adjacent visual rows are soft wraps.
                 if (!Float.isNaN(previousBottom)) {
                     float gap = minTop - previousBottom;
-                    float paragraphGap = Math.max(previousHeight, line.typicalHeight) * 1.10f;
+                    // A sparse printed layout still belongs to one reading stream.
+                    // Only an unusually large gap starts another paragraph.
+                    float paragraphGap = Math.max(previousHeight, line.typicalHeight) * 3.0f;
                     output.append(gap > paragraphGap ? "\n\n" : "\n");
                 }
                 StringBuilder rowText = new StringBuilder();
