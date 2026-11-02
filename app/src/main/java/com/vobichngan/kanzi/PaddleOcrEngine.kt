@@ -286,15 +286,30 @@ class PaddleOcrEngine(
                             }
                         }
                     }
+                    // Fast real-time recognition must not wait for a
+                    // separate document-layout model. It uses just OCR's
+                    // existing quadrilaterals and top-first coherent flows.
+                    // Keep the old BOOK/diagnostic flow available separately.
+                    val realtime = fastScanMode && readingFocusMode == ReadingFocus.Mode.AUTO
                     val layout = layoutReuse.analyze(data, width, height, bitmap,
-                        aiLayoutEnabled && readingFocusMode == ReadingFocus.Mode.AUTO,
+                        !realtime && aiLayoutEnabled &&
+                            readingFocusMode == ReadingFocus.Mode.AUTO,
                         result.results.size)
-                    val focus = arrangeInReadingOrder(result.results, bitmap.width,
-                        bitmap.height, layout.regions)
-                    val text = focus.text
-                    val verification = if (aiLayoutEnabled && readingFocusMode == ReadingFocus.Mode.AUTO)
+                    val text: String
+                    val flowDescription: String
+                    if (realtime) {
+                        text = ReadingOrder.arrangeRealtime(toReadingBoxes(result.results))
+                        flowDescription = "实时文字：自上而下按独立文字流连续朗读"
+                    } else {
+                        val focus = arrangeInReadingOrder(result.results, bitmap.width,
+                            bitmap.height, layout.regions)
+                        text = focus.text
+                        flowDescription = focus.description
+                    }
+                    val verification = if (!realtime && aiLayoutEnabled &&
+                        readingFocusMode == ReadingFocus.Mode.AUTO)
                         inspectVerifiedOrder(result.results, layout.regions) else ""
-                    Log.i(TAG, "Reading focus: ${focus.description}; layout=${layout.status}; " +
+                    Log.i(TAG, "Reading focus: $flowDescription; layout=${layout.status}; " +
                         "layoutMs=${layout.elapsedMs}; ordering=$verification")
                     val averageConfidence = if (result.results.isEmpty()) 0.0
                         else result.results.map { it.confidence }.average()
