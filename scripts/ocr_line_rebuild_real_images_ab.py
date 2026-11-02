@@ -27,24 +27,51 @@ from ocr_box_value_deep_dive import rec,normalize,distance,REC_SHA,REC_CONFIG_SH
 def read_csv(path):
     with open(path,encoding="utf-8-sig",newline="") as f:return list(csv.DictReader(f))
 
-def get_row(session,split,index):
-    params={"dataset":"Yesianrohn/OCR-Data","config":"default",
-            "split":split,"offset":int(index),"length":1}
-    for attempt in range(3):
+def get_row(session,split,index,metadata):
+    obj=metadata.get((split,str(index)))
+    if obj is None:raise RuntimeError("Missing cached public source annotation")
+    url=obj["image"]["src"]
+    for attempt in range(4):
         try:
-            result=session.get("https://datasets-server.huggingface.co/rows",
-                               params=params,timeout=45)
-            result.raise_for_status()
-            obj=result.json()["rows"][0]
-            if int(obj["row_idx"])!=int(index):raise RuntimeError("GT row changed")
-            url=obj["row"]["image"]["src"]
-            request=session.get(url,timeout=45)
+            request=session.get(url,timeout=65)
             request.raise_for_status()
             rgb=np.asarray(Image.open(io.BytesIO(request.content)).convert("RGB"))
-            return rgb,obj["row"]
+            return rgb,obj
         except Exception as e:
-            if attempt==2:raise
-            time.sleep(1+attempt*2)
+            if attempt==3:raise
+            time.sleep(3*(attempt+1))
+
+def fetch_metadata_bulk(session,keys,holdout):
+    """Six bulk requests instead of 34 individual /rows requests.
+    Hugging Face dataset viewer rate limits small sequential requests."""
+    ranges=((500,22),(720,22)) if holdout else ((0,24),(101,24),(310,24))
+    needed=set(keys)
+    out={}
+    for split in ("ReCTS","RCTW","ART"):
+        for start,count in ranges:
+            if not any(s==split and start<=int(i)<start+count for s,i in needed):
+                continue
+            for attempt in range(5):
+                try:
+                    response=session.get("https://datasets-server.huggingface.co/rows",
+                        params={"dataset":"Yesianrohn/OCR-Data","config":"default",
+                                "split":split,"offset":start,"length":count},
+                        timeout=90)
+                    if response.status_code==429:
+                        raise RuntimeError("HTTP 429 dataset viewer")
+                    response.raise_for_status()
+                    items=response.json().get("rows",[])
+                    for item in items:
+                        out[split,str(item["row_idx"])]=item["row"]
+                    print("BULK_METADATA",split,start,"rows",len(items),flush=True)
+                    break
+                except Exception as e:
+                    if attempt==4:raise
+                    time.sleep(min(75,7*(2**attempt)))
+            time.sleep(.8)
+    missing=needed-set(out)
+    if missing:raise RuntimeError("Missing metadata for "+str(sorted(missing)[:8]))
+    return out
 
 def intersection(a,b):
     return max(0,min(a[2],b[2])-max(a[0],b[0]))*max(0,min(a[3],b[3])-max(a[1],b[1]))
@@ -168,12 +195,13 @@ def main():
           "unique_pairs",len(jobs),"unique_images",
           len(set(k[:2] for k in jobs)),flush=True)
     session=requests.Session()
+    metadata=fetch_metadata_bulk(session,{k[:2] for k in jobs},args.holdout)
     cache={}
     results=[];failed=0
     for index,key in enumerate(sorted(jobs),1):
         split,imageid=key[:2]
         if (split,imageid) not in cache:
-            try:cache[split,imageid]=get_row(session,split,imageid)
+            try:cache[split,imageid]=get_row(session,split,imageid,metadata)
             except Exception as e:
                 failed+=1;print("WARN_REAL_PHOTO_FETCH",split,imageid,str(e)[:150],flush=True)
                 continue
@@ -211,7 +239,8 @@ def main():
             results.append(result)
         if index%15==0:print("LINE_REBUILD_PROGRESS",index,"pairs",
                              "retained",len(results),"failed_images",failed,flush=True)
-    if not results:raise RuntimeError("Cannot evaluate any rebuilt line")
+    if len(results)<(12 if args.holdout else 20):
+        raise RuntimeError("Insufficient real image coverage for A/B: "+str(len(results)))
     summaries=[summarize(results,mode,cat)
                for mode in policies for cat in ["ALL","ReCTS","RCTW","ART"]]
     for c in results:
