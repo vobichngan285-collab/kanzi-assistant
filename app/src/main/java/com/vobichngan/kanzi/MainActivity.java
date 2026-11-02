@@ -112,7 +112,10 @@ public class MainActivity extends CameraActivity {
     private volatile boolean speechPageActive = false;
     // Preserve an active scan while the selected OCR model is re-initializing.
     private volatile boolean resumeAfterModelReady = false;
+    private int modelLoadGeneration = 0;
     private final FrameChangeGate frameChangeGate = new FrameChangeGate();
+    // Different readout behavior: more sensitive short-text scene change sampling.
+    private final FastScanFrameGate fastScanFrameGate = new FastScanFrameGate();
     private final java.util.concurrent.atomic.AtomicInteger readingEpoch = new java.util.concurrent.atomic.AtomicInteger(0);
     private volatile float speechRate = 1.0f;
     private volatile int previewRotation = 0;
@@ -147,6 +150,7 @@ public class MainActivity extends CameraActivity {
     private final ArrayDeque<SpeechItem> speechQueue = new ArrayDeque<>();
     private SpeechItem currentSpeech;
     private boolean speakingQueued = false;
+    private boolean firstFastSpeechNeedsFlush = false;
     private long utteranceSequence = 0;
 
     private static final class SpeechItem {
@@ -233,7 +237,7 @@ public class MainActivity extends CameraActivity {
                     intervalBlockedFrames.incrementAndGet();
                     return;
                 }
-                if (longReadingMode && speechPageActive) {
+                if (ReadingModeRules.shouldDeferOcrForSpeech(longReadingMode, speechPageActive)) {
                     speechBlockedFrames.incrementAndGet();
                     return;
                 }
@@ -246,8 +250,12 @@ public class MainActivity extends CameraActivity {
             // full-page pass both delayed TTS and could restart indefinitely
             // when the long OCR strings differed at a few characters.
             boolean samePageLocked = longReadingMode && !lastSpoken.isEmpty();
-            if (!oneShot &&
-                !frameChangeGate.accept(data, width, height, now, samePageLocked)) {
+            // Fast scans may detect new labels while the previous label is spoken.
+            // Long reading deliberately waits until TTS has completed that page.
+            boolean sceneAccepted = oneShot || (longReadingMode
+                ? frameChangeGate.accept(data, width, height, now, samePageLocked)
+                : fastScanFrameGate.accept(data, width, height, now));
+            if (!sceneAccepted) {
                 busy.set(false);
                 return;
             }
@@ -476,6 +484,7 @@ public class MainActivity extends CameraActivity {
      */
     private void resetRecognitionWindowForSwitch() {
         frameChangeGate.reset();
+        fastScanFrameGate.reset();
         lastProcess = 0L;
         lastNonEmptyAt = 0L;
         noTextSince = 0L;
@@ -497,12 +506,13 @@ public class MainActivity extends CameraActivity {
         lastDiagnosticText = "";
         busy.set(false);
         if (recognizer != null) recognizer.release();
+        final int targetModelGeneration = ++modelLoadGeneration;
         status.setText("正在切换到 " + ocrModelDisplayName(modelId) + "…");
         recognizer = new PaddleOcrEngine(getApplicationContext(), new PaddleOcrEngine.Listener() {
             @Override public void onReady() {
                 runOnUiThread(() -> {
                     // A delayed completion from a previous model must not resume the wrong one.
-                    if (!modelId.equals(ocrModelId)) return;
+                    if (targetModelGeneration != modelLoadGeneration || !modelId.equals(ocrModelId)) return;
                     boolean resumed = resumeAfterModelReady;
                     resumeAfterModelReady = false;
                     resetRecognitionWindowForSwitch();
@@ -517,6 +527,7 @@ public class MainActivity extends CameraActivity {
             }
             @Override public void onError(String message) {
                 runOnUiThread(() -> {
+                    if (targetModelGeneration != modelLoadGeneration) return;
                     if (!"ppocrv6_small".equals(modelId)) {
                         Toast.makeText(MainActivity.this, ocrModelDisplayName(modelId) + " 初始化失败，已自动回退到 PP-OCRv6 Small。", Toast.LENGTH_LONG).show();
                         ocrModelId = "ppocrv6_small";
@@ -905,7 +916,7 @@ public class MainActivity extends CameraActivity {
                 else if (wasQueueEnabled && !queueSpeech) clearSpeechQueue(true);
                 if (focusChanged || aiLayoutChanged) {
                     readingEpoch.incrementAndGet();
-                    frameChangeGate.reset();
+                    resetRecognitionWindowForSwitch();
                     lastSpoken = "";
                     clearSpeechQueue(true);
                     if (recognizer != null) {
@@ -995,8 +1006,7 @@ public class MainActivity extends CameraActivity {
         diagnosticHandler.postDelayed(diagnosticRunnable, 1200);
         recognizer = new PaddleOcrEngine(getApplicationContext(), new PaddleOcrEngine.Listener() {
             @Override public void onReady() {
-                frameChangeGate.reset();
-                lastProcess = 0L;
+                resetRecognitionWindowForSwitch();
                 runOnUiThread(() -> status.setText(ocrModelDisplayName(ocrModelId) + " 已加载，可以开始识别"));
             }
             @Override public void onError(String message) {
@@ -1062,8 +1072,7 @@ public class MainActivity extends CameraActivity {
                 if (ttsReady) {
                     // If the camera already saw this page before TTS was ready,
                     // make it immediately eligible for reading now.
-                    frameChangeGate.reset();
-                    lastProcess = 0L;
+                    resetRecognitionWindowForSwitch();
                     tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
                         @Override public void onStart(String utteranceId) {}
                         @Override public void onDone(String utteranceId) {
@@ -1119,7 +1128,7 @@ public class MainActivity extends CameraActivity {
             readingEpoch.incrementAndGet();
             // Explicit capture replaces old speech even during a long reading session.
             clearSpeechQueue(true);
-            frameChangeGate.reset();
+            resetRecognitionWindowForSwitch();
             updateControlLabels();
             Toast.makeText(this, "正在抓取当前画面识别", Toast.LENGTH_SHORT).show();
         });
@@ -1539,11 +1548,17 @@ public class MainActivity extends CameraActivity {
         if (spokenNormalized.isEmpty()) return;
         if (!force) {
             if (longReadingMode && (speechPageActive || currentSpeech != null || !speechQueue.isEmpty())) return;
-            if (isAlreadyQueuedOrRecentlySpoken(spokenNormalized, similarityThreshold / 100.0f)) return;
+            boolean repeated = longReadingMode
+                ? isAlreadyQueuedOrRecentlySpoken(spokenNormalized, similarityThreshold / 100.0f)
+                : ReadingModeRules.isFastDuplicate(spokenNormalized, lastSpoken,
+                    currentSpeech == null ? null : currentSpeech.normalized);
+            if (repeated) return;
         }
-        if (force || !longReadingMode) {
-            // Latest-content-wins in scan mode. A manual request always takes priority.
+        if (ReadingModeRules.shouldInterruptSpeech(longReadingMode, force)) {
+            // New fast-scan text interrupts a previous utterance immediately.
+            // A normal long-reading result never interrupts the active page.
             clearSpeechQueue(true);
+            firstFastSpeechNeedsFlush = !longReadingMode;
         }
         List<String> chunks = SpeechText.chunks(spokenText);
         if (chunks.isEmpty()) return;
@@ -1570,7 +1585,10 @@ public class MainActivity extends CameraActivity {
         currentSpeech = speechQueue.pollFirst();
         speakingQueued = true;
         lastSpoken = currentSpeech.normalized;
-        int result = tts.speak(currentSpeech.text, TextToSpeech.QUEUE_ADD, null,
+        int speechQueueMode = firstFastSpeechNeedsFlush
+            ? TextToSpeech.QUEUE_FLUSH : TextToSpeech.QUEUE_ADD;
+        firstFastSpeechNeedsFlush = false;
+        int result = tts.speak(currentSpeech.text, speechQueueMode, null,
             currentSpeech.utteranceId);
         if (result == TextToSpeech.ERROR) finishQueuedUtterance(currentSpeech.utteranceId);
     }
@@ -1583,7 +1601,7 @@ public class MainActivity extends CameraActivity {
             speechPageActive = false;
             // When TTS finishes, a newly turned page must be eligible on the next frame.
             // FrameChangeGate still rejects unchanged pages (no duplicate OCR).
-            lastProcess = 0L;
+            if (longReadingMode) lastProcess = 0L;
         }
         speakNextQueued();
     }
@@ -1593,6 +1611,7 @@ public class MainActivity extends CameraActivity {
         speechQueue.clear();
         currentSpeech = null;
         speakingQueued = false;
+        firstFastSpeechNeedsFlush = false;
         if (stopCurrent && tts != null) tts.stop();
     }
 
