@@ -13,7 +13,7 @@ public final class SinglePassLumaConfirmBenchmark {
         Arrays.fill(image,0,W*H,(byte)192);
         Arrays.fill(image,W*H,image.length,(byte)128);
         for(int y=T;y<B;y++) for(int x=L;x<R;x++)
-            if((x/6)%2==0 && y%5!=0) image[y*W+x]=(byte)38;
+            if(((x/7)+(y/11))%2==0 && y%5!=0) image[y*W+x]=(byte)38;
         return image;
     }
     private static long percentile(long[] values, double fraction) {
