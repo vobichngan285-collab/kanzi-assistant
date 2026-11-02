@@ -201,7 +201,10 @@ public class MainActivity extends CameraActivity {
                             + "\n逐框原始识别（未做低置信度过滤）：\n" + report.getRawDetails()
                             + "\n\n按连续文字流整理的朗读内容：\n" +
                                 (report.getText().isEmpty() ? "（未识别到文字）" : report.getText()) +
-                            "\n\n全部可见文字（对照）：\n" + report.getFullPageText();
+                            "\n\n全部可见文字（对照）：\n" + report.getFullPageText()
+                            + "\n\n实验候选阅读顺序（仅诊断，不影响当前播报）：\n"
+                            + (report.getCandidateText().isEmpty() ? "（无可靠候选）" : report.getCandidateText())
+                            + "\n\n候选框序号与归属追溯：\n" + report.getCandidateDetails();
                         lastDiagnosticText = report.getText();
                         runOnUiThread(() -> { if (diagnosticReportView != null) diagnosticReportView.setText(result); });
                     },
