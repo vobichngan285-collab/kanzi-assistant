@@ -25,6 +25,8 @@ on:
       - 'app/src/main/java/com/vobichngan/kanzi/RealtimeTextOrientation.java'
       - 'scripts/RealtimeTextOrientationSmokeTest.java'
       - 'scripts/RealtimeSceneTrackerSmokeTest.java'
+      - 'scripts/verify_live_speech_delivery.py'
+      - 'app/src/main/java/com/vobichngan/kanzi/MainActivity.java'
       - 'scripts/LayoutSceneFingerprintSmokeTest.java'
       - 'scripts/LayoutFrameSchedulerSmokeTest.java'
       - '.github/workflows/strict-ocr-order-tests.yml'
@@ -39,6 +41,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Verify successful OCR can reach speech even if the camera moves
+        run: python3 scripts/verify_live_speech_delivery.py
       - name: Compile pure Java reading-order components
         run: |
           mkdir -p build/order-tests
