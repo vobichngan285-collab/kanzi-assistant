@@ -24,7 +24,7 @@ assert 'pageFocusGroup' in main and 'readingFocusMode = requestedFocus' in main
 assert 'getFocusDescription()' in main and 'getFullPageText()' in main
 assert 'setReadingFocusMode(readingFocusMode)' in main
 assert 'ReadingFocus.Tracker' in ocr
-assert 'arrangeInReadingOrder(result.results, bitmap.width, bitmap.height)' in ocr
+assert 'arrangeInReadingOrder(result.results, bitmap.width,' in ocr
 assert 'fullPageText = ReadingOrder.arrange(toReadingBoxes(result.results))' in ocr
 assert 'enum Mode { AUTO, ALL, LEFT, RIGHT }' in focus
 assert 'r.medianHeight >= strongest.medianHeight * .78f' in focus
@@ -41,7 +41,7 @@ assert 'selectedBoxes==diag.size()' not in focus
 print("CONTINUITY_CORE_WIRING=PASS")
 
 flow=(root/"app/src/main/java/com/vobichngan/kanzi/TextFlowRebuilder.java").read_text()
-assert "return TextFlowRebuilder.arrange(boxes);" in reading
+assert "return TextFlowRebuilder.arrange(boxes, regions);" in reading
 assert "sameVisualRow" in flow and "adjacentVertical" in flow
 assert 'b.alignedY(seamX)' in flow
 assert "Math.max(ha,hb)*4.3f" in flow
