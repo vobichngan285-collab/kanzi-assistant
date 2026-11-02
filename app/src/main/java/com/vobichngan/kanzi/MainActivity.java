@@ -299,8 +299,8 @@ public class MainActivity extends CameraActivity {
             // For very dark AND low-detail frames, one enhanced OCR pass is
             // preferable to reading unreadable pixels. Never add an extra
             // inference to the fast path just because the page moves.
-            final boolean enhance = enhancedOcr || (quality.dark && quality.possiblyBlurry);
             final FrameQuality.Assessment quality = FrameQuality.assess(frame, width, height);
+            final boolean enhance = enhancedOcr || (quality.dark && quality.possiblyBlurry);
             final boolean legacyDecode = false;
             try {
                 recognizer.recognizeNv21(frame, width, height, enhance, legacyDecode, found -> {
