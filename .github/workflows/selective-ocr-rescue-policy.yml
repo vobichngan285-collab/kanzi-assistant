@@ -11,7 +11,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -34,7 +34,7 @@ jobs:
           set -euo pipefail
           python3 scripts/verify_book_reading_fast_path.py
           python3 scripts/verify_preview_ocr_isolation.py
-          git diff --quiet origin/release/v0.8.0-ocr-engine-rework -- app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt app/src/main/java/com/vobichngan/kanzi/FrameChangeGate.java
+          git fetch --no-tags --depth=1 origin release/v0.8.0-ocr-engine-rework\n          git diff --quiet FETCH_HEAD -- app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt app/src/main/java/com/vobichngan/kanzi/FrameChangeGate.java
       - name: Upload test summary
         uses: actions/upload-artifact@v4
         if: always()
