@@ -248,8 +248,10 @@ public final class ReadingOrder {
         for (int i = 0; i < boxes.size(); i++) {
             Box b = boxes.get(i);
             float width = b.right() - b.left();
-            if (width >= minAnchorWidth &&
-                (width <= maxAnchorWidth || widths.size() < 6)) anchorIds.add(i);
+            // Even on sparse two-page scenes, a full-width heading must not
+            // connect left and right page columns into one stream.
+            if (width >= minAnchorWidth && width <= maxAnchorWidth)
+                anchorIds.add(i);
         }
         if (anchorIds.size() < 4) return Arrays.asList(boxes);
         int n = anchorIds.size();
