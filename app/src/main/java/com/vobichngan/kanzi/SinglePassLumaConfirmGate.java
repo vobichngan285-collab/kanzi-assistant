@@ -275,21 +275,56 @@ public final class SinglePassLumaConfirmGate {
      * WARNING: allowing small translations improves hand-jitter tolerance but
      * does NOT establish whether two visually similar words are identical.
      */
+    /**
+     * Exact test is the fast path; if it fails, align a common global+ROI
+     * translation within 2 luma pixels. Finally, permit a small uniform
+     * illumination offset (up to +-12 levels), never a spatially varying warp.
+     *
+     * This is a low-cost visual stability check, NOT text or scene recognition.
+     * No frame clone, image transform or extra ONNX recognition is performed.
+     */
     private boolean sameImage(byte[] frame, int width, int height) {
-        if (matchAtOffset(frame, width, height, 0, 0)) return true;
-        for (int radius=1;radius<=2;radius++) {
-            for (int dy=-radius;dy<=radius;dy++) {
-                for (int dx=-radius;dx<=radius;dx++) {
-                    if (Math.max(Math.abs(dx),Math.abs(dy))!=radius) continue;
-                    if (matchAtOffset(frame,width,height,dx,dy)) return true;
+        if (matchAtOffset(frame,width,height,0,0,0)) return true;
+        for(int radius=1;radius<=2;radius++)
+            for(int dy=-radius;dy<=radius;dy++)
+                for(int dx=-radius;dx<=radius;dx++) {
+                    if(Math.max(Math.abs(dx),Math.abs(dy))!=radius) continue;
+                    if(matchAtOffset(frame,width,height,dx,dy,0)) return true;
                 }
-            }
-        }
+
+        // A uniform brightness shift can happen when camera auto-exposure changes.
+        // Do not compensate >12 levels or extremely weak changes that failed
+        // spatial matching: this is deliberately conservative.
+        for(int radius=0;radius<=2;radius++)
+            for(int dy=-radius;dy<=radius;dy++)
+                for(int dx=-radius;dx<=radius;dx++) {
+                    if(Math.max(Math.abs(dx),Math.abs(dy))!=radius) continue;
+                    int light=estimateExposureDelta(frame,width,height,dx,dy);
+                    if(light==Integer.MIN_VALUE || Math.abs(light)<4 ||
+                            Math.abs(light)>12) continue;
+                    if(matchAtOffset(frame,width,height,dx,dy,light)) return true;
+                }
         return false;
     }
 
+    private int estimateExposureDelta(byte[] frame,int width,int height,
+                                      int shiftX,int shiftY) {
+        long signedTotal=0;
+        int offset=0;
+        for(int r=0;r<GLOBAL_ROWS;r++) {
+            int yy=coord(0,height,r,GLOBAL_ROWS)+shiftY;
+            if(yy<0 || yy>=height) return Integer.MIN_VALUE;
+            for(int c=0;c<GLOBAL_COLS;c++) {
+                int xx=coord(0,width,c,GLOBAL_COLS)+shiftX;
+                if(xx<0 || xx>=width) return Integer.MIN_VALUE;
+                signedTotal+=(frame[yy*width+xx]&255)-(reference[offset++]&255);
+            }
+        }
+        return Math.round(signedTotal/(float)(GLOBAL_COLS*GLOBAL_ROWS));
+    }
+
     private boolean matchAtOffset(byte[] frame,int width,int height,
-                                  int shiftX,int shiftY) {
+                                  int shiftX,int shiftY,int exposureDelta) {
         long total=0;
         int changed=0;
         int offset=0;
@@ -301,7 +336,8 @@ public final class SinglePassLumaConfirmGate {
             for (int c=0;c<GLOBAL_COLS;c++) {
                 int xx=coord(0,width,c,GLOBAL_COLS)+shiftX;
                 if(xx<0 || xx>=width) return false;
-                int diff=Math.abs((frame[yy*width+xx]&0xff)-(reference[offset++]&0xff));
+                int diff=Math.abs((frame[yy*width+xx]&0xff)-
+                                  (reference[offset++]&0xff)-exposureDelta);
                 total+=diff;
                 if(diff>=20) changed++;
                 if(total>maxGlobalTotal || changed>maxGlobalChanged) return false;
@@ -318,7 +354,8 @@ public final class SinglePassLumaConfirmGate {
             for (int c=0;c<LOCAL_COLS;c++) {
                 int xx=coord(roiLeft,w,c,LOCAL_COLS)+shiftX;
                 if(xx<0 || xx>=width) return false;
-                int diff=Math.abs((frame[yy*width+xx]&0xff)-(reference[offset++]&0xff));
+                int diff=Math.abs((frame[yy*width+xx]&0xff)-
+                                  (reference[offset++]&0xff)-exposureDelta);
                 total+=diff;
                 if(diff>=20) changed++;
                 if(total>maxLocalTotal || changed>maxLocalChanged) return false;
