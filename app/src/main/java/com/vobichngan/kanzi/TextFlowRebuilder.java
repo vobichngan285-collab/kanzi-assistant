@@ -77,6 +77,21 @@ public final class TextFlowRebuilder {
     }
 
     public static String arrange(List<ReadingOrder.Box> input, List<LayoutRegion> regions) {
+        return arrangeInternal(input, regions, false);
+    }
+
+    /**
+     * Live camera: process coherent text flows from TOP to BOTTOM; inside
+     * each flow preserve its original line order. Do not read every left-side
+     * strip before a visibly higher product title or receipt heading.
+     * No semantic model, additional OCR call, or confidence-based deletion.
+     */
+    public static String arrangeRealtime(List<ReadingOrder.Box> input) {
+        return arrangeInternal(input, java.util.Collections.emptyList(), true);
+    }
+
+    private static String arrangeInternal(List<ReadingOrder.Box> input,
+                                         List<LayoutRegion> regions, boolean realtime) {
         if (input == null || input.isEmpty()) return "";
         List<ReadingOrder.Box> boxes = new ArrayList<>(input);
         int[] layoutId = LayoutRegion.assign(boxes, regions);
@@ -174,8 +189,13 @@ public final class TextFlowRebuilder {
                 bFlow.maxRight-bFlow.minLeft > repeatedMaxWidth*1.45f &&
                 bFlow.top+bFlow.maxHeight*1.25f < firstRepeatedTop;
             if(aTitle != bTitle) return aTitle?-1:1;
-            int cmp = Float.compare(aFlow.centerX(),bFlow.centerX());
-            return cmp!=0?cmp:Float.compare(aFlow.top,bFlow.top);
+            // Live OCR starts from the uppermost coherent region, not
+            // always from the leftmost column. The dedicated book path keeps
+            // its original column-first behavior.
+            int cmp = realtime ? Float.compare(aFlow.top,bFlow.top)
+                               : Float.compare(aFlow.centerX(),bFlow.centerX());
+            return cmp!=0?cmp:(realtime ? Float.compare(aFlow.minLeft,bFlow.minLeft)
+                                        : Float.compare(aFlow.top,bFlow.top));
         });
         StringBuilder output = new StringBuilder();
         for (Flow flow : ordered) {
