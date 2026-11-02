@@ -8,7 +8,9 @@ assert "found != null && recognizedEpoch == readingEpoch.get()" in ocr_callback
 assert "onRecognized(found.getText(), oneShot," in ocr_callback
 assert "recognizedScene == realtimeScene.generation()" not in ocr_callback, "scene changed during slow OCR; recognized text was discarded"
 assert "sceneGeneration != realtimeScene.generation()" not in source, "luma noise silently suppressed successful OCR"
-assert 'if (!running || !ttsReady)' in source
+assert 'if (!running || !canSpeak())' in source
+assert 'private boolean canSpeak()' in source
+assert 'return !voice.isSystem() && voiceStore.isInstalled(voice);' in source
 assert "OCR recognized text but speech skipped" in source
 assert "speakSystemItem(currentSpeech)" in source, "system voice fallback must stay wired"
 assert "tts.speak(item.text, TextToSpeech.QUEUE_FLUSH" in source
