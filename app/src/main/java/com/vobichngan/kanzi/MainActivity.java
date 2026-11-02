@@ -54,7 +54,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.9.6";
+    private static final String APP_VERSION = "0.9.7";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -186,7 +186,7 @@ public class MainActivity extends CameraActivity {
                             + "\nOCR 输入方向：原始摄像头帧（固定 0°）"
                             + "\n图像解码：" + (legacyForDiagnostic ? "0.7.0 JPEG 兼容方式" : "OpenCV NV21 方式")
                             + "\n平均置信度：" + String.format(Locale.US, "%.3f", report.getAverageConfidence())
-                            + "\n实际朗读区域：" + report.getFocusDescription()
+                            + "\n文字流组织方式：" + report.getFocusDescription()
                             + "\n检测输入尺寸：" + report.getDetectorInputShape()
                             + "\n识别输入尺寸：" + report.getRecognitionInputShapes()
                             + "\n检测耗时：" + report.getDetectionTimeMs() + " ms"
@@ -194,9 +194,9 @@ public class MainActivity extends CameraActivity {
                             + "\n总耗时：" + report.getTotalTimeMs() + " ms"
                             + "\n诊断总用时：" + (System.currentTimeMillis() - started) + " ms"
                             + "\n逐框原始识别（未做低置信度过滤）：\n" + report.getRawDetails()
-                            + "\n\n实际朗读内容（智能正文/手动选页）：\n" +
+                            + "\n\n按连续文字流整理的朗读内容：\n" +
                                 (report.getText().isEmpty() ? "（未识别到文字）" : report.getText()) +
-                            "\n\n全部可见文字（不用于智能朗读，仅供对照）：\n" + report.getFullPageText();
+                            "\n\n全部可见文字（对照）：\n" + report.getFullPageText();
                         lastDiagnosticText = report.getText();
                         runOnUiThread(() -> { if (diagnosticReportView != null) diagnosticReportView.setText(result); });
                     },
@@ -421,8 +421,10 @@ public class MainActivity extends CameraActivity {
         previewVerticalFlip = prefs.getBoolean(PREF_PREVIEW_FLIP, false);
         enhancedOcr = prefs.getBoolean(PREF_ENHANCED_OCR, false);
         readingFocusMode = prefs.getString(PREF_READING_FOCUS, "AUTO");
-        if (!readingFocusMode.equals("AUTO") && !readingFocusMode.equals("ALL") &&
-            !readingFocusMode.equals("LEFT") && !readingFocusMode.equals("RIGHT"))
+        // Retired page-centric ALL setting is equivalent to continuous AUTO.
+        if ("ALL".equals(readingFocusMode)) readingFocusMode = "AUTO";
+        if (!"AUTO".equals(readingFocusMode) &&
+            !"LEFT".equals(readingFocusMode) && !"RIGHT".equals(readingFocusMode))
             readingFocusMode = "AUTO";
         ocrModelId = prefs.getString(PREF_OCR_MODEL, "ppocrv6_small");
         if (!ocrModelId.equals("ppocrv6_small") && !ocrModelId.equals("ppocrv6_tiny") && !ocrModelId.equals("ppocrv5_mobile")) ocrModelId = "ppocrv6_small";
@@ -496,17 +498,16 @@ public class MainActivity extends CameraActivity {
         panel.addView(enhancedNote);
 
         TextView pageFocusTitle = new TextView(this);
-        pageFocusTitle.setText("书籍朗读区域（横排书页）");
+        pageFocusTitle.setText("文字连续朗读范围");
         pageFocusTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         pageFocusTitle.setPadding(0, dp(12), 0, dp(4));
         panel.addView(pageFocusTitle);
         RadioGroup pageFocusGroup = new RadioGroup(this);
         pageFocusGroup.setOrientation(RadioGroup.VERTICAL);
         String[][] pageFocusOptions = new String[][] {
-            {"AUTO", "智能正文优先（推荐，跳过旁边的残页和窄注释）"},
-            {"LEFT", "优先读左侧书页"},
-            {"RIGHT", "优先读右侧书页"},
-            {"ALL", "朗读全部可见文字（旧版行为）"}
+            {"AUTO", "连续文字流（推荐，保留所有检测文字）"},
+            {"LEFT", "只读左侧文字区域（手动筛选）"},
+            {"RIGHT", "只读右侧文字区域（手动筛选）"}
         };
         for (String[] option : pageFocusOptions) {
             RadioButton radio = new RadioButton(this);
@@ -519,7 +520,7 @@ public class MainActivity extends CameraActivity {
         }
         panel.addView(pageFocusGroup);
         TextView pageFocusNote = new TextView(this);
-        pageFocusNote.setText("只有检测到多片连续横排书页时才筛选阅读区域；普通单页、竖排字和招牌保持原有朗读。白色文字框继续显示全画面检测结果。");
+        pageFocusNote.setText("默认不会因文字位于边缘、较短或置信度低而丢弃内容。按文字行与文字流整理顺序，避免不同区域互相插入。需要限定范围时才手动选左侧或右侧。");
         pageFocusNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         pageFocusNote.setTextColor(0xFF667085);
         panel.addView(pageFocusNote);
@@ -1427,8 +1428,8 @@ public class MainActivity extends CameraActivity {
         }
         lastNonEmptyAt = now;
         if (!running || !ttsReady) return;
-        // No mandatory second OCR; focused text already targets the intended
-        // page and leaves neighboring partial pages out of spoken content.
+        // One OCR pass feeds full, continuous text flows. Never automatically
+        // crop to a guessed page or discard entire shorter lines.
         final String confirmed = recognizedText;
         String speechText = confirmed;
         if (speechNoEnglish) speechText = speechText.replaceAll("[A-Za-z]+", " ");

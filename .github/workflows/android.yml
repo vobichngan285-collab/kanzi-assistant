@@ -212,15 +212,18 @@ jobs:
             scripts/PhonePreviewGeometrySmokeTest.java \
             scripts/ReadingFlowSmokeTest.java \
             scripts/ReadingFocusSmokeTest.java \
+            scripts/ContinuousReadingSmokeTest.java \
             scripts/ReadingModesSmokeTest.java \
             scripts/CameraReadingFeatureSmokeTest.java
           java -cp "$RUNNER_TEMP/reading-flow-classes" ReadingFlowSmokeTest | tee "$RUNNER_TEMP/reading-flow-test.log"
           java -cp "$RUNNER_TEMP/reading-flow-classes" ReadingFocusSmokeTest | tee -a "$RUNNER_TEMP/reading-flow-test.log"
+          java -cp "$RUNNER_TEMP/reading-flow-classes" ContinuousReadingSmokeTest | tee -a "$RUNNER_TEMP/reading-flow-test.log"
           java -cp "$RUNNER_TEMP/reading-flow-classes" ReadingModesSmokeTest | tee -a "$RUNNER_TEMP/reading-flow-test.log"
           java -cp "$RUNNER_TEMP/reading-flow-classes" CameraReadingFeatureSmokeTest | tee -a "$RUNNER_TEMP/reading-flow-test.log"
           java -cp "$RUNNER_TEMP/reading-flow-classes" PhonePreviewGeometrySmokeTest | tee -a "$RUNNER_TEMP/reading-flow-test.log"
           grep -q "READING_FLOW_SMOKE_TEST=PASS" "$RUNNER_TEMP/reading-flow-test.log"
-          grep -q "BOOK_READING_FOCUS_SMOKE_TEST=PASS" "$RUNNER_TEMP/reading-flow-test.log"
+          grep -q "CONTINUOUS_FULL_TEXT_FOCUS_SMOKE_TEST=PASS" "$RUNNER_TEMP/reading-flow-test.log"
+          grep -q "CONTINUOUS_TEXT_INTEGRITY_SMOKE_TEST=PASS" "$RUNNER_TEMP/reading-flow-test.log"
           grep -q "DUAL_READING_MODES_SMOKE_TEST=PASS" "$RUNNER_TEMP/reading-flow-test.log"
           grep -q "CAMERA_READING_FEATURES=PASS" "$RUNNER_TEMP/reading-flow-test.log"
           grep -q "PHONE_PREVIEW_GEOMETRY=PASS" "$RUNNER_TEMP/reading-flow-test.log"
@@ -294,7 +297,7 @@ jobs:
           "$ZIPALIGN" -c -v 4 "$APK"
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           "$AAPT" dump badging "$APK" | tee "$RUNNER_TEMP/apk-manifest.txt"
-          grep -q "package: name='com.vobich.kanzi' versionCode='37' versionName='0.9.6'" "$RUNNER_TEMP/apk-manifest.txt"
+          grep -q "package: name='com.vobich.kanzi' versionCode='38' versionName='0.9.7'" "$RUNNER_TEMP/apk-manifest.txt"
           grep -q "sdkVersion:'26'" "$RUNNER_TEMP/apk-manifest.txt"
           echo "APK_SHA256=$(sha256sum "$APK" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
           echo "APK_SIZE=$(stat -c%s "$APK") bytes" >> "$GITHUB_STEP_SUMMARY"
@@ -302,7 +305,7 @@ jobs:
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kanzi-assistant-0.9.6-smart-book-page-focus-signed
+          name: kanzi-assistant-0.9.7-continuous-full-text-reading-signed
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
@@ -311,6 +314,6 @@ jobs:
         with:
           tag_name: test-build-${{ github.run_number }}
           target_commitish: ${{ github.sha }}
-          name: 看字助手测试版 0.9.6 智能书页正文优先朗读 (${{ github.run_number }})
+          name: 看字助手测试版 0.9.7 文字流连续性与完整朗读优化 (${{ github.run_number }})
           prerelease: true
           files: app/build/outputs/apk/release/app-release.apk

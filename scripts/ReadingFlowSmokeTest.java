@@ -25,7 +25,7 @@ public class ReadingFlowSmokeTest {
         equals(ReadingOrder.arrange(Arrays.asList(
             box("右二", 450, 190, 100, 25), box("左一", 10, 100, 100, 25),
             box("右一", 450, 100, 100, 25), box("左二", 10, 190, 100, 25))),
-            "左一\n左二\n右一\n右二", "two-column page");
+            "左一\n左二\n\n右一\n右二", "two-column page");
         equals(ReadingOrder.arrange(Arrays.asList(box("5元 50% ￥", 10, 10, 200, 25))),
             "5元 50% ￥", "preserve numeric punctuation");
         equals(ReadingOrder.arrange(Arrays.asList(box("清晰文字", 10, 10, 130, 25))),
@@ -35,7 +35,7 @@ public class ReadingFlowSmokeTest {
             box("名", 180, 68, 23, 24), box("称", 180, 97, 23, 24),
             box("生", 110, 10, 23, 24), box("产", 110, 39, 23, 24),
             box("日", 110, 68, 23, 24), box("期", 110, 97, 23, 24)
-        )), "商品名称\n生产日期", "traditional vertical columns right-to-left");
+        )), "商品名称\n\n生产日期", "traditional vertical columns right-to-left");
         equals(ReadingOrder.arrange(Arrays.asList(
             box("保", 85, 10, 23, 24), box("质", 85, 39, 23, 24),
             box("期", 85, 68, 23, 24)
@@ -50,7 +50,10 @@ public class ReadingFlowSmokeTest {
             reconstructed.append(s);
         }
         equals(reconstructed.toString(), page.toString(), "no missing chars across speech chunks");
-        equals(String.join("|", SpeechText.chunks("标题\n第一段内容\n第二段内容")), "标题|第一段内容|第二段内容", "paragraph pauses");
+        equals(String.join("|", SpeechText.chunks("标题\n第一段内容\n第二段内容")),
+            "标题第一段内容第二段内容", "soft OCR line wrapping without choppy TTS");
+        equals(String.join("|", SpeechText.chunks("第一片段\n第二行\n\n无关区域")),
+            "第一片段第二行|无关区域", "hard boundaries across independent text flows");
         // Regression from a real 720x1280 book-page diagnostic: 49 OCR
         // boxes were formerly spliced into one row because the inner gutter
         // was too small for the previous global-x-gap-only splitter.
@@ -105,7 +108,7 @@ public class ReadingFlowSmokeTest {
             tightColumns.add(box("右页" + row, 187, 80 + row * 29, 348, 23));
         }
         String split = ReadingOrder.arrange(tightColumns);
-        if (!split.startsWith("跨栏标题\n左页0\n") ||
+        if (!split.startsWith("跨栏标题\n\n左页0\n") ||
             split.indexOf("左页4") > split.indexOf("右页0"))
             throw new AssertionError("narrow gutter + page header broken: " + split);
 

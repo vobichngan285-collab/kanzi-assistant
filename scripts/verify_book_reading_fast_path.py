@@ -4,7 +4,7 @@ from pathlib import Path
 root=Path(__file__).resolve().parents[1]
 main=(root/"app/src/main/java/com/vobichngan/kanzi/MainActivity.java").read_text()
 reading=(root/"app/src/main/java/com/vobichngan/kanzi/ReadingOrder.java").read_text()
-assert "APP_VERSION = \"0.9.6\"" in main
+assert "APP_VERSION = \"0.9.7\"" in main
 assert "if (recognizer == null || !recognizer.isReady()) return;" in main
 assert "if (candidateCount < 2) return;" not in main
 assert "needsConfirmation" not in main
@@ -29,3 +29,13 @@ assert 'fullPageText = ReadingOrder.arrange(toReadingBoxes(result.results))' in 
 assert 'enum Mode { AUTO, ALL, LEFT, RIGHT }' in focus
 assert 'r.medianHeight >= strongest.medianHeight * .78f' in focus
 print("BOOK_PAGE_FOCUS_WIRING=PASS")
+
+speech=(root/"app/src/main/java/com/vobichngan/kanzi/SpeechText.java").read_text()
+assert 'mode == Mode.AUTO || mode == Mode.ALL' in focus
+assert 'boxes.size(), boxes.size(), .5f, false' in focus
+assert '连续文字流（推荐，保留所有检测文字）' in main
+assert '单次' not in speech or 'CHUNK_LIMIT' in speech
+assert 'if (breaks >= 2)' in speech
+assert 'wrapped = true;' in speech
+assert 'selectedBoxes==diag.size()' not in focus
+print("CONTINUITY_CORE_WIRING=PASS")

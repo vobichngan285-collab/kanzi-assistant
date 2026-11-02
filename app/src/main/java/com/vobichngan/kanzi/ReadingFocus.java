@@ -69,8 +69,14 @@ public final class ReadingFocus {
                                    int height, Mode mode, float previousCenter) {
         if (boxes == null || boxes.isEmpty()) return new Selection("", "未发现文字", 0, 0, .5f, false);
         String entire = ReadingOrder.arrange(boxes);
-        if (mode == Mode.ALL || width <= 0 || height <= 0)
-            return new Selection(entire, "全部可见文字", boxes.size(), boxes.size(), .5f, false);
+        // AUTO is a continuity-first READING mode, not a guess about the
+        // user's preferred page. Keep every recognized character available.
+        // Background objects may appear in independent flows, but are never
+        // silently discarded merely for being shorter, left/right or smaller.
+        // LEFT/RIGHT remain explicit user-directed filters only.
+        if (mode == Mode.AUTO || mode == Mode.ALL || width <= 0 || height <= 0)
+            return new Selection(entire, "连续文字流（不丢弃有效识别框）",
+                boxes.size(), boxes.size(), .5f, false);
 
         // A horizontal book body has repeated LONG recognized lines. Exclude
         // isolated titles/short punctuation as grouping anchors, but preserve

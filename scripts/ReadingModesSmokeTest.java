@@ -26,9 +26,9 @@ public class ReadingModesSmokeTest {
         check(gate.accept(initial, 64, 48, 9000L, false), "switching modes resets image fingerprint");
         String full = "说明书第一行较长的文字。\n说明书第二行还有很多文字。\n说明书第三行需要长文阅读。";
         List<String> longChunks = SpeechText.chunks(full);
-        check(longChunks.size() == 3, "long mode reads all paragraphs");
-        check("说明书第一行较长的文字。|说明书第二行还有很多文字。|说明书第三行需要长文阅读。"
-            .equals(String.join("|", longChunks)), "long mode preserves full text and order");
+        check(longChunks.size() == 1, "adjacent visual lines form one fluent utterance");
+        check("说明书第一行较长的文字。说明书第二行还有很多文字。说明书第三行需要长文阅读。"
+            .equals(String.join("|", longChunks)), "long mode preserves every OCR character in order");
         check("商品名称\n生产日期\n其他文字".equals(SpeechText.scanExcerpt("商品名称\n生产日期\n其他文字")),
               "scan mode preserves all detected text");
         check(SpeechText.scanExcerpt(null).isEmpty(), "empty camera text is safe");

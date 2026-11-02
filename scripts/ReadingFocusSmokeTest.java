@@ -38,12 +38,13 @@ public final class ReadingFocusSmokeTest {
             small.add(box("脚注"+i+"与注释",603,marginTop[i],84,14,.9f));
         small.add(box("LaeB",400,381,103,18,.31f));
         ReadingFocus.Selection main = select(small,ReadingFocus.Mode.AUTO);
-        check(main.isolated, "must isolate main page in partial-open-book view");
+        check(!main.isolated && main.selectedBoxes == small.size(),
+              "automatic reading cannot discard text just for its position");
         check(main.text.contains("正文第0行") && main.text.contains("正文第28行"),
-              "cannot truncate complete page: "+main.description);
-        check(!main.text.contains("残页") && !main.text.contains("脚注") &&
-              !main.text.contains("LaeB"),
-              "side pages, notes and spurious low confidence label must not speak: "+main.text);
+              "cannot truncate main text: "+main.description);
+        check(main.text.contains("残页") && main.text.contains("脚注") &&
+              main.text.contains("LaeB"),
+              "keep every OCR box, even uncertain annotations, for complete reading: "+main.text);
         ReadingFocus.Selection right = select(small,ReadingFocus.Mode.RIGHT);
         check(right.text.contains("正文第0行") && !right.text.contains("脚注"),
               "manual RIGHT must mean right book page, not far-right footnotes");
@@ -64,9 +65,9 @@ public final class ReadingFocusSmokeTest {
         for (int i=0;i<9;i++)
             tiny.add(box("旁边小字"+i,545,460+i*22,74,13,.8f));
         ReadingFocus.Selection tinyFocus=select(tiny,ReadingFocus.Mode.AUTO);
-        check(tinyFocus.isolated && tinyFocus.text.contains("完整主文") &&
-            !tinyFocus.text.contains("边缘") && !tinyFocus.text.contains("小字"),
-            "Tiny screenshot book regions: "+tinyFocus.description);
+        check(!tinyFocus.isolated && tinyFocus.text.contains("完整主文") &&
+            tinyFocus.text.contains("边缘") && tinyFocus.text.contains("小字"),
+            "Tiny screenshot: none of the recognized text may be lost");
 
         // A single normal paragraph, sign, or upright vertical Chinese text
         // should keep all text and should not accidentally focus one glyph.
@@ -101,6 +102,6 @@ public final class ReadingFocusSmokeTest {
         tracker.reset();
         check(!Float.isNaN(tracker.choose(spread,720,1280,ReadingFocus.Mode.AUTO).centerFraction),
               "explicit reset must allow fresh page selection");
-        System.out.println("BOOK_READING_FOCUS_SMOKE_TEST=PASS");
+        System.out.println("CONTINUOUS_FULL_TEXT_FOCUS_SMOKE_TEST=PASS");
     }
 }

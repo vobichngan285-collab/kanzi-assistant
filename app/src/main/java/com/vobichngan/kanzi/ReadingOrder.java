@@ -170,7 +170,7 @@ public final class ReadingOrder {
             if (vertical.size() >= 2 && verticalGlyphs >= boxes.size() * .65f) {
                 StringBuilder text = new StringBuilder();
                 for (Vertical col : vertical) {
-                    if (text.length() > 0) text.append('\n');
+                    if (text.length() > 0) text.append("\n\n");
                     text.append(col.text());
                 }
                 return text.toString();
@@ -184,9 +184,14 @@ public final class ReadingOrder {
             boxes = merged;
         }
 
+        // Reconstruct independent text FLOWS, not a single flattened list of
+        // boxes. A blank line marks a stream boundary; a single newline marks
+        // a soft visual line-wrap that speech synthesis may join naturally.
+        // All valid OCR boxes are emitted once, including short/uncertain ones.
         List<List<Box>> columns = splitColumns(boxes);
         StringBuilder output = new StringBuilder();
         for (List<Box> column : columns) {
+            if (column.isEmpty()) continue;
             column.sort(Comparator.comparingDouble(Box::top).thenComparingDouble(Box::left));
             List<Line> lines = new ArrayList<>();
             for (Box entry : column) {
@@ -200,19 +205,38 @@ public final class ReadingOrder {
                 else best.add(entry);
             }
             lines.sort(Comparator.comparingDouble(a -> a.anchorY));
+            if (output.length() > 0) output.append("\n\n");
+            float previousBottom = Float.NaN;
+            float previousHeight = Float.NaN;
             for (Line line : lines) {
                 line.boxes.sort(Comparator.comparingDouble(Box::left));
-                if (output.length() != 0) output.append('\n');
+                float minTop = Float.MAX_VALUE, maxBottom = -Float.MAX_VALUE;
+                for (Box box : line.boxes) {
+                    minTop = Math.min(minTop, box.top());
+                    maxBottom = Math.max(maxBottom, box.bottom());
+                }
+                // A large vertical whitespace gap is a likely paragraph
+                // boundary. Ordinary adjacent visual rows are soft wraps.
+                if (!Float.isNaN(previousBottom)) {
+                    float gap = minTop - previousBottom;
+                    float paragraphGap = Math.max(previousHeight, line.typicalHeight) * 1.10f;
+                    output.append(gap > paragraphGap ? "\n\n" : "\n");
+                }
+                StringBuilder rowText = new StringBuilder();
                 Box previous = null;
                 for (Box box : line.boxes) {
                     if (previous != null && !box.text.isEmpty()) {
                         char p = previous.text.charAt(previous.text.length() - 1);
                         char n = box.text.charAt(0);
-                        if (asciiWord(p) && asciiWord(n) && box.left() - previous.right() > 1f) output.append(' ');
+                        if (asciiWord(p) && asciiWord(n) && box.left() - previous.right() > 1f)
+                            rowText.append(' ');
                     }
-                    output.append(box.text);
+                    rowText.append(box.text);
                     previous = box;
                 }
+                output.append(rowText);
+                previousBottom = maxBottom;
+                previousHeight = line.typicalHeight;
             }
         }
         return output.toString().trim();
