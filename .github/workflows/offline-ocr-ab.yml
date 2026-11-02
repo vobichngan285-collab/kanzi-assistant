@@ -1,0 +1,34 @@
+name: Offline OCR A/B (synthetic only)
+on:
+  push:
+    branches: [test/ocr-ab-offline-20261102]
+  workflow_dispatch:
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install OCR dependencies and CJK font
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
+          python -m pip install --upgrade pip
+          python -m pip install numpy 'opencv-python-headless<5' pillow pyyaml onnxruntime
+      - name: Fetch pinned PP-OCRv6 Small recognition model and dictionary
+        run: |
+          mkdir -p /tmp/ocr-assets/models/rec
+          curl -fL --retry 3 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx' -o /tmp/ocr-assets/models/rec/inference.onnx
+          curl -fL --retry 3 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml?download=true' -o /tmp/ocr-assets/models/rec/inference.yml
+          test "$(stat -c%s /tmp/ocr-assets/models/rec/inference.onnx)" -gt 1000000
+      - name: Run real ONNX recognition A/B on synthetic Chinese samples
+        run: |
+          python scripts/ocr_ab_synthetic.py /tmp/ocr-assets /tmp/ocr-ab | tee /tmp/ocr-ab/summary.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: offline-ocr-ab-results
+          path: /tmp/ocr-ab/
