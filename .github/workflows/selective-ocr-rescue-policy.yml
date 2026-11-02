@@ -25,11 +25,13 @@ jobs:
             app/src/main/java/com/vobichngan/kanzi/StableShortTextGate.java \
             app/src/main/java/com/vobichngan/kanzi/NoQueueOcrRescueExecutor.java \
             app/src/main/java/com/vobichngan/kanzi/SinglePassLumaConfirmGate.java \
+            app/src/main/java/com/vobichngan/kanzi/FrameChangeGate.java \
             scripts/SelectiveOcrRescuePolicySmokeTest.java \
             scripts/StableShortTextGateSmokeTest.java \
             scripts/NoQueueOcrRescueExecutorSmokeTest.java \
             scripts/SinglePassLumaConfirmGateSmokeTest.java \
-            scripts/SinglePassLumaConfirmBenchmark.java
+            scripts/SinglePassLumaConfirmBenchmark.java \
+            scripts/SinglePassLumaPipelineSimulation.java
       - name: Run safety, geometry, budget and cooldown regression tests
         run: |
           set -euo pipefail
@@ -43,6 +45,10 @@ jobs:
             | tee -a /tmp/kanzi-ocr-policy-test-summary.txt
           java -ea -cp /tmp/kanzi-ocr-policy-classes SinglePassLumaConfirmBenchmark \
             | tee -a /tmp/kanzi-ocr-policy-test-summary.txt
+          java -ea -cp /tmp/kanzi-ocr-policy-classes SinglePassLumaPipelineSimulation \
+            | tee -a /tmp/kanzi-ocr-policy-test-summary.txt
+          grep -q 'SINGLE_PASS_TIMELINE=PASS' /tmp/kanzi-ocr-policy-test-summary.txt
+          grep -q 'SINGLE_PASS_MOVED_SCENE=PASS' /tmp/kanzi-ocr-policy-test-summary.txt
           grep -q 'SINGLE_PASS_LUMA_CONFIRM_GATE=PASS' /tmp/kanzi-ocr-policy-test-summary.txt
           grep -q 'SINGLE_PASS_LUMA_CI_BENCH=PASS' /tmp/kanzi-ocr-policy-test-summary.txt
           grep -q 'NO_QUEUE_OCR_RESCUE_EXECUTOR=PASS' /tmp/kanzi-ocr-policy-test-summary.txt
