@@ -9,6 +9,8 @@ import android.os.Looper;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.speech.tts.TextToSpeech;
+import android.media.AudioManager;
+import android.media.ToneGenerator;
 import android.speech.tts.UtteranceProgressListener;
 import android.content.SharedPreferences;
 import android.content.ClipData;
@@ -110,10 +112,20 @@ public class MainActivity extends CameraActivity {
     private volatile boolean automaticMode = true;
     private volatile long recognitionIntervalMs = 500L;
     private volatile int similarityThreshold = 88;
-    private volatile boolean queueSpeech = true;
-    private volatile boolean longReadingMode = true;
+    private volatile boolean queueSpeech = false;
+    private volatile boolean longReadingMode = false;
     private volatile boolean speechPageActive = false;
     private final FrameChangeGate frameChangeGate = new FrameChangeGate();
+    // Fast-scan frame identities are tracked even while a previous OCR is busy.
+    // Old results must never steal the microphone after the user turns the camera.
+    private final RealtimeSceneTracker realtimeScene = new RealtimeSceneTracker();
+    private volatile long lastLiveObservationAt = 0L;
+    private volatile long lastQuickScanGeneration = -1L;
+    private volatile long lastQuickScanAt = 0L;
+    private volatile boolean lastQuickScanReliable = false;
+    private long lastSpokenSceneGeneration = -1L;
+    private long speechPromptSerial = 0L;
+    private ToneGenerator recognitionTone;
     private final java.util.concurrent.atomic.AtomicInteger readingEpoch = new java.util.concurrent.atomic.AtomicInteger(0);
     private volatile float speechRate = 1.0f;
     private volatile int previewRotation = 0;
@@ -406,11 +418,11 @@ public class MainActivity extends CameraActivity {
         }
         if (readingModeButton != null) {
             readingModeButton.setText(longReadingMode
-                ? "长文阅读｜完整读完，不打断"
-                : "快速扫读｜移动即读新内容");
+                ? "长文阅读｜完整读完（后续课题）"
+                : "实时文字｜新目标立即读");
             readingModeButton.setContentDescription(longReadingMode
-                ? "当前是长文阅读模式。点击切换到快速扫读"
-                : "当前是快速扫读模式。点击切换到长文阅读");
+                ? "当前是长文阅读模式。点击切换到实时文字识别"
+                : "当前是实时文字识别模式。点击切换到长文阅读");
         }
         if (modeButton != null) modeButton.setText(automaticMode ? "模式：自动" : "模式：手动");
         if (startButton != null) startButton.setText(running ? "暂停识别" : "开始识别");
@@ -424,7 +436,7 @@ public class MainActivity extends CameraActivity {
             prefs.getLong(PREF_INTERVAL, 500L)));
         similarityThreshold = Math.max(0, Math.min(100,
             prefs.getInt(PREF_SIMILARITY, 88)));
-        queueSpeech = prefs.getBoolean(PREF_QUEUE_SPEECH, true);
+        queueSpeech = prefs.getBoolean(PREF_QUEUE_SPEECH, false);
         usingPhoneCamera = prefs.getBoolean(PREF_PHONE_CAMERA, false);
         phoneFrontFacing = prefs.getBoolean(PREF_FRONT_CAMERA, false);
         qualityPromptsEnabled = prefs.getBoolean(PREF_QUALITY_PROMPTS, true);
@@ -1054,6 +1066,11 @@ public class MainActivity extends CameraActivity {
                 });
             }
         });
+        try {
+            recognitionTone = new ToneGenerator(AudioManager.STREAM_NOTIFICATION, 70);
+        } catch (RuntimeException toneError) {
+            Log.w("KanziTTS", "Notification tone unavailable; OCR speech still works", toneError);
+        }
         tts = new TextToSpeech(this, code -> {
             if (code == TextToSpeech.SUCCESS) {
                 int language = tts.setLanguage(Locale.SIMPLIFIED_CHINESE);
@@ -1469,6 +1486,10 @@ public class MainActivity extends CameraActivity {
         readingEpoch.incrementAndGet();
         longReadingMode = enableLong;
         queueSpeech = enableLong; // keep legacy preference consistent
+        realtimeScene.reset();
+        lastQuickScanGeneration = -1L;
+        lastQuickScanReliable = false;
+        lastSpokenSceneGeneration = -1L;
         if (recognizer != null) recognizer.setFastScanMode(!enableLong);
         manualCaptureRequested.set(false);
         frameChangeGate.reset();
@@ -1484,7 +1505,7 @@ public class MainActivity extends CameraActivity {
             .putBoolean(PREF_QUEUE_SPEECH, enableLong)
             .apply();
         updateControlLabels();
-        String announcement = enableLong ? "已切换长文阅读，读完再识别" : "已切换快速扫读，新内容会打断旧内容";
+        String announcement = enableLong ? "已切换长文阅读，读完再识别" : "已切换实时文字，新目标会打断旧内容";
         Toast.makeText(this, announcement, Toast.LENGTH_SHORT).show();
         if (readingModeButton != null) readingModeButton.announceForAccessibility(announcement);
     }
@@ -1493,11 +1514,13 @@ public class MainActivity extends CameraActivity {
      * Both modes read one CURRENT OCR result; only speech scheduling differs.
      * Long-form mode keeps the complete text until all TTS chunks finish.
      */
-    private void onRecognized(String found, boolean manualCapture) {
+    private void onRecognized(String found, boolean manualCapture,
+                              long sceneGeneration, int resultEpoch) {
         final long now = System.currentTimeMillis();
         final String recognizedText = found == null ? "" : found.trim();
         if (recognizedText.isEmpty()) {
-            if (lastNonEmptyAt > 0 && now - lastNonEmptyAt >= 2800) lastSpoken = "";
+            if (longReadingMode && lastNonEmptyAt > 0 &&
+                now - lastNonEmptyAt >= 2800) lastSpoken = "";
             return;
         }
         lastNonEmptyAt = now;
@@ -1517,21 +1540,35 @@ public class MainActivity extends CameraActivity {
         final String normalizedSpeech = normalizeOcrText(fullSpeech);
         if (normalizedSpeech.isEmpty()) return;
         runOnUiThread(() -> {
-            if (!running || tts == null || !ttsReady) return;
-            queueSpeechText(fullSpeech, normalizedSpeech, manualCapture);
+            if (!running || tts == null || !ttsReady ||
+                resultEpoch != readingEpoch.get() ||
+                (!longReadingMode && !manualCapture &&
+                 sceneGeneration != realtimeScene.generation())) return;
+            queueSpeechText(fullSpeech, normalizedSpeech, manualCapture, sceneGeneration);
         });
     }
 
-    /** Read one complete frame, splitting into bounded utterances but never dropping its tail. */
+    /** Diagnostic/manual listening keeps the same explicit one-shot path. */
     private void queueSpeechText(String text, String normalized, boolean force) {
+        queueSpeechText(text,normalized,force,-1L);
+    }
+
+    /** Read a complete, coherent OCR flow. New live targets preempt old speech. */
+    private void queueSpeechText(String text, String normalized, boolean force,
+                                 long sceneGeneration) {
         if (tts == null || !ttsReady || normalized.isEmpty()) return;
-        // Compare the ACTUAL text being spoken, not unspoken tail content.
-        String spokenText = (!force && !longReadingMode) ? SpeechText.scanExcerpt(text) : text;
+        // Never truncate live recognition to only the first few words/lines.
+        String spokenText = text;
         String spokenNormalized = normalizeOcrText(spokenText);
         if (spokenNormalized.isEmpty()) return;
         if (!force) {
             if (longReadingMode && (speechPageActive || currentSpeech != null || !speechQueue.isEmpty())) return;
-            if (isAlreadyQueuedOrRecentlySpoken(spokenNormalized, similarityThreshold / 100.0f)) return;
+            // Revisit of A after leaving A is a new intentional scan, even
+            // if B was passed too fast for a full OCR. Within one target,
+            // small OCR fluctuations must not replay the same text.
+            if ((longReadingMode || lastSpokenSceneGeneration == sceneGeneration) &&
+                isAlreadyQueuedOrRecentlySpoken(spokenNormalized, similarityThreshold / 100.0f))
+                return;
         }
         if (force || !longReadingMode) {
             // Latest-content-wins in scan mode. A manual request always takes priority.
@@ -1540,10 +1577,21 @@ public class MainActivity extends CameraActivity {
         List<String> chunks = SpeechText.chunks(spokenText);
         if (chunks.isEmpty()) return;
         speechPageActive = true;
+        lastSpokenSceneGeneration = sceneGeneration;
         for (String chunk : chunks) {
             speechQueue.addLast(new SpeechItem(chunk, spokenNormalized, "ocr-" + (++utteranceSequence)));
         }
-        speakNextQueued();
+        // The visual OCR boxes are already shown by the camera callback.
+        // Ding once for a NEW confirmed live target, then start TTS.
+        if (!force && !longReadingMode && recognitionTone != null) {
+            final long prompt = ++speechPromptSerial;
+            recognitionTone.startTone(ToneGenerator.TONE_PROP_BEEP, 85);
+            mainHandler.postDelayed(() -> {
+                if (prompt == speechPromptSerial) speakNextQueued();
+            }, 105L);
+        } else {
+            speakNextQueued();
+        }
     }
 
     private boolean isAlreadyQueuedOrRecentlySpoken(String normalized, float threshold) {
@@ -1576,6 +1624,8 @@ public class MainActivity extends CameraActivity {
     }
 
     private void clearSpeechQueue(boolean stopCurrent) {
+        ++speechPromptSerial;
+        if (stopCurrent && recognitionTone != null) recognitionTone.stopTone();
         speechPageActive = false;
         speechQueue.clear();
         currentSpeech = null;
@@ -1617,6 +1667,16 @@ public class MainActivity extends CameraActivity {
     private int dp(int value) { return (int) (value * getResources().getDisplayMetrics().density); }
 
     @Override protected void onPause() {
+        // Accessibility safety: a camera that is no longer foreground must
+        // neither scan nor continue speaking private surrounding text.
+        running = false;
+        readingEpoch.incrementAndGet();
+        manualCaptureRequested.set(false);
+        realtimeScene.reset();
+        frameChangeGate.reset();
+        lastQuickScanGeneration = -1L;
+        clearSpeechQueue(true);
+        if (ocrOverlay != null) ocrOverlay.clear();
         phoneStartSequence++;
         if (phoneController != null) phoneController.stop();
         super.onPause();
@@ -1631,6 +1691,7 @@ public class MainActivity extends CameraActivity {
         currentSpeech = null;
         speechPageActive = false;
         if (tts != null) { tts.stop(); tts.shutdown(); }
+        if (recognitionTone != null) { recognitionTone.release(); recognitionTone = null; }
         if (recognizer != null) recognizer.release();
         diagnosticHandler.removeCallbacksAndMessages(null);
         super.onDestroy();
