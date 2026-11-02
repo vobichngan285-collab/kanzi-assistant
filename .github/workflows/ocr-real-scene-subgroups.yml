@@ -25,6 +25,7 @@ jobs:
       - name: Evaluate price, food, package-label proxies and confidence gating
         run: |
           set -euo pipefail
+          mkdir -p /tmp/scene-summary
           python3 scripts/analyze_public_ocr_predictions.py \
             /tmp/scene-results/predictions.csv /tmp/scene-summary \
             | tee /tmp/scene-summary/analysis.log
