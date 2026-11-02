@@ -1,0 +1,47 @@
+name: Probe public Chinese scene OCR labeled samples
+on:
+  push:
+    branches: [test/ocr-real-world-benchmark-20261103]
+    paths:
+      - .github/workflows/ocr-public-dataset-probe.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - name: Probe HF labeled street-sign/menu/product OCR examples
+        run: |
+          python3 - <<'PY'
+          import requests,json
+          url='https://datasets-server.huggingface.co/splits'
+          r=requests.get(url,params={'dataset':'Yesianrohn/OCR-Data'},timeout=35)
+          print('SPLITS_HTTP',r.status_code,r.text[:1400])
+          if r.ok:
+              data=r.json()
+              print('SPLIT_NAMES',[(x.get('config'),x.get('split')) for x in data.get('splits',[])])
+          for split in ['ShopSign','RCTW','ReCTS','ART']:
+              print('PROBE_SPLIT',split,flush=True)
+              try:
+                  r=requests.get('https://datasets-server.huggingface.co/rows',params={
+                      'dataset':'Yesianrohn/OCR-Data','config':'default','split':split,
+                      'offset':0,'length':3},timeout=50)
+                  print('ROWS_HTTP',r.status_code,r.text[:500])
+                  if r.ok:
+                      d=r.json()
+                      print('NUM_ROWS',d.get('num_rows_total'),'ROWS',len(d.get('rows',[])))
+                      for x in d.get('rows',[]):
+                          row=x['row']
+                          print('ROW',x['row_idx'],'image=',str(row.get('image'))[:230],
+                                'texts=',str(row.get('texts'))[:400],
+                                'polygons=',str(row.get('polygons'))[:80])
+                          img=row.get('image') or {}
+                          if img.get('src'):
+                              pic=requests.get(img['src'],timeout=45)
+                              print('SAMPLE_IMAGE_HTTP',pic.status_code,'BYTES',len(pic.content),
+                                    'CONTENT_TYPE',pic.headers.get('content-type'))
+                              break
+              except Exception as e: print('PROBE_ERROR',type(e).__name__,str(e)[:250])
+          PY
