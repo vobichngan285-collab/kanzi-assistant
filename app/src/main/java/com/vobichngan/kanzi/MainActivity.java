@@ -207,7 +207,7 @@ public class MainActivity extends CameraActivity {
                             + "\nOCR 引擎：已就绪\n检测框数量：" + report.getBoxCount()
                             + "\n实时朗读状态：" + (running ? "已启动" : "未启动，请点开始识别") +
                                 "；扫描模式：" + (automaticMode ? "自动" : "手动") +
-                                "；中文语音：" + (ttsReady ? "已就绪" : "尚未就绪") +
+                                "；中文语音：" + (canSpeak() ? "已就绪" : "尚未就绪") +
                             "\n提示：本页为诊断结果，诊断本身不自动朗读；可点「朗读这次诊断识别出的文字」试听。"
                             + "\n当前模型：" + report.getModelId()
                             + "\nOCR 输入方向：原始摄像头帧（固定 0°）"
@@ -748,9 +748,9 @@ public class MainActivity extends CameraActivity {
 
         Button speechPreviewButton = createControlButton("试听当前语速");
         speechPreviewButton.setOnClickListener(v -> {
-            if (tts != null && ttsReady) {
+            if (canSpeak()) {
                 float previewRate = 0.5f + speechRateSeek.getProgress() / 100f;
-                tts.setSpeechRate(previewRate);
+                if (tts != null) tts.setSpeechRate(previewRate);
                 clearSpeechQueue(true);
                 DownloadableVoiceStore.Voice previewVoice = voiceStore.selectedVoice();
                 String sample = "看字助手语音试听，现在是当前设置的朗读速度。";
@@ -967,7 +967,7 @@ public class MainActivity extends CameraActivity {
                 "\n提示：OCR 诊断只生成文字，不会自动朗读。需要听诊断结果请点击下方的「朗读这次诊断识别出的文字」。" +
                 "\n实时朗读状态：" + (running ? "已启动" : "未启动，请点开始识别") +
                 "；扫描模式：" + (automaticMode ? "自动" : "手动") +
-                "；中文语音：" + (ttsReady ? "已就绪" : "尚未就绪"));
+                "；中文语音：" + (canSpeak() ? "已就绪" : "尚未就绪"));
             diagnosticCaptureRequested.set(true);
         });
         panel.addView(runDiagnosticButton);
@@ -975,7 +975,7 @@ public class MainActivity extends CameraActivity {
         speakDiagnosticButton.setOnClickListener(v -> {
             String textToRead = lastDiagnosticText == null ? "" : lastDiagnosticText.trim();
             if (textToRead.isEmpty()) Toast.makeText(this, "这次诊断没有得到可朗读的文字", Toast.LENGTH_SHORT).show();
-            else if (tts == null || !ttsReady) Toast.makeText(this, "中文语音尚未准备好", Toast.LENGTH_SHORT).show();
+            else if (!canSpeak()) Toast.makeText(this, "中文语音尚未准备好", Toast.LENGTH_SHORT).show();
             else {
                 queueSpeechText(textToRead, normalizeOcrText(textToRead), true);
             }
@@ -989,7 +989,7 @@ public class MainActivity extends CameraActivity {
                 ? "" : lastCandidateDiagnosticText;
             if (textToRead.trim().isEmpty()) {
                 Toast.makeText(this, "尚无实验候选文字，请先运行诊断", Toast.LENGTH_SHORT).show();
-            } else if (tts == null || !ttsReady) {
+            } else if (!canSpeak()) {
                 Toast.makeText(this, "中文语音尚未准备好", Toast.LENGTH_SHORT).show();
             } else {
                 queueSpeechText(textToRead, normalizeOcrText(textToRead), true);
@@ -1364,7 +1364,7 @@ public class MainActivity extends CameraActivity {
                 return;
             }
             running = !running;
-            if (running && !ttsReady) {
+            if (running && !canSpeak()) {
                 Toast.makeText(this,
                     "识别已启动，但中文语音尚未就绪。可在设置中点「试听当前语速」检查语音引擎。",
                     Toast.LENGTH_LONG).show();
@@ -1764,9 +1764,9 @@ public class MainActivity extends CameraActivity {
             return;
         }
         lastNonEmptyAt = now;
-        if (!running || !ttsReady) {
+        if (!running || !canSpeak()) {
             Log.w("KanziTTS", "OCR recognized text but speech skipped: running=" +
-                running + " ttsReady=" + ttsReady);
+                running + " availableVoice=" + canSpeak());
             return;
         }
         // One OCR pass feeds full, continuous text flows. Never automatically
@@ -1786,7 +1786,7 @@ public class MainActivity extends CameraActivity {
         runOnUiThread(() -> {
             // A scene luma fingerprint is a performance *hint*, never a
             // condition for suppressing successful recognized speech.
-            if (!running || tts == null || !ttsReady ||
+            if (!running || !canSpeak() ||
                 (!manualCapture && !automaticMode) ||
                 resultEpoch != readingEpoch.get()) return;
             queueSpeechText(fullSpeech, normalizedSpeech, manualCapture, sceneGeneration);
@@ -1801,7 +1801,7 @@ public class MainActivity extends CameraActivity {
     /** Read a complete, coherent OCR flow. New live targets preempt old speech. */
     private void queueSpeechText(String text, String normalized, boolean force,
                                  long sceneGeneration) {
-        if (tts == null || !ttsReady || normalized.isEmpty()) return;
+        if (!canSpeak() || normalized.isEmpty()) return;
         // Never truncate live recognition to only the first few words/lines.
         String spokenText = text;
         String spokenNormalized = normalizeOcrText(spokenText);
@@ -1865,7 +1865,7 @@ public class MainActivity extends CameraActivity {
     }
 
     private void speakNextQueued() {
-        if (!ttsReady || tts == null || speakingQueued || speechQueue.isEmpty()) return;
+        if (!canSpeak() || speakingQueued || speechQueue.isEmpty()) return;
         currentSpeech = speechQueue.pollFirst();
         speakingQueued = true;
         lastSpoken = currentSpeech.normalized;
@@ -1906,6 +1906,14 @@ public class MainActivity extends CameraActivity {
             showSpeechFailure("系统语音播放失败，请检查中文语音引擎");
             finishQueuedUtterance(item.utteranceId);
         }
+    }
+
+    /** A downloaded offline model does not need a system TTS voice. */
+    private boolean canSpeak() {
+        if (ttsReady && tts != null) return true;
+        if (voiceStore == null || offlineVoicePlayback == null) return false;
+        DownloadableVoiceStore.Voice voice = voiceStore.selectedVoice();
+        return !voice.isSystem() && voiceStore.isInstalled(voice);
     }
 
     private String voiceRowLabel(DownloadableVoiceStore.Voice voice) {
