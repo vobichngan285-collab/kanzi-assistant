@@ -19,8 +19,8 @@ public final class CloudCameraConditionReplay {
     private static final String[] CASES = {
         "static", "sensor_noise_2", "sensor_noise_5",
         "camera_jitter_1px", "camera_jitter_2px",
-        "camera_jitter_3px", "exposure_plus_5",
-        "exposure_plus_10", "replace_label",
+        "camera_jitter_3px", "camera_jitter_1px_exposure_plus_10", "exposure_plus_5",
+        "exposure_plus_10", "exposure_plus_20", "replace_label",
         "small_unsampled_label_change", "camera_pan_12px"
     };
 
@@ -59,9 +59,11 @@ public final class CloudCameraConditionReplay {
             case "camera_jitter_1px": shift=phase%2==0?-1:1;break;
             case "camera_jitter_2px": shift=phase%2==0?-2:2;break;
             case "camera_jitter_3px": shift=phase%2==0?-3:3;break;
+            case "camera_jitter_1px_exposure_plus_10": shift=phase%2==0?-1:1;light=10;break;
             case "camera_pan_12px": shift=12;break;
             case "exposure_plus_5": light=5;break;
             case "exposure_plus_10": light=10;break;
+            case "exposure_plus_20": light=20;break;
             case "replace_label":
                 for(int y=T;y<B;y++) for(int x=L;x<R;x++)
                     out[y*W+x]=(byte)((x/3+y/7)%2==0 ? 42:203);
