@@ -96,3 +96,4 @@ public final class RealtimeSpeechGuard {
                 return true;
         return false;
 }
+}
