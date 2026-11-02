@@ -1,0 +1,84 @@
+name: Smart OCR line reconstruction - real annotated photo A/B
+on:
+  push:
+    branches: [test/ocr-line-rebuild-ab-20261103]
+    paths:
+      - scripts/ocr_line_rebuild_geometry.py
+      - scripts/ocr_line_rebuild_real_images_ab.py
+      - .github/workflows/ocr-line-rebuild-ab.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  real-image-ab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 23
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check geometry safety without models
+        run: python3 scripts/ocr_line_rebuild_geometry.py
+      - name: Install original #315 ONNX research runtime
+        run: |
+          set -euo pipefail
+          pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
+      - name: Download two independent cohorts of actual #315 bounding boxes
+        uses: actions/download-artifact@v4
+        with:
+          name: ocr-315-true-box-value-data
+          run-id: 41492030817
+          github-token: ${{ github.token }}
+          path: /tmp/lines-develop
+      - name: Download untouched 132-photo holdout box coordinates
+        uses: actions/download-artifact@v4
+        with:
+          name: original-315-low-score-132-photo-holdout
+          run-id: 41495592122
+          github-token: ${{ github.token }}
+          path: /tmp/lines-holdout
+      - name: Download original unchanged #315 rec model, verify hash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/line-rec
+          curl -fL --retry 3 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx' -o /tmp/line-rec/rec.onnx
+          curl -fL --retry 3 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml?download=true' -o /tmp/line-rec/rec.yml
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/line-rec/rec.onnx' | sha256sum -c -
+          echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/line-rec/rec.yml' | sha256sum -c -
+      - name: Run matched A/B on 216 development photos
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/line-ab-dev
+          python3 -u scripts/ocr_line_rebuild_real_images_ab.py \
+            --boxes /tmp/lines-develop/all_boxes_ocr.csv \
+            --rec /tmp/line-rec/rec.onnx \
+            --yml /tmp/line-rec/rec.yml \
+            --out /tmp/line-ab-dev \
+            | tee /tmp/line-ab-dev/console.log
+          grep -q 'LINE_REBUILD_REAL_IMAGE_AB=PASS' /tmp/line-ab-dev/console.log
+          cat /tmp/line-ab-dev/summary.csv >> "$GITHUB_STEP_SUMMARY"
+      - name: Independently apply the exact same geometry rules to 132 NEW photos
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/line-ab-holdout
+          python3 -u scripts/ocr_line_rebuild_real_images_ab.py \
+            --boxes /tmp/lines-holdout/all_boxes_ocr.csv \
+            --rec /tmp/line-rec/rec.onnx \
+            --yml /tmp/line-rec/rec.yml \
+            --out /tmp/line-ab-holdout --holdout \
+            | tee /tmp/line-ab-holdout/console.log
+          grep -q 'LINE_REBUILD_REAL_IMAGE_AB=PASS' /tmp/line-ab-holdout/console.log
+          cat /tmp/line-ab-holdout/summary.csv >> "$GITHUB_STEP_SUMMARY"
+          echo 'Only selected same-line candidate pairs; not end-to-end USB or full-image OCR improvement.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive numerical A/B results (no public photos or model weights)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smart-line-reconstruction-real-photo-ab
+          path: |
+            /tmp/line-ab-dev/
+            /tmp/line-ab-holdout/
+          retention-days: 10
+          if-no-files-found: warn
