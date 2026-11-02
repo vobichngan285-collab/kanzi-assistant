@@ -102,6 +102,12 @@ public final class BookDiagnostic52RegressionTest {
             new LayoutRegion(2,.95f,0,380,680,840));
         LayoutReadingPlanner.Plan candidate=LayoutReadingPlanner.plan(source,boxes,single);
         require(candidate.verified.accepted,"strict ID permutation rejected");
+        require(candidate.distinctAssignedRegions==1,
+            "one AI-wide region must not be reported as multiple distinct page regions");
+        require(candidate.assignedBoxes==52,
+            "all boxes should remain traceable to the one broad region");
+        require(candidate.geometryGroupOrder && candidate.geometryGroups>=2,
+            "real two-page fallback must be explicitly reported as geometric grouping");
         require(candidate.placements.size()==52,"an OCR box was dropped");
         require(candidate.verified.ordered.size()==52,"not all original raw items remain");
         // Two-page reading: a late left-page body line must precede the right
