@@ -160,9 +160,24 @@ jobs:
           echo "OCR FIX: BGR recognition crops now match all three inference.yml files and PaddleOCR's Python recognizer." >> "$GITHUB_STEP_SUMMARY"
           echo "PP-OCRv6 Small model assets prepared; app-private model file loading enabled." >> "$GITHUB_STEP_SUMMARY"
           du -h "$SDK/src/main/assets/models/"*/* >> "$GITHUB_STEP_SUMMARY"
+      - name: Fetch verified offline PP-DocLayout-S ONNX model
+        run: |
+          set -euo pipefail
+          mkdir -p app/src/main/assets/layout
+          AI_MODEL="app/src/main/assets/layout/pp_doclayout_s.onnx"
+          curl -fL --retry 3 --retry-delay 2 \
+            "https://huggingface.co/stefanj0/PP-DocLayout-S-ONNX/resolve/main/pp_doclayout_s.onnx" \
+            -o "$AI_MODEL"
+          echo "33688dbee1c23e34b81777e97cb428eb40f24b242c02b5f623484959e830aec8  $AI_MODEL" | sha256sum -c -
+          echo "Offline PP-DocLayout-S ONNX: SHA256 verified, Apache-2.0." >> "$GITHUB_STEP_SUMMARY"
       - name: Install independent OCR model inspection tools
         run: |
           python3 -m pip install --quiet "numpy==1.26.4" "onnxruntime==1.21.1" "PyYAML==6.0.2"
+      - name: Verify real ONNX execution for layout model
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_layout_model.py app/src/main/assets/layout/pp_doclayout_s.onnx
+          echo "PP-DocLayout-S real ONNX Runtime execution passed." >> "$GITHUB_STEP_SUMMARY"
       - name: Verify all OCR ONNX models against SDK CTC dictionary
         run: |
           set -euo pipefail
@@ -203,6 +218,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/reading-flow-classes"
           javac -encoding UTF-8 -d "$RUNNER_TEMP/reading-flow-classes" \
             app/src/main/java/com/vobichngan/kanzi/ReadingOrder.java \
+            app/src/main/java/com/vobichngan/kanzi/LayoutRegion.java \
             app/src/main/java/com/vobichngan/kanzi/TextFlowRebuilder.java \
             app/src/main/java/com/vobichngan/kanzi/ReadingFocus.java \
             app/src/main/java/com/vobichngan/kanzi/SpeechText.java \
@@ -215,12 +231,14 @@ jobs:
             scripts/ReadingFocusSmokeTest.java \
             scripts/ContinuousReadingSmokeTest.java \
             scripts/RealSkewedTextFlowSmokeTest.java \
+            scripts/LayoutHybridSmokeTest.java \
             scripts/ReadingModesSmokeTest.java \
             scripts/CameraReadingFeatureSmokeTest.java
           java -cp "$RUNNER_TEMP/reading-flow-classes" ReadingFlowSmokeTest | tee "$RUNNER_TEMP/reading-flow-test.log"
           java -cp "$RUNNER_TEMP/reading-flow-classes" ReadingFocusSmokeTest | tee -a "$RUNNER_TEMP/reading-flow-test.log"
           java -cp "$RUNNER_TEMP/reading-flow-classes" ContinuousReadingSmokeTest | tee -a "$RUNNER_TEMP/reading-flow-test.log"
           java -cp "$RUNNER_TEMP/reading-flow-classes" RealSkewedTextFlowSmokeTest | tee -a "$RUNNER_TEMP/reading-flow-test.log"
+          java -cp "$RUNNER_TEMP/reading-flow-classes" LayoutHybridSmokeTest | tee -a "$RUNNER_TEMP/reading-flow-test.log"
           java -cp "$RUNNER_TEMP/reading-flow-classes" ReadingModesSmokeTest | tee -a "$RUNNER_TEMP/reading-flow-test.log"
           java -cp "$RUNNER_TEMP/reading-flow-classes" CameraReadingFeatureSmokeTest | tee -a "$RUNNER_TEMP/reading-flow-test.log"
           java -cp "$RUNNER_TEMP/reading-flow-classes" PhonePreviewGeometrySmokeTest | tee -a "$RUNNER_TEMP/reading-flow-test.log"
@@ -228,6 +246,7 @@ jobs:
           grep -q "CONTINUOUS_FULL_TEXT_FOCUS_SMOKE_TEST=PASS" "$RUNNER_TEMP/reading-flow-test.log"
           grep -q "CONTINUOUS_TEXT_INTEGRITY_SMOKE_TEST=PASS" "$RUNNER_TEMP/reading-flow-test.log"
           grep -q "REAL_SKEWED_TEXT_FLOW_SMOKE_TEST=PASS" "$RUNNER_TEMP/reading-flow-test.log"
+          grep -q "AI_GEOMETRY_HYBRID_SMOKE_TEST=PASS" "$RUNNER_TEMP/reading-flow-test.log"
           grep -q "DUAL_READING_MODES_SMOKE_TEST=PASS" "$RUNNER_TEMP/reading-flow-test.log"
           grep -q "CAMERA_READING_FEATURES=PASS" "$RUNNER_TEMP/reading-flow-test.log"
           grep -q "PHONE_PREVIEW_GEOMETRY=PASS" "$RUNNER_TEMP/reading-flow-test.log"
@@ -301,7 +320,7 @@ jobs:
           "$ZIPALIGN" -c -v 4 "$APK"
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           "$AAPT" dump badging "$APK" | tee "$RUNNER_TEMP/apk-manifest.txt"
-          grep -q "package: name='com.vobich.kanzi' versionCode='39' versionName='0.9.8'" "$RUNNER_TEMP/apk-manifest.txt"
+          grep -q "package: name='com.vobich.kanzi' versionCode='40' versionName='0.9.9'" "$RUNNER_TEMP/apk-manifest.txt"
           grep -q "sdkVersion:'26'" "$RUNNER_TEMP/apk-manifest.txt"
           echo "APK_SHA256=$(sha256sum "$APK" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
           echo "APK_SIZE=$(stat -c%s "$APK") bytes" >> "$GITHUB_STEP_SUMMARY"
@@ -309,7 +328,7 @@ jobs:
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kanzi-assistant-0.9.8-text-flow-rebuild-signed
+          name: kanzi-assistant-0.9.9-layout-ai-hybrid-signed
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
@@ -318,6 +337,6 @@ jobs:
         with:
           tag_name: test-build-${{ github.run_number }}
           target_commitish: ${{ github.sha }}
-          name: 看字助手测试版 0.9.8 透视文字行与连续朗读重建 (${{ github.run_number }})
+          name: 看字助手测试版 0.9.9 轻量版面AI与规则混合实验 (${{ github.run_number }})
           prerelease: true
           files: app/build/outputs/apk/release/app-release.apk

@@ -51,6 +51,12 @@ public final class ReadingFocus {
 
         public synchronized Selection choose(List<ReadingOrder.Box> boxes, int width,
                                               int height, Mode mode) {
+            return choose(boxes,width,height,mode,java.util.Collections.emptyList());
+        }
+
+        public synchronized Selection choose(List<ReadingOrder.Box> boxes, int width,
+                                              int height, Mode mode,
+                                              List<LayoutRegion> regions) {
             if (boxes == null) boxes = Collections.emptyList();
             if (mode == null) mode = Mode.AUTO;
             if (mode != previousMode || width != previousWidth || height != previousHeight) {
@@ -59,7 +65,7 @@ public final class ReadingFocus {
             previousMode = mode;
             previousWidth = width;
             previousHeight = height;
-            Selection chosen = ReadingFocus.choose(boxes, width, height, mode, previousCenter);
+            Selection chosen = ReadingFocus.choose(boxes, width, height, mode, previousCenter, regions);
             if (chosen.isolated && mode == Mode.AUTO) previousCenter = chosen.centerFraction;
             return chosen;
         }
@@ -67,15 +73,25 @@ public final class ReadingFocus {
 
     public static Selection choose(List<ReadingOrder.Box> boxes, int width,
                                    int height, Mode mode, float previousCenter) {
+        return choose(boxes,width,height,mode,previousCenter,
+            java.util.Collections.emptyList());
+    }
+
+    public static Selection choose(List<ReadingOrder.Box> boxes, int width,
+                                   int height, Mode mode, float previousCenter,
+                                   List<LayoutRegion> regions) {
         if (boxes == null || boxes.isEmpty()) return new Selection("", "未发现文字", 0, 0, .5f, false);
-        String entire = ReadingOrder.arrange(boxes);
+        String entire = mode == Mode.AUTO ?
+            ReadingOrder.arrange(boxes, regions) : ReadingOrder.arrange(boxes);
         // AUTO is a continuity-first READING mode, not a guess about the
         // user's preferred page. Keep every recognized character available.
         // Background objects may appear in independent flows, but are never
         // silently discarded merely for being shorter, left/right or smaller.
         // LEFT/RIGHT remain explicit user-directed filters only.
         if (mode == Mode.AUTO || mode == Mode.ALL || width <= 0 || height <= 0)
-            return new Selection(entire, "连续文字流（不丢弃有效识别框）",
+            return new Selection(entire, (mode == Mode.AUTO && regions != null && !regions.isEmpty() ?
+                    "AI版面辅助+文字流（不丢弃有效识别框）" :
+                    "连续文字流（不丢弃有效识别框）"),
                 boxes.size(), boxes.size(), .5f, false);
 
         // A horizontal book body has repeated LONG recognized lines. Exclude

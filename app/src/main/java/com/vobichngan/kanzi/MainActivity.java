@@ -54,7 +54,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.9.8";
+    private static final String APP_VERSION = "0.9.9";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -75,6 +75,7 @@ public class MainActivity extends CameraActivity {
     private static final String PREF_FRONT_CAMERA = "phone_camera_front";
     private static final String PREF_QUALITY_PROMPTS = "quality_voice_prompts";
     private static final String PREF_READING_FOCUS = "reading_page_focus";
+    private static final String PREF_AI_LAYOUT = "experimental_ai_layout";
     private static final int REQUEST_PHONE_CAMERA = 4051;
     private final Handler diagnosticHandler = new Handler(Looper.getMainLooper());
     private int diagnosticAttempts = 0;
@@ -119,6 +120,7 @@ public class MainActivity extends CameraActivity {
     private volatile boolean enhancedOcr = false;
     private volatile String ocrModelId = "ppocrv6_small";
     private volatile String readingFocusMode = "AUTO";
+    private volatile boolean aiLayoutEnabled = false;
     private volatile String lastDiagnosticText = "";
     private volatile boolean speechNoEnglish = false;
     private volatile boolean speechNoNumbers = false;
@@ -187,6 +189,9 @@ public class MainActivity extends CameraActivity {
                             + "\n图像解码：" + (legacyForDiagnostic ? "0.7.0 JPEG 兼容方式" : "OpenCV NV21 方式")
                             + "\n平均置信度：" + String.format(Locale.US, "%.3f", report.getAverageConfidence())
                             + "\n文字流组织方式：" + report.getFocusDescription()
+                            + "\n版面 AI 状态：" + report.getLayoutStatus()
+                            + "\nAI 有效版面区域：" + report.getLayoutRegions()
+                            + "\nAI 推理耗时：" + report.getLayoutElapsedMs() + " ms"
                             + "\n检测输入尺寸：" + report.getDetectorInputShape()
                             + "\n识别输入尺寸：" + report.getRecognitionInputShapes()
                             + "\n检测耗时：" + report.getDetectionTimeMs() + " ms"
@@ -420,6 +425,7 @@ public class MainActivity extends CameraActivity {
         previewMirror = prefs.getBoolean(PREF_PREVIEW_MIRROR, false);
         previewVerticalFlip = prefs.getBoolean(PREF_PREVIEW_FLIP, false);
         enhancedOcr = prefs.getBoolean(PREF_ENHANCED_OCR, false);
+        aiLayoutEnabled = prefs.getBoolean(PREF_AI_LAYOUT, false);
         readingFocusMode = prefs.getString(PREF_READING_FOCUS, "AUTO");
         // Retired page-centric ALL setting is equivalent to continuous AUTO.
         if ("ALL".equals(readingFocusMode)) readingFocusMode = "AUTO";
@@ -477,6 +483,7 @@ public class MainActivity extends CameraActivity {
         }, modelId);
         recognizer.setFastScanMode(!longReadingMode);
         recognizer.setReadingFocusMode(readingFocusMode);
+        recognizer.setAiLayoutEnabled(aiLayoutEnabled);
         recognizer.initialize();
     }
 
@@ -524,6 +531,17 @@ public class MainActivity extends CameraActivity {
         pageFocusNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         pageFocusNote.setTextColor(0xFF667085);
         panel.addView(pageFocusNote);
+
+        CheckBox layoutAiCheck = new CheckBox(this);
+        layoutAiCheck.setText("实验功能：AI 版面理解 + 连续文字流规则");
+        layoutAiCheck.setChecked(aiLayoutEnabled);
+        layoutAiCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        panel.addView(layoutAiCheck);
+        TextView layoutAiNote = new TextView(this);
+        layoutAiNote.setText("仅在自动连续朗读且检测到较多文字时运行设备端 PP-DocLayout-S。AI 只判断区域边界，不改写文字；可能增加识别耗时。失败自动使用原有几何规则。建议先通过诊断比较。");
+        layoutAiNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        layoutAiNote.setTextColor(0xFF667085);
+        panel.addView(layoutAiNote);
 
         TextView modelManagementTitle = new TextView(this);
         modelManagementTitle.setText("OCR 引擎选择");
@@ -793,6 +811,8 @@ public class MainActivity extends CameraActivity {
                     ? selectedFocus.getTag().toString() : readingFocusMode;
                 boolean focusChanged = !readingFocusMode.equals(requestedFocus);
                 readingFocusMode = requestedFocus;
+                boolean aiLayoutChanged = aiLayoutEnabled != layoutAiCheck.isChecked();
+                aiLayoutEnabled = layoutAiCheck.isChecked();
                 similarityThreshold = similaritySeek.getProgress();
                 boolean wasQueueEnabled = queueSpeech;
                 queueSpeech = queueCheck.isChecked();
@@ -827,19 +847,23 @@ public class MainActivity extends CameraActivity {
                     .putBoolean(PREF_ENHANCED_OCR, enhancedOcr)
                     .putString(PREF_OCR_MODEL, ocrModelId)
                     .putString(PREF_READING_FOCUS, readingFocusMode)
+                    .putBoolean(PREF_AI_LAYOUT, aiLayoutEnabled)
                     .putBoolean(PREF_NO_ENGLISH, speechNoEnglish)
                     .putBoolean(PREF_NO_NUMBERS, speechNoNumbers)
                     .putInt(PREF_MAX_SPEECH_CHARS, maxSpeechChars)
                     .apply();
                 if (changeReadingMode) setLongReadingMode(queueSpeech);
                 else if (wasQueueEnabled && !queueSpeech) clearSpeechQueue(true);
-                if (focusChanged) {
+                if (focusChanged || aiLayoutChanged) {
                     readingEpoch.incrementAndGet();
                     frameChangeGate.reset();
                     lastSpoken = "";
                     clearSpeechQueue(true);
-                    if (recognizer != null) recognizer.setReadingFocusMode(readingFocusMode);
-                    Toast.makeText(this, "已更新书籍阅读区域，将按新设置识别", Toast.LENGTH_SHORT).show();
+                    if (recognizer != null) {
+                        if (focusChanged) recognizer.setReadingFocusMode(readingFocusMode);
+                        recognizer.setAiLayoutEnabled(aiLayoutEnabled);
+                    }
+                    Toast.makeText(this, "已更新文字流/版面 AI 设置", Toast.LENGTH_SHORT).show();
                 }
                 if (modelChanged) switchOcrModel(selectedModelId);
                 Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show();
@@ -942,6 +966,7 @@ public class MainActivity extends CameraActivity {
         }, ocrModelId);
         recognizer.setFastScanMode(!longReadingMode);
         recognizer.setReadingFocusMode(readingFocusMode);
+        recognizer.setAiLayoutEnabled(aiLayoutEnabled);
         recognizer.initialize();
         phoneController = new InternalCameraController(this, phoneTexture, new InternalCameraController.Listener() {
             @Override public boolean shouldReceiveFrame() {

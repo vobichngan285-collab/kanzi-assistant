@@ -54,7 +54,10 @@ data class OcrDiagnosticResult(
     val detectorInputShape: String,
     val recognitionInputShapes: String,
     val focusDescription: String,
-    val fullPageText: String
+    val fullPageText: String,
+    val layoutStatus: String,
+    val layoutRegions: Int,
+    val layoutElapsedMs: Long
 )
 fun interface OcrDiagnosticCallback { fun onResult(result: OcrDiagnosticResult) }
 
@@ -93,6 +96,9 @@ class PaddleOcrEngine(
     @Volatile private var fastScanMode = false
     @Volatile private var readingFocusMode = ReadingFocus.Mode.AUTO
     private val focusTracker = ReadingFocus.Tracker()
+    private val layoutAi = LayoutAiEngine(appContext)
+    @Volatile private var aiLayoutEnabled = false
+    fun setAiLayoutEnabled(enabled: Boolean) { aiLayoutEnabled = enabled }
     fun setFastScanMode(enabled: Boolean) { fastScanMode = enabled }
     fun setReadingFocusMode(mode: String) {
         readingFocusMode = try { ReadingFocus.Mode.valueOf(mode) }
@@ -127,7 +133,10 @@ class PaddleOcrEngine(
                         if (enhanced !== bitmap) { bitmap.recycle(); bitmap = enhanced }
                     }
                     val result = current.recognize(bitmap)
-                    val focus = arrangeInReadingOrder(result.results, bitmap.width, bitmap.height)
+                    val layout = layoutAi.analyze(bitmap, aiLayoutEnabled &&
+                        readingFocusMode == ReadingFocus.Mode.AUTO, result.results.size)
+                    val focus = arrangeInReadingOrder(result.results, bitmap.width,
+                        bitmap.height, layout.regions)
                     val text = focus.text
                     val confidence = if (result.results.isEmpty()) 0.0
                         else result.results.map { it.confidence.toDouble() }.average()
@@ -149,7 +158,10 @@ class PaddleOcrEngine(
                         detectorInputShape = result.detInputShape.joinToString("×"),
                         recognitionInputShapes = result.recInputShapes.joinToString("；") { it.joinToString("×") },
                         focusDescription = focus.description,
-                        fullPageText = ReadingOrder.arrange(toReadingBoxes(result.results))
+                        fullPageText = ReadingOrder.arrange(toReadingBoxes(result.results)),
+                        layoutStatus = layout.status,
+                        layoutRegions = layout.regions.size,
+                        layoutElapsedMs = layout.elapsedMs
                     )
                     withContext(Dispatchers.Main) { onResult.onResult(report) }
                 } finally { bitmap.recycle() }
@@ -259,9 +271,12 @@ class PaddleOcrEngine(
                             }
                         }
                     }
-                    val focus = arrangeInReadingOrder(result.results, bitmap.width, bitmap.height)
+                    val layout = layoutAi.analyze(bitmap, aiLayoutEnabled &&
+                        readingFocusMode == ReadingFocus.Mode.AUTO, result.results.size)
+                    val focus = arrangeInReadingOrder(result.results, bitmap.width,
+                        bitmap.height, layout.regions)
                     val text = focus.text
-                    Log.i(TAG, "Reading focus: ${focus.description}")
+                    Log.i(TAG, "Reading focus: ${focus.description}; layout=${layout.status}; layoutMs=${layout.elapsedMs}")
                     val averageConfidence = if (result.results.isEmpty()) 0.0
                         else result.results.map { it.confidence }.average()
                     val message = "frame=${width}x${height}, ocrInputDirection=raw0, " +
@@ -364,9 +379,11 @@ class PaddleOcrEngine(
         }
 
     private fun arrangeInReadingOrder(
-        results: List<OCRResult>, width: Int, height: Int
+        results: List<OCRResult>, width: Int, height: Int,
+        layoutRegions: List<LayoutRegion> = emptyList()
     ): ReadingFocus.Selection {
-        return focusTracker.choose(toReadingBoxes(results), width, height, readingFocusMode)
+        return focusTracker.choose(toReadingBoxes(results), width, height,
+            readingFocusMode, layoutRegions)
     }
 
     /** Decode the camera's unrotated NV21 pixels; TextureView handles display transforms. */
@@ -403,6 +420,7 @@ class PaddleOcrEngine(
         released = true
         scope.launch {
             try { engine?.release() } catch (_: Throwable) {}
+            try { layoutAi.release() } catch (_: Throwable) {}
             engine = null
             scope.cancel()
         }

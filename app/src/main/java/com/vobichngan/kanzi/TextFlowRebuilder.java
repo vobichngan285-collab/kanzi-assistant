@@ -73,8 +73,13 @@ public final class TextFlowRebuilder {
 
     /** Default order is left-to-right by independent stream, then down. */
     public static String arrange(List<ReadingOrder.Box> input) {
+        return arrange(input, java.util.Collections.emptyList());
+    }
+
+    public static String arrange(List<ReadingOrder.Box> input, List<LayoutRegion> regions) {
         if (input == null || input.isEmpty()) return "";
         List<ReadingOrder.Box> boxes = new ArrayList<>(input);
+        int[] layoutId = LayoutRegion.assign(boxes, regions);
         int n = boxes.size();
         int[] flowParent = new int[n];
         int[] rowParent = new int[n];
@@ -91,6 +96,12 @@ public final class TextFlowRebuilder {
             ReadingOrder.Box a = boxes.get(i);
             for (int j = i + 1; j < n; j++) {
                 ReadingOrder.Box b = boxes.get(j);
+                // AI regions are *barriers*, never permission to fabricate
+                // text or override the geometric baseline. A footnote may
+                // touch the main row; if both have trusted different region
+                // IDs, they must not be attached into the same sentence.
+                if(layoutId[i]>=0 && layoutId[j]>=0 &&
+                    layoutId[i]!=layoutId[j])continue;
                 if (sameVisualRow(a,b,dense[i],dense[j])) {
                     unite(rowParent,i,j);
                     unite(flowParent,i,j);
@@ -116,8 +127,14 @@ public final class TextFlowRebuilder {
             firstIndex.putIfAbsent(id,i);
         }
         List<Flow> parts = new ArrayList<>(prelim.values());
+        java.util.Map<Integer,java.util.Set<Integer>> flowRegions=new HashMap<>();
+        for(int i=0;i<n;i++)if(layoutId[i]>=0)
+            flowRegions.computeIfAbsent(root(flowParent,i),
+                k->new java.util.HashSet<>()).add(layoutId[i]);
         for(int i=0;i<parts.size();i++) for(int j=i+1;j<parts.size();j++) {
             Flow a=parts.get(i),b=parts.get(j);
+            java.util.Set<Integer> ra=flowRegions.get(a.id), rb=flowRegions.get(b.id);
+            if(ra!=null && rb!=null && !ra.equals(rb))continue;
             // Never use a singleton title, page number or isolated noisy
             // fragment as a bridge joining two unrelated columns.
             if (a.boxes.size()<2 || b.boxes.size()<2) continue;

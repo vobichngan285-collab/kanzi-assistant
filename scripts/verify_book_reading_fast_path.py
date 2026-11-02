@@ -4,7 +4,7 @@ from pathlib import Path
 root=Path(__file__).resolve().parents[1]
 main=(root/"app/src/main/java/com/vobichngan/kanzi/MainActivity.java").read_text()
 reading=(root/"app/src/main/java/com/vobichngan/kanzi/ReadingOrder.java").read_text()
-assert "APP_VERSION = \"0.9.8\"" in main
+assert "APP_VERSION = \"0.9.9\"" in main
 assert "if (recognizer == null || !recognizer.isReady()) return;" in main
 assert "if (candidateCount < 2) return;" not in main
 assert "needsConfirmation" not in main
@@ -46,3 +46,13 @@ assert "sameVisualRow" in flow and "adjacentVertical" in flow
 assert 'b.alignedY(seamX)' in flow
 assert "Math.max(ha,hb)*4.3f" in flow
 print("PERSPECTIVE_FLOW_REBUILD_WIRING=PASS")
+
+layout=(root/"app/src/main/java/com/vobichngan/kanzi/LayoutAiEngine.kt").read_text()
+region=(root/"app/src/main/java/com/vobichngan/kanzi/LayoutRegion.java").read_text()
+ocr=(root/"app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt").read_text()
+assert "PREF_AI_LAYOUT" in main and "aiLayoutEnabled = layoutAiCheck.isChecked()" in main
+assert "layoutAi.analyze(bitmap" in ocr
+assert "layout.regions" in ocr and "layoutElapsedMs" in ocr
+assert "OnnxTensor.createTensor" in layout and "pp_doclayout_s.onnx" in layout
+assert "return assigned;" in region and "covered<" in region
+print("LAYOUT_AI_HYBRID_WIRING=PASS")

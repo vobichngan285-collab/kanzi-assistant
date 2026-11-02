@@ -151,6 +151,10 @@ public final class ReadingOrder {
 
     /** No confidence filtering here: losing a valid line is worse than exposing uncertain OCR text. */
     public static String arrange(List<Box> incoming) {
+        return arrange(incoming, java.util.Collections.emptyList());
+    }
+
+    public static String arrange(List<Box> incoming, List<LayoutRegion> regions) {
         List<Box> boxes = new ArrayList<>();
         for (Box box : incoming) {
             if (box == null || box.x.length != 4 || box.y.length != 4 || box.text == null) continue;
@@ -196,7 +200,7 @@ public final class ReadingOrder {
         // Baseline-aware line construction and text-stream reconstruction
         // belong in one geometric graph. A simple shared-X column heuristic
         // causes unrelated footnotes to be inserted into running prose.
-        return TextFlowRebuilder.arrange(boxes);
+        return TextFlowRebuilder.arrange(boxes, regions);
 
     }
 
