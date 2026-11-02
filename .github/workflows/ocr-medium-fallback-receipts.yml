@@ -1,0 +1,42 @@
+name: Medium conditional fallback on 100 food receipts prices
+on:
+  push:
+    branches: [test/ocr-small-det-medium-rec-20261103]
+    paths:
+      - scripts/ocr_medium_fallback_receipts.py
+      - .github/workflows/ocr-medium-fallback-receipts.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  receipt-simulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download independently computed four-model receipt A/B predictions
+        uses: actions/download-artifact@v4
+        with:
+          name: food-price-4-recognizers-paired-comparison
+          run-id: 41502981441
+          github-token: ${{ github.token }}
+          path: /tmp/receipts-four-ocr
+      - name: Apply same Small-confidence 0.95 rule to 100 receipts
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/receipt-fallback
+          python3 -u scripts/ocr_medium_fallback_receipts.py \
+            /tmp/receipts-four-ocr/per_word.csv /tmp/receipt-fallback \
+            | tee /tmp/receipt-fallback/log.txt
+          grep -q 'RECEIPT_CONDITIONAL_MEDIUM_AB=PASS 1235' /tmp/receipt-fallback/log.txt
+          cat /tmp/receipt-fallback/receipt_medium_fallback.csv >> "$GITHUB_STEP_SUMMARY"
+          echo 'Annotation cropped: recognition-only, not real-world Android/USB photo detection.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload only price/recognition statistics
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: conditional-medium-food-receipts
+          path: /tmp/receipt-fallback/
+          retention-days: 10
+          if-no-files-found: warn
