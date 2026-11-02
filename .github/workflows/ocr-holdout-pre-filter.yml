@@ -1,0 +1,44 @@
+name: Independent holdout - pre-OCR low-score filtering usefulness
+on:
+  push:
+    branches: [test/ocr-111-boxes-audit-20261103]
+    paths:
+      - .github/workflows/ocr-holdout-pre-filter.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download SHA-verified 132-real-photo holdout OCR outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: original-315-low-score-132-photo-holdout
+          run-id: 41495592122
+          github-token: ${{ github.token }}
+          path: /tmp/holdout
+      - name: Apply same PRE-OCR box selection rules without retuning
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/holdout-filters
+          python3 -u scripts/analyze_low_boxes_vs_baseline.py \
+            --boxes /tmp/holdout/all_boxes_ocr.csv \
+            --per-image /tmp/holdout/per_image.csv \
+            --holdout \
+            --out /tmp/holdout-filters \
+            | tee /tmp/holdout-filters/console.log
+          grep -q 'DATA_SPLIT INDEPENDENT_HOLDOUT' /tmp/holdout-filters/console.log
+          grep -q 'BASELINE_OVERLAP_AND_PRE_REC_FILTER_AB=PASS 90' /tmp/holdout-filters/console.log
+          cat /tmp/holdout-filters/pre_recognition_policies.csv >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload holdout selection and timing metrics only
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: holdout-132-photos-filter-policy-metrics
+          path: /tmp/holdout-filters/
+          retention-days: 10
+          if-no-files-found: warn
