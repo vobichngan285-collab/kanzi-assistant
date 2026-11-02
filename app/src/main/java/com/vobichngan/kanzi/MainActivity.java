@@ -71,7 +71,6 @@ public class MainActivity extends CameraActivity {
     private static final String PREF_LONG_READING = "reading_mode_long";
     private static final String PREF_SPEECH_RATE = "speech_rate";
     private static final String PREF_PREVIEW_ROTATION = "preview_rotation";
-    private static final String PREF_LEGACY_NV21 = "ocr_legacy_nv21_jpeg";
     private static final String PREF_PREVIEW_MIRROR = "preview_mirror";
     private static final String PREF_PREVIEW_FLIP = "preview_flip";
     private static final String PREF_ENHANCED_OCR = "enhanced_ocr";
@@ -130,7 +129,6 @@ public class MainActivity extends CameraActivity {
     private final java.util.concurrent.atomic.AtomicInteger readingEpoch = new java.util.concurrent.atomic.AtomicInteger(0);
     private volatile float speechRate = 1.0f;
     private volatile int previewRotation = 0;
-    private volatile boolean legacyNv21Jpeg = false;
     private volatile boolean previewMirror = false;
     private volatile boolean previewVerticalFlip = false;
     private volatile boolean enhancedOcr = false;
@@ -197,7 +195,9 @@ public class MainActivity extends CameraActivity {
                 }
                 final byte[] diagnosticFrame = data.clone();
                 final long started = diagnosticStartedAt;
-                final boolean legacyForDiagnostic = legacyNv21Jpeg;
+                // The obsolete 0.7.0 NV21->JPEG comparison is retired.
+                // Keep one consistent low-overhead OpenCV NV21 decoder.
+                final boolean legacyForDiagnostic = false;
                 recognizer.diagnoseNv21(diagnosticFrame, width, height, enhancedOcr, legacyForDiagnostic,
                     report -> {
                         busy.set(false);
@@ -211,7 +211,7 @@ public class MainActivity extends CameraActivity {
                             + "\nOCR 输入方向：原始摄像头帧（固定 0°）"
                             + "\n实时文字输入旋转设置：" + liveTextRotationDegrees +
                                 "°（仅用于正式实时扫描；独立诊断保持原始0°画面）"
-                            + "\n图像解码：" + (legacyForDiagnostic ? "0.7.0 JPEG 兼容方式" : "OpenCV NV21 方式")
+                            + "\n图像解码：OpenCV NV21 方式"
                             + "\n平均置信度：" + String.format(Locale.US, "%.3f", report.getAverageConfidence())
                             + "\n文字流组织方式：" + report.getFocusDescription()
                             + "\n版面 AI 状态：" + report.getLayoutStatus()
@@ -296,7 +296,7 @@ public class MainActivity extends CameraActivity {
             byte[] frame = data.clone();
             final boolean enhance = enhancedOcr;
             final FrameQuality.Assessment quality = FrameQuality.assess(frame, width, height);
-            final boolean legacyDecode = legacyNv21Jpeg;
+            final boolean legacyDecode = false;
             try {
                 recognizer.recognizeNv21(frame, width, height, enhance, legacyDecode, found -> {
                     busy.set(false);
@@ -494,7 +494,6 @@ public class MainActivity extends CameraActivity {
         speechRate = Math.max(0.5f, Math.min(2.0f, prefs.getFloat(PREF_SPEECH_RATE, 1.0f)));
         previewRotation = prefs.getInt(PREF_PREVIEW_ROTATION, 0);
         if (previewRotation != 0 && previewRotation != 90 && previewRotation != 180 && previewRotation != 270) previewRotation = 0;
-        legacyNv21Jpeg = prefs.getBoolean(PREF_LEGACY_NV21, false);
         previewMirror = prefs.getBoolean(PREF_PREVIEW_MIRROR, false);
         previewVerticalFlip = prefs.getBoolean(PREF_PREVIEW_FLIP, false);
         enhancedOcr = prefs.getBoolean(PREF_ENHANCED_OCR, false);
@@ -781,16 +780,6 @@ public class MainActivity extends CameraActivity {
         panel.addView(rotationNote);
 
 
-        CheckBox legacyDecodeCheck = new CheckBox(this);
-        legacyDecodeCheck.setText("使用 0.7.0 的 NV21→JPEG 图像解码方式（对照测试）");
-        legacyDecodeCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        legacyDecodeCheck.setChecked(legacyNv21Jpeg);
-        panel.addView(legacyDecodeCheck);
-        TextView legacyNote = new TextView(this);
-        legacyNote.setText("只改变图像转换过程，不改变摄像头分辨率、模型、语音或预览。可与目前的 OpenCV 解码方式对比；JPEG 方式可能更慢。");
-        legacyNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        panel.addView(legacyNote);
-
         CheckBox mirrorCheck = new CheckBox(this);
         mirrorCheck.setText("水平镜像");
         mirrorCheck.setChecked(previewMirror);
@@ -982,7 +971,6 @@ public class MainActivity extends CameraActivity {
                 try { maxSpeechChars = Math.max(0, Math.min(5000, Integer.parseInt(maxCharsInput.getText().toString().trim()))); }
                 catch (NumberFormatException ignored) { maxSpeechChars = 0; }
                 previewRotation = rotationSeek.getProgress() * 90;
-                legacyNv21Jpeg = legacyDecodeCheck.isChecked();
                 previewMirror = mirrorCheck.isChecked();
                 previewVerticalFlip = flipCheck.isChecked();
                 enhancedOcr = enhancedCheck.isChecked();
@@ -999,7 +987,6 @@ public class MainActivity extends CameraActivity {
                     .putBoolean(PREF_QUALITY_PROMPTS, qualityPromptsEnabled)
                     .putFloat(PREF_SPEECH_RATE, speechRate)
                     .putInt(PREF_PREVIEW_ROTATION, previewRotation)
-                    .putBoolean(PREF_LEGACY_NV21, legacyNv21Jpeg)
                     .putBoolean(PREF_PREVIEW_MIRROR, previewMirror)
                     .putBoolean(PREF_PREVIEW_FLIP, previewVerticalFlip)
                     .putBoolean(PREF_ENHANCED_OCR, enhancedOcr)
