@@ -64,9 +64,35 @@ public final class RealtimeSpeechGuard {
             }
         }
         int shorterShingles = shorter - 2;
-        // At least 60% of the shorter reading's character triples must be
-        // shared. A distinct page with only the same publisher/author
-        // heading is allowed to interrupt the previous one.
-        return shared >= 3 && shared >= Math.ceil(shorterShingles * 0.60);
+        // Strong generic overlap covers ordinary near-identical OCR frames.
+        if (shared >= 3 && shared >= Math.ceil(shorterShingles * 0.60))
+            return true;
+
+        // Real cover regression: the SAME Jane Eyre cover varied between
+        // 19 and 22 OCR boxes. The damaged translator biography, a stray
+        // (4iThy) box and changed cover glyphs lowered shingle overlap below
+        // 60%, making live TTS restart after the top slogan.
+        //
+        // Do not solve that solely by lowering the global threshold: require
+        // BOTH significant shared text AND a contiguous long anchor phrase.
+        // This distinguishes the same cover with noisy small print from a
+        // different page that happens to repeat its publisher or author.
+        // Pure string work; no extra model or OCR inference.
+        return shorter >= 24 &&
+            shared >= 10 &&
+            shared >= Math.ceil(shorterShingles * 0.43) &&
+            sharesContiguousAnchor(previous, next, 8);
     }
+
+    private static boolean sharesContiguousAnchor(String previous, String next,
+                                                  int anchorChars) {
+        if (previous.length() < anchorChars || next.length() < anchorChars)
+            return false;
+        java.util.HashSet<String> phrases = new java.util.HashSet<>();
+        for (int i = 0; i <= previous.length() - anchorChars; i++)
+            phrases.add(previous.substring(i, i + anchorChars));
+        for (int i = 0; i <= next.length() - anchorChars; i++)
+            if (phrases.contains(next.substring(i, i + anchorChars)))
+                return true;
+        return false;
 }
