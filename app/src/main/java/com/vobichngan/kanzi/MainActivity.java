@@ -161,6 +161,7 @@ public class MainActivity extends CameraActivity {
     private SpeechItem currentSpeech;
     private boolean speakingQueued = false;
     private long utteranceSequence = 0;
+    private long lastSpeechFailureNoticeAt = 0L;
 
     private static final class SpeechItem {
         final String text;
@@ -1185,6 +1186,7 @@ public class MainActivity extends CameraActivity {
                 tts.setSpeechRate(speechRate);
                 ttsReady = language != TextToSpeech.LANG_MISSING_DATA && language != TextToSpeech.LANG_NOT_SUPPORTED;
                 if (ttsReady) {
+                    Log.i("KanziTTS", "Chinese TextToSpeech engine ready");
                     // If the camera already saw this page before TTS was ready,
                     // make it immediately eligible for reading now.
                     frameChangeGate.reset();
@@ -1195,7 +1197,11 @@ public class MainActivity extends CameraActivity {
                             mainHandler.post(() -> finishQueuedUtterance(utteranceId));
                         }
                         @Override public void onError(String utteranceId) {
-                            mainHandler.post(() -> finishQueuedUtterance(utteranceId));
+                            Log.e("KanziTTS", "TTS utterance failed: " + utteranceId);
+                            mainHandler.post(() -> {
+                                showSpeechFailure("系统语音合成失败，请检查中文 TTS 引擎");
+                                finishQueuedUtterance(utteranceId);
+                            });
                         }
                         @Override public void onStop(String utteranceId, boolean interrupted) {
                             mainHandler.post(() -> finishQueuedUtterance(utteranceId));
@@ -1204,10 +1210,18 @@ public class MainActivity extends CameraActivity {
                     speakNextQueued();
                 } else {
                     status.setText("系统没有可用的中文语音，请先安装中文语音包");
+                    Log.e("KanziTTS", "Chinese TTS language unavailable: " + language);
+                    Toast.makeText(MainActivity.this,
+                        "OCR 已可识别，但系统中文语音不可用。请检查系统文字转语音设置。",
+                        Toast.LENGTH_LONG).show();
                 }
             } else {
                 ttsReady = false;
+                Log.e("KanziTTS", "TTS initialize failed: " + code);
                 status.setText("系统中文语音引擎初始化失败，状态码：" + code);
+                Toast.makeText(MainActivity.this,
+                    "系统语音引擎初始化失败，OCR 识别仍可用但不能朗读。",
+                    Toast.LENGTH_LONG).show();
             }
         });
 
@@ -1257,6 +1271,16 @@ public class MainActivity extends CameraActivity {
                 return;
             }
             running = !running;
+            if (running && !ttsReady) {
+                Toast.makeText(this,
+                    "识别已启动，但中文语音尚未就绪。可在设置中点「试听当前语速」检查语音引擎。",
+                    Toast.LENGTH_LONG).show();
+            }
+            if (running && !automaticMode) {
+                Toast.makeText(this,
+                    "当前是手动模式，需要点击「识别一次」才会朗读。",
+                    Toast.LENGTH_LONG).show();
+            }
             readingEpoch.incrementAndGet();
             realtimeScene.reset();
             lastQuickScanGeneration = -1L;
@@ -1647,7 +1671,11 @@ public class MainActivity extends CameraActivity {
             return;
         }
         lastNonEmptyAt = now;
-        if (!running || !ttsReady) return;
+        if (!running || !ttsReady) {
+            Log.w("KanziTTS", "OCR recognized text but speech skipped: running=" +
+                running + " ttsReady=" + ttsReady);
+            return;
+        }
         // One OCR pass feeds full, continuous text flows. Never automatically
         // crop to a guessed page or discard entire shorter lines.
         final String confirmed = recognizedText;
@@ -1709,7 +1737,15 @@ public class MainActivity extends CameraActivity {
         // Ding once for a NEW confirmed live target, then start TTS.
         if (!force && !longReadingMode && recognitionTone != null) {
             final long prompt = ++speechPromptSerial;
-            recognitionTone.startTone(ToneGenerator.TONE_PROP_BEEP, 85);
+            try {
+                recognitionTone.startTone(ToneGenerator.TONE_PROP_BEEP, 85);
+            } catch (RuntimeException error) {
+                // Audio feedback is optional; TTS may never be held hostage
+                // by an unavailable notification audio stream.
+                Log.w("KanziTTS", "Recognition chime unavailable", error);
+                speakNextQueued();
+                return;
+            }
             mainHandler.postDelayed(() -> {
                 if (prompt == speechPromptSerial) speakNextQueued();
             }, 105L);
@@ -1734,9 +1770,23 @@ public class MainActivity extends CameraActivity {
         currentSpeech = speechQueue.pollFirst();
         speakingQueued = true;
         lastSpoken = currentSpeech.normalized;
-        int result = tts.speak(currentSpeech.text, TextToSpeech.QUEUE_ADD, null,
+        // Always flush the system's previous utterance for the FIRST chunk
+        // of a newly confirmed scan target. Subsequent chunks only start after
+        // onDone; flushing here cannot remove the rest of our own Java queue.
+        int result = tts.speak(currentSpeech.text, TextToSpeech.QUEUE_FLUSH, null,
             currentSpeech.utteranceId);
-        if (result == TextToSpeech.ERROR) finishQueuedUtterance(currentSpeech.utteranceId);
+        if (result == TextToSpeech.ERROR) {
+            Log.e("KanziTTS", "TextToSpeech.speak returned ERROR");
+            showSpeechFailure("系统语音播放失败，请到设置里试听当前语速");
+            finishQueuedUtterance(currentSpeech.utteranceId);
+        }
+    }
+
+    private void showSpeechFailure(String message) {
+        long now = System.currentTimeMillis();
+        if (now - lastSpeechFailureNoticeAt < 8000L) return;
+        lastSpeechFailureNoticeAt = now;
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
     }
 
     private void finishQueuedUtterance(String utteranceId) {
