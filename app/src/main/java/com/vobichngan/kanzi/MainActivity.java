@@ -844,6 +844,8 @@ public class MainActivity extends CameraActivity {
                         clearSpeechQueue(true);
                         if (selected.isSystem()) {
                             voiceStore.activate(selected);
+                            if (offlineVoicePlayback != null)
+                                offlineVoicePlayback.releaseModelWhenIdle();
                             voiceStatus.setText("当前语音：系统中文语音");
                             for (DownloadableVoiceStore.Voice item : DownloadableVoiceStore.VOICES) {
                                 TextView row = voiceRows.get(item.id);
@@ -1946,6 +1948,8 @@ public class MainActivity extends CameraActivity {
                             !currentSpeech.utteranceId.equals(utteranceId)) return;
                         Log.e("KanziTTS", "Offline speech failed, switching to system: " + reason);
                         voiceStore.forceSystem();
+                        if (offlineVoicePlayback != null)
+                            offlineVoicePlayback.releaseModelWhenIdle();
                         showSpeechFailure("离线自然语音暂不可用，已自动切回系统中文语音");
                         speakSystemItem(item);
                     }
