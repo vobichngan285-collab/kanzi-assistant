@@ -1,0 +1,62 @@
+name: Same scene OCR - compare 4 recognition models (no APK)
+on:
+  push:
+    branches: [test/ocr-model-swap-ab-20261103]
+    paths:
+      - scripts/ocr_model_swap_rec_ab.py
+      - .github/workflows/ocr-model-swap-rec.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  recognition-ab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install exactly one ONNX inference stack for all four models
+        run: |
+          set -euo pipefail
+          pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
+      - name: Download four original official ONNX models AND four model-specific dictionaries
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ocr-models
+          for item in 'v6_small:PP-OCRv6_small_rec_onnx' 'v6_medium:PP-OCRv6_medium_rec_onnx' 'v6_tiny:PP-OCRv6_tiny_rec_onnx' 'v5_mobile:PP-OCRv5_mobile_rec_onnx'; do
+            dir=${item%%:*}
+            name=${item#*:}
+            mkdir -p "/tmp/ocr-models/$dir"
+            for file in inference.onnx inference.yml; do
+              curl --fail --location --retry 4 --retry-delay 3 \
+                --connect-timeout 25 --max-time 260 \
+                "https://huggingface.co/PaddlePaddle/$name/resolve/main/$file" \
+                -o "/tmp/ocr-models/$dir/$file"
+            done
+            sha256sum "/tmp/ocr-models/$dir/inference.onnx"
+            sha256sum "/tmp/ocr-models/$dir/inference.yml"
+          done
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/ocr-models/v6_small/inference.onnx' | sha256sum -c -
+          echo '9c09abf0957f7968c7586464b7397b84ad2387a0497a351af40e9acc71b673ba  /tmp/ocr-models/v6_medium/inference.onnx' | sha256sum -c -
+      - name: A/B on SAME 216 development and 132 untouched real photos
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ocr-model-swap-results
+          python3 -u scripts/ocr_model_swap_rec_ab.py \
+            --models /tmp/ocr-models \
+            --out /tmp/ocr-model-swap-results \
+            | tee /tmp/ocr-model-swap-results/cloud-rec-ab.log
+          grep -q 'MODEL_SWAP_SAME_REAL_IMAGE_CROPS=PASS' /tmp/ocr-model-swap-results/cloud-rec-ab.log
+          echo '### Fixed GT-cropped real scenes: identical images/regions + model-specific dictionaries' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/ocr-model-swap-results/metrics.csv >> "$GITHUB_STEP_SUMMARY"
+          echo 'No source photo bytes; no APK or Android UVC timings.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish numerical A/B and line predictions (no public photo or model binaries)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 4-model-real-photo-recognition-swap-results
+          path: /tmp/ocr-model-swap-results/
+          retention-days: 10
+          if-no-files-found: warn
