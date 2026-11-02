@@ -69,3 +69,37 @@ java -ea -cp /tmp/kanzi-policy SelectiveOcrRescuePolicySmokeTest
 - `scripts/NoQueueOcrRescueExecutorSmokeTest.java` — 零队列、过期帧抑制、后台工作与超时冷却。
 
 工作流：`.github/workflows/selective-ocr-rescue-policy.yml`。仅验证 Java 逻辑与未修改现有热路径；**不代表 Android 真实帧率、准确率或摄像头不卡顿的验收结果**。
+
+## 新增方案：单次 OCR + NV21 亮度辅助稳定性确认
+
+独立原型：`SinglePassLumaConfirmGate.java`。
+
+### 延迟问题的处理
+
+我们确认当前快速扫读的 `FrameChangeGate` 对相同场景设置 **2800ms** 扫描重试间隔；因此，`StableShortTextGate` 原型的「必须再次完成 OCR」策略会明显推迟首次播报。
+
+新的辅助方案**只需一次完整 OCR**：
+
+1. 已有 OCR 成功后，用**用于 OCR 的同一张 NV21 原始帧**、原始文字框、置信度及其摄像头帧编号创建采样快照。
+2. 在 USB 的后续预览帧上**仅检查亮度**，不新建 Bitmap、不调用 ONNX、不排队图片。
+3. 每次全局 32×18 点与目标文字框局部 32×16 点，总计 1088 个亮度采样点；局部与全局都须稳定。
+4. 只处理短文字、高置信度、具有一定纹理的文字框；OCR 结果过旧、相机移动、帧间断、超时都拒绝。
+5. 收到至少两张不同的后续帧、且在接收首次 OCR 结果后持续稳定 >= 160ms，才产生 `READY` 决策。**该规则只表明画面相对稳定，不保证 OCR 文字正确。**
+6. 必须在用户主动开启扫描且短文字模式、未朗读、相机仍可用时，才能将 `READY` 决策考虑交给 TTS。模块本身**没有发音能力**，当前尚未接入正式 TTS。
+
+### 与当前摄像头回调的兼容性
+
+`MainActivity.previewCallback.onPreviewData` 接收 USB 的 NV21 连续帧，然后进入 `processCameraFrame`，在识别间隔与 `busy` 限流检查**之前**有接入廉价亮度检查的机会。新功能若要启用，必须：
+- 把补充采样插入到低成本的帧入口（只在有待确认文字时读取采样），不能放在当前 `busy` / 500ms / 2800ms 的 OCR 分支之后；
+- 在主线程异步展示/朗读之前重新检查 `readingEpoch`、`running`、模式、当前场景是否发生变化；
+- 仅允许 USB 场景开始试验。手机摄像头的 `InternalCameraController.shouldReceiveFrame` 当前会在 OCR 忙碌及识别间隔内减少回调，可能拿不到满足此策略的辅助帧，不能直接把同一方案当作手机相机上已经验证。
+- 当前分支**没有修改 MainActivity 或 SDK 的热路径**，不影响现有行为。
+
+### 验证结果与局限
+
+最新 GitHub CI 基于 JDK17 + 合成 NV21 帧（非真机）通过了：
+- `SinglePassLumaConfirmGateSmokeTest`：场景变化拒绝、重复帧/乱序帧拒绝、帧中断、参考画面过期、短文字限定、无纹理、停止扫描等。
+- `SinglePassLumaPipelineSimulation`：在 **模拟** OCR 于 1000ms 取帧、1320ms 结束时，使用 1400ms 与 1490ms 的两张稳定后续帧，在 1490ms 给出 `READY`。相同画面原来直到 3800ms 才符合第二次 OCR 重试条件。这是**模拟的确认时机对比**，不是安卓真实首次朗读时间。
+- `SinglePassLumaConfirmBenchmark`：在 GitHub 服务器上，以合成 1920×1080 画面重复 5000 次的采样与决策，某次结果约 P50=8.75µs、P95=14.23µs；**不包含原始 OCR、TTS 或相机线程调度，不能推出真机不卡顿。**
+
+**重要缺点**：1088 点稀疏亮度采样可能漏掉很小的字形差异，无法判断「纯生奶」是否应为「纯牛奶」，也不能保证不同但看起来相似的标签不会被误判为同一场景。因此这种策略只能用作**辅助画面稳定性判断**；准确率改善、误触发率及真机首句播报延迟仍需实测，不能取代文字检测分割与真正的 OCR。
