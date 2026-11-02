@@ -128,6 +128,11 @@ public final class OfflineVoicePlayback {
         generation.incrementAndGet();
         stopTrack();
     }
+    /** Restore OCR memory headroom when the user switches back to system TTS. */
+    public void releaseModelWhenIdle() {
+        stop();
+        if (!closed) worker.execute(synthesizer::release);
+    }
     public void shutdown() {
         closed=true;
         stop();
