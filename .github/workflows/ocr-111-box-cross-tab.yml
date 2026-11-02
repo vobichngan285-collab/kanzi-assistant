@@ -1,0 +1,57 @@
+name: Cross-tab 111 unknown OCR boxes for source-image review prioritization
+on:
+  push:
+    branches: [test/ocr-111-boxes-audit-20261103]
+    paths:
+      - scripts/cross_tab_low_score_box_audit.py
+      - .github/workflows/ocr-111-box-cross-tab.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve 111 geometric candidate hypotheses (no images)
+        uses: actions/download-artifact@v4
+        with:
+          name: ocr-111-unmatched-box-audit-data
+          run-id: 41495124440
+          github-token: ${{ github.token }}
+          path: /tmp/geometry
+      - name: Retrieve #315 baseline high-score detections and extra OCR
+        uses: actions/download-artifact@v4
+        with:
+          name: ocr-315-true-box-value-data
+          run-id: 41492030817
+          github-token: ${{ github.token }}
+          path: /tmp/baseline
+      - name: Retrieve pre-recognition box overlap analysis
+        uses: actions/download-artifact@v4
+        with:
+          name: low-box-versus-baseline-geometry-policies
+          run-id: 41495331732
+          github-token: ${{ github.token }}
+          path: /tmp/overlap
+      - name: Investigate unresolved low boxes and produce manual-review queue
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/unknown-cross-tab
+          python3 -u scripts/cross_tab_low_score_box_audit.py \
+            /tmp/geometry/111_unmatched_audited.csv \
+            /tmp/overlap/all_137_candidate_existing_box_overlap.csv \
+            /tmp/unknown-cross-tab \
+            | tee /tmp/unknown-cross-tab/console.log
+          grep -q 'LOW_SCORE_111_CROSS_TAB=PASS 111' /tmp/unknown-cross-tab/console.log
+          cat /tmp/unknown-cross-tab/unmatched_111_cross_tab.csv >> "$GITHUB_STEP_SUMMARY"
+      - name: Save evidence-based prioritized text review list, not original photos
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unknown-111-boxes-research-queue
+          path: /tmp/unknown-cross-tab/
+          retention-days: 10
+          if-no-files-found: warn
