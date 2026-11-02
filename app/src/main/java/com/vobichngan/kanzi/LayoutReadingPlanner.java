@@ -18,6 +18,19 @@ import java.util.Map;
 public final class LayoutReadingPlanner {
     private LayoutReadingPlanner() {}
 
+    /**
+     * BOOK opts into chapter/column grouping. Other modes must not assume a
+     * narrow right-side text is a footnote: it may be a price, ingredients,
+     * opening hours, or a product warning.
+     */
+    public enum SceneMode { AUTO, BOOK, PACKAGING, RECEIPT, SIGNAGE }
+
+    public static SceneMode parseSceneMode(String value) {
+        if (value == null) return SceneMode.AUTO;
+        try { return SceneMode.valueOf(value); }
+        catch (IllegalArgumentException ex) { return SceneMode.AUTO; }
+    }
+
     public static final class Placement {
         public final int ocrId;
         public final int regionId; // -1 means geometric fallback
@@ -38,9 +51,12 @@ public final class LayoutReadingPlanner {
         public final int distinctAssignedRegions;
         public final int geometryGroups;
         public final boolean geometryGroupOrder;
+        public final SceneMode requestedScene;
+        public final boolean bookStreamStrategy;
         private Plan(List<Placement> placements, StrictOcrOrderGuard.Result verified,
                      boolean usedLayout, int assignedBoxes, int distinctAssignedRegions,
-                     int geometryGroups, boolean geometryGroupOrder) {
+                     int geometryGroups, boolean geometryGroupOrder,
+                     SceneMode requestedScene, boolean bookStreamStrategy) {
             this.placements = Collections.unmodifiableList(new ArrayList<>(placements));
             this.verified = verified;
             this.usedLayout = usedLayout;
@@ -48,6 +64,8 @@ public final class LayoutReadingPlanner {
             this.distinctAssignedRegions = distinctAssignedRegions;
             this.geometryGroups = geometryGroups;
             this.geometryGroupOrder = geometryGroupOrder;
+            this.requestedScene = requestedScene;
+            this.bookStreamStrategy = bookStreamStrategy;
         }
     }
 
@@ -125,18 +143,69 @@ public final class LayoutReadingPlanner {
         }
     }
 
+    /**
+     * AUTO page separation requires two independently coherent body columns,
+     * not a body plus short marginal annotations or receipt price fragments.
+     * If any measurement is ambiguous, return false and retain row-wise order.
+     */
+    private static boolean confidentParallelBookStreams(
+            List<List<Integer>> groups,List<ReadingOrder.Box> boxes) {
+        if(groups.size()<2)return false;
+        List<float[]> candidates=new ArrayList<>();
+        for(List<Integer> g:groups) {
+            List<Float> widths=new ArrayList<>();
+            float minY=Float.MAX_VALUE,maxY=-Float.MAX_VALUE;
+            float center=0f;
+            float averageHeight=0f;
+            for(int i:g) {
+                ReadingOrder.Box b=boxes.get(i);
+                float w=b.right()-b.left();
+                if(w>=Math.max(80f,b.actualHeight()*5f) && b.confidence>=.4f)
+                    widths.add(w);
+                minY=Math.min(minY,b.top());
+                maxY=Math.max(maxY,b.bottom());
+                center+=b.centerX();
+                averageHeight+=b.actualHeight();
+            }
+            if(widths.size()<4)continue;
+            widths.sort(Float::compare);
+            float median=widths.get(widths.size()/2);
+            float height=(maxY-minY);
+            if(height<Math.max(80f,averageHeight/g.size()*5f))continue;
+            candidates.add(new float[]{center/g.size(),minY,maxY,median,widths.size()});
+        }
+        for(int i=0;i<candidates.size();i++)for(int j=i+1;j<candidates.size();j++) {
+            float[] a=candidates.get(i),b=candidates.get(j);
+            float widthRatio=Math.min(a[3],b[3])/Math.max(1f,Math.max(a[3],b[3]));
+            float overlapY=Math.min(a[2],b[2])-Math.max(a[1],b[1]);
+            float shorterSpan=Math.min(a[2]-a[1],b[2]-b[1]);
+            if(widthRatio>=.48f &&
+                Math.abs(a[0]-b[0])>=Math.max(95f,Math.min(a[3],b[3])*.95f) &&
+                overlapY>=Math.max(70f,shorterSpan*.42f))
+                return true;
+        }
+        return false;
+    }
+
     private static float area(float l, float t, float r, float b) {
         return Math.max(0, r-l)*Math.max(0,b-t);
     }
 
     /**
-     * Inputs are in identical OCR detection order. Box IDs must be unique.
-     * Layout coordinates must be expressed in the same frame as OCR coordinates.
-     * An uncovered OCR box remains in the output.
+     * Default AUTO is deliberately conservative: only split a book into page
+     * streams when BOTH columns show substantial, comparable running text.
+     * Ambiguous one-page layouts retain side information in spatial order.
      */
     public static Plan plan(List<StrictOcrOrderGuard.Item> source,
                             List<ReadingOrder.Box> boxes,
                             List<LayoutRegion> regions) {
+        return plan(source,boxes,regions,SceneMode.AUTO);
+    }
+
+    public static Plan plan(List<StrictOcrOrderGuard.Item> source,
+                            List<ReadingOrder.Box> boxes,
+                            List<LayoutRegion> regions, SceneMode requested) {
+        SceneMode mode=requested==null?SceneMode.AUTO:requested;
         if (source == null || boxes == null || source.size() != boxes.size())
             throw new IllegalArgumentException("OCR IDs and boxes must align");
         // Validate IDs even if layout is empty.
@@ -202,16 +271,30 @@ public final class LayoutReadingPlanner {
         // ReadingOrder.horizontalColumns already places full-width headings
         // ahead of left/right page streams and trailing footers last. Preserve
         // that order instead of applying a non-transitive rectangle comparator.
-        final boolean groupedByGeometry = !groups.isEmpty();
+        final boolean wasGeometricallyGrouped = !groups.isEmpty();
+        final boolean bookLike=mode==SceneMode.BOOK ||
+            (mode==SceneMode.AUTO && confidentParallelBookStreams(groups,boxes));
+        // A one-page book with marginal comments, a milk carton, a restaurant
+        // sign and a receipt can all have narrow side-by-side OCR strips.
+        // Only a confirmed BOOK or a strong TWO-body-stream AUTO is permitted
+        // to send one entire strip after another. Never silently treat every
+        // right-hand strip as a marginal annotation.
+        if (!bookLike) groups.clear();
         if (groups.isEmpty()) {
-            Map<Integer,List<Integer>> byRegion = new HashMap<>();
-            for(int i=0;i<n;i++) {
-                int key=membership[i];
-                if (!byRegion.containsKey(key)) byRegion.put(key,new ArrayList<Integer>());
-                byRegion.get(key).add(i);
+            if (bookLike) {
+                Map<Integer,List<Integer>> byRegion = new HashMap<>();
+                for(int i=0;i<n;i++) {
+                    int key=membership[i];
+                    byRegion.computeIfAbsent(key,k->new ArrayList<Integer>()).add(i);
+                }
+                groups.addAll(byRegion.values());
+            } else {
+                List<Integer> whole=new ArrayList<>();
+                for(int i=0;i<n;i++) whole.add(i);
+                groups.add(whole);
             }
-            groups.addAll(byRegion.values());
         }
+        final boolean groupedByGeometry=bookLike && wasGeometricallyGrouped;
         if (!groupedByGeometry) {
             // Region groups are not necessarily in any meaningful HashMap order.
             // Choose ONE global reading mode before sorting. Mixing pairwise
@@ -300,6 +383,6 @@ public final class LayoutReadingPlanner {
         }
         return new Plan(placements,checked,covered>0,
             covered,distinct.size(),groupedByGeometry ? groups.size() : 0,
-            groupedByGeometry);
+            groupedByGeometry,mode,bookLike);
     }
 }
