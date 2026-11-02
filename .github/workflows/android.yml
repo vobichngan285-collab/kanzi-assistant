@@ -295,6 +295,13 @@ jobs:
             -o "app/libs/sherpa-onnx-2.0.1.aar"
           echo "a8d09d1d32f3eb8520482c6d3d43fae674681c5b050385967c70a3c2c9bf0ee7  app/libs/sherpa-onnx-2.0.1.aar" | sha256sum -c -
           echo "Official native TTS runtime sha256 verified; no voice models are bundled." >> "$GITHUB_STEP_SUMMARY"
+      - name: Isolate sherpa native runtime from PaddleOCR ONNX Runtime
+        run: |
+          set -euo pipefail
+          sudo apt-get -qq update
+          sudo apt-get install -y -qq patchelf
+          python3 scripts/isolate_sherpa_onnx_runtime.py app/libs/sherpa-onnx-2.0.1.aar
+          echo "Sherpa and PaddleOCR now use separate native ONNX runtime SONAMEs." >> "$GITHUB_STEP_SUMMARY"
       - name: Validate voice download UI and safe settings cleanup
         run: |
           python3 scripts/verify_voice_pack_integration.py
@@ -322,6 +329,10 @@ jobs:
           gradle --no-daemon --no-parallel --max-workers=2 --stacktrace assembleRelease
           APK="app/build/outputs/apk/release/app-release.apk"
           test -s "$APK"
+          # A previous build silently replaced PaddleOCR's ONNX runtime
+          # with sherpa's incompatible library; that disabled ALL OCR/TTS.
+          # Require the exact runtime SHA from the known-good #280 APK.
+          python3 scripts/verify_isolated_onnx_libraries.py "$APK"
           # Match the known-good 0.6.0 build: Gradle signs with the original keystore using V2.
           # Do not re-sign the APK with apksigner or change the signing scheme here.
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
