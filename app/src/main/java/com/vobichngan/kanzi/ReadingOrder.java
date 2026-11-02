@@ -169,9 +169,18 @@ public final class ReadingOrder {
             for (Vertical col : vertical) verticalGlyphs += col.items.size();
             if (vertical.size() >= 2 && verticalGlyphs >= boxes.size() * .65f) {
                 StringBuilder text = new StringBuilder();
+                List<Box> unassigned = new ArrayList<>(boxes);
                 for (Vertical col : vertical) {
                     if (text.length() > 0) text.append("\n\n");
                     text.append(col.text());
+                    unassigned.removeAll(col.items);
+                }
+                // A small horizontal caption/number can coexist with vertical
+                // paragraphs. Previous code silently lost every such box.
+                // Append as a distinct flow rather than interrupting columns.
+                if (!unassigned.isEmpty()) {
+                    String additional = arrange(unassigned);
+                    if (!additional.isEmpty()) text.append("\n\n").append(additional);
                 }
                 return text.toString();
             }
