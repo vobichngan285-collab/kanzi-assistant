@@ -58,6 +58,7 @@ data class OcrDiagnosticResult(
     val layoutStatus: String,
     val layoutRegions: Int,
     val layoutElapsedMs: Long,
+    val layoutReuseStats: String,
     val candidateText: String,
     val candidateDetails: String
 )
@@ -173,6 +174,7 @@ class PaddleOcrEngine(
                         layoutStatus = layout.status,
                         layoutRegions = layout.regions.size,
                         layoutElapsedMs = layout.elapsedMs,
+                        layoutReuseStats = layoutReuse.statistics(),
                         candidateText = candidate.first,
                         candidateDetails = candidate.second
                     )
@@ -430,8 +432,9 @@ class PaddleOcrEngine(
                 "${placement.readingIndex + 1}. 原始OCR框#${placement.ocrId + 1}" +
                     " [${region}] " + results[placement.ocrId].text
             }
-            val state = if (plan.verified.accepted) "严格编号校验通过" else
-                "严格编号校验未通过，已退回OCR输入顺序"
+            val state = if (plan.verified.accepted)
+                "OCR框编号完整性校验通过（不代表候选阅读顺序正确）" else
+                "OCR框编号完整性校验未通过，已退回OCR输入顺序"
             Pair(plan.verified.exactText(), state + "\n" + lines)
         } catch (error: RuntimeException) {
             Pair("", "候选排序异常（${error.javaClass.simpleName}），保留原有阅读顺序")
