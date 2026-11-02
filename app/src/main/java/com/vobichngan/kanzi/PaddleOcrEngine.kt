@@ -60,7 +60,8 @@ data class OcrDiagnosticResult(
     val layoutElapsedMs: Long,
     val layoutReuseStats: String,
     val candidateText: String,
-    val candidateDetails: String
+    val candidateDetails: String,
+    val realtimeText: String
 )
 fun interface OcrDiagnosticCallback { fun onResult(result: OcrDiagnosticResult) }
 
@@ -176,7 +177,10 @@ class PaddleOcrEngine(
                         layoutElapsedMs = layout.elapsedMs,
                         layoutReuseStats = layoutReuse.statistics(),
                         candidateText = candidate.first,
-                        candidateDetails = candidate.second
+                        candidateDetails = candidate.second,
+                        // Exactly the geometry-only order used by the new
+                        // real-time scanner; no additional ONNX inference.
+                        realtimeText = ReadingOrder.arrangeRealtime(toReadingBoxes(result.results))
                     )
                     withContext(Dispatchers.Main) { onResult.onResult(report) }
                 } finally { bitmap.recycle() }
