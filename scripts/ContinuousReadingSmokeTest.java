@@ -101,6 +101,18 @@ public final class ContinuousReadingSmokeTest {
         String emoji="可读文字".repeat(43)+"🧡"+"这是后续文字，不得破坏代理对。";
         check(String.join("",SpeechText.chunks(emoji)).equals(emoji),
             "UTF-16 surrogate pair was split or lost");
+        // Traditional upright vertical glyphs may have a separate title,
+        // caption or page number. Every detected box must survive, even when
+        // 65%+ of the image is correctly identified as vertical reading.
+        List<ReadingOrder.Box> vertical = new ArrayList<>();
+        for(int col=0;col<3;col++)for(int row=0;row<5;row++)
+            vertical.add(box("文",400-col*70,100+row*29,23,23,.96f));
+        vertical.add(box("页码三",12,370,72,20,.91f));
+        String verticalText=ReadingFocus.choose(vertical,720,1280,
+            ReadingFocus.Mode.AUTO,Float.NaN).text;
+        check(verticalText.contains("页码三"),
+            "vertical layout must not discard a remaining horizontal caption");
+        check(occurrences(verticalText,"文")==15,"vertical glyphs lost");
         System.out.println("CONTINUOUS_TEXT_INTEGRITY_SMOKE_TEST=PASS");
     }
 }
