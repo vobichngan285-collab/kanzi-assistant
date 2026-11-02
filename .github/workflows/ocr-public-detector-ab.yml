@@ -1,0 +1,49 @@
+name: Detector threshold A/B - original #315 real photo text boxes
+on:
+  push:
+    branches: [test/ocr-real-world-benchmark-20261103]
+    paths:
+      - scripts/ocr_public_scene_detection_ab.py
+      - .github/workflows/ocr-public-detector-ab.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  det-benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install exact detector test runtime
+        run: |
+          set -euo pipefail
+          pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
+      - name: Download verified original #315 detector ONNX
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ocr-det-model
+          curl -fL --retry 3 --retry-delay 2 \
+            'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/5994b4f/inference.onnx' \
+            -o /tmp/ocr-det-model/inference.onnx
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  /tmp/ocr-det-model/inference.onnx' | sha256sum -c -
+      - name: Compare model detector thresholds on real annotated street-photo images
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/scene-det-results
+          python3 -u scripts/ocr_public_scene_detection_ab.py \
+            /tmp/ocr-det-model/inference.onnx /tmp/scene-det-results \
+            | tee /tmp/scene-det-results/det.log
+          grep -q 'REAL_SCENE_DETECTOR_THRESHOLD_AB=PASS' /tmp/scene-det-results/det.log
+          cat /tmp/scene-det-results/detector_metrics.csv >> "$GITHUB_STEP_SUMMARY"
+          echo 'Proxy IoU>=0.4 based on bbox annotations; SDK unclip only approximated in Python; not Android/UVC.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload ONLY detection metrics, no third-party images
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: original-315-detector-scene-ab-metrics
+          path: /tmp/scene-det-results/
+          retention-days: 7
+          if-no-files-found: warn
