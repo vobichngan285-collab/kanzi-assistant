@@ -68,7 +68,7 @@ public final class BookDiagnostic46RegressionTest {
         }
         return -1;
     }
-    private static LayoutReadingPlanner.Plan execute(List<LayoutRegion> regions) {
+    private static LayoutReadingPlanner.Plan execute(List<LayoutRegion> regions, LayoutReadingPlanner.SceneMode mode) {
         List<StrictOcrOrderGuard.Item> source=new ArrayList<>();
         List<ReadingOrder.Box> boxes=new ArrayList<>();
         for (String line:DATA.split("\n")) {
@@ -86,13 +86,13 @@ public final class BookDiagnostic46RegressionTest {
             boxes.add(new ReadingOrder.Box(anonymous,conf,x,y));
         }
         check(boxes.size()==46,"All real OCR boxes must be present");
-        return LayoutReadingPlanner.plan(source,boxes,regions);
+        return LayoutReadingPlanner.plan(source,boxes,regions,mode);
     }
     public static void main(String[] args) {
         List<LayoutRegion> broad=Collections.singletonList(
             new LayoutRegion(2,.98f,30,380,540,1150));
         for (List<LayoutRegion> region:Arrays.asList(broad,Collections.<LayoutRegion>emptyList())) {
-            LayoutReadingPlanner.Plan p=execute(region);
+            LayoutReadingPlanner.Plan p=execute(region,LayoutReadingPlanner.SceneMode.BOOK);
             check(p.verified.accepted,"Strict OCR ID permutation check failed");
             check(p.verified.ordered.size()==46,"OCR content lost");
             check(pos(p,2)<pos(p,3),"body reading order broken at top");
