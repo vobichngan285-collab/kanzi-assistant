@@ -1,0 +1,54 @@
+name: Quick detector model check on 54 balanced real photos
+on:
+  push:
+    branches: [test/ocr-model-swap-ab-20261103]
+    paths:
+      - scripts/ocr_model_swap_det_quick.py
+      - .github/workflows/ocr-model-swap-det-quick.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fast-det:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install detector ONNX environment
+        run: |
+          set -euo pipefail
+          pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
+      - name: Fetch same original 4 detectors as full comparison
+        run: |
+          set -euo pipefail
+          for item in 'v6_small:PP-OCRv6_small_det_onnx' 'v6_medium:PP-OCRv6_medium_det_onnx' 'v6_tiny:PP-OCRv6_tiny_det_onnx' 'v5_mobile:PP-OCRv5_mobile_det_onnx'; do
+            dir=${item%%:*}
+            name=${item#*:}
+            mkdir -p "/tmp/quick-det/$dir"
+            curl --fail --location --retry 4 --retry-delay 3 --max-time 260 \
+              "https://huggingface.co/PaddlePaddle/$name/resolve/main/inference.onnx" \
+              -o "/tmp/quick-det/$dir/inference.onnx"
+          done
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  /tmp/quick-det/v6_small/inference.onnx' | sha256sum -c -
+          echo 'eb13b44b25bb36f89528b68720af8a61d9cf381176107f465db1757b65d086e1  /tmp/quick-det/v6_medium/inference.onnx' | sha256sum -c -
+      - name: Balanced 54-photo model comparison: 9 per split and cohort
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/quick-det-results
+          python3 -u scripts/ocr_model_swap_det_quick.py \
+            --models /tmp/quick-det --out /tmp/quick-det-results \
+            | tee /tmp/quick-det-results/console.log
+          grep -q 'QUICK_54_PHOTO_DETECTOR_SWAP=PASS' /tmp/quick-det-results/console.log
+          cat /tmp/quick-det-results/quick_det.csv >> "$GITHUB_STEP_SUMMARY"
+          echo 'A diagnostic 54-photo balanced subset, not a full population estimate.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep test metrics only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: detector-model-quick-subset-54-photos
+          path: /tmp/quick-det-results/
+          retention-days: 7
+          if-no-files-found: warn
