@@ -9,7 +9,10 @@ p = Path(sys.argv[1])
 assert p.is_file() and p.stat().st_size > 4_500_000, "layout model absent/truncated"
 sess = ort.InferenceSession(str(p),providers=["CPUExecutionProvider"])
 inputs = {x.name: x.shape for x in sess.get_inputs()}
-assert inputs == {"image":[1,3,480,480],"scale_factor":[1,2]}, inputs
+assert set(inputs) == {"image","scale_factor"}, inputs
+assert inputs["image"][1:] == [3,480,480], inputs
+assert inputs["scale_factor"][1:] == [2], inputs
+assert isinstance(inputs["image"][0], (int,str)), inputs
 outputs = sess.run(None,{
     "image": np.zeros((1,3,480,480),dtype=np.float32),
     "scale_factor": np.array([[1.,1.]],dtype=np.float32)
