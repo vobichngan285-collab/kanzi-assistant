@@ -1,0 +1,58 @@
+name: Audit original APK #315 OCR model assets
+on:
+  push:
+    branches: [test/ocr-ab-offline-20261102]
+    paths: [.github/workflows/apk-315-model-audit.yml]
+  workflow_dispatch:
+jobs:
+  download-and-inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - name: Download original #315 APK from GitHub release
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --retry-all-errors --connect-timeout 20 \
+            'https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/test-build-315/app-release.apk' \
+            -o /tmp/kanzi-315-original.apk
+          test "$(stat -c%s /tmp/kanzi-315-original.apk)" -gt 200000000
+          python - <<'PY'
+          import zipfile,hashlib,os
+          p='/tmp/kanzi-315-original.apk'
+          assert zipfile.is_zipfile(p), 'Downloaded data is not an APK/zip'
+          print('APK_DOWNLOADED=PASS', 'bytes='+str(os.stat(p).st_size),flush=True)
+          PY
+      - name: Inspect model files within the unmodified APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import zipfile,hashlib,json,pathlib
+          p='/tmp/kanzi-315-original.apk'
+          result={'apk_release':'test-build-315','apk_bytes':pathlib.Path(p).stat().st_size,'apk_sha256':hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest(),'model_files':[]}
+          with zipfile.ZipFile(p) as z:
+            for f in z.infolist():
+              n=f.filename
+              if not (n.lower().endswith(('.onnx','.yml','.yaml','.pdmodel','.pdiparams','.txt')) and
+                      ('model' in n.lower() or 'ocr' in n.lower() or 'dict' in n.lower())):
+                continue
+              h=hashlib.sha256()
+              with z.open(f) as handle:
+                for buf in iter(lambda:handle.read(1024*1024),b''):h.update(buf)
+              result['model_files'].append({'path':n,'bytes':f.file_size,'sha256':h.hexdigest()})
+          out=pathlib.Path('/tmp/apk315-model-audit.json')
+          out.write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
+          print('APK_MODEL_AUDIT=PASS','matched_files='+str(len(result['model_files'])),flush=True)
+          for m in result['model_files']:
+            print('APK_ASSET',m['path'],'bytes='+str(m['bytes']),'sha256='+m['sha256'],flush=True)
+          PY
+      - name: Upload audit metadata only (never upload APK or model)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: apk315-model-metadata
+          path: /tmp/apk315-model-audit.json
+          if-no-files-found: warn
