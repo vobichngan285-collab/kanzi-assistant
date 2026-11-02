@@ -1,0 +1,40 @@
+name: Analyze real-world OCR subgroup risks and selective heuristics
+on:
+  push:
+    branches: [test/ocr-real-world-benchmark-20261103]
+    paths:
+      - scripts/analyze_public_ocr_predictions.py
+      - .github/workflows/ocr-real-scene-subgroups.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch first real-world OCR model A/B report only (no photo bytes)
+        uses: actions/download-artifact@v4
+        with:
+          name: annotated-public-scene-ocr-ab-results
+          run-id: 41487814922
+          github-token: ${{ github.token }}
+          path: /tmp/scene-results
+      - name: Evaluate price, food, package-label proxies and confidence gating
+        run: |
+          set -euo pipefail
+          python3 scripts/analyze_public_ocr_predictions.py \
+            /tmp/scene-results/predictions.csv /tmp/scene-summary \
+            | tee /tmp/scene-summary/analysis.log
+          grep -q 'PUBLIC_SCENE_SUBGROUP_REVIEW=PASS' /tmp/scene-summary/analysis.log
+          cat /tmp/scene-summary/subgroups.csv >> "$GITHUB_STEP_SUMMARY"
+      - name: Save analysis and text predictions, no copyrighted image redistributions
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-scene-ocr-heuristic-review
+          path: /tmp/scene-summary/
+          retention-days: 7
+          if-no-files-found: warn
