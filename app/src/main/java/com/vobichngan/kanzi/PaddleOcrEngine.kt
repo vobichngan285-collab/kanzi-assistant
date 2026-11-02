@@ -413,6 +413,15 @@ class PaddleOcrEngine(
         results: List<OCRResult>, regions: List<LayoutRegion>
     ): Pair<String, String> {
         return try {
+            // Do not certify completeness after silently dropping a nonempty
+            // OCR result whose quadrilateral is absent or has invalid numbers.
+            val unpositioned = results.count { item ->
+                item.text.isNotBlank() && (item.box.points.size != 4 ||
+                    item.box.points.any { !it.x.isFinite() || !it.y.isFinite() })
+            }
+            if (unpositioned > 0) {
+                return Pair("", "候选排序不可用：有${unpositioned}个非空OCR文字框坐标异常，不能保证全部原文保留")
+            }
             val valid = results.mapIndexedNotNull { originalIndex, item ->
                 val p = item.box.points
                 if (p.size != 4 || item.text.isBlank()) null
@@ -449,6 +458,11 @@ class PaddleOcrEngine(
         results: List<OCRResult>, regions: List<LayoutRegion>
     ): String {
         return try {
+            val invalidCoordinates = results.count { item ->
+                item.text.isNotBlank() && (item.box.points.size != 4 ||
+                    item.box.points.any { !it.x.isFinite() || !it.y.isFinite() })
+            }
+            if (invalidCoordinates > 0) return "｜候选编号不完整：有${invalidCoordinates}个原始OCR框不可定位，未通过完整性审查"
             val boxes = toReadingBoxes(results)
             val ids = boxes.mapIndexed { i, b -> StrictOcrOrderGuard.Item(i, b.text) }
             val plan = LayoutReadingPlanner.plan(ids, boxes, regions)
