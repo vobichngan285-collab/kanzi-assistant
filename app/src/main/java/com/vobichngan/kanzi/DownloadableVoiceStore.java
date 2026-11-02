@@ -124,6 +124,12 @@ public final class DownloadableVoiceStore {
         selectionSerial.incrementAndGet();
         persist(SYSTEM);
     }
+    /** Make a voice active ONLY after synthesis and actual audio playback succeed. */
+    public void activate(Voice voice) {
+        if (voice == null || !isInstalled(voice))
+            throw new IllegalArgumentException("不能启用未安装的离线语音");
+        persist(voice);
+    }
     private void persist(Voice voice) {
         selectedId=voice.id;
         SharedPreferences settings=context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
@@ -134,7 +140,6 @@ public final class DownloadableVoiceStore {
         if (voice == null) return;
         final int ticket=selectionSerial.incrementAndGet();
         if (voice.isSystem() || isInstalled(voice)) {
-            persist(voice);
             main.post(() -> { if (selectionSerial.get()==ticket)
                 listener.onSelected(voice); });
             return;
@@ -144,7 +149,9 @@ public final class DownloadableVoiceStore {
             try {
                 install(voice, ticket, listener);
                 if (ticket != selectionSerial.get()) return;
-                persist(voice);
+                // Installation is not proof of a working neural TTS engine:
+                // only the UI's later real synthesis/playback smoke test can
+                // activate and remember this voice.
                 main.post(() -> { if (ticket == selectionSerial.get())
                     listener.onSelected(voice); });
             } catch (Throwable error) {
