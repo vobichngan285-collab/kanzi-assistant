@@ -44,10 +44,16 @@ def get_row(session,split,index,metadata):
 def fetch_metadata_bulk(session,keys,holdout):
     """Six bulk requests instead of 34 individual /rows requests.
     Hugging Face dataset viewer rate limits small sequential requests."""
-    ranges=((500,22),(720,22)) if holdout else ((0,24),(101,24),(310,24))
+    ranges_by_split = (
+      {"ReCTS":((500,22),(720,22)),"RCTW":((500,22),(720,22)),
+       "ART":((500,22),(720,22))}
+      if holdout else
+      {"ReCTS":((0,24),(101,24),(310,24)),
+       "RCTW":((0,24),(135,24),(315,24)),
+       "ART":((0,24),(125,24),(295,24))})
     needed=set(keys)
     out={}
-    for split in ("ReCTS","RCTW","ART"):
+    for split,ranges in ranges_by_split.items():
         for start,count in ranges:
             if not any(s==split and start<=int(i)<start+count for s,i in needed):
                 continue
