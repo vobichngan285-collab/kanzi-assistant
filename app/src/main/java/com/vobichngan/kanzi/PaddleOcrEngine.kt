@@ -97,13 +97,18 @@ class PaddleOcrEngine(
     @Volatile private var readingFocusMode = ReadingFocus.Mode.AUTO
     private val focusTracker = ReadingFocus.Tracker()
     private val layoutAi = LayoutAiEngine(appContext)
+    private val layoutReuse = LayoutAiReuseCoordinator(layoutAi)
     @Volatile private var aiLayoutEnabled = false
-    fun setAiLayoutEnabled(enabled: Boolean) { aiLayoutEnabled = enabled }
+    fun setAiLayoutEnabled(enabled: Boolean) {
+        if (aiLayoutEnabled != enabled) layoutReuse.reset()
+        aiLayoutEnabled = enabled
+    }
     fun setFastScanMode(enabled: Boolean) { fastScanMode = enabled }
     fun setReadingFocusMode(mode: String) {
         readingFocusMode = try { ReadingFocus.Mode.valueOf(mode) }
             catch (_: IllegalArgumentException) { ReadingFocus.Mode.AUTO }
         focusTracker.reset()
+        layoutReuse.reset()
     }
 
     fun isReady(): Boolean = engine != null && !released
@@ -133,6 +138,8 @@ class PaddleOcrEngine(
                         if (enhanced !== bitmap) { bitmap.recycle(); bitmap = enhanced }
                     }
                     val result = current.recognize(bitmap)
+                    // A diagnostic must measure fresh model inference, not a cached result.
+                    layoutReuse.reset()
                     val layout = layoutAi.analyze(bitmap, aiLayoutEnabled &&
                         readingFocusMode == ReadingFocus.Mode.AUTO, result.results.size)
                     val focus = arrangeInReadingOrder(result.results, bitmap.width,
@@ -157,7 +164,7 @@ class PaddleOcrEngine(
                         totalTimeMs = result.totalTimeMs.toLong(),
                         detectorInputShape = result.detInputShape.joinToString("×"),
                         recognitionInputShapes = result.recInputShapes.joinToString("；") { it.joinToString("×") },
-                        focusDescription = focus.description,
+                        focusDescription = focus.description + inspectVerifiedOrder(result.results, layout.regions),
                         fullPageText = ReadingOrder.arrange(toReadingBoxes(result.results)),
                         layoutStatus = layout.status,
                         layoutRegions = layout.regions.size,
@@ -271,12 +278,16 @@ class PaddleOcrEngine(
                             }
                         }
                     }
-                    val layout = layoutAi.analyze(bitmap, aiLayoutEnabled &&
-                        readingFocusMode == ReadingFocus.Mode.AUTO, result.results.size)
+                    val layout = layoutReuse.analyze(data, width, height, bitmap,
+                        aiLayoutEnabled && readingFocusMode == ReadingFocus.Mode.AUTO,
+                        result.results.size)
                     val focus = arrangeInReadingOrder(result.results, bitmap.width,
                         bitmap.height, layout.regions)
                     val text = focus.text
-                    Log.i(TAG, "Reading focus: ${focus.description}; layout=${layout.status}; layoutMs=${layout.elapsedMs}")
+                    val verification = if (aiLayoutEnabled && readingFocusMode == ReadingFocus.Mode.AUTO)
+                        inspectVerifiedOrder(result.results, layout.regions) else ""
+                    Log.i(TAG, "Reading focus: ${focus.description}; layout=${layout.status}; " +
+                        "layoutMs=${layout.elapsedMs}; ordering=$verification")
                     val averageConfidence = if (result.results.isEmpty()) 0.0
                         else result.results.map { it.confidence }.average()
                     val message = "frame=${width}x${height}, ocrInputDirection=raw0, " +
@@ -386,6 +397,25 @@ class PaddleOcrEngine(
             readingFocusMode, layoutRegions)
     }
 
+    /**
+     * Shadow-mode inspection. The planner may only return IDs of existing OCR
+     * boxes. Do not change live speech before the actual camera samples pass.
+     */
+    private fun inspectVerifiedOrder(
+        results: List<OCRResult>, regions: List<LayoutRegion>
+    ): String {
+        return try {
+            val boxes = toReadingBoxes(results)
+            val ids = boxes.mapIndexed { i, b -> StrictOcrOrderGuard.Item(i, b.text) }
+            val plan = LayoutReadingPlanner.plan(ids, boxes, regions)
+            val assigned = plan.placements.count { it.regionId >= 0 }
+            "｜阅读编号校验=${if (plan.verified.accepted) "通过" else "回退"}，" +
+                "区域归属=${assigned}/${boxes.size}，候选顺序仅诊断"
+        } catch (error: RuntimeException) {
+            "｜阅读编号校验异常：${error.javaClass.simpleName}，维持原排序"
+        }
+    }
+
     /** Decode the camera's unrotated NV21 pixels; TextureView handles display transforms. */
     private fun nv21ToBitmap(data: ByteArray, width: Int, height: Int, legacyNv21Jpeg: Boolean): Bitmap {
         if (legacyNv21Jpeg) {
@@ -420,6 +450,7 @@ class PaddleOcrEngine(
         released = true
         scope.launch {
             try { engine?.release() } catch (_: Throwable) {}
+            layoutReuse.reset()
             try { layoutAi.release() } catch (_: Throwable) {}
             engine = null
             scope.cancel()
