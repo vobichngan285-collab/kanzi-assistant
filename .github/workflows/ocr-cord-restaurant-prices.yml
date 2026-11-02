@@ -1,0 +1,59 @@
+name: #315 OCR on real restaurant receipts - menu item names and prices
+on:
+  push:
+    branches: [test/ocr-real-world-benchmark-20261103]
+    paths:
+      - scripts/ocr_cord_restaurant_price_ab.py
+      - .github/workflows/ocr-cord-restaurant-prices.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install #315 recognition test dependencies
+        run: |
+          set -euo pipefail
+          pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests
+      - name: Download 100 credited restaurant receipt photos with human price labels
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 \
+            'https://raw.githubusercontent.com/Nextia-Intelligence/nextia-learning-labs/main/C13/read-real-receipts/data/cord-v2-test-sample.zip' \
+            -o /tmp/cord100.zip
+          echo '2dd48e2cc1412d4cdcb41314f1ccad70901fc0c3f8126f7cf1554ed3fab3a900  /tmp/cord100.zip' | sha256sum -c -
+      - name: Fetch model exactly matching #315
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/cord-model
+          curl -fL --retry 3 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx' -o /tmp/cord-model/inference.onnx
+          curl -fL --retry 3 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml?download=true' -o /tmp/cord-model/inference.yml
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/cord-model/inference.onnx' | sha256sum -c -
+          echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/cord-model/inference.yml' | sha256sum -c -
+      - name: Compare word accuracy on actual food menu items and prices from receipts
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/cord-results
+          python3 -u scripts/ocr_cord_restaurant_price_ab.py \
+            /tmp/cord100.zip \
+            /tmp/cord-model/inference.onnx \
+            /tmp/cord-model/inference.yml \
+            --out /tmp/cord-results \
+            | tee /tmp/cord-results/benchmark.log
+          grep -q 'CORD_REAL_RECEIPT_OCR_AB=PASS' /tmp/cord-results/benchmark.log
+          cat /tmp/cord-results/metrics.csv >> "$GITHUB_STEP_SUMMARY"
+          echo 'These are food receipts (Indonesian/English), NOT Chinese menu boards; annotation crops, not detector or USB.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload only reports, not real receipt photos or ONNX
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-food-receipt-price-ocr-ab
+          path: /tmp/cord-results/
+          retention-days: 7
+          if-no-files-found: warn
