@@ -81,6 +81,7 @@ public class MainActivity extends CameraActivity {
     private static final String PREF_QUALITY_PROMPTS = "quality_voice_prompts";
     private static final String PREF_READING_FOCUS = "reading_page_focus";
     private static final String PREF_AI_LAYOUT = "experimental_ai_layout";
+    private static final String PREF_REALTIME_TEXT_ROTATION = "realtime_text_rotation";
     private static final int REQUEST_PHONE_CAMERA = 4051;
     private final Handler diagnosticHandler = new Handler(Looper.getMainLooper());
     private int diagnosticAttempts = 0;
@@ -136,6 +137,7 @@ public class MainActivity extends CameraActivity {
     private volatile String ocrModelId = "ppocrv6_small";
     private volatile String readingFocusMode = "AUTO";
     private volatile boolean aiLayoutEnabled = false;
+    private volatile int liveTextRotationDegrees = 0;
     private volatile String lastDiagnosticText = "";
     private volatile String lastCandidateDiagnosticText = "";
     private volatile boolean speechNoEnglish = false;
@@ -476,6 +478,9 @@ public class MainActivity extends CameraActivity {
         previewVerticalFlip = prefs.getBoolean(PREF_PREVIEW_FLIP, false);
         enhancedOcr = prefs.getBoolean(PREF_ENHANCED_OCR, false);
         aiLayoutEnabled = prefs.getBoolean(PREF_AI_LAYOUT, false);
+        liveTextRotationDegrees = prefs.getInt(PREF_REALTIME_TEXT_ROTATION, 0);
+        if (liveTextRotationDegrees != 90 && liveTextRotationDegrees != 270)
+            liveTextRotationDegrees = 0;
         readingFocusMode = prefs.getString(PREF_READING_FOCUS, "AUTO");
         // Retired page-centric ALL setting is equivalent to continuous AUTO.
         if ("ALL".equals(readingFocusMode)) readingFocusMode = "AUTO";
@@ -534,6 +539,7 @@ public class MainActivity extends CameraActivity {
             }
         }, modelId);
         recognizer.setFastScanMode(!longReadingMode);
+        recognizer.setLiveTextRotationDegrees(liveTextRotationDegrees);
         recognizer.setReadingFocusMode(readingFocusMode);
         recognizer.setAiLayoutEnabled(aiLayoutEnabled);
         recognizer.initialize();
@@ -594,6 +600,34 @@ public class MainActivity extends CameraActivity {
         layoutAiNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         layoutAiNote.setTextColor(0xFF667085);
         panel.addView(layoutAiNote);
+
+        TextView rotationTitle = new TextView(this);
+        rotationTitle.setText("实时文字识别方向");
+        rotationTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        rotationTitle.setPadding(0, dp(14), 0, dp(4));
+        panel.addView(rotationTitle);
+        RadioGroup rotationGroup = new RadioGroup(this);
+        rotationGroup.setOrientation(RadioGroup.VERTICAL);
+        String[][] rotationOptions = {
+            {"0", "自动：按检测到的文字方向整理（默认，无额外 OCR）"},
+            {"90", "横放文字：将画面向右旋转 90° 识别"},
+            {"270", "横放文字：将画面向左旋转 90° 识别"}
+        };
+        for (String[] option : rotationOptions) {
+            RadioButton radio = new RadioButton(this);
+            radio.setId(View.generateViewId());
+            radio.setTag(option[0]);
+            radio.setText(option[1]);
+            radio.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            radio.setChecked(Integer.toString(liveTextRotationDegrees).equals(option[0]));
+            rotationGroup.addView(radio);
+        }
+        panel.addView(rotationGroup);
+        TextView rotationNote = new TextView(this);
+        rotationNote.setText("默认模式不增加额外模型。若书本横放后自动识别仍有乱码，可手动选择左转或右转：每次仍只执行一遍 OCR，白框保持与摄像头画面对应。该选项仅影响实时文字。");
+        rotationNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        rotationNote.setTextColor(0xFF667085);
+        panel.addView(rotationNote);
 
         TextView modelManagementTitle = new TextView(this);
         modelManagementTitle.setText("OCR 引擎选择");
@@ -901,6 +935,15 @@ public class MainActivity extends CameraActivity {
                     ? selectedFocus.getTag().toString() : readingFocusMode;
                 boolean focusChanged = !readingFocusMode.equals(requestedFocus);
                 readingFocusMode = requestedFocus;
+                RadioButton selectedRotation = rotationGroup.findViewById(rotationGroup.getCheckedRadioButtonId());
+                int requestedTextRotation = liveTextRotationDegrees;
+                if (selectedRotation != null && selectedRotation.getTag() != null) {
+                    try {
+                        requestedTextRotation = Integer.parseInt(selectedRotation.getTag().toString());
+                    } catch (NumberFormatException ignored) {}
+                }
+                boolean textRotationChanged = requestedTextRotation != liveTextRotationDegrees;
+                liveTextRotationDegrees = requestedTextRotation;
                 boolean aiLayoutChanged = aiLayoutEnabled != layoutAiCheck.isChecked();
                 aiLayoutEnabled = layoutAiCheck.isChecked();
                 similarityThreshold = similaritySeek.getProgress();
@@ -938,22 +981,27 @@ public class MainActivity extends CameraActivity {
                     .putString(PREF_OCR_MODEL, ocrModelId)
                     .putString(PREF_READING_FOCUS, readingFocusMode)
                     .putBoolean(PREF_AI_LAYOUT, aiLayoutEnabled)
+                    .putInt(PREF_REALTIME_TEXT_ROTATION, liveTextRotationDegrees)
                     .putBoolean(PREF_NO_ENGLISH, speechNoEnglish)
                     .putBoolean(PREF_NO_NUMBERS, speechNoNumbers)
                     .putInt(PREF_MAX_SPEECH_CHARS, maxSpeechChars)
                     .apply();
                 if (changeReadingMode) setLongReadingMode(queueSpeech);
                 else if (wasQueueEnabled && !queueSpeech) clearSpeechQueue(true);
-                if (focusChanged || aiLayoutChanged) {
+                if (focusChanged || aiLayoutChanged || textRotationChanged) {
                     readingEpoch.incrementAndGet();
                     frameChangeGate.reset();
+                    realtimeScene.reset();
+                    lastQuickScanGeneration = -1L;
+                    lastSpokenSceneGeneration = -1L;
                     lastSpoken = "";
                     clearSpeechQueue(true);
                     if (recognizer != null) {
                         if (focusChanged) recognizer.setReadingFocusMode(readingFocusMode);
                         recognizer.setAiLayoutEnabled(aiLayoutEnabled);
+                        recognizer.setLiveTextRotationDegrees(liveTextRotationDegrees);
                     }
-                    Toast.makeText(this, "已更新文字流/版面 AI 设置", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "已更新文字排序与识别方向", Toast.LENGTH_SHORT).show();
                 }
                 if (modelChanged) switchOcrModel(selectedModelId);
                 Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show();
@@ -1055,6 +1103,7 @@ public class MainActivity extends CameraActivity {
             }
         }, ocrModelId);
         recognizer.setFastScanMode(!longReadingMode);
+        recognizer.setLiveTextRotationDegrees(liveTextRotationDegrees);
         recognizer.setReadingFocusMode(readingFocusMode);
         recognizer.setAiLayoutEnabled(aiLayoutEnabled);
         recognizer.initialize();
