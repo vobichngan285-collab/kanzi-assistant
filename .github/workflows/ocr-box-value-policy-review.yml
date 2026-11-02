@@ -1,0 +1,44 @@
+name: Evaluate low-score OCR candidate filtering (no images)
+on:
+  push:
+    branches: [test/ocr-box-value-20261103]
+    paths:
+      - scripts/analyze_box_candidate_value.py
+      - .github/workflows/ocr-box-value-policy-review.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  policy-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download true #315 detector / recognition AB data
+        uses: actions/download-artifact@v4
+        with:
+          name: ocr-315-true-box-value-data
+          run-id: 41492030817
+          github-token: ${{ github.token }}
+          path: /tmp/ocr-box-raw
+      - name: Compare extra rec work under selective confidence and length gates
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ocr-box-policy
+          python3 -u scripts/analyze_box_candidate_value.py \
+            /tmp/ocr-box-raw/all_boxes_ocr.csv \
+            /tmp/ocr-box-raw/per_image.csv \
+            /tmp/ocr-box-policy \
+            | tee /tmp/ocr-box-policy/console.log
+          grep -q 'REAL_BOX_VALUE_GATE_POLICY_REVIEW=PASS' /tmp/ocr-box-policy/console.log
+          cat /tmp/ocr-box-policy/policies.csv >> "$GITHUB_STEP_SUMMARY"
+          echo 'Unmatched annotations UNKNOWN; P95 CPU rec inference not an Android estimate.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload numerical policy comparison only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-box-confidence-heuristic-analysis
+          path: /tmp/ocr-box-policy/
+          retention-days: 7
+          if-no-files-found: warn
