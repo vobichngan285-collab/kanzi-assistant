@@ -26,6 +26,8 @@ jobs:
           test "$(stat -c%s /tmp/ocr-assets/models/rec/inference.onnx)" -gt 1000000
       - name: Run real ONNX recognition A/B on synthetic Chinese samples
         run: |
+          mkdir -p /tmp/ocr-ab
+          set -o pipefail
           python scripts/ocr_ab_synthetic.py /tmp/ocr-assets /tmp/ocr-ab | tee /tmp/ocr-ab/summary.txt
       - uses: actions/upload-artifact@v4
         if: always()
