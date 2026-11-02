@@ -121,6 +121,21 @@ public final class BookDiagnostic46RegressionTest {
                     "Real single broad region must cover 44 of the 46 OCR boxes");
             }
         }
+        for (LayoutReadingPlanner.SceneMode mode : new LayoutReadingPlanner.SceneMode[]{
+                LayoutReadingPlanner.SceneMode.AUTO,
+                LayoutReadingPlanner.SceneMode.PACKAGING,
+                LayoutReadingPlanner.SceneMode.RECEIPT,
+                LayoutReadingPlanner.SceneMode.SIGNAGE}) {
+            LayoutReadingPlanner.Plan p=execute(broad,mode);
+            check(p.verified.accepted && p.placements.size()==46,
+                "scene mode dropped OCR box IDs: "+mode);
+            check(!p.bookStreamStrategy,
+                "single-page marginal notes mistaken for two book pages: "+mode);
+            check(pos(p,4)<pos(p,25),
+                "important side text deferred behind a long paragraph: "+mode);
+            check(pos(p,26)<pos(p,44),
+                "side text must stay near its original visual row: "+mode);
+        }
         System.out.println("REAL_SINGLE_PAGE_46_ORDER=PASS");
     }
 }
