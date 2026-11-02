@@ -39,6 +39,17 @@ class OfflineVoiceSynthesizer(private val store: DownloadableVoiceStore) {
         require(generated.samples.isNotEmpty() && generated.sampleRate >= 8000) {
             "语音模型没有产生有效音频"
         }
+        // Some corrupt/incompatible packages still return a PCM array of
+        // pure zeros or NaN. Reject that before claiming a voice works.
+        var loudness = 0f
+        for (i in generated.samples.indices step 8) {
+            val sample = generated.samples[i]
+            require(sample.isFinite()) { "语音模型生成了无效音频数据" }
+            loudness = maxOf(loudness, kotlin.math.abs(sample))
+        }
+        require(loudness >= 0.002f) {
+            "语音模型仅生成静音，未通过发声检查"
+        }
         return Audio(generated.samples, generated.sampleRate)
     }
 
