@@ -1183,8 +1183,18 @@ public class MainActivity extends CameraActivity {
         tts = new TextToSpeech(this, code -> {
             if (code == TextToSpeech.SUCCESS) {
                 int language = tts.setLanguage(Locale.SIMPLIFIED_CHINESE);
+                // Some Android installations only ship an offline traditional
+                // Chinese voice. Both can speak OCR Chinese characters; try a
+                // local alternative rather than silently disabling all audio.
+                if (language == TextToSpeech.LANG_MISSING_DATA ||
+                    language == TextToSpeech.LANG_NOT_SUPPORTED)
+                    language = tts.setLanguage(Locale.TRADITIONAL_CHINESE);
+                if (language == TextToSpeech.LANG_MISSING_DATA ||
+                    language == TextToSpeech.LANG_NOT_SUPPORTED)
+                    language = tts.setLanguage(Locale.CHINESE);
                 tts.setSpeechRate(speechRate);
-                ttsReady = language != TextToSpeech.LANG_MISSING_DATA && language != TextToSpeech.LANG_NOT_SUPPORTED;
+                ttsReady = language != TextToSpeech.LANG_MISSING_DATA &&
+                    language != TextToSpeech.LANG_NOT_SUPPORTED;
                 if (ttsReady) {
                     Log.i("KanziTTS", "Chinese TextToSpeech engine ready");
                     // If the camera already saw this page before TTS was ready,
