@@ -18,6 +18,11 @@ on:
       - 'scripts/DenseTwoPageReadingSmokeTest.java'
       - 'scripts/BookDiagnostic52RegressionTest.java'
       - 'scripts/BookDiagnostic46RegressionTest.java'
+      - 'app/src/main/java/com/vobichngan/kanzi/RealtimeSceneTracker.java'
+      - 'app/src/main/java/com/vobichngan/kanzi/TextFlowRebuilder.java'
+      - 'app/src/main/java/com/vobichngan/kanzi/ReadingOrder.java'
+      - 'scripts/RealtimeTextFlowSmokeTest.java'
+      - 'scripts/RealtimeSceneTrackerSmokeTest.java'
       - 'scripts/LayoutSceneFingerprintSmokeTest.java'
       - 'scripts/LayoutFrameSchedulerSmokeTest.java'
       - '.github/workflows/strict-ocr-order-tests.yml'
@@ -43,12 +48,15 @@ jobs:
             app/src/main/java/com/vobichngan/kanzi/LayoutReadingPlanner.java \
             app/src/main/java/com/vobichngan/kanzi/LayoutFrameScheduler.java \
             app/src/main/java/com/vobichngan/kanzi/LayoutSceneFingerprint.java \
+            app/src/main/java/com/vobichngan/kanzi/RealtimeSceneTracker.java \
             scripts/StrictOcrOrderGuardSmokeTest.java \
             scripts/LayoutReadingPlannerSmokeTest.java \
             scripts/LayoutOrderingDeterminismSmokeTest.java \
             scripts/DenseTwoPageReadingSmokeTest.java \
             scripts/BookDiagnostic52RegressionTest.java \
             scripts/BookDiagnostic46RegressionTest.java \
+            scripts/RealtimeSceneTrackerSmokeTest.java \
+            scripts/RealtimeTextFlowSmokeTest.java \
             scripts/LayoutFrameSchedulerSmokeTest.java \
             scripts/LayoutSceneFingerprintSmokeTest.java
       - name: Run strict OCR preservation test
@@ -63,6 +71,10 @@ jobs:
         run: java -cp build/order-tests BookDiagnostic52RegressionTest
       - name: Test real single-page 46 boxes with footnotes and page number
         run: java -cp build/order-tests BookDiagnostic46RegressionTest
+      - name: Verify new-target acquisition and same-target suppression
+        run: java -cp build/order-tests RealtimeSceneTrackerSmokeTest
+      - name: Verify real-time top-first coherent text flows
+        run: java -cp build/order-tests RealtimeTextFlowSmokeTest
       - name: Run layout frame scheduler test
         run: java -cp build/order-tests LayoutFrameSchedulerSmokeTest
       - name: Verify layout scene fingerprint
