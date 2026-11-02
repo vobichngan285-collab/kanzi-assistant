@@ -1,4 +1,4 @@
-name: Smart OCR line reconstruction - real annotated photo A/B
+name: Smart OCR line reconstruction - independent holdout recheck
 on:
   push:
     branches: [test/ocr-line-rebuild-ab-20261103]
@@ -48,6 +48,7 @@ jobs:
           echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/line-rec/rec.onnx' | sha256sum -c -
           echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/line-rec/rec.yml' | sha256sum -c -
       - name: Run matched A/B on 216 development photos
+        if: github.event_name == 'workflow_dispatch'
         run: |
           set -euo pipefail
           mkdir -p /tmp/line-ab-dev
