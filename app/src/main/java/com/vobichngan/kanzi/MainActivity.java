@@ -236,18 +236,35 @@ public class MainActivity extends CameraActivity {
                 return;
             }
             if (!running) return;
+            // Phone Camera2 only converts the frames we request; this timestamp
+            // caps cheap scene observation while allowing OCR to run in parallel.
+            lastLiveObservationAt = System.currentTimeMillis();
             // Never fingerprint a frame before models are available: the old
             // gate could suppress the first readable page for several seconds.
             if (recognizer == null || !recognizer.isReady()) return;
             // Long reading owns OCR until the entire spoken page has completed.
             // Manual capture remains an explicit override below.
             long now = System.currentTimeMillis();
+            final boolean live = !longReadingMode && automaticMode;
+            // Observe while OCR/TTS is busy too. A page turn during a slow OCR
+            // invalidates that result before it can interrupt newer speech.
+            long previousScene = realtimeScene.generation();
+            long scene = live ? realtimeScene.observe(data, width, height, now)
+                              : previousScene;
+            if (live && scene != previousScene) frameChangeGate.reset();
             boolean oneShot = manualCaptureRequested.get();
             if (oneShot) {
                 if (!manualCaptureRequested.compareAndSet(true, false)) return;
             } else {
                 if (!automaticMode || now - lastProcess < recognitionIntervalMs) return;
                 if (longReadingMode && speechPageActive) return;
+                // Static, reliably read text should NOT cause full OCR every
+                // 2.8 seconds. A scene generation change can trigger at once.
+                // The long safety refresh handles very subtle changes missed
+                // by the cheap scene fingerprint without repeating speech.
+                if (live && lastQuickScanReliable &&
+                    scene == lastQuickScanGeneration &&
+                    now - lastQuickScanAt < 12000L) return;
             }
             if (!busy.compareAndSet(false, true)) {
                 if (oneShot) manualCaptureRequested.set(true);
@@ -264,6 +281,7 @@ public class MainActivity extends CameraActivity {
             }
             lastProcess = now;
             final int recognizedEpoch = readingEpoch.get();
+            final long recognizedScene = scene;
             byte[] frame = data.clone();
             final boolean enhance = enhancedOcr;
             final FrameQuality.Assessment quality = FrameQuality.assess(frame, width, height);
@@ -271,7 +289,14 @@ public class MainActivity extends CameraActivity {
             try {
                 recognizer.recognizeNv21(frame, width, height, enhance, legacyDecode, found -> {
                     busy.set(false);
-                    if (found != null && recognizedEpoch == readingEpoch.get()) {
+                    if (found != null && recognizedEpoch == readingEpoch.get() &&
+                        (!live || oneShot || recognizedScene == realtimeScene.generation())) {
+                        if (live && !oneShot) {
+                            lastQuickScanGeneration = recognizedScene;
+                            lastQuickScanAt = System.currentTimeMillis();
+                            lastQuickScanReliable = !found.getText().trim().isEmpty() &&
+                                found.getAverageConfidence() >= 0.75;
+                        }
                         if (ocrOverlay != null) {
                             ocrOverlay.show(found.getBoxes(), found.getFrameWidth(),
                                 found.getFrameHeight(),
@@ -279,7 +304,7 @@ public class MainActivity extends CameraActivity {
                                 isPhoneCamera, isPhoneCamera ? phoneSensorNaturalRotation : 0,
                                 isPhoneCamera ? phoneOcrRotation : 0);
                         }
-                        onRecognized(found.getText(), oneShot);
+                        onRecognized(found.getText(), oneShot, recognizedScene, recognizedEpoch);
                         onReadingQuality(found, quality);
                     }
                 }, error -> {
@@ -481,6 +506,8 @@ public class MainActivity extends CameraActivity {
         lastDiagnosticText = "";
         busy.set(false);
         if (recognizer != null) recognizer.release();
+        realtimeScene.reset();
+        lastQuickScanGeneration = -1L;
         status.setText("正在切换到 " + ocrModelDisplayName(modelId) + "…");
         recognizer = new PaddleOcrEngine(getApplicationContext(), new PaddleOcrEngine.Listener() {
             @Override public void onReady() {
@@ -1033,8 +1060,14 @@ public class MainActivity extends CameraActivity {
             @Override public boolean shouldReceiveFrame() {
                 if (!usingPhoneCamera || !running) return diagnosticCaptureRequested.get();
                 if (manualCaptureRequested.get() || diagnosticCaptureRequested.get()) return true;
-                if (!automaticMode || busy.get() || (longReadingMode && speechPageActive)) return false;
-                return System.currentTimeMillis() - lastProcess >= recognitionIntervalMs;
+                if (!automaticMode || (longReadingMode && speechPageActive)) return false;
+                // During real-time speech and even during an ongoing OCR,
+                // inspect a few preview frames per second for a NEW target.
+                // The lightweight observer never runs the OCR model itself.
+                if (!longReadingMode)
+                    return System.currentTimeMillis() - lastLiveObservationAt >= 115L;
+                return !busy.get() &&
+                    System.currentTimeMillis() - lastProcess >= recognitionIntervalMs;
             }
             @Override public void onFrame(byte[] nv21, int width, int height) {
                 if (usingPhoneCamera) processCameraFrame(nv21, width, height, true);
@@ -1143,12 +1176,18 @@ public class MainActivity extends CameraActivity {
                 return;
             }
             running = !running;
+            readingEpoch.incrementAndGet();
+            realtimeScene.reset();
+            lastQuickScanGeneration = -1L;
+            lastQuickScanReliable = false;
+            lastSpokenSceneGeneration = -1L;
             if (!running) {
                 manualCaptureRequested.set(false);
                 clearSpeechQueue(true);
-                readingEpoch.incrementAndGet();
+                if (ocrOverlay != null) ocrOverlay.clear();
             } else {
                 frameChangeGate.reset();
+                lastProcess = 0L;
                 lastSpoken = ""; // Explicit resume must be able to re-read the current paper.
                 candidateCount = 0;
                 candidateNormalized = "";
@@ -1296,6 +1335,9 @@ public class MainActivity extends CameraActivity {
     private void switchCameraSource(boolean phone) {
         readingEpoch.incrementAndGet();
         frameChangeGate.reset();
+        realtimeScene.reset();
+        lastQuickScanGeneration = -1L;
+        lastSpokenSceneGeneration = -1L;
         clearSpeechQueue(true);
         candidateText = "";
         candidateNormalized = "";
