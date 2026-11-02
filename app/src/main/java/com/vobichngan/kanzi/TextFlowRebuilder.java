@@ -36,12 +36,23 @@ public final class TextFlowRebuilder {
             projectedY /= Math.max(1f, totalWeight);
             boxes.sort(Comparator.comparingDouble(ReadingOrder.Box::left));
         }
-        String text() {
+        String text(boolean realtime) {
             StringBuilder s = new StringBuilder();
             ReadingOrder.Box prev = null;
             for (ReadingOrder.Box b : boxes) {
-                if (prev != null && ascii(prev.text.charAt(prev.text.length() - 1)) &&
-                    ascii(b.text.charAt(0)) && b.left() - prev.right() > 1f) s.append(' ');
+                if (prev != null) {
+                    float gap = b.left() - prev.right();
+                    boolean separatedLatin = ascii(prev.text.charAt(prev.text.length() - 1)) &&
+                        ascii(b.text.charAt(0)) && gap > 1f;
+                    // Adjacent Chinese OCR boxes may be separate cover labels,
+                    // names, or receipt fields. Never concatenate them into a
+                    // fabricated single word when a visible gap separates them.
+                    // Only LIVE text adds a whitespace boundary; the legacy
+                    // book reconstruction remains byte-for-byte unchanged.
+                    boolean separateLiveLabels = realtime && gap >=
+                        Math.max(2.5f, Math.min(prev.actualHeight(), b.actualHeight()) * .25f);
+                    if (separatedLatin || separateLiveLabels) s.append(' ');
+                }
                 s.append(b.text);
                 prev = b;
             }
@@ -214,7 +225,7 @@ public final class TextFlowRebuilder {
             if (output.length() > 0) output.append("\n\n");
             for (int i=0;i<list.size();i++) {
                 if (i>0) output.append("\n");
-                output.append(list.get(i).text());
+                output.append(list.get(i).text(realtime));
             }
         }
         return output.toString().trim();
