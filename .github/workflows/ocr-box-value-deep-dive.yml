@@ -1,0 +1,74 @@
+name: Deep dive OCR box value - true #315 settings (isolated)
+on:
+  push:
+    branches: [test/ocr-box-value-20261103]
+    paths:
+      - scripts/ocr_box_value_deep_dive.py
+      - .github/workflows/ocr-box-value-deep-dive.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  value-study:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install original-model CPU inference dependencies
+        run: |
+          set -euo pipefail
+          pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
+      - name: Fetch and SHA-check deployed #315 detection and recognition models
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-model
+          curl -fL --retry 3 --retry-delay 1 \
+            'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/5994b4f/inference.onnx' \
+            -o /tmp/kanzi-model/det.onnx
+          curl -fL --retry 3 --retry-delay 1 \
+            'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx' \
+            -o /tmp/kanzi-model/rec.onnx
+          curl -fL --retry 3 --retry-delay 1 \
+            'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml?download=true' \
+            -o /tmp/kanzi-model/rec.yml
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  /tmp/kanzi-model/det.onnx' | sha256sum -c -
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/kanzi-model/rec.onnx' | sha256sum -c -
+          echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/kanzi-model/rec.yml' | sha256sum -c -
+      - name: Match actual #315 app model configuration
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          src=Path('app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt').read_text()
+          required=['detLimitSideLen = if (isV5) 960 else 1600',
+            'detThresh = if (isV5) 0.30f else 0.20f',
+            'detBoxThresh = if (isV5) 0.60f else 0.45f',
+            'detUnclipRatio = if (isV5) 1.50f else 1.40f']
+          for x in required:
+              assert x in src, x
+          print("REAL_RELEASE_315_THRESHOLDS_VERIFIED=PASS",flush=True)
+          PY
+      - name: Compare true default 0.45 with 0.40, 0.35 and 0.30, recognize new boxes
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/box-value
+          python3 -u scripts/ocr_box_value_deep_dive.py \
+            /tmp/kanzi-model/det.onnx \
+            /tmp/kanzi-model/rec.onnx \
+            /tmp/kanzi-model/rec.yml \
+            --out /tmp/box-value \
+            | tee /tmp/box-value/console.log
+          grep -q 'CORRECT_315_BOX_VALUE_DEEP_DIVE=PASS' /tmp/box-value/console.log
+          echo '### Actual #315-model detector threshold versus annotated GT' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/box-value/thresholds.csv >> "$GITHUB_STEP_SUMMARY"
+          echo 'Only approximate SDK Python reimplementation: no Android hardware; unmatched boxes are NOT proven false positives.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain numerical outputs only; no copyrighted or user image bytes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-315-true-box-value-data
+          path: /tmp/box-value/
+          retention-days: 7
+          if-no-files-found: warn
