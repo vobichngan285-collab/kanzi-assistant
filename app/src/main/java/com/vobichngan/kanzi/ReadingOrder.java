@@ -155,6 +155,20 @@ public final class ReadingOrder {
     }
 
     public static String arrange(List<Box> incoming, List<LayoutRegion> regions) {
+        return arrangeInternal(incoming,regions,false);
+    }
+
+    /**
+     * Live text capture: use the same glyph reconstruction and line grouping
+     * but order independent regions top-first. Book-specific column reading
+     * stays isolated in the original arrange() path.
+     */
+    public static String arrangeRealtime(List<Box> incoming) {
+        return arrangeInternal(incoming,java.util.Collections.emptyList(),true);
+    }
+
+    private static String arrangeInternal(List<Box> incoming,
+                                          List<LayoutRegion> regions,boolean realtime) {
         List<Box> boxes = new ArrayList<>();
         for (Box box : incoming) {
             if (box == null || box.x.length != 4 || box.y.length != 4 || box.text == null) continue;
@@ -183,7 +197,7 @@ public final class ReadingOrder {
                 // paragraphs. Previous code silently lost every such box.
                 // Append as a distinct flow rather than interrupting columns.
                 if (!unassigned.isEmpty()) {
-                    String additional = arrange(unassigned);
+                    String additional = realtime ? arrangeRealtime(unassigned) : arrange(unassigned);
                     if (!additional.isEmpty()) text.append("\n\n").append(additional);
                 }
                 return text.toString();
@@ -200,7 +214,8 @@ public final class ReadingOrder {
         // Baseline-aware line construction and text-stream reconstruction
         // belong in one geometric graph. A simple shared-X column heuristic
         // causes unrelated footnotes to be inserted into running prose.
-        return TextFlowRebuilder.arrange(boxes, regions);
+        return realtime ? TextFlowRebuilder.arrangeRealtime(boxes)
+                        : TextFlowRebuilder.arrange(boxes, regions);
 
     }
 
