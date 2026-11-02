@@ -14,6 +14,14 @@ internal class LayoutAiReuseCoordinator(private val engine: LayoutAiEngine) {
     private val scheduler = LayoutFrameScheduler(500L, 10_000L, .03f)
     private var previous: LayoutSceneFingerprint? = null
     private var cached: List<LayoutRegion> = emptyList()
+    private var inferenceCount = 0L
+    private var cacheReuseCount = 0L
+    private var safetyFallbackCount = 0L
+
+    /** Counts normal recognition frames, excluding independent diagnostic runs. */
+    @Synchronized
+    fun statistics(): String =
+        "正常识别累计：AI实际运行${inferenceCount}次，缓存复用${cacheReuseCount}次，安全回退${safetyFallbackCount}次"
 
     @Synchronized
     fun reset() {
@@ -42,6 +50,7 @@ internal class LayoutAiReuseCoordinator(private val engine: LayoutAiEngine) {
         val fingerprint = try {
             LayoutSceneFingerprint.fromNv21(nv21, width, height)
         } catch (_: IllegalArgumentException) {
+            safetyFallbackCount++
             reset()
             return LayoutAiEngine.Result(emptyList(), 0L, "画面校验失败，回退几何排序")
         }
@@ -52,16 +61,21 @@ internal class LayoutAiReuseCoordinator(private val engine: LayoutAiEngine) {
             LayoutFrameScheduler.Action.REUSE -> {
                 // Fail closed if the application cache and scheduler ever disagree.
                 if (cached.isEmpty() || !sameFrame) {
+                    safetyFallbackCount++
                     reset()
                     LayoutAiEngine.Result(emptyList(), 0L, "缓存不同步，回退几何排序")
                 } else {
+                    cacheReuseCount++
                     LayoutAiEngine.Result(cached, 0L, "稳定画面，复用上次版面（无需推理）")
                 }
             }
-            LayoutFrameScheduler.Action.GEOMETRY_FALLBACK ->
+            LayoutFrameScheduler.Action.GEOMETRY_FALLBACK -> {
+                safetyFallbackCount++
                 LayoutAiEngine.Result(emptyList(), 0L,
                     "画面变化或分析冷却中，暂用几何阅读顺序")
+            }
             LayoutFrameScheduler.Action.ANALYZE -> {
+                inferenceCount++
                 try {
                     val result = engine.analyze(bitmap, true, ocrBoxes)
                     val usable = result.regions.isNotEmpty()
@@ -75,6 +89,7 @@ internal class LayoutAiReuseCoordinator(private val engine: LayoutAiEngine) {
                     }
                     result
                 } catch (t: Throwable) {
+                    safetyFallbackCount++
                     scheduler.completed(SystemClock.elapsedRealtime(), false)
                     previous = null
                     cached = emptyList()
