@@ -34,7 +34,8 @@ jobs:
           set -euo pipefail
           python3 scripts/verify_book_reading_fast_path.py
           python3 scripts/verify_preview_ocr_isolation.py
-          git fetch --no-tags --depth=1 origin release/v0.8.0-ocr-engine-rework\n          git diff --quiet FETCH_HEAD -- app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt app/src/main/java/com/vobichngan/kanzi/FrameChangeGate.java
+          git fetch --no-tags --depth=1 origin release/v0.8.0-ocr-engine-rework
+          git diff --quiet FETCH_HEAD -- app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt app/src/main/java/com/vobichngan/kanzi/FrameChangeGate.java
       - name: Upload test summary
         uses: actions/upload-artifact@v4
         if: always()
