@@ -18,6 +18,24 @@ jobs:
           curl -fL --retry 3 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml?download=true' -o /tmp/ocr-model/inference.yml
           echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/ocr-model/inference.onnx' | sha256sum -c -
           echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/ocr-model/inference.yml' | sha256sum -c -
+      - name: Extract exact #315 detector model from original APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --connect-timeout 20 \
+            'https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/test-build-315/app-release.apk' \
+            -o /tmp/app315.apk
+          python - <<'PY'
+          import zipfile,pathlib,hashlib
+          with zipfile.ZipFile('/tmp/app315.apk') as z:
+            data=z.read('assets/models/det/inference.onnx')
+          actual=hashlib.sha256(data).hexdigest()
+          expected='d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e'
+          assert actual==expected,(actual,expected)
+          pathlib.Path('/tmp/ocr-model/detector.onnx').write_bytes(data)
+          print('DETECTOR_SHA256_VERIFIED',actual,'bytes='+str(len(data)))
+          PY
+          rm /tmp/app315.apk
       - name: Download offline Python 3.13 OCR runtime wheel packages
         shell: bash
         run: |
