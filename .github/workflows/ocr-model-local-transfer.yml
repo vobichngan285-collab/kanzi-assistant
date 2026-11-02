@@ -1,0 +1,26 @@
+name: Transfer verified PP-OCRv6 Small model for local photo testing
+on:
+  push:
+    branches: [test/ocr-ab-offline-20261102]
+    paths: [.github/workflows/ocr-model-local-transfer.yml]
+  workflow_dispatch:
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download original #315-matching publicly licensed model
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ocr-model
+          curl -fL --retry 3 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx' -o /tmp/ocr-model/inference.onnx
+          curl -fL --retry 3 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml?download=true' -o /tmp/ocr-model/inference.yml
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/ocr-model/inference.onnx' | sha256sum -c -
+          echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/ocr-model/inference.yml' | sha256sum -c -
+      - name: Export model and dictionary only (no photographs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: original-apk315-matched-rec-model
+          path: /tmp/ocr-model/
+          retention-days: 1
