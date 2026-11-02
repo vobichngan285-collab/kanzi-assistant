@@ -11,6 +11,9 @@ import android.hardware.usb.UsbManager;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.content.SharedPreferences;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.res.ColorStateList;
 import android.text.InputType;
 import android.view.Gravity;
@@ -122,6 +125,7 @@ public class MainActivity extends CameraActivity {
     private volatile String readingFocusMode = "AUTO";
     private volatile boolean aiLayoutEnabled = false;
     private volatile String lastDiagnosticText = "";
+    private volatile String lastCandidateDiagnosticText = "";
     private volatile boolean speechNoEnglish = false;
     private volatile boolean speechNoNumbers = false;
     private volatile int maxSpeechChars = 0;
@@ -206,10 +210,13 @@ public class MainActivity extends CameraActivity {
                             + (report.getCandidateText().isEmpty() ? "（无可靠候选）" : report.getCandidateText())
                             + "\n\n候选框序号与归属追溯：\n" + report.getCandidateDetails();
                         lastDiagnosticText = report.getText();
+                        lastCandidateDiagnosticText = report.getCandidateText();
                         runOnUiThread(() -> { if (diagnosticReportView != null) diagnosticReportView.setText(result); });
                     },
                     error -> {
                         busy.set(false);
+                        lastDiagnosticText = "";
+                        lastCandidateDiagnosticText = "";
                         runOnUiThread(() -> { if (diagnosticReportView != null) diagnosticReportView.setText(
                             "诊断失败\n摄像头帧：" + width + "×" + height + "\n原因：" + error); });
                     });
@@ -746,7 +753,7 @@ public class MainActivity extends CameraActivity {
         diagnosticTitle.setPadding(0, dp(18), 0, dp(4));
         panel.addView(diagnosticTitle);
         TextView diagnosticNote = new TextView(this);
-        diagnosticNote.setText("点击后抓取摄像头下一帧并执行一次 OCR。诊断不受自动识别间隔和连续识别条件影响；完成后可让中文语音实际朗读这次识别结果。请先连接外接摄像头。");
+        diagnosticNote.setText("抓取手机或 USB 摄像头的下一帧，进行一次独立的原始 OCR 与版面诊断。完成后可以分别朗读当前顺序和实验候选顺序，或复制完整日志。候选顺序不会自动取代正式朗读。");
         diagnosticNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         diagnosticNote.setTextColor(0xFF667085);
         panel.addView(diagnosticNote);
@@ -768,6 +775,8 @@ public class MainActivity extends CameraActivity {
                 return;
             }
             diagnosticStartedAt = System.currentTimeMillis();
+            lastDiagnosticText = "";
+            lastCandidateDiagnosticText = "";
             diagnosticReportView.setText("正在等待摄像头下一帧并执行 OCR……");
             diagnosticCaptureRequested.set(true);
         });
@@ -782,6 +791,40 @@ public class MainActivity extends CameraActivity {
             }
         });
         panel.addView(speakDiagnosticButton);
+        Button speakCandidateButton = createControlButton("试听实验候选阅读顺序");
+        speakCandidateButton.setOnClickListener(v -> {
+            // A/B listening is explicitly user-triggered. Live automatic TTS
+            // continues to use the established reading-order implementation.
+            String textToRead = lastCandidateDiagnosticText == null
+                ? "" : lastCandidateDiagnosticText;
+            if (textToRead.trim().isEmpty()) {
+                Toast.makeText(this, "尚无实验候选文字，请先运行诊断", Toast.LENGTH_SHORT).show();
+            } else if (tts == null || !ttsReady) {
+                Toast.makeText(this, "中文语音尚未准备好", Toast.LENGTH_SHORT).show();
+            } else {
+                queueSpeechText(textToRead, normalizeOcrText(textToRead), true);
+            }
+        });
+        panel.addView(speakCandidateButton);
+        Button copyDiagnosticButton = createControlButton("复制完整 OCR + AI 版面诊断");
+        copyDiagnosticButton.setOnClickListener(v -> {
+            String contents = diagnosticReportView == null ? ""
+                : diagnosticReportView.getText().toString();
+            if (contents.isEmpty() || "尚未运行诊断".equals(contents)
+                || contents.startsWith("正在等待")) {
+                Toast.makeText(this, "请先完成一次诊断", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            ClipboardManager clipboard = (ClipboardManager)
+                getSystemService(Context.CLIPBOARD_SERVICE);
+            if (clipboard == null) {
+                Toast.makeText(this, "设备剪贴板不可用", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            clipboard.setPrimaryClip(ClipData.newPlainText("Kanzi OCR 诊断", contents));
+            Toast.makeText(this, "诊断文字已复制，可以粘贴发送", Toast.LENGTH_SHORT).show();
+        });
+        panel.addView(copyDiagnosticButton);
 
         TextView similarityNote = new TextView(this);
         similarityNote.setText("长文阅读按当前画面一次识别后即开始按顺序朗读，读完前不重复识别。快速扫读直接响应最新画面；相似度用于防止重复朗读，不要求两次整页OCR确认。0关闭相似度去重。");
