@@ -283,6 +283,18 @@ public final class DownloadableVoiceStore {
         }
     }
 
+    /** Optional storage cleanup from a long-press on the installed voice row. */
+    public void remove(Voice voice,Runnable whenDone) {
+        if(voice==null||voice.isSystem())return;
+        selectionSerial.incrementAndGet();
+        downloader.execute(() -> {
+            // Both Kokoro voice options share one package on disk.
+            if(selectedVoice().pack.equals(voice.pack))persist(SYSTEM);
+            deleteTree(modelDir(voice));
+            main.post(whenDone);
+        });
+    }
+
     static void deleteTree(File file) {
         if(file==null||!file.exists())return;
         if(file.isDirectory()){
