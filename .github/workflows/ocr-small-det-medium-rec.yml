@@ -1,0 +1,60 @@
+name: #315 Small DET plus Medium REC - real-scene paired OCR and latency
+on:
+  push:
+    branches: [test/ocr-small-det-medium-rec-20261103]
+    paths:
+      - scripts/ocr_small_det_medium_rec_fullframe.py
+      - .github/workflows/ocr-small-det-medium-rec.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fullframe-hybrid-ab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        cohort: [holdout, dev]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install same CPU ONNX stack for both variants
+        run: |
+          set -euo pipefail
+          pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
+      - name: Download 3 original #315/Medium ONNX weights and matched dictionaries
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/hybrid-models
+          curl -fL --retry 4 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx' -o /tmp/hybrid-models/det.onnx
+          curl -fL --retry 4 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx' -o /tmp/hybrid-models/small_rec.onnx
+          curl -fL --retry 4 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_rec_onnx/resolve/main/inference.onnx' -o /tmp/hybrid-models/medium_rec.onnx
+          curl -fL --retry 4 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml' -o /tmp/hybrid-models/small_rec.yml
+          curl -fL --retry 4 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_rec_onnx/resolve/main/inference.yml' -o /tmp/hybrid-models/medium_rec.yml
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  /tmp/hybrid-models/det.onnx' | sha256sum -c -
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/hybrid-models/small_rec.onnx' | sha256sum -c -
+          echo '9c09abf0957f7968c7586464b7397b84ad2387a0497a351af40e9acc71b673ba  /tmp/hybrid-models/medium_rec.onnx' | sha256sum -c -
+      - name: Same Small detector and crop, compare recognizers on ${{ matrix.cohort }} photos
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/hybrid-results
+          python3 -u scripts/ocr_small_det_medium_rec_fullframe.py \
+            --models /tmp/hybrid-models --cohort ${{ matrix.cohort }} \
+            --out /tmp/hybrid-results \
+            | tee /tmp/hybrid-results/run.log
+          grep -q 'SMALL_DET_MEDIUM_REC_FULL_FRAME_AB=PASS' /tmp/hybrid-results/run.log
+          echo '### Small detector + Small/Medium recognition on ${{ matrix.cohort }} real photos' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/hybrid-results/summary.csv >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/hybrid-results/paired.json >> "$GITHUB_STEP_SUMMARY"
+          echo 'Approximate Android pipeline, not actual USB phone performance; GT-unmatched predictions NOT declared false positives.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish numerical prediction, GT and CPU-time reports only
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: small-det-medium-rec-fullframe-${{ matrix.cohort }}
+          path: /tmp/hybrid-results/
+          retention-days: 10
+          if-no-files-found: warn
