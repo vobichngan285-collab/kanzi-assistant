@@ -325,8 +325,8 @@ def main():
                 "post_ms":round(post_ms,2)})
         base_ids={b["id"] for b in groups[BASE_BOX_THRESH]}
         for cand in boxes:
-            if len(boxes)>MAX_RECOGNITION_CROPS_PER_PHOTO and
-               cand["id"] not in base_ids and cand["score"]<.35:
+            if (len(boxes)>MAX_RECOGNITION_CROPS_PER_PHOTO and
+                cand["id"] not in base_ids and cand["score"]<.35):
                 # cap pathological frames; counts still include candidates.
                 continue
             roi=crop_box(rgb,cand)
