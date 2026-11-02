@@ -131,10 +131,10 @@ public final class OfflineVoicePlayback {
     public void shutdown() {
         closed=true;
         stop();
-        worker.shutdownNow();
-        // JNI deallocation must occur on the same single worker,
-        // after any ongoing generation has exited; do not free while
-        // another thread is in native code.
-        // The process owns the remainder if an interrupted generation hangs.
+        // Release the native engine on its OWN worker after any synthesis
+        // currently in progress has finished. Never free it from the UI
+        // thread while JNI could be generating another audio chunk.
+        worker.execute(synthesizer::release);
+        worker.shutdown();
     }
 }
