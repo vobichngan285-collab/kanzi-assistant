@@ -5,6 +5,8 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
+import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Map;
 
@@ -141,14 +143,19 @@ public final class LayoutReadingPlanner {
         // Geometric fallback: detect persistent left/right page columns.
         // A single layout region must not suppress this split.
         List<List<ReadingOrder.Box>> columns = ReadingOrder.horizontalColumns(boxes);
-        Map<ReadingOrder.Box,Integer> indexByBox = new HashMap<>();
-        for (int i=0;i<n;i++) indexByBox.put(boxes.get(i),i);
+        // A detector can yield multiple entries sharing the same Box object.
+        // Keep a queue per object identity so every original OCR ID survives.
+        Map<ReadingOrder.Box,ArrayDeque<Integer>> indexByBox = new IdentityHashMap<>();
+        for (int i=0;i<n;i++) {
+            indexByBox.computeIfAbsent(boxes.get(i),k->new ArrayDeque<Integer>()).add(i);
+        }
         final List<List<Integer>> groups = new ArrayList<>();
         if (columns.size() > 1) {
             for (List<ReadingOrder.Box> column: columns) {
                 List<Integer> group = new ArrayList<>();
                 for (ReadingOrder.Box b: column) {
-                    Integer id=indexByBox.get(b);
+                    ArrayDeque<Integer> remaining=indexByBox.get(b);
+                    Integer id=remaining == null ? null : remaining.pollFirst();
                     if (id != null) group.add(id);
                 }
                 if (!group.isEmpty()) groups.add(group);
@@ -163,6 +170,10 @@ public final class LayoutReadingPlanner {
             }
             if(!valid || count!=n) groups.clear();
         }
+        // ReadingOrder.horizontalColumns already places full-width headings
+        // ahead of left/right page streams and trailing footers last. Preserve
+        // that order instead of applying a non-transitive rectangle comparator.
+        final boolean groupedByGeometry = !groups.isEmpty();
         if (groups.isEmpty()) {
             Map<Integer,List<Integer>> byRegion = new HashMap<>();
             for(int i=0;i<n;i++) {
@@ -172,31 +183,71 @@ public final class LayoutReadingPlanner {
             }
             groups.addAll(byRegion.values());
         }
-        // Sort groups spatially (top-to-bottom; distinct side-by-side columns left first).
-        Collections.sort(groups, new Comparator<List<Integer>>() {
-            public int compare(List<Integer> a,List<Integer> b) {
-                float ax=0,ay=0,bx=0,by=0;
-                for(int i:a){ax+=boxes.get(i).centerX();ay+=boxes.get(i).centerY();}
-                for(int i:b){bx+=boxes.get(i).centerX();by+=boxes.get(i).centerY();}
-                ax/=a.size();ay/=a.size();bx/=b.size();by/=b.size();
-                // Two separated streams: read left page before right page.
-                float aLeft=Float.MAX_VALUE,aRight=-Float.MAX_VALUE;
-                float bLeft=Float.MAX_VALUE,bRight=-Float.MAX_VALUE;
-                for(int i:a){aLeft=Math.min(aLeft,boxes.get(i).left());aRight=Math.max(aRight,boxes.get(i).right());}
-                for(int i:b){bLeft=Math.min(bLeft,boxes.get(i).left());bRight=Math.max(bRight,boxes.get(i).right());}
-                float aTop=Float.MAX_VALUE,aBottom=-Float.MAX_VALUE;
-                float bTop=Float.MAX_VALUE,bBottom=-Float.MAX_VALUE;
-                for(int i:a){aTop=Math.min(aTop,boxes.get(i).top());aBottom=Math.max(aBottom,boxes.get(i).bottom());}
-                for(int i:b){bTop=Math.min(bTop,boxes.get(i).top());bBottom=Math.max(bBottom,boxes.get(i).bottom());}
-                // A page-wide heading above all columns must be read before either page.
-                if (aBottom <= bTop) return -1;
-                if (bBottom <= aTop) return 1;
-                if(aRight<=bLeft) return -1;
-                if(bRight<=aLeft) return 1;
-                int y=Float.compare(ay,by);
-                return y!=0?y:Float.compare(ax,bx);
+        if (!groupedByGeometry) {
+            // Region groups are not necessarily in any meaningful HashMap order.
+            // Choose ONE global reading mode before sorting. Mixing pairwise
+            // 'above' and 'left-of' precedence can create comparison cycles.
+            final Map<List<Integer>,float[]> bounds = new IdentityHashMap<>();
+            for(List<Integer> g:groups) {
+                float left=Float.MAX_VALUE, right=-Float.MAX_VALUE;
+                float top=Float.MAX_VALUE, bottom=-Float.MAX_VALUE;
+                for(int i:g) {
+                    ReadingOrder.Box box=boxes.get(i);
+                    left=Math.min(left,box.left());
+                    right=Math.max(right,box.right());
+                    top=Math.min(top,box.top());
+                    bottom=Math.max(bottom,box.bottom());
+                }
+                bounds.put(g,new float[]{left,top,right,bottom});
             }
-        });
+            boolean hasParallelRegions=false;
+            for(int a=0;a<groups.size();a++) for(int b=a+1;b<groups.size();b++) {
+                float[] x=bounds.get(groups.get(a)), y=bounds.get(groups.get(b));
+                float commonY=Math.min(x[3],y[3])-Math.max(x[1],y[1]);
+                float smallerHeight=Math.max(1f,Math.min(x[3]-x[1],y[3]-y[1]));
+                if(commonY >= .35f*smallerHeight &&
+                    (x[2]<=y[0] || y[2]<=x[0])) hasParallelRegions=true;
+            }
+            final boolean parallel=hasParallelRegions;
+            final Map<List<Integer>,Integer> priority=new IdentityHashMap<>();
+            for(List<Integer> g:groups) {
+                float[] b=bounds.get(g);
+                int p=1;
+                if(parallel && groups.size()>2) {
+                    boolean entirelyAboveAll=true, entirelyBelowAll=true;
+                    for(List<Integer> other:groups) {
+                        if(g==other)continue;
+                        float[] o=bounds.get(other);
+                        if(b[3]>o[1])entirelyAboveAll=false;
+                        if(b[1]<o[3])entirelyBelowAll=false;
+                    }
+                    // Only promote a page-spanning banner; narrow side notes
+                    // should not leap ahead of an entire opposite page.
+                    float minWidth=Float.MAX_VALUE;
+                    for(List<Integer> other:groups) if(g!=other) {
+                        float[] o=bounds.get(other);
+                        minWidth=Math.min(minWidth,o[2]-o[0]);
+                    }
+                    boolean wide=b[2]-b[0]>=minWidth*1.35f;
+                    if(wide && entirelyAboveAll)p=0;
+                    else if(wide && entirelyBelowAll)p=2;
+                }
+                priority.put(g,p);
+            }
+            groups.sort((a,b)->{
+                int p=Integer.compare(priority.get(a),priority.get(b));
+                if(p!=0)return p;
+                float[] x=bounds.get(a),y=bounds.get(b);
+                int primary=parallel ? Float.compare(x[0],y[0])
+                                     : Float.compare(x[1],y[1]);
+                if(primary!=0)return primary;
+                int secondary=parallel ? Float.compare(x[1],y[1])
+                                       : Float.compare(x[0],y[0]);
+                if(secondary!=0)return secondary;
+                // Deterministic tie-break, independent of HashMap iteration.
+                return Integer.compare(a.get(0),b.get(0));
+            });
+        }
         List<Integer> orderedIds = new ArrayList<>();
         List<Placement> placements = new ArrayList<>();
         for(List<Integer> group:groups) {
