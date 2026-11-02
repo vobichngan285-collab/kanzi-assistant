@@ -110,6 +110,9 @@ public class MainActivity extends CameraActivity {
     private DownloadableVoiceStore voiceStore;
     private OfflineVoicePlayback offlineVoicePlayback;
     private PaddleOcrEngine recognizer;
+    // Make engine errors visible in the diagnostics instead of only showing
+    // the confusing generic "waiting for OCR initialization" string.
+    private volatile String lastOcrEngineError = "";
     private volatile boolean running = false;
     private volatile boolean automaticMode = true;
     private volatile long recognitionIntervalMs = 500L;
@@ -542,15 +545,19 @@ public class MainActivity extends CameraActivity {
         if (recognizer != null) recognizer.release();
         realtimeScene.reset();
         lastQuickScanGeneration = -1L;
+        lastOcrEngineError = "";
         status.setText("正在切换到 " + ocrModelDisplayName(modelId) + "…");
         recognizer = new PaddleOcrEngine(getApplicationContext(), new PaddleOcrEngine.Listener() {
             @Override public void onReady() {
+                lastOcrEngineError = "";
                 runOnUiThread(() -> {
                     status.setText(ocrModelDisplayName(modelId) + " 已加载，可以开始识别");
                     Toast.makeText(MainActivity.this, ocrModelDisplayName(modelId) + " 已切换", Toast.LENGTH_SHORT).show();
                 });
             }
             @Override public void onError(String message) {
+                lastOcrEngineError = message;
+                Log.e("KanziOCR", "Model initialization failed: " + message);
                 runOnUiThread(() -> {
                     if (!"ppocrv6_small".equals(modelId)) {
                         Toast.makeText(MainActivity.this, ocrModelDisplayName(modelId) + " 初始化失败，已自动回退到 PP-OCRv6 Small。", Toast.LENGTH_LONG).show();
@@ -989,6 +996,12 @@ public class MainActivity extends CameraActivity {
         diagnosticReportView.setBackgroundColor(0xFFF1F3F5);
         // Controls stay above the potentially very long diagnostic output, so
         // users do not need to scroll past hundreds of OCR boxes to compare A/B.
+        Button retryOcrButton = createControlButton("重新初始化 OCR");
+        retryOcrButton.setOnClickListener(v -> {
+            diagnosticReportView.setText("正在重新初始化 " + ocrModelDisplayName(ocrModelId) + "…");
+            switchOcrModel(ocrModelId);
+        });
+        panel.addView(retryOcrButton);
         Button runDiagnosticButton = createControlButton("开始 OCR 诊断");
         runDiagnosticButton.setOnClickListener(v -> {
             if (!(usingPhoneCamera || previewCallbackAdded)) {
@@ -996,7 +1009,12 @@ public class MainActivity extends CameraActivity {
                 return;
             }
             if (recognizer == null || !recognizer.isReady()) {
-                diagnosticReportView.setText("正在等待 OCR 引擎初始化，或引擎初始化失败。请稍后重试；如果持续如此，请检查应用日志。");
+                diagnosticReportView.setText(lastOcrEngineError.isEmpty()
+                    ? "OCR 引擎正在初始化。若长时间不就绪，请点击「重新初始化 OCR」并复制诊断报告。"
+                    : "OCR 引擎初始化失败：" + lastOcrEngineError +
+                        "\n当前模型：" + ocrModelId +
+                        "\n中文语音：" + (ttsReady ? "系统语音已就绪" : "系统语音未就绪") +
+                        "\n可尝试「重新初始化 OCR」，若仍失败请复制本页文字。");
                 return;
             }
             diagnosticStartedAt = System.currentTimeMillis();
@@ -1227,11 +1245,14 @@ public class MainActivity extends CameraActivity {
         diagnosticHandler.postDelayed(diagnosticRunnable, 1200);
         recognizer = new PaddleOcrEngine(getApplicationContext(), new PaddleOcrEngine.Listener() {
             @Override public void onReady() {
+                lastOcrEngineError = "";
                 frameChangeGate.reset();
                 lastProcess = 0L;
                 runOnUiThread(() -> status.setText(ocrModelDisplayName(ocrModelId) + " 已加载，可以开始识别"));
             }
             @Override public void onError(String message) {
+                lastOcrEngineError = message;
+                Log.e("KanziOCR", "OCR initialization failed: " + message);
                 runOnUiThread(() -> {
                     if (!"ppocrv6_small".equals(ocrModelId)) {
                         Toast.makeText(MainActivity.this, ocrModelDisplayName(ocrModelId) + " 启动失败，自动恢复 PP-OCRv6 Small。", Toast.LENGTH_LONG).show();
