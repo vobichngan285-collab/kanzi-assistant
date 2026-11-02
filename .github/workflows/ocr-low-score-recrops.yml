@@ -1,0 +1,47 @@
+name: Low-score text box source recrop A/B - 2% / 5%
+on:
+  push:
+    branches: [test/ocr-box-value-20261103]
+    paths:
+      - scripts/ocr_low_score_recrop_ab.py
+      - .github/workflows/ocr-low-score-recrops.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  recrop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install exact model inference runtime
+        run: |
+          set -euo pipefail
+          pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
+      - name: Fetch original #315 models
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ocr-models
+          curl -fL --retry 3 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/5994b4f/inference.onnx' -o /tmp/ocr-models/det.onnx
+          curl -fL --retry 3 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx' -o /tmp/ocr-models/rec.onnx
+          curl -fL --retry 3 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml?download=true' -o /tmp/ocr-models/rec.yml
+      - name: Test original versus conditional recrop on newly recovered labeled words
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ocr-recrops
+          python3 -u scripts/ocr_low_score_recrop_ab.py \
+            /tmp/ocr-models/det.onnx /tmp/ocr-models/rec.onnx /tmp/ocr-models/rec.yml \
+            --out /tmp/ocr-recrops | tee /tmp/ocr-recrops/console.log
+          grep -q 'LOW_SCORE_SOURCE_RECROP_AB=PASS' /tmp/ocr-recrops/console.log
+          echo 'Matched low-score box recrop A/B; no device evidence and tiny sample of newly found annotations.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Store only numeric and text A/B report, not photos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: low-score-source-recrops-ab
+          path: /tmp/ocr-recrops/
+          retention-days: 7
+          if-no-files-found: warn
