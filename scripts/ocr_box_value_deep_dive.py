@@ -36,6 +36,12 @@ SLICES = {
     "RCTW": [(0,24),(135,24),(315,24)],
     "ART": [(0,24),(125,24),(295,24)],
 }
+# Samples STRICTLY disjoint from the 216 photos used to explore strategies.
+HOLDOUT_SLICES = {
+    "ReCTS": [(500,22),(720,22)],
+    "RCTW": [(500,22),(720,22)],
+    "ART": [(500,22),(720,22)],
+}
 DET_SHA = "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e"
 REC_SHA = "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634"
 REC_CONFIG_SHA = "ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1"
@@ -270,7 +276,14 @@ def main():
     ap.add_argument("rec_model")
     ap.add_argument("rec_config")
     ap.add_argument("--out",required=True)
+    ap.add_argument("--holdout",action="store_true",help="use 132 untouched, disjoint photos")
     args=ap.parse_args()
+    global SLICES
+    if args.holdout:
+        SLICES = HOLDOUT_SLICES
+        print("DATA_SPLIT=INDEPENDENT_HOLDOUT",SLICES,flush=True)
+    else:
+        print("DATA_SPLIT=EXPLORATORY",SLICES,flush=True)
     out=Path(args.out);out.mkdir(exist_ok=True,parents=True)
     for p,h in [(args.det_model,DET_SHA),(args.rec_model,REC_SHA),
                 (args.rec_config,REC_CONFIG_SHA)]:
