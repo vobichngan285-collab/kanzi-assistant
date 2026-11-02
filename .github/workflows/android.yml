@@ -2,7 +2,7 @@ name: Android APK (PP-OCRv6 Small/Tiny + PP-OCRv5 Mobile + 1080p UVC)
 # Manual workflow_dispatch is enabled for clean rebuilds after stalled runs.
 on:
   push:
-    branches: [ main, feature/v0.7.0-accessibility-upgrades, release/v0.7.8, release/v0.8.0-ocr-engine-rework ]
+    branches: [ main, feature/v0.7.0-accessibility-upgrades, release/v0.7.8, release/v0.8.0-ocr-engine-rework, feature/strict-offline-ocr-order-guard ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
