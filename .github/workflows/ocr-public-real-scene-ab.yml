@@ -1,0 +1,50 @@
+name: #315 OCR accuracy benchmark - public real-world annotated scenes
+on:
+  push:
+    branches: [test/ocr-real-world-benchmark-20261103]
+    paths:
+      - scripts/ocr_public_real_scene_ab.py
+      - .github/workflows/ocr-public-real-scene-ab.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install recognition-only inference environment
+        run: |
+          set -euo pipefail
+          pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests
+      - name: Fetch original #315 SHA-verified recognizer and YAML
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-public-ocr-model /tmp/kanzi-public-ocr-results
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx' -o /tmp/kanzi-public-ocr-model/inference.onnx
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml?download=true' -o /tmp/kanzi-public-ocr-model/inference.yml
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/kanzi-public-ocr-model/inference.onnx' | sha256sum -c -
+          echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/kanzi-public-ocr-model/inference.yml' | sha256sum -c -
+      - name: Run recognition A/B with REAL annotated public camera images
+        run: |
+          set -euo pipefail
+          python3 -u scripts/ocr_public_real_scene_ab.py \
+            /tmp/kanzi-public-ocr-model/inference.onnx \
+            /tmp/kanzi-public-ocr-model/inference.yml \
+            --out /tmp/kanzi-public-ocr-results \
+            | tee /tmp/kanzi-public-ocr-results/console.log
+          grep 'PUBLIC_REAL_SCENE_RECOGNITION_AB=PASS' /tmp/kanzi-public-ocr-results/console.log
+          cat /tmp/kanzi-public-ocr-results/summary.csv >> "$GITHUB_STEP_SUMMARY"
+          echo 'Real-world public dataset crops (annotation supplied): not a detector, Android UVC or TTS benchmark.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload scores and source identifiers - NO real photos or model binaries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: annotated-public-scene-ocr-ab-results
+          path: /tmp/kanzi-public-ocr-results/
+          retention-days: 7
+          if-no-files-found: warn
