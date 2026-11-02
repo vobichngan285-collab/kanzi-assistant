@@ -231,6 +231,8 @@ public class MainActivity extends CameraActivity {
                                 (report.getText().isEmpty() ? "（未识别到文字）" : report.getText()) +
                             "\n\n实时文字排序（正式快速扫读使用的算法；仅一次 OCR）：\n" +
                                 (report.getRealtimeText().isEmpty() ? "（未识别到文字）" : report.getRealtimeText()) +
+                            "\n\n上下文修正后的建议朗读（仅明确语境，原始框不变）：\n" +
+                                OcrContextRefiner.refine(report.getRealtimeText()) +
                             "\n\n全部可见文字（对照）：\n" + report.getFullPageText()
                             + "\n\n实验候选阅读顺序（仅诊断，不影响当前播报）：\n"
                             + (report.getCandidateText().isEmpty() ? "（无可靠候选）" : report.getCandidateText())
