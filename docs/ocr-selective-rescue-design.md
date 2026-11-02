@@ -36,3 +36,36 @@
 javac -d /tmp/kanzi-policy app/src/main/java/com/vobichngan/kanzi/SelectiveOcrRescuePolicy.java scripts/SelectiveOcrRescuePolicySmokeTest.java
 java -ea -cp /tmp/kanzi-policy SelectiveOcrRescuePolicySmokeTest
 ```
+
+## 快速扫读：稳定短文字确认（仅原型，默认关闭）
+
+`StableShortTextGate` 接受**已完成**的 OCR 文字、置信度、归一化中心坐标、帧序号和时间戳。它不抓帧、不调用模型、不能发音。仅在符合以下条件时返回 `SPEAK` 建议：
+
+- 默认关闭，且只考虑短文字；长文阅读直接跳过。
+- 同一文字至少在**不同摄像头帧**重复识别两次，文本一致（忽略空格冗余和英文大小写），位置变化不大，且跨越最短稳定时间。
+- 相机不稳定、低置信度、TTS 正在朗读、文字过长时跳过。
+- 当前场景已经朗读过的相同内容不重复播报，直到用户停止重新启动或能独立确认新场景。
+- 不做中文字典纠错：错字不可强行替换成常见商品词。
+
+**部署阻碍：现有 `FrameChangeGate` 在快速扫读时，对未变化的场景约 2800 ms 才重检。** 如果直接使用两帧确认机制，首次朗读可能至少被推迟约 2.8 秒，与实时读字要求矛盾。因此本原型**暂不接入**实际 TTS；下一阶段必须设计与帧队列、CPU 和 UVC 采集隔离的快速确认节奏，并测量真实设备首句朗读延迟。如果不能可靠降低延迟，就不要接入双帧确认，优先保留原来的单次识别朗读。
+
+## 超时与无队列实验执行器（仅原型，默认关闭）
+
+`NoQueueOcrRescueExecutor` 用独立后台线程、最多一个飞行任务、零容量 `SynchronousQueue`、单调时钟时限、过度耗时冷却机制实现**拒绝排队旧帧**。
+
+- 超时、失效帧和任务过度耗时产生的候选结果不向上层发布。
+- `invalidate()` 只能防止旧结果发布，**不能停止当前原生 ONNX 推理**。
+- 整体 CPU 资源、模型线程池、内存及摄像头驱动仍会互相竞争；一个慢任务可能跑到结束才释放工作线程。
+- 工作线程的成功回调不是 Android 主线程；未来任何接入都必须转发主线程，并重新检查朗读轮次 ID。
+- 真正的额外识别应共享或受控使用模型实例，**禁止**为每个候选初始化一个 ONNX 会话。
+- 必须先完成 USB 真机 P50/P95 延迟、帧丢失、热量、内存、TTS 连续性对照，才允许开放选项。当前所有阈值仅为实验初始值。
+
+## 回归测试
+
+纯 JDK 测试文件：
+
+- `scripts/SelectiveOcrRescuePolicySmokeTest.java` — 形变筛选与预算。
+- `scripts/StableShortTextGateSmokeTest.java` — 稳定文字、去重、长文隔离。
+- `scripts/NoQueueOcrRescueExecutorSmokeTest.java` — 零队列、过期帧抑制、后台工作与超时冷却。
+
+工作流：`.github/workflows/selective-ocr-rescue-policy.yml`。仅验证 Java 逻辑与未修改现有热路径；**不代表 Android 真实帧率、准确率或摄像头不卡顿的验收结果**。
