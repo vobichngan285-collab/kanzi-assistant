@@ -27,6 +27,8 @@ public final class StableShortTextGateSmokeTest {
                 "first frame waits");
         check(run(p, one, 1010L).action == StableShortTextGate.Action.WAIT_FOR_CONFIRMATION,
                 "duplicate frame id does not confirm");
+        check(run(p, item("房号 201", .95f, .51f, .5f, 0L), 1100L).confirmations == 1,
+                "out-of-order frame cannot provide confirmation");
         check(run(p, two, 1210L).action == StableShortTextGate.Action.SPEAK,
                 "two consistent observations after dwell trigger speak");
         check(run(p, item("房号 201", .91f, .52f, .5f, 3L), 1400L).action ==
