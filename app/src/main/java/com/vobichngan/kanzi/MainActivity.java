@@ -118,7 +118,7 @@ public class MainActivity extends CameraActivity {
     private volatile boolean speechPageActive = false;
     private final FrameChangeGate frameChangeGate = new FrameChangeGate();
     // Fast-scan frame identities are tracked even while a previous OCR is busy.
-    // Old results must never steal the microphone after the user turns the camera.
+    // A noisy frame identity can never cancel a successfully recognized sentence.
     private final RealtimeSceneTracker realtimeScene = new RealtimeSceneTracker();
     private volatile long lastLiveObservationAt = 0L;
     private volatile long lastQuickScanGeneration = -1L;
@@ -202,6 +202,10 @@ public class MainActivity extends CameraActivity {
                         busy.set(false);
                         String result = "诊断完成\n摄像头帧：已获取 " + width + "×" + height
                             + "\nOCR 引擎：已就绪\n检测框数量：" + report.getBoxCount()
+                            + "\n实时朗读状态：" + (running ? "已启动" : "未启动，请点开始识别") +
+                                "；扫描模式：" + (automaticMode ? "自动" : "手动") +
+                                "；中文语音：" + (ttsReady ? "已就绪" : "尚未就绪") +
+                            "\n提示：本页为诊断结果，诊断本身不自动朗读；可点「朗读这次诊断识别出的文字」试听。"
                             + "\n当前模型：" + report.getModelId()
                             + "\nOCR 输入方向：原始摄像头帧（固定 0°）"
                             + "\n实时文字输入旋转设置：" + liveTextRotationDegrees +
@@ -295,10 +299,23 @@ public class MainActivity extends CameraActivity {
             try {
                 recognizer.recognizeNv21(frame, width, height, enhance, legacyDecode, found -> {
                     busy.set(false);
-                    if (found != null && recognizedEpoch == readingEpoch.get() &&
-                        (!live || oneShot || recognizedScene == realtimeScene.generation())) {
+                    // Never discard a fully recognized, readable text frame
+                    // merely because autofocus, exposure or hand movement
+                    // advanced the cheap luma scene counter during the OCR
+                    // inference. That caused COMPLETE SILENCE on real phones:
+                    // camera callbacks can update the generation much faster
+                    // than the ~1-3 second recognition pass can finish.
+                    //
+                    // The reading epoch still rejects results from an actual
+                    // pause, mode change or camera change. New completed OCR
+                    // will supersede older TTS as soon as it becomes ready.
+                    if (found != null && recognizedEpoch == readingEpoch.get()) {
                         if (live && !oneShot) {
-                            lastQuickScanGeneration = recognizedScene;
+                            // Associate a completed OCR with the CURRENT
+                            // camera state so a harmless scene fingerprint
+                            // change during inference doesn't immediately
+                            // start a second full OCR and cancel the speech.
+                            lastQuickScanGeneration = realtimeScene.generation();
                             lastQuickScanAt = System.currentTimeMillis();
                             lastQuickScanReliable = !found.getText().trim().isEmpty() &&
                                 found.getAverageConfidence() >= 0.75;
@@ -310,7 +327,8 @@ public class MainActivity extends CameraActivity {
                                 isPhoneCamera, isPhoneCamera ? phoneSensorNaturalRotation : 0,
                                 isPhoneCamera ? phoneOcrRotation : 0);
                         }
-                        onRecognized(found.getText(), oneShot, recognizedScene, recognizedEpoch);
+                        onRecognized(found.getText(), oneShot,
+                            live ? realtimeScene.generation() : recognizedScene, recognizedEpoch);
                         onReadingQuality(found, quality);
                     }
                 }, error -> {
@@ -856,7 +874,11 @@ public class MainActivity extends CameraActivity {
             diagnosticStartedAt = System.currentTimeMillis();
             lastDiagnosticText = "";
             lastCandidateDiagnosticText = "";
-            diagnosticReportView.setText("正在等待摄像头下一帧并执行 OCR……");
+            diagnosticReportView.setText("正在等待摄像头下一帧并执行 OCR……" +
+                "\n提示：OCR 诊断只生成文字，不会自动朗读。需要听诊断结果请点击下方的「朗读这次诊断识别出的文字」。" +
+                "\n实时朗读状态：" + (running ? "已启动" : "未启动，请点开始识别") +
+                "；扫描模式：" + (automaticMode ? "自动" : "手动") +
+                "；中文语音：" + (ttsReady ? "已就绪" : "尚未就绪"));
             diagnosticCaptureRequested.set(true);
         });
         panel.addView(runDiagnosticButton);
@@ -1641,11 +1663,11 @@ public class MainActivity extends CameraActivity {
         final String normalizedSpeech = normalizeOcrText(fullSpeech);
         if (normalizedSpeech.isEmpty()) return;
         runOnUiThread(() -> {
+            // A scene luma fingerprint is a performance *hint*, never a
+            // condition for suppressing successful recognized speech.
             if (!running || tts == null || !ttsReady ||
                 (!manualCapture && !automaticMode) ||
-                resultEpoch != readingEpoch.get() ||
-                (!longReadingMode && !manualCapture &&
-                 sceneGeneration != realtimeScene.generation())) return;
+                resultEpoch != readingEpoch.get()) return;
             queueSpeechText(fullSpeech, normalizedSpeech, manualCapture, sceneGeneration);
         });
     }
