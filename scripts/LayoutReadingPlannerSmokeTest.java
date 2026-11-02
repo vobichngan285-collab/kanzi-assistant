@@ -34,18 +34,18 @@ public final class LayoutReadingPlannerSmokeTest {
         List<LayoutRegion> regions=Arrays.asList(
             new LayoutRegion(2,.9f,0,0,150,100),
             new LayoutRegion(2,.9f,250,0,400,100));
-        LayoutReadingPlanner.Plan p=LayoutReadingPlanner.plan(items,boxes,regions);
+        LayoutReadingPlanner.Plan p=LayoutReadingPlanner.plan(items,boxes,regions,LayoutReadingPlanner.SceneMode.BOOK);
         check(p.verified.accepted,"invalid permutation");
         check(p.verified.exactText().equals("左页第一行\n左页第二行\n右页第一行\n右页第二行"),
             "page reading order incorrect");
         check(p.usedLayout,"layout assignment missing");
         check(p.placements.get(0).regionId==0,"wrong region assignment");
-        LayoutReadingPlanner.Plan fallback=LayoutReadingPlanner.plan(items,boxes,Collections.<LayoutRegion>emptyList());
+        LayoutReadingPlanner.Plan fallback=LayoutReadingPlanner.plan(items,boxes,Collections.<LayoutRegion>emptyList(),LayoutReadingPlanner.SceneMode.BOOK);
         check(fallback.verified.accepted,"geometry fallback invalid");
         check(fallback.verified.ordered.size()==4,"OCR box lost");
         // Single broad AI region must NOT prevent splitting a two-page book.
         LayoutReadingPlanner.Plan broad=LayoutReadingPlanner.plan(items,boxes,
-            Collections.singletonList(new LayoutRegion(2,.99f,0,0,400,100)));
+            Collections.singletonList(new LayoutRegion(2,.99f,0,0,400,100)),LayoutReadingPlanner.SceneMode.BOOK);
         assertSequence(broad,"左页第一行\n左页第二行\n右页第一行\n右页第二行");
 
         // When geometry detects multiple columns, a full-width heading ABOVE
@@ -62,7 +62,7 @@ public final class LayoutReadingPlannerSmokeTest {
             box("右页第一行",300,80),box("左页第一行",10,80),
             box("右页第二行",300,120),box("左页第二行",10,120));
         assertSequence(LayoutReadingPlanner.plan(headingItems,headingBoxes,
-            Collections.<LayoutRegion>emptyList()),
+            Collections.<LayoutRegion>emptyList(),LayoutReadingPlanner.SceneMode.BOOK),
             "跨页总标题\n左页第一行\n左页第二行\n右页第一行\n右页第二行");
 
         // Camera perspective: line 1 right half is physically below the
