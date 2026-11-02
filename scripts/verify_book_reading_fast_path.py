@@ -41,7 +41,9 @@ assert 'selectedBoxes==diag.size()' not in focus
 print("CONTINUITY_CORE_WIRING=PASS")
 
 flow=(root/"app/src/main/java/com/vobichngan/kanzi/TextFlowRebuilder.java").read_text()
-assert "return TextFlowRebuilder.arrange(boxes, regions);" in reading
+# The dedicated real-time path must remain separate from legacy book flow.
+assert "TextFlowRebuilder.arrangeRealtime(boxes)" in reading
+assert "TextFlowRebuilder.arrange(boxes, regions)" in reading
 assert "sameVisualRow" in flow and "adjacentVertical" in flow
 assert 'b.alignedY(seamX)' in flow
 assert "Math.max(ha,hb)*4.3f" in flow
