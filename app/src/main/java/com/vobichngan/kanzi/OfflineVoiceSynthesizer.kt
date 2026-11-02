@@ -64,7 +64,11 @@ class OfflineVoiceSynthesizer(private val store: DownloadableVoiceStore) {
                     model = file("model.onnx"),
                     voices = file("voices.bin"),
                     tokens = file("tokens.txt"),
-                    // Both lexicons are shipped with the official Chinese-English package.
+                    // Official Kokoro package includes these pronunciation
+                    // resources; older sherpa-native builds still consume
+                    // dataDir/dictDir even if newer Kotlin docs deprecate them.
+                    dataDir = file("espeak-ng-data"),
+                    dictDir = file("dict"),
                     lexicon = file("lexicon-us-en.txt") + "," + file("lexicon-zh.txt")
                 )
             }
@@ -81,6 +85,7 @@ class OfflineVoiceSynthesizer(private val store: DownloadableVoiceStore) {
                 model.vits = OfflineTtsVitsModelConfig(
                     model = file("model.onnx"),
                     lexicon = file("lexicon.txt"),
+                    dictDir = file("dict"),
                     tokens = file("tokens.txt")
                 )
                 ruleFsts = listOf("date.fst", "number.fst")
