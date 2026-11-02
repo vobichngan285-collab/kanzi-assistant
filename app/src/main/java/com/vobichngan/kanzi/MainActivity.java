@@ -54,7 +54,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.9.4";
+    private static final String APP_VERSION = "0.9.5";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -124,7 +124,7 @@ public class MainActivity extends CameraActivity {
     private final AtomicBoolean diagnosticCaptureRequested = new AtomicBoolean(false);
     private volatile TextView diagnosticReportView;
     private volatile long diagnosticStartedAt = 0;
-    private boolean ttsReady = false;
+    private volatile boolean ttsReady = false;
     private boolean previewCallbackAdded = false;
     private volatile String lastSpoken = "";
     private String candidateText = "";
@@ -203,6 +203,9 @@ public class MainActivity extends CameraActivity {
                 return;
             }
             if (!running) return;
+            // Never fingerprint a frame before models are available: the old
+            // gate could suppress the first readable page for several seconds.
+            if (recognizer == null || !recognizer.isReady()) return;
             // Long reading owns OCR until the entire spoken page has completed.
             // Manual capture remains an explicit override below.
             long now = System.currentTimeMillis();
@@ -217,11 +220,11 @@ public class MainActivity extends CameraActivity {
                 if (oneShot) manualCaptureRequested.set(true);
                 return;
             }
-            // Long reading needs a SECOND OCR pass to confirm the first candidate,
-            // even when the image has not moved. Once spoken, avoid re-reading it.
-            boolean needsConfirmation = longReadingMode && candidateCount > 0;
+            // One successful OCR per stable page. The old mandatory second
+            // full-page pass both delayed TTS and could restart indefinitely
+            // when the long OCR strings differed at a few characters.
             boolean samePageLocked = longReadingMode && !lastSpoken.isEmpty();
-            if (!oneShot && !needsConfirmation &&
+            if (!oneShot &&
                 !frameChangeGate.accept(data, width, height, now, samePageLocked)) {
                 busy.set(false);
                 return;
@@ -720,7 +723,7 @@ public class MainActivity extends CameraActivity {
         panel.addView(speakDiagnosticButton);
 
         TextView similarityNote = new TextView(this);
-        similarityNote.setText("自动模式需连续两帧相近才朗读，手动抓取立即朗读一次；0 关闭相似度去重。长文本自动分段，不会因系统单次朗读限制被截断。若设置了最大朗读字数或不读英文/数字，仍会按这些设置筛选。");
+        similarityNote.setText("长文阅读按当前画面一次识别后即开始按顺序朗读，读完前不重复识别。快速扫读直接响应最新画面；相似度用于防止重复朗读，不要求两次整页OCR确认。0关闭相似度去重。");
         similarityNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         similarityNote.setTextColor(0xFF667085);
         panel.addView(similarityNote);
@@ -865,7 +868,9 @@ public class MainActivity extends CameraActivity {
         diagnosticHandler.postDelayed(diagnosticRunnable, 1200);
         recognizer = new PaddleOcrEngine(getApplicationContext(), new PaddleOcrEngine.Listener() {
             @Override public void onReady() {
-                runOnUiThread(() -> status.setText(ocrModelDisplayName(ocrModelId) + " 已加载，等待 USB 摄像头…"));
+                frameChangeGate.reset();
+                lastProcess = 0L;
+                runOnUiThread(() -> status.setText(ocrModelDisplayName(ocrModelId) + " 已加载，可以开始识别"));
             }
             @Override public void onError(String message) {
                 runOnUiThread(() -> {
@@ -926,6 +931,10 @@ public class MainActivity extends CameraActivity {
                 tts.setSpeechRate(speechRate);
                 ttsReady = language != TextToSpeech.LANG_MISSING_DATA && language != TextToSpeech.LANG_NOT_SUPPORTED;
                 if (ttsReady) {
+                    // If the camera already saw this page before TTS was ready,
+                    // make it immediately eligible for reading now.
+                    frameChangeGate.reset();
+                    lastProcess = 0L;
                     tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
                         @Override public void onStart(String utteranceId) {}
                         @Override public void onDone(String utteranceId) {
@@ -1351,46 +1360,21 @@ public class MainActivity extends CameraActivity {
     }
 
     /**
-     * Full reading confirms two matching frames; rapid scanning acts on one
-     * current frame. An explicit manual request reads its own complete capture.
+     * Both modes read one CURRENT OCR result; only speech scheduling differs.
+     * Long-form mode keeps the complete text until all TTS chunks finish.
      */
     private void onRecognized(String found, boolean manualCapture) {
         final long now = System.currentTimeMillis();
         final String recognizedText = found == null ? "" : found.trim();
         if (recognizedText.isEmpty()) {
-            candidateText = "";
-            candidateNormalized = "";
-            candidateCount = 0;
             if (lastNonEmptyAt > 0 && now - lastNonEmptyAt >= 2800) lastSpoken = "";
             return;
         }
         lastNonEmptyAt = now;
         if (!running || !ttsReady) return;
-        String confirmed;
-        if (manualCapture || !longReadingMode) {
-            candidateText = "";
-            candidateNormalized = "";
-            candidateCount = 0;
-            confirmed = recognizedText;
-        } else {
-            final String normalized = normalizeOcrText(recognizedText);
-            if (normalized.isEmpty()) return;
-            final float threshold = similarityThreshold / 100.0f;
-            if (!candidateNormalized.isEmpty() &&
-                    (threshold <= 0f || textSimilarity(candidateNormalized, normalized) >= threshold)) {
-                candidateCount++;
-                // Use the more complete frame; the old code silently spoke the LAST frame.
-                if (recognizedText.length() > candidateText.length()) candidateText = recognizedText;
-            } else {
-                candidateText = recognizedText;
-                candidateCount = 1;
-            }
-            candidateNormalized = normalized;
-            if (candidateCount < 2) return;
-            confirmed = candidateText;
-            candidateCount = 0;
-        }
-
+        // No arbitrary 88%-similarity confirmation of a second full page.
+        // Box grouping now produces a stable left-to-right page order.
+        final String confirmed = recognizedText;
         String speechText = confirmed;
         if (speechNoEnglish) speechText = speechText.replaceAll("[A-Za-z]+", " ");
         if (speechNoNumbers) speechText = speechText.replaceAll("[0-9]+", " ");

@@ -51,6 +51,74 @@ public class ReadingFlowSmokeTest {
         }
         equals(reconstructed.toString(), page.toString(), "no missing chars across speech chunks");
         equals(String.join("|", SpeechText.chunks("标题\n第一段内容\n第二段内容")), "标题|第一段内容|第二段内容", "paragraph pauses");
+        // Regression from a real 720x1280 book-page diagnostic: 49 OCR
+        // boxes were formerly spliced into one row because the inner gutter
+        // was too small for the previous global-x-gap-only splitter.
+        List<ReadingOrder.Box> actualPageGeometry = new ArrayList<>();
+        int[] leftTop = {539,578,616,636,657,679,701,722,769,792,841,866,892,918,945};
+        int[] leftRight = {186,174,172,170,168,163,157,156,150,147,140,135,131,129,123};
+        for (int i = 0; i < leftTop.length; i++)
+            actualPageGeometry.add(box("LEFT" + i, 0, leftTop[i],
+                leftRight[i], 24));
+        int[] mainTop = {691,711,734,757,779,803,827,851,879,904,929,956,982,1009};
+        int[] mainLeft = {223,204,201,199,195,194,191,187,188,200,184,179,176,172};
+        for (int i = 0; i < mainTop.length; i++)
+            actualPageGeometry.add(box("MAIN" + i, mainLeft[i], mainTop[i],
+                548 - mainLeft[i], 25));
+        int[] marginTop = {459,470,482,491,505,631,644,656,668};
+        for (int i = 0; i < marginTop.length; i++)
+            actualPageGeometry.add(box("SIDE" + i, 545, marginTop[i], 77, 14));
+        // A valid isolated small OCR box must not alter column grouping.
+        actualPageGeometry.add(box("书名", 13, 434, 64, 23));
+        actualPageGeometry.add(box("1", 240, 500, 10, 9));
+        String reconstructed = ReadingOrder.arrange(actualPageGeometry);
+        if (reconstructed.isEmpty()) throw new AssertionError("lost diagnostic page");
+        int lastOffset = -1;
+        for (int i = 0; i < leftTop.length; i++) {
+            int offset = reconstructed.indexOf("LEFT" + i + "\n");
+            if (offset < 0 && i == leftTop.length - 1)
+                offset = reconstructed.indexOf("LEFT" + i);
+            if (offset <= lastOffset) throw new AssertionError(
+                "left page not consecutive before other streams: " + reconstructed);
+            lastOffset = offset;
+        }
+        int leftEnd = reconstructed.indexOf("LEFT14");
+        int mainStart = reconstructed.indexOf("MAIN0");
+        int marginStart = reconstructed.indexOf("SIDE0");
+        if (!(leftEnd >= 0 && mainStart > leftEnd && marginStart > mainStart))
+            throw new AssertionError("book columns interleaved: " + reconstructed);
+        int seen = 0;
+        for (int i = 0; i < leftTop.length; i++)
+            if (reconstructed.contains("LEFT" + i)) seen++;
+        for (int i = 0; i < mainTop.length; i++)
+            if (reconstructed.contains("MAIN" + i)) seen++;
+        for (int i = 0; i < marginTop.length; i++)
+            if (reconstructed.contains("SIDE" + i)) seen++;
+        if (seen != leftTop.length + mainTop.length + marginTop.length)
+            throw new AssertionError("missing a detected book line");
+
+        // Nearly touching left/right lines must STILL be read one full page at a time.
+        List<ReadingOrder.Box> tightColumns = new ArrayList<>();
+        tightColumns.add(box("跨栏标题", 0, 0, 550, 25));
+        for (int row = 0; row < 5; row++) {
+            tightColumns.add(box("左页" + row, 0, 80 + row * 29, 163, 23));
+            tightColumns.add(box("右页" + row, 187, 80 + row * 29, 348, 23));
+        }
+        String split = ReadingOrder.arrange(tightColumns);
+        if (!split.startsWith("跨栏标题\n左页0\n") ||
+            split.indexOf("左页4") > split.indexOf("右页0"))
+            throw new AssertionError("narrow gutter + page header broken: " + split);
+
+        // One continuous single-column paragraph must NOT be split by its
+        // changing line lengths, even when there are multiple OCR boxes.
+        List<ReadingOrder.Box> single = new ArrayList<>();
+        for (int row = 0; row < 14; row++)
+            single.add(box("连续段落" + row, 12 + (row % 3) * 9,
+                50 + row * 30, 220 + (row % 4) * 16, 24));
+        String singleText = ReadingOrder.arrange(single);
+        if (singleText.indexOf("连续段落0") > singleText.indexOf("连续段落1") ||
+            singleText.indexOf("连续段落9") > singleText.indexOf("连续段落10"))
+            throw new AssertionError("single column fragmented: " + singleText);
         System.out.println("READING_FLOW_SMOKE_TEST=PASS");
     }
 }

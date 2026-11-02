@@ -220,45 +220,186 @@ public final class ReadingOrder {
 
     private static boolean asciiWord(char c) { return c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'; }
 
-    /** Split only when a wide, persistent gutter separates two vertically overlapping columns. */
+    /**
+     * Recover parallel reading streams even when a camera perspective leaves
+     * only a VERY SMALL gutter (or lightly skewed quadrilaterals touch it).
+     *
+     * The old global-edge-gutter test could not split columns when a single
+     * corner crossed the seam. Instead, group repeated horizontal OCR lines
+     * by significant X-INTERVAL OVERLAP. A long line can join another line
+     * in the same column, but a 2-5 px accidental edge intersection cannot
+     * bridge two entire book pages.
+     *
+     * Only accept multiple columns if each one persists vertically and two
+     * groups share a substantial Y range. An isolated title or footer is
+     * assigned to the nearest group, rather than creating a false column.
+     * Costs O(n^2) over boxes; no additional OCR invocation or image copy.
+     */
     private static List<List<Box>> splitColumns(List<Box> boxes) {
         if (boxes.size() < 4) return Arrays.asList(boxes);
-        List<Box> sorted = new ArrayList<>(boxes);
-        sorted.sort(Comparator.comparingDouble(Box::left));
-        float minX = Float.MAX_VALUE, maxX = -Float.MAX_VALUE;
         List<Float> heights = new ArrayList<>();
-        for (Box box : boxes) {
-            minX = Math.min(minX, box.left());
-            maxX = Math.max(maxX, box.right());
-            heights.add(box.actualHeight());
-        }
+        for (Box b : boxes) heights.add(b.actualHeight());
         heights.sort(Float::compare);
-        float typicalH = heights.get(heights.size() / 2);
-        float minGutter = Math.max(typicalH * 2.5f, (maxX - minX) * 0.12f);
-        float bestGap = minGutter;
-        int bestIndex = -1;
-        for (int split = 2; split <= sorted.size() - 2; split++) {
-            float leftRight = -Float.MAX_VALUE, rightLeft = Float.MAX_VALUE;
-            float leftTop = Float.MAX_VALUE, leftBottom = -Float.MAX_VALUE;
-            float rightTop = Float.MAX_VALUE, rightBottom = -Float.MAX_VALUE;
-            for (int i = 0; i < sorted.size(); i++) {
-                Box b = sorted.get(i);
-                if (i < split) {
-                    leftRight = Math.max(leftRight, b.right());
-                    leftTop = Math.min(leftTop, b.top());
-                    leftBottom = Math.max(leftBottom, b.bottom());
-                } else {
-                    rightLeft = Math.min(rightLeft, b.left());
-                    rightTop = Math.min(rightTop, b.top());
-                    rightBottom = Math.max(rightBottom, b.bottom());
+        float typicalHeight = heights.get(heights.size() / 2);
+        float minAnchorWidth = Math.max(24f, typicalHeight * 2.5f);
+        List<Float> widths = new ArrayList<>();
+        for (Box b : boxes) {
+            float width = b.right() - b.left();
+            if (width >= minAnchorWidth) widths.add(width);
+        }
+        widths.sort(Float::compare);
+        // A single page-spanning title must not bridge two otherwise separate
+        // columns in the overlap graph. Keep that title in the output later.
+        float ordinaryWide = widths.isEmpty() ? Float.MAX_VALUE :
+            widths.get((int)Math.floor((widths.size() - 1) * .80f));
+        float maxAnchorWidth = Math.max(ordinaryWide * 1.50f, typicalHeight * 9f);
+        List<Integer> anchorIds = new ArrayList<>();
+        for (int i = 0; i < boxes.size(); i++) {
+            Box b = boxes.get(i);
+            float width = b.right() - b.left();
+            if (width >= minAnchorWidth &&
+                (width <= maxAnchorWidth || widths.size() < 6)) anchorIds.add(i);
+        }
+        if (anchorIds.size() < 4) return Arrays.asList(boxes);
+        int n = anchorIds.size();
+        int[] parent = new int[n];
+        for (int i = 0; i < n; i++) parent[i] = i;
+        for (int i = 0; i < n; i++) {
+            Box a = boxes.get(anchorIds.get(i));
+            for (int j = i + 1; j < n; j++) {
+                Box b = boxes.get(anchorIds.get(j));
+                float overlap = Math.min(a.right(), b.right()) -
+                    Math.max(a.left(), b.left());
+                float narrow = Math.min(a.right() - a.left(), b.right() - b.left());
+                // Do not connect two page columns through a 5px curved edge.
+                if (overlap >= Math.max(typicalHeight * 0.35f, narrow * 0.37f)) {
+                    union(parent, i, j);
                 }
             }
-            float gap = rightLeft - leftRight;
-            float overlap = Math.min(leftBottom, rightBottom) - Math.max(leftTop, rightTop);
-            if (gap > bestGap && overlap > typicalH * 1.5f) { bestGap = gap; bestIndex = split; }
         }
-        if (bestIndex < 0) return Arrays.asList(boxes);
-        return Arrays.asList(new ArrayList<>(sorted.subList(0, bestIndex)),
-                             new ArrayList<>(sorted.subList(bestIndex, sorted.size())));
+
+        List<Column> candidates = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            int root = root(parent, i);
+            Column group = null;
+            for (Column c : candidates) if (c.root == root) { group = c; break; }
+            if (group == null) {
+                group = new Column(root);
+                candidates.add(group);
+            }
+            group.add(boxes.get(anchorIds.get(i)));
+        }
+        List<Column> persistent = new ArrayList<>();
+        for (Column c : candidates) {
+            if (c.anchors.size() >= 2 &&
+                c.maxBottom - c.minTop >= typicalHeight * 2f) {
+                persistent.add(c);
+            }
+        }
+        if (persistent.size() < 2) return Arrays.asList(boxes);
+
+        // An actual multi-page image has concurrent text on left and right.
+        // Isolated headings at a different Y level must not trigger splitting.
+        List<Column> streams = new ArrayList<>();
+        for (Column c : persistent) {
+            for (Column other : persistent) {
+                if (c == other) continue;
+                float sharedHeight = Math.min(c.maxBottom, other.maxBottom) -
+                                     Math.max(c.minTop, other.minTop);
+                if (sharedHeight >= typicalHeight * 1.5f &&
+                    Math.abs(c.centerX() - other.centerX()) >= typicalHeight * 1.8f) {
+                    streams.add(c);
+                    break;
+                }
+            }
+        }
+        if (streams.size() < 2) return Arrays.asList(boxes);
+        streams.sort(Comparator.comparingDouble(Column::centerX));
+
+        // Assign EVERY original box exactly once. Short isolated words and
+        // punctuation were excluded only from the clustering *anchors*.
+        // Page-wide titles ABOVE all streams are read first, not attached
+        // to the middle of one column.
+        List<Box> first = new ArrayList<>();
+        List<Box> last = new ArrayList<>();
+        float firstStreamTop = Float.MAX_VALUE;
+        float lastStreamBottom = -Float.MAX_VALUE;
+        for (Column c : streams) {
+            firstStreamTop = Math.min(firstStreamTop, c.minTop);
+            lastStreamBottom = Math.max(lastStreamBottom, c.maxBottom);
+        }
+        List<List<Box>> result = new ArrayList<>();
+        for (int i = 0; i < streams.size(); i++) result.add(new ArrayList<>());
+        for (Box box : boxes) {
+            if (box.right() - box.left() > maxAnchorWidth) {
+                if (box.bottom() < firstStreamTop + typicalHeight) {
+                    first.add(box);
+                    continue;
+                }
+                if (box.top() > lastStreamBottom - typicalHeight) {
+                    last.add(box);
+                    continue;
+                }
+            }
+            int preferred = 0;
+            float best = -Float.MAX_VALUE;
+            for (int i = 0; i < streams.size(); i++) {
+                Column c = streams.get(i);
+                float overlap = Math.max(0f, Math.min(box.right(), c.maxRight) -
+                    Math.max(box.left(), c.minLeft));
+                float width = Math.max(1f, box.right() - box.left());
+                // Prefer a stream with substantial shared X coverage.
+                // Penalize a distant stream; a word touching a gutter must
+                // not be swallowed by the next page merely due to Y alignment.
+                float distance = Math.abs(box.centerX() - c.centerX());
+                float score = overlap / width * 4f -
+                    distance / Math.max(typicalHeight, width) * .35f;
+                if (score > best) { best = score; preferred = i; }
+            }
+            result.get(preferred).add(box);
+        }
+        result.removeIf(List::isEmpty);
+        if (result.size() < 2) return Arrays.asList(boxes);
+        if (!first.isEmpty()) {
+            first.sort(Comparator.comparingDouble(Box::top));
+            result.add(0, first);
+        }
+        if (!last.isEmpty()) {
+            last.sort(Comparator.comparingDouble(Box::top));
+            result.add(last);
+        }
+        return result;
+    }
+
+    private static final class Column {
+        final int root;
+        final List<Box> anchors = new ArrayList<>();
+        float minLeft = Float.MAX_VALUE, maxRight = -Float.MAX_VALUE;
+        float minTop = Float.MAX_VALUE, maxBottom = -Float.MAX_VALUE;
+        float weightedCenters;
+        Column(int root) { this.root = root; }
+        void add(Box b) {
+            anchors.add(b);
+            weightedCenters += b.centerX();
+            minLeft = Math.min(minLeft, b.left());
+            maxRight = Math.max(maxRight, b.right());
+            minTop = Math.min(minTop, b.top());
+            maxBottom = Math.max(maxBottom, b.bottom());
+        }
+        float centerX() { return weightedCenters / anchors.size(); }
+    }
+
+    private static int root(int[] parent, int i) {
+        while (parent[i] != i) {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        return i;
+    }
+
+    private static void union(int[] parent, int a, int b) {
+        a = root(parent, a);
+        b = root(parent, b);
+        if (a != b) parent[b] = a;
     }
 }

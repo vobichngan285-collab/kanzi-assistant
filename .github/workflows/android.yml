@@ -192,6 +192,11 @@ jobs:
           set -euo pipefail
           python3 scripts/verify_phone_camera_preview.py
           echo "Phone camera startup restores visible TextureView before requesting Camera2." >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify long-form single-pass and book column isolation
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_book_reading_fast_path.py
+          echo "Long-form reading starts after first completed OCR, without mandatory second full-page confirmation." >> "$GITHUB_STEP_SUMMARY"
       - name: Test OCR reading order and complete speech segmentation
         run: |
           set -euo pipefail
@@ -285,7 +290,7 @@ jobs:
           "$ZIPALIGN" -c -v 4 "$APK"
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           "$AAPT" dump badging "$APK" | tee "$RUNNER_TEMP/apk-manifest.txt"
-          grep -q "package: name='com.vobich.kanzi' versionCode='35' versionName='0.9.4'" "$RUNNER_TEMP/apk-manifest.txt"
+          grep -q "package: name='com.vobich.kanzi' versionCode='36' versionName='0.9.5'" "$RUNNER_TEMP/apk-manifest.txt"
           grep -q "sdkVersion:'26'" "$RUNNER_TEMP/apk-manifest.txt"
           echo "APK_SHA256=$(sha256sum "$APK" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
           echo "APK_SIZE=$(stat -c%s "$APK") bytes" >> "$GITHUB_STEP_SUMMARY"
@@ -293,7 +298,7 @@ jobs:
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kanzi-assistant-0.9.4-correct-camera2-natural-orientation-signed
+          name: kanzi-assistant-0.9.5-book-layout-one-pass-signed
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
@@ -302,6 +307,6 @@ jobs:
         with:
           tag_name: test-build-${{ github.run_number }}
           target_commitish: ${{ github.sha }}
-          name: 看字助手测试版 0.9.4 修复手机摄像头重复旋转与白框映射 (${{ github.run_number }})
+          name: 看字助手测试版 0.9.5 书籍分栏顺序与长文单次识别优化 (${{ github.run_number }})
           prerelease: true
           files: app/build/outputs/apk/release/app-release.apk
