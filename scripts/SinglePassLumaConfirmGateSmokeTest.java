@@ -131,6 +131,19 @@ public final class SinglePassLumaConfirmGateSmokeTest {
                 SinglePassLumaConfirmGate.Reason.UNARMED,
                 "stop or reading epoch invalidates pending OCR");
 
+
+        // Adversarial alias: a tiny edit at an UNSAMPLED pixel may be missed.
+        // This test intentionally demonstrates why luma stability != OCR correctness.
+        byte[] tinyEdit=image.clone();
+        tinyEdit[(T+1)*W+(L+1)]=(byte)230;
+        SinglePassLumaConfirmGate alias=on();
+        arm(alias,image,1,1000,1080);
+        follow(alias,tinyEdit,2,1170);
+        check(follow(alias,tinyEdit,3,1290).action ==
+                SinglePassLumaConfirmGate.Action.READY,
+                "known limitation: sparse luma cannot see every tiny glyph edit");
+        System.out.println("SPARSE_LUMA_ALIAS_LIMITATION=CONFIRMED (not an OCR correctness check)");
+
         System.out.println("SINGLE_PASS_LUMA_CONFIRM_GATE=PASS");
     }
 }
