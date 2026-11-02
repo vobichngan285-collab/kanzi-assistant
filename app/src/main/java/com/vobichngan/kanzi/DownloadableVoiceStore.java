@@ -193,6 +193,7 @@ public final class DownloadableVoiceStore {
                     long count=0, lastUpdate=0;
                     int n;
                     while((n=input.read(buffer))!=-1){
+                        if(ticket!=selectionSerial.get())throw new IOException("下载已取消");
                         count+=n;
                         if(count>MAX_DOWNLOAD)throw new IOException("下载大小超出安全限制");
                         output.write(buffer,0,n);
@@ -208,7 +209,8 @@ public final class DownloadableVoiceStore {
                 }
             } finally { conn.disconnect(); }
             notifyStatus(ticket,voice,listener,"正在解压并检查模型…");
-            unpack(incoming,staging,voice);
+            unpack(incoming,staging,voice,ticket);
+            if(ticket!=selectionSerial.get())throw new IOException("安装已取消");
             File candidate=new File(staging,voice.folder);
             if(!candidate.isDirectory())throw new IOException("压缩包缺少模型文件夹");
             File installed=modelDir(voice);
@@ -235,7 +237,7 @@ public final class DownloadableVoiceStore {
         return new File(dir,"lexicon.txt").isFile();
     }
 
-    private static void unpack(File input,File staging,Voice voice) throws IOException {
+    private void unpack(File input,File staging,Voice voice,int ticket) throws IOException {
         long expanded=0; int entries=0;
         String prefix=voice.folder+"/";
         try(TarArchiveInputStream tar=new TarArchiveInputStream(
@@ -244,8 +246,11 @@ public final class DownloadableVoiceStore {
             TarArchiveEntry entry;
             byte[] buffer=new byte[65536];
             while((entry=tar.getNextTarEntry())!=null){
+                if(ticket!=selectionSerial.get())throw new IOException("安装已取消");
                 if(++entries>MAX_FILES)throw new IOException("语音包包含过多文件");
                 String name=entry.getName();
+                while(name.startsWith("./"))name=name.substring(2);
+                if(name.equals(voice.folder) && entry.isDirectory())continue;
                 if(!name.startsWith(prefix) || name.contains("\\") ||
                    name.contains("..") || name.startsWith("/"))
                     throw new IOException("语音包路径不安全");
@@ -269,7 +274,10 @@ public final class DownloadableVoiceStore {
                 try(BufferedOutputStream output=new BufferedOutputStream(
                     new FileOutputStream(destination))){
                     int n;
-                    while((n=tar.read(buffer))!=-1)output.write(buffer,0,n);
+                    while((n=tar.read(buffer))!=-1){
+                        if(ticket!=selectionSerial.get())throw new IOException("安装已取消");
+                        output.write(buffer,0,n);
+                    }
                 }
             }
         }
