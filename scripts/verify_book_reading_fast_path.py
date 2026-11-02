@@ -4,7 +4,7 @@ from pathlib import Path
 root=Path(__file__).resolve().parents[1]
 main=(root/"app/src/main/java/com/vobichngan/kanzi/MainActivity.java").read_text()
 reading=(root/"app/src/main/java/com/vobichngan/kanzi/ReadingOrder.java").read_text()
-assert "APP_VERSION = \"0.9.7\"" in main
+assert "APP_VERSION = \"0.9.8\"" in main
 assert "if (recognizer == null || !recognizer.isReady()) return;" in main
 assert "if (candidateCount < 2) return;" not in main
 assert "needsConfirmation" not in main
@@ -39,3 +39,10 @@ assert 'if (breaks >= 2)' in speech
 assert 'wrapped = true;' in speech
 assert 'selectedBoxes==diag.size()' not in focus
 print("CONTINUITY_CORE_WIRING=PASS")
+
+flow=(root/"app/src/main/java/com/vobichngan/kanzi/TextFlowRebuilder.java").read_text()
+assert "return TextFlowRebuilder.arrange(boxes);" in reading
+assert "sameVisualRow" in flow and "adjacentVertical" in flow
+assert 'b.alignedY(seamX)' in flow
+assert "Math.max(ha,hb)*4.3f" in flow
+print("PERSPECTIVE_FLOW_REBUILD_WIRING=PASS")

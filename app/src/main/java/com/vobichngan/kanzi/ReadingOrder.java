@@ -193,64 +193,11 @@ public final class ReadingOrder {
             boxes = merged;
         }
 
-        // Reconstruct independent text FLOWS, not a single flattened list of
-        // boxes. A blank line marks a stream boundary; a single newline marks
-        // a soft visual line-wrap that speech synthesis may join naturally.
-        // All valid OCR boxes are emitted once, including short/uncertain ones.
-        List<List<Box>> columns = splitColumns(boxes);
-        StringBuilder output = new StringBuilder();
-        for (List<Box> column : columns) {
-            if (column.isEmpty()) continue;
-            column.sort(Comparator.comparingDouble(Box::top).thenComparingDouble(Box::left));
-            List<Line> lines = new ArrayList<>();
-            for (Box entry : column) {
-                Line best = null;
-                float distance = Float.POSITIVE_INFINITY;
-                for (Line row : lines) {
-                    float d = Math.abs(entry.centerY() - row.expectedY(entry));
-                    if (row.matches(entry) && d < distance) { best = row; distance = d; }
-                }
-                if (best == null) lines.add(new Line(entry));
-                else best.add(entry);
-            }
-            lines.sort(Comparator.comparingDouble(a -> a.anchorY));
-            if (output.length() > 0) output.append("\n\n");
-            float previousBottom = Float.NaN;
-            float previousHeight = Float.NaN;
-            for (Line line : lines) {
-                line.boxes.sort(Comparator.comparingDouble(Box::left));
-                float minTop = Float.MAX_VALUE, maxBottom = -Float.MAX_VALUE;
-                for (Box box : line.boxes) {
-                    minTop = Math.min(minTop, box.top());
-                    maxBottom = Math.max(maxBottom, box.bottom());
-                }
-                // A large vertical whitespace gap is a likely paragraph
-                // boundary. Ordinary adjacent visual rows are soft wraps.
-                if (!Float.isNaN(previousBottom)) {
-                    float gap = minTop - previousBottom;
-                    // A sparse printed layout still belongs to one reading stream.
-                    // Only an unusually large gap starts another paragraph.
-                    float paragraphGap = Math.max(previousHeight, line.typicalHeight) * 3.0f;
-                    output.append(gap > paragraphGap ? "\n\n" : "\n");
-                }
-                StringBuilder rowText = new StringBuilder();
-                Box previous = null;
-                for (Box box : line.boxes) {
-                    if (previous != null && !box.text.isEmpty()) {
-                        char p = previous.text.charAt(previous.text.length() - 1);
-                        char n = box.text.charAt(0);
-                        if (asciiWord(p) && asciiWord(n) && box.left() - previous.right() > 1f)
-                            rowText.append(' ');
-                    }
-                    rowText.append(box.text);
-                    previous = box;
-                }
-                output.append(rowText);
-                previousBottom = maxBottom;
-                previousHeight = line.typicalHeight;
-            }
-        }
-        return output.toString().trim();
+        // Baseline-aware line construction and text-stream reconstruction
+        // belong in one geometric graph. A simple shared-X column heuristic
+        // causes unrelated footnotes to be inserted into running prose.
+        return TextFlowRebuilder.arrange(boxes);
+
     }
 
     private static boolean asciiWord(char c) { return c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'; }

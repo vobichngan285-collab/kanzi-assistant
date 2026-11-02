@@ -21,7 +21,7 @@ public class ReadingFlowSmokeTest {
         );
         equals(ReadingOrder.arrange(skewed), "第一行文字\n第二行文字", "deskewed rows");
         equals(ReadingOrder.arrange(Arrays.asList(box("保存", 300, 100, 50, 25), box("食品名称", 10, 100, 100, 25))),
-            "食品名称保存", "single line left to right");
+            "食品名称\n\n保存", "distant same-y labels are separate flows");
         equals(ReadingOrder.arrange(Arrays.asList(
             box("右二", 450, 190, 100, 25), box("左一", 10, 100, 100, 25),
             box("右一", 450, 100, 100, 25), box("左二", 10, 190, 100, 25))),
@@ -108,9 +108,10 @@ public class ReadingFlowSmokeTest {
             tightColumns.add(box("右页" + row, 187, 80 + row * 29, 348, 23));
         }
         String split = ReadingOrder.arrange(tightColumns);
-        if (!split.startsWith("跨栏标题\n\n左页0\n") ||
-            split.indexOf("左页4") > split.indexOf("右页0"))
-            throw new AssertionError("narrow gutter + page header broken: " + split);
+        if (split.indexOf("跨栏标题") > split.indexOf("左页0") ||
+            split.indexOf("左页4") > split.indexOf("右页0") ||
+            split.indexOf("左页1") > split.indexOf("右页0"))
+            throw new AssertionError("narrow gutter allowed cross-stream interleaving: " + split);
 
         // One continuous single-column paragraph must NOT be split by its
         // changing line lengths, even when there are multiple OCR boxes.
