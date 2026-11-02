@@ -31,7 +31,8 @@ jobs:
             scripts/NoQueueOcrRescueExecutorSmokeTest.java \
             scripts/SinglePassLumaConfirmGateSmokeTest.java \
             scripts/SinglePassLumaConfirmBenchmark.java \
-            scripts/SinglePassLumaPipelineSimulation.java
+            scripts/SinglePassLumaPipelineSimulation.java \
+            scripts/CloudCameraConditionReplay.java
       - name: Run safety, geometry, budget and cooldown regression tests
         run: |
           set -euo pipefail
@@ -47,6 +48,10 @@ jobs:
             | tee -a /tmp/kanzi-ocr-policy-test-summary.txt
           java -ea -cp /tmp/kanzi-ocr-policy-classes SinglePassLumaPipelineSimulation \
             | tee -a /tmp/kanzi-ocr-policy-test-summary.txt
+          java -ea -Xmx512m -cp /tmp/kanzi-ocr-policy-classes CloudCameraConditionReplay \
+            | tee /tmp/kanzi-cloud-replay.csv \
+            | tee -a /tmp/kanzi-ocr-policy-test-summary.txt
+          grep -q 'CLOUD_CONDITION_REPLAY=PASS' /tmp/kanzi-cloud-replay.csv
           grep -q 'SINGLE_PASS_TIMELINE=PASS' /tmp/kanzi-ocr-policy-test-summary.txt
           grep -q 'SINGLE_PASS_MOVED_SCENE=PASS' /tmp/kanzi-ocr-policy-test-summary.txt
           grep -q 'SINGLE_PASS_LUMA_CONFIRM_GATE=PASS' /tmp/kanzi-ocr-policy-test-summary.txt
@@ -66,4 +71,6 @@ jobs:
         if: always()
         with:
           name: selective-ocr-policy-tests
-          path: /tmp/kanzi-ocr-policy-test-summary.txt
+          path: |
+            /tmp/kanzi-ocr-policy-test-summary.txt
+            /tmp/kanzi-cloud-replay.csv
