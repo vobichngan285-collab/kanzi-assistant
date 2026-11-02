@@ -1,0 +1,109 @@
+name: Android compile-only check - page-turn behavior (no APK)
+on:
+  push:
+    branches: [fix/ocr-page-switch-resume-20261103]
+    paths:
+      - app/src/main/java/**
+      - .github/workflows/page-turn-android-compile.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compile-android:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout app
+        uses: actions/checkout@v4
+      - name: Checkout official PaddleOCR SDK
+        uses: actions/checkout@v4
+        with:
+          repository: PaddlePaddle/PaddleOCR
+          ref: v3.7.0
+          path: third_party/PaddleOCR
+      - name: Checkout AUSBC library
+        uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: third_party/AndroidUSBCamera
+      - name: Match upstream Android library build to current app
+        run: |
+          set -euo pipefail
+          SDK=third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk
+          test -s "$SDK/src/main/java/com/paddle/ocr/PaddleOCR.kt"
+          rm -f "$SDK/build.gradle.kts"
+          cat > "$SDK/build.gradle" <<'GRADLE'
+          plugins { id 'com.android.library'; id 'org.jetbrains.kotlin.android' }
+          android {
+              namespace 'com.paddle.ocr'
+              compileSdk 36
+              defaultConfig { minSdk 26 }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = '17' }
+              buildTypes { release { minifyEnabled false } }
+          }
+          dependencies {
+              implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.21.1'
+              api 'com.quickbirdstudios:opencv:4.5.3.0'
+              implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
+              implementation 'androidx.core:core-ktx:1.15.0'
+          }
+          GRADLE
+          python3 scripts/patch_uvc_resolution.py third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/MultiCameraClient.kt
+          python3 scripts/patch_usbmonitor.py third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('third_party/AndroidUSBCamera/libnative/build.gradle')
+          s=p.read_text()
+          old="abiFilters 'armeabi-v7a','arm64-v8a', \"x86\", \"x86_64\""
+          if old in s:
+              p.write_text(s.replace(old,"abiFilters 'armeabi-v7a','arm64-v8a'",1))
+          PY
+          # Compile-time parity: allow model files in app-private locations.
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path('third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/java/com/paddle/ocr')
+          ort=root/'engine/ORTSessionManager.kt'
+          src=ort.read_text()
+          needle='context.assets.open(assetPath).use { it.readBytes() }'
+          assert src.count(needle)==1
+          if 'import java.io.File' not in src:
+              src=src.replace('import java.nio.FloatBuffer','import java.nio.FloatBuffer\nimport java.io.File')
+          src=src.replace(needle,'val modelFile = File(assetPath)\n                  if (modelFile.isFile) modelFile.readBytes()\n                  else context.assets.open(assetPath).use { it.readBytes() }',1)
+          ort.write_text(src)
+          config=root/'model/ModelConfig.kt'
+          src=config.read_text()
+          needle='context.assets.open(assetPath).bufferedReader().use { it.readText() }'
+          assert src.count(needle)==1
+          if 'import java.io.File' not in src:
+              src=src.replace('import com.paddle.ocr.util.YamlUtils','import com.paddle.ocr.util.YamlUtils\nimport java.io.File')
+          src=src.replace(needle,'val configFile = File(assetPath)\n                  if (configFile.isFile) configFile.bufferedReader().use { it.readText() }\n                  else context.assets.open(assetPath).bufferedReader().use { it.readText() }',1)
+          config.write_text(src)
+          PY
+      - name: Set up JDK and Gradle
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Android compile without any APK creation or publishing
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --no-parallel --max-workers=2 --stacktrace \
+            :app:compileDebugKotlin :app:compileDebugJavaWithJavac \
+            | tee /tmp/kanzi-android-compile.log
+          grep -q "BUILD SUCCESSFUL" /tmp/kanzi-android-compile.log
+          echo "ANDROID_COMPILE_ONLY=PASS" | tee -a /tmp/kanzi-android-compile.log
+      - name: Upload compile log only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: page-turn-android-compile-log-no-apk
+          path: /tmp/kanzi-android-compile.log
+          if-no-files-found: warn
