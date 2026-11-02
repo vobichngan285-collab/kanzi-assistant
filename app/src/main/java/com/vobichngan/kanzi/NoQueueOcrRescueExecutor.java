@@ -95,7 +95,8 @@ public final class NoQueueOcrRescueExecutor implements AutoCloseable {
         if (work == null || onSuccess == null)
             throw new IllegalArgumentException("work and onSuccess are required");
         final long now = System.nanoTime();
-        if (now - blockedUntilNanos < 0L) return Submission.COOLDOWN;
+        if (blockedUntilNanos != Long.MIN_VALUE &&
+            now - blockedUntilNanos < 0L) return Submission.COOLDOWN;
         final long minimumNs = TimeUnit.MILLISECONDS.toNanos(config.minimumRemainingMs);
         if (deadlineNanos - now < minimumNs) return Submission.DEADLINE;
         if (!inFlight.compareAndSet(false, true)) return Submission.BUSY;
