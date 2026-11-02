@@ -23,8 +23,10 @@ jobs:
             -d /tmp/kanzi-ocr-policy-classes \
             app/src/main/java/com/vobichngan/kanzi/SelectiveOcrRescuePolicy.java \
             app/src/main/java/com/vobichngan/kanzi/StableShortTextGate.java \
+            app/src/main/java/com/vobichngan/kanzi/NoQueueOcrRescueExecutor.java \
             scripts/SelectiveOcrRescuePolicySmokeTest.java \
-            scripts/StableShortTextGateSmokeTest.java
+            scripts/StableShortTextGateSmokeTest.java \
+            scripts/NoQueueOcrRescueExecutorSmokeTest.java
       - name: Run safety, geometry, budget and cooldown regression tests
         run: |
           set -euo pipefail
@@ -32,6 +34,9 @@ jobs:
             | tee /tmp/kanzi-ocr-policy-test-summary.txt
           java -ea -cp /tmp/kanzi-ocr-policy-classes StableShortTextGateSmokeTest \
             | tee -a /tmp/kanzi-ocr-policy-test-summary.txt
+          java -ea -cp /tmp/kanzi-ocr-policy-classes NoQueueOcrRescueExecutorSmokeTest \
+            | tee -a /tmp/kanzi-ocr-policy-test-summary.txt
+          grep -q 'NO_QUEUE_OCR_RESCUE_EXECUTOR=PASS' /tmp/kanzi-ocr-policy-test-summary.txt
           grep -q 'SELECTIVE_OCR_RESCUE_POLICY=PASS' /tmp/kanzi-ocr-policy-test-summary.txt
           grep -q 'STABLE_SHORT_TEXT_GATE=PASS' /tmp/kanzi-ocr-policy-test-summary.txt
       - name: Protect current app's existing realtime frame gate
