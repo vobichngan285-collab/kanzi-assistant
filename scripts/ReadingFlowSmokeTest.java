@@ -71,29 +71,29 @@ public class ReadingFlowSmokeTest {
         // A valid isolated small OCR box must not alter column grouping.
         actualPageGeometry.add(box("书名", 13, 434, 64, 23));
         actualPageGeometry.add(box("1", 240, 500, 10, 9));
-        String reconstructed = ReadingOrder.arrange(actualPageGeometry);
-        if (reconstructed.isEmpty()) throw new AssertionError("lost diagnostic page");
+        String reorderedBook = ReadingOrder.arrange(actualPageGeometry);
+        if (reorderedBook.isEmpty()) throw new AssertionError("lost diagnostic page");
         int lastOffset = -1;
         for (int i = 0; i < leftTop.length; i++) {
-            int offset = reconstructed.indexOf("LEFT" + i + "\n");
+            int offset = reorderedBook.indexOf("LEFT" + i + "\n");
             if (offset < 0 && i == leftTop.length - 1)
-                offset = reconstructed.indexOf("LEFT" + i);
+                offset = reorderedBook.indexOf("LEFT" + i);
             if (offset <= lastOffset) throw new AssertionError(
-                "left page not consecutive before other streams: " + reconstructed);
+                "left page not consecutive before other streams: " + reorderedBook);
             lastOffset = offset;
         }
-        int leftEnd = reconstructed.indexOf("LEFT14");
-        int mainStart = reconstructed.indexOf("MAIN0");
-        int marginStart = reconstructed.indexOf("SIDE0");
+        int leftEnd = reorderedBook.indexOf("LEFT14");
+        int mainStart = reorderedBook.indexOf("MAIN0");
+        int marginStart = reorderedBook.indexOf("SIDE0");
         if (!(leftEnd >= 0 && mainStart > leftEnd && marginStart > mainStart))
-            throw new AssertionError("book columns interleaved: " + reconstructed);
+            throw new AssertionError("book columns interleaved: " + reorderedBook);
         int seen = 0;
         for (int i = 0; i < leftTop.length; i++)
-            if (reconstructed.contains("LEFT" + i)) seen++;
+            if (reorderedBook.contains("LEFT" + i)) seen++;
         for (int i = 0; i < mainTop.length; i++)
-            if (reconstructed.contains("MAIN" + i)) seen++;
+            if (reorderedBook.contains("MAIN" + i)) seen++;
         for (int i = 0; i < marginTop.length; i++)
-            if (reconstructed.contains("SIDE" + i)) seen++;
+            if (reorderedBook.contains("SIDE" + i)) seen++;
         if (seen != leftTop.length + mainTop.length + marginTop.length)
             throw new AssertionError("missing a detected book line");
 
