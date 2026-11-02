@@ -603,11 +603,11 @@ public class MainActivity extends CameraActivity {
         layoutAiNote.setTextColor(0xFF667085);
         panel.addView(layoutAiNote);
 
-        TextView rotationTitle = new TextView(this);
-        rotationTitle.setText("实时文字识别方向");
-        rotationTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        rotationTitle.setPadding(0, dp(14), 0, dp(4));
-        panel.addView(rotationTitle);
+        TextView liveRotationTitle = new TextView(this);
+        liveRotationTitle.setText("实时文字识别方向");
+        liveRotationTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        liveRotationTitle.setPadding(0, dp(14), 0, dp(4));
+        panel.addView(liveRotationTitle);
         RadioGroup rotationGroup = new RadioGroup(this);
         rotationGroup.setOrientation(RadioGroup.VERTICAL);
         String[][] rotationOptions = {
@@ -625,11 +625,11 @@ public class MainActivity extends CameraActivity {
             rotationGroup.addView(radio);
         }
         panel.addView(rotationGroup);
-        TextView rotationNote = new TextView(this);
-        rotationNote.setText("默认模式不增加额外模型。若书本横放后自动识别仍有乱码，可手动选择左转或右转：每次仍只执行一遍 OCR，白框保持与摄像头画面对应。该选项仅影响实时文字。");
-        rotationNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        rotationNote.setTextColor(0xFF667085);
-        panel.addView(rotationNote);
+        TextView liveRotationNote = new TextView(this);
+        liveRotationNote.setText("默认模式不增加额外模型。若书本横放后自动识别仍有乱码，可手动选择左转或右转：每次仍只执行一遍 OCR，白框保持与摄像头画面对应。该选项仅影响实时文字。");
+        liveRotationNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        liveRotationNote.setTextColor(0xFF667085);
+        panel.addView(liveRotationNote);
 
         TextView modelManagementTitle = new TextView(this);
         modelManagementTitle.setText("OCR 引擎选择");
