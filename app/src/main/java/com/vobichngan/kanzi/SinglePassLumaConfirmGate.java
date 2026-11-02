@@ -267,35 +267,64 @@ public final class SinglePassLumaConfirmGate {
         return gradient / (double) (LOCAL_ROWS*(LOCAL_COLS-1));
     }
 
+    /**
+     * Keep exact comparison as the fast path. Only when it fails, search for a
+     * common global+ROI translation within +-2 luma pixels. No full-frame
+     * image transform or extra OCR pass. The SAME shift must fit both regions.
+     *
+     * WARNING: allowing small translations improves hand-jitter tolerance but
+     * does NOT establish whether two visually similar words are identical.
+     */
     private boolean sameImage(byte[] frame, int width, int height) {
+        if (matchAtOffset(frame, width, height, 0, 0)) return true;
+        for (int radius=1;radius<=2;radius++) {
+            for (int dy=-radius;dy<=radius;dy++) {
+                for (int dx=-radius;dx<=radius;dx++) {
+                    if (Math.max(Math.abs(dx),Math.abs(dy))!=radius) continue;
+                    if (matchAtOffset(frame,width,height,dx,dy)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean matchAtOffset(byte[] frame,int width,int height,
+                                  int shiftX,int shiftY) {
         long total=0;
         int changed=0;
         int offset=0;
+        final double maxGlobalTotal=config.maxGlobalMeanDiff*GLOBAL_COLS*GLOBAL_ROWS;
+        final double maxGlobalChanged=config.maxChangedFraction*GLOBAL_COLS*GLOBAL_ROWS;
         for (int r=0;r<GLOBAL_ROWS;r++) {
-            int yy=coord(0,height,r,GLOBAL_ROWS);
+            int yy=coord(0,height,r,GLOBAL_ROWS)+shiftY;
+            if(yy<0 || yy>=height) return false;
             for (int c=0;c<GLOBAL_COLS;c++) {
-                int yyVal=y(frame,width,coord(0,width,c,GLOBAL_COLS),yy);
-                int diff=Math.abs(yyVal - (reference[offset++] & 0xff));
-                total += diff;
-                if (diff >= 20) changed++;
+                int xx=coord(0,width,c,GLOBAL_COLS)+shiftX;
+                if(xx<0 || xx>=width) return false;
+                int diff=Math.abs((frame[yy*width+xx]&0xff)-(reference[offset++]&0xff));
+                total+=diff;
+                if(diff>=20) changed++;
+                if(total>maxGlobalTotal || changed>maxGlobalChanged) return false;
             }
         }
-        if (total > config.maxGlobalMeanDiff*GLOBAL_COLS*GLOBAL_ROWS ||
-            changed > config.maxChangedFraction*GLOBAL_COLS*GLOBAL_ROWS) return false;
         total=0;
         changed=0;
         int w=roiRight-roiLeft,h=roiBottom-roiTop;
+        final double maxLocalTotal=config.maxLocalMeanDiff*LOCAL_COLS*LOCAL_ROWS;
+        final double maxLocalChanged=config.maxChangedFraction*LOCAL_COLS*LOCAL_ROWS;
         for (int r=0;r<LOCAL_ROWS;r++) {
-            int yy=coord(roiTop,h,r,LOCAL_ROWS);
+            int yy=coord(roiTop,h,r,LOCAL_ROWS)+shiftY;
+            if(yy<0 || yy>=height) return false;
             for (int c=0;c<LOCAL_COLS;c++) {
-                int yyVal=y(frame,width,coord(roiLeft,w,c,LOCAL_COLS),yy);
-                int diff=Math.abs(yyVal - (reference[offset++] & 0xff));
-                total += diff;
-                if (diff>=20) changed++;
+                int xx=coord(roiLeft,w,c,LOCAL_COLS)+shiftX;
+                if(xx<0 || xx>=width) return false;
+                int diff=Math.abs((frame[yy*width+xx]&0xff)-(reference[offset++]&0xff));
+                total+=diff;
+                if(diff>=20) changed++;
+                if(total>maxLocalTotal || changed>maxLocalChanged) return false;
             }
         }
-        return total <= config.maxLocalMeanDiff*LOCAL_COLS*LOCAL_ROWS &&
-                changed <= config.maxChangedFraction*LOCAL_COLS*LOCAL_ROWS;
+        return true;
     }
 
     private static String normalize(String source) {
