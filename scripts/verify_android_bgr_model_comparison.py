@@ -126,12 +126,17 @@ def do_rec(sess,dictionary,crop):
     prediction=sess.run(None,{input_name:arr})[0][0]
     inference_ms=(time.perf_counter()-t)*1000
     inds=prediction.argmax(axis=1)
-    chars=[];prev=-1
-    for ii in inds:
+    chars=[];probs=[];prev=-1
+    max_probs=prediction.max(axis=1)
+    for t,ii in enumerate(inds):
         ii=int(ii)
-        if ii and ii!=prev and ii<=len(dictionary):chars.append(dictionary[ii-1])
+        if ii and ii!=prev and ii<=len(dictionary):
+            chars.append(dictionary[ii-1])
+            probs.append(float(max_probs[t]))
         prev=ii
-    return "".join(chars),inference_ms
+    # Match PaddleOCR SDK CTCDecoder: average of kept token scores.
+    confidence=sum(probs)/len(probs) if probs else 0.0
+    return "".join(chars),inference_ms,confidence
 
 def p95(v):
     s=sorted(v)
@@ -165,12 +170,13 @@ def main():
             for color in ["BGR_ANDROID","RGB_OLD_CLOUD"]:
                 test_crop=cv2.cvtColor(crop,cv2.COLOR_RGB2BGR) if color=="BGR_ANDROID" else crop
                 for model in ["small","medium"]:
-                    pred,ms=do_rec(models[model],chars[model],test_crop)
+                    pred,ms,confidence=do_rec(models[model],chars[model],test_crop)
                     rows.append({
                        "cohort":cohort,"split":split,"image":index,"region":region,
                        "color":color,"model":model,
                        "truth":truth,"prediction":pred,"chars":len(norm(truth)),
                        "edits":edit(norm(truth),norm(pred)),"rec_ms":round(ms,3),
+                       "rec_confidence":round(confidence,5),
                     })
     assert len(rows)>=550,len(rows)
     report=[]
@@ -198,6 +204,40 @@ def main():
                 "medium_improved":sum(x["medium"]["edits"]<x["small"]["edits"] for x in pairs),
                 "medium_worsened":sum(x["medium"]["edits"]>x["small"]["edits"] for x in pairs)},
                 ensure_ascii=False),flush=True)
+    # Predeclared 0.95 Small-confidence gating, budget 1 or 3, and
+    # SOURCE-IMAGE GROUPING, not individual GT crop selected by error.
+    policy_rows=[]
+    grouped=defaultdict(list)
+    for key,pair in by.items():
+        cohort,color,split,image,region=key
+        if color!="BGR_ANDROID":continue
+        grouped[cohort,split,image].append((region,pair))
+    for cohort in ["DEV","HOLDOUT"]:
+        all_photo_groups=[(k,v) for k,v in grouped.items() if k[0]==cohort]
+        for cap in [0,1,3,99]:
+            chosen=[]
+            medium_count=0
+            for key,crops in all_photo_groups:
+                candidate=sorted(
+                    [(int(region),pair) for region,pair in crops if
+                     float(pair["small"]["rec_confidence"])<.95],
+                    key=lambda x:(float(x[1]["small"]["rec_confidence"]),x[0]))
+                selected={region for region,pair in candidate[:cap]}
+                medium_count+=len(selected)
+                for region,pair in crops:
+                    chosen.append(pair["medium"] if int(region) in selected else pair["small"])
+            chars_total=sum(x["chars"] for x in chosen)
+            row={"cohort":cohort,"channel_order":"BGR_ANDROID",
+                 "policy_max_medium_per_photo":cap,
+                 "GT_annotated_line_crops":len(chosen),
+                 "medium_rec_calls":medium_count,
+                 "gt_CER":round(sum(x["edits"] for x in chosen)/max(1,chars_total),5),
+                 "gt_exact_rate":round(sum(x["edits"]==0 for x in chosen)/max(1,len(chosen)),5)}
+            policy_rows.append(row)
+            print("BGR_MODEL_RESCUE_POLICY",json.dumps(row,ensure_ascii=False),flush=True)
+    with (out/"bgr_budget_policy.csv").open("w",newline="",encoding="utf-8-sig") as f:
+        w=csv.DictWriter(f,fieldnames=list(policy_rows[0]))
+        w.writeheader();w.writerows(policy_rows)
     for path,data in [("per_line.csv",rows),("summary.csv",report)]:
         with (out/path).open("w",newline="",encoding="utf-8-sig") as f:
             w=csv.DictWriter(f,fieldnames=list(data[0]))
@@ -206,6 +246,7 @@ def main():
       "BGR_ANDROID matches the RELEASE pipeline's scripted SDK patch and inference.yml BGR declaration.\n"
       "This is an annotation crop study, NOT an Android device benchmark; 72 public photos only.\n"
       "The 2026-11-03 earlier 344 photo study used RGB source input and must NOT be asserted Android-exact.\n"
+      "The cap1/cap3 policies select annotated source crops, NOT detected OCR boxes; real phone performance remains untested.\n"
       "Model SHA fixed. Pictures are never stored in test artifacts.\n")
     print("RELEASE_BGR_COLOR_MODEL_ALIGNMENT=PASS",len(rows),flush=True)
 
