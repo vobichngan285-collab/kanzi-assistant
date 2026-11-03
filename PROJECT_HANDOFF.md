@@ -254,3 +254,12 @@
 - **关键限制：** 这**不是**正式手机 OCR准确率提升10个百分点；只有已IoU配对的122/244个区域，而且是同一公开照片 Linux Python/ONNX 的控制变量结果，并不证明真实 Android SDK RGB/BGR、裁剪和预览路径等价。其余122未匹配的 GT 区域仍有漏检/粘连/匹配问题。人工 GT 只能作为实验 Oracle，不能直接上线使用。
 - **永久研究报告**：`test/line-overlay-plan-isolated-20261103:docs/paired-small-crop-attribution-holdout-20261103.md`，提交 `dbf6c76a5ac63374464ed4b8ff3337e03410475f`；实验脚本提交 `1addfcf5f14d3663e4cac400828433b152078a42`，工作流提交 `856a2ae622e9fa3fc531f1e024446fb0208341ce`。均属于原仓库隔离分支，不改正式代码、模型或 APK，旧记录保留。
 - **下一步应避免重复试验：** 优先核对 Android 真正从 NV21/Bitmap 到 SDK 四点裁剪与 Small REC 的颜色、旋转、归一化及张量输入能否与固定参考对齐；必要时按用户批准做安全的影子诊断，而不是继续广泛重跑同一72图、尝试未经证实的检测阈值修改。
+
+
+#### 2026-11-03 — Android 原主线图像预处理只读核查（配对实验后的问题收敛）
+
+- 追加到配对实验永久报告的 Android 静态审查，更新 Commit `c1d7373805708284079d675bf41e52df7e8d83d1`，文件仍为 `test/line-overlay-plan-isolated-20261103:docs/paired-small-crop-attribution-holdout-20261103.md`，仅文档更新，未触发新实验或 APK。
+- `feature/strict-offline-ocr-order-guard:MainActivity.java:303–311` 原实时画面传 `legacyDecode=false`；`PaddleOcrEngine.kt` 因此走 OpenCV `COLOR_YUV2RGBA_NV21`，而非早期兼容的 JPEG quality82 二次压缩路径。**不能未经核实把手机偏差归因于JPEG质量82。**
+- 原构建 `.github/workflows/android.yml:125–160` 明确为识别器 `img_mode:BGR` 在构建时修补 SDK RecPreprocessor，保留 BGR；不能在无真机等价证据下盲目改 RGB/BGR。**构建补丁存在，不代表已经逐字节验证实际手机 REC 张量。**
+- 有条件增强路径：`enhancedOcr || (brightness<47 && edgeStrength<7)`，以及非快速模式低置信条件下的额外增强尝试；来源 `MainActivity.java`、`FrameQuality.java` 和 `PaddleOcrEngine.kt`。要核实手机画面及 SDK crop/REC tensor，**先做明确范围的安全单帧诊断**，不得擅自上传用户图像。
+- 维持刚验收的配对结果：同122区域自动框 CER16.087% → GT框5.797%，**不是手机准确率提升声明**。正式 App、模型、TTS、APK及原有历史记录均未改变。
