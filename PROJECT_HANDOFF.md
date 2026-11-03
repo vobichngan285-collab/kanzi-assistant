@@ -226,3 +226,12 @@
 - **目视例子**：RCTW-1402 的同一水平带两个 GT 字区域已经由一个原 DBNet 框覆盖；RCTW-1403 下方LED字带也是一行多个 GT 实例，表明“一个框跨多个 GT”不能直接推断跨行粘连。1406有三列竖排文字和底部近邻横向文字；1409是斜店招，1411为弧形井盖文字，均提示保守处理。旧12图 52→51、71 GT、IoU代理36→34保持不变。
 - **永久完整报告**：`test/line-overlay-plan-isolated-20261103:docs/line-overlay-realphoto-visual-review-20261103.md`，提交 `c2747e70481a51aa8b763320cd0811fdc9bdc0f8`（已回读确认）。原先实验、文档和旧结果**未删除**。
 - **决策**：暂不更改 `LineOverlayPlanner` 算法阈值、不接入正式预览、不改 Small/DBNet/TTS、不出 APK。下一步可经用户指令在隔离测试中增加“合并候选与未纳入源框显著重叠”审计反例，并采集明确人工单行 GT 后再讨论保护逻辑，避免针对一个样本过拟合。
+
+
+#### 2026-11-03 — OCR 错误归因去重检查：发现已完成的72图人工框 Oracle 与检测归因实验
+
+- **用户强调先查旧实验，避免任何重复工作。** 已在原仓库历史分支找到 `test/ocr-final-error-attribution-20261103` 的 `docs/ocr-final-error-attribution-results-20261103.md` 和 `scripts/ocr_final_error_attribution.py`，以及 `small_rec_gtbox_oracle_72.py`（同仓库实验代码）。对应 Actions **41566050026**（success）、**41564703130**（success）。
+- 旧实验共72张公开真实场景照片，DEV36（217 GT 区域）、HOLDOUT36（244 GT 区域）。HOLDOUT 自动检测框 IoU≥0.4 成功匹配122/244；在这122区域上 Small REC 的 CER **16.087%**（111 编辑距离 / 690 GT 字符），其中89行完全正确。Oracle 在全部244 GT 人工框上 CER **9.734%**（117/1202），不是同一分母，**禁止相减宣称裁剪造成6.35个百分点的错误**。
+- HOLDOUT 122 个未匹配区域中 80 个与检测框有交集、42 个没有任何 AABB 交集；该分类只是几何代理，不等同逐行实际读错原因。
+- **本轮新的、尚未完成的控制变量问题：** 同一 HOLDOUT 的 **恰好122个已 IoU 配对的 GT 区域**，在不改变 Small REC、预处理、照片与文字真值的条件下，用其 **GT polygon 裁剪**与**已存储的旧自动检测裁剪 REC**逐区域配对比较，避免旧全量 Oracle 与匹配子集样本分母不一致。原来的数据包 Artifact **13199760778** 仍有效、CSV 中有旧每区域 REC 编辑距离；只需对这122个 GT 裁剪做 Small REC，不重跑 DBNet/CRAFT/72图整体检测归因。
+- 本节点为**历史实验核实与后续设计**，没有声称新模型实验成功。仍不动正式 App、TTS、检测器或 APK。
