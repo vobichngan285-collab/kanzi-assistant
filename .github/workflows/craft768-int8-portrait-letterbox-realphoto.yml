@@ -1,0 +1,68 @@
+name: CRAFT768 INT8 portrait photo vs old white-letterbox 72-scene paired A/B - NO APK
+on:
+  push:
+    branches: [test/craft768-int8-portrait-boxes-20261103]
+    paths:
+      - scripts/craft768_int8_portrait_letterbox_ab.py
+      - .github/workflows/craft768-int8-portrait-letterbox-realphoto.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  portrait-ocr-paired:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate pure Python experiment and no APK
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/craft768_int8_portrait_letterbox_ab.py
+          echo 'No Android code or APK assembled in this paired research study' >> "$GITHUB_STEP_SUMMARY"
+      - name: Install exact prior CRAFT quantization + recognition runtime
+        run: |
+          python3 -m pip install --quiet 'numpy==1.26.4' 'onnx==1.17.0' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
+      - name: Download and verify unchanged official CRAFT and Small DET/REC models
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft-portrait-models
+          curl -fL --retry 3 --retry-delay 2 --max-time 300 'https://huggingface.co/inference4j/craft-mlt-25k/resolve/290e4d5/model.onnx' -o /tmp/craft-portrait-models/craft.onnx
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx' -o /tmp/craft-portrait-models/det.onnx
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx' -o /tmp/craft-portrait-models/small_rec.onnx
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml' -o /tmp/craft-portrait-models/small_rec.yml
+          echo '28c05f8b5e97f3c5765d00bca556ec2397c86c954d4ac5ef73aa10043db16388  /tmp/craft-portrait-models/craft.onnx' | sha256sum -c -
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  /tmp/craft-portrait-models/det.onnx' | sha256sum -c -
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/craft-portrait-models/small_rec.onnx' | sha256sum -c -
+          echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/craft-portrait-models/small_rec.yml' | sha256sum -c -
+      - name: DEV-only quantization with previously validated exact INT8 checksum
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft-portrait-results
+          python3 -u scripts/craft768_int8_static_quantize.py --source /tmp/craft-portrait-models/craft.onnx --output /tmp/craft-portrait-models/craft768_int8.onnx --report /tmp/craft-portrait-results/quantization.json | tee /tmp/craft-portrait-results/quantization.log
+          echo '9ab885d2f6669b77f70e9c8f68acfbe408c0b051501fd02d94bcaa0c7779ab15  /tmp/craft-portrait-models/craft768_int8.onnx' | sha256sum -c -
+      - name: Six photo smoke A/B including aspect roundtrip
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft-portrait-results/smoke
+          python3 -u scripts/craft768_int8_portrait_letterbox_ab.py --models /tmp/craft-portrait-models --quant /tmp/craft-portrait-models/craft768_int8.onnx --out /tmp/craft-portrait-results/smoke --max-photos 6 | tee /tmp/craft-portrait-results/smoke/run.log
+          grep -q 'CRAFT768_PORTRAIT_AB_COMPLETE 6' /tmp/craft-portrait-results/smoke/run.log
+      - name: Full 72 public photos old letterbox vs source-ratio identical CRAFT + REC
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft-portrait-results/full
+          python3 -u scripts/craft768_int8_portrait_letterbox_ab.py --models /tmp/craft-portrait-models --quant /tmp/craft-portrait-models/craft768_int8.onnx --out /tmp/craft-portrait-results/full | tee /tmp/craft-portrait-results/full/run.log
+          grep -q 'CRAFT768_PORTRAIT_AB_COMPLETE 72' /tmp/craft-portrait-results/full/run.log
+          echo '### Paired CRAFT768 INT8 + Small REC source orientation vs landscape letterbox' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/craft-portrait-results/full/summary.json >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/craft-portrait-results/full/limitations.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Save numeric A/B only, not real photos or model weights
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: craft768-portrait-vs-landscape-letterbox-no-apk
+          path: /tmp/craft-portrait-results/
+          retention-days: 10
+          if-no-files-found: warn
