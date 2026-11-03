@@ -5,6 +5,7 @@ on:
     paths:
       - 'app/**'
       - '.github/workflows/phone-ocr-single-frame-diagnostic.yml'
+      - 'docs/phone-single-frame-diagnostic-20261103.md'
   workflow_dispatch:
 concurrency:
   group: diagnostic-phone-ocr-${{ github.run_id }}
