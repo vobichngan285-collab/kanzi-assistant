@@ -18,7 +18,7 @@ import craft_small_detector_ab as base
 SMALL_DET_SHA=base.SMALL_DET_SHA
 SMALL_REC_SHA=base.SMALL_REC_SHA
 SMALL_YML_SHA=base.SMALL_YML_SHA
-LIGHT_DBNET_EXPECTED_SHA=""  # SHA printed on first verified runner; pin it thereafter.
+LIGHT_DBNET_EXPECTED_SHA="ec31eb2b7daa39c4e0307ebb290045deecd515f4e9656d5d987eb82148aea867"  # Verified from successful 72-photo run.
 SHORT_EDGE=640
 MAX_NEW_BOXES=180
 MAX_SMALL=150
