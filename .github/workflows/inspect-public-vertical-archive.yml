@@ -1,0 +1,41 @@
+name: Verify public vertical archive annotation format (inventory only)
+on:
+  push:
+    branches: [test/phone-ocr-single-frame-diagnostic-20261103]
+    paths: ['.github/workflows/inspect-public-vertical-archive.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect-public-only:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Download and inspect the ONE nonimage metadata member
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --max-time 600 \
+            'https://huggingface.co/datasets/AlroWilde/vertical_annotations/resolve/main/vertical_annotations.zip' \
+            -o "$RUNNER_TEMP/vertical.zip"
+          python3 - <<'PY'
+          import json,os,zipfile
+          z=zipfile.ZipFile(os.environ["RUNNER_TEMP"]+"/vertical.zip")
+          names=z.namelist()
+          meta=[p for p in names if not p.lower().endswith(('.jpg','.jpeg','.png','.webp'))]
+          print("VERTICAL_ARCHIVE_NONIMAGE_MEMBERS",json.dumps(meta,ensure_ascii=False),flush=True)
+          for name in meta[:10]:
+              item=z.getinfo(name)
+              print("META_FILE",repr(name),"uncompressed_bytes",item.file_size,flush=True)
+              if item.file_size < 10_000_000:
+                  raw=z.read(name)
+                  print("META_FIRST_1000_BYTES",repr(raw[:1000]),flush=True)
+                  # Only dataset-public annotation bytes. No raw image files.
+                  output=os.environ["RUNNER_TEMP"]+"/vertical_metadata_inspect.txt"
+                  with open(output,"wb") as f:f.write(raw[:min(len(raw),120000)])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: public-vertical-nonimage-metadata-only
+          path: ${{ runner.temp }}/vertical_metadata_inspect.txt
+          retention-days: 3
+          if-no-files-found: warn
