@@ -1,0 +1,65 @@
+name: Matched-only Small REC auto-vs-GT crop causality (no DET, no APK)
+on:
+  push:
+    branches: [test/line-overlay-plan-isolated-20261103]
+    paths:
+      - 'scripts/paired_small_crop_attribution_holdout.py'
+      - '.github/workflows/paired-small-crop-attribution.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  paired-crop-small-rec-only:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout new fixed paired-analysis driver
+        uses: actions/checkout@v4
+      - name: Checkout unmodified prior analysis helpers at original successful run commit
+        uses: actions/checkout@v4
+        with:
+          ref: 1e0c227f33fb0fbef4c681024972d107b09bfc99
+          path: original-ocr-study
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Fetch previous per-GT results; do not rerun automatic detection
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/previous" "$RUNNER_TEMP/small-rec-model" "$RUNNER_TEMP/paired-output"
+          gh run download 41566050026 --repo "$GITHUB_REPOSITORY" --name kanzi-final-ocr-error-attribution --dir "$RUNNER_TEMP/previous"
+          test -s "$RUNNER_TEMP/previous/per_gt_diagnostics.csv"
+          python3 -m py_compile scripts/paired_small_crop_attribution_holdout.py
+      - name: Install exact old inference dependencies
+        run: |
+          python3 -m pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' 'requests==2.32.3' pyclipper
+      - name: Download verified SAME Small REC weights and charset; no DET model
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx' -o "$RUNNER_TEMP/small-rec-model/small_rec.onnx"
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml' -o "$RUNNER_TEMP/small-rec-model/small_rec.yml"
+          echo "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  $RUNNER_TEMP/small-rec-model/small_rec.onnx" | sha256sum -c -
+          echo "ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  $RUNNER_TEMP/small-rec-model/small_rec.yml" | sha256sum -c -
+      - name: Recognize ONLY historical matched 122 GT crops and compare on identical rows
+        run: |
+          set -euo pipefail
+          PYTHONPATH=original-ocr-study/scripts python3 -u scripts/paired_small_crop_attribution_holdout.py \
+            --old-csv "$RUNNER_TEMP/previous/per_gt_diagnostics.csv" \
+            --rec "$RUNNER_TEMP/small-rec-model/small_rec.onnx" \
+            --yml "$RUNNER_TEMP/small-rec-model/small_rec.yml" \
+            --out "$RUNNER_TEMP/paired-output" \
+            | tee "$RUNNER_TEMP/paired-output/run.log"
+          grep -q '^PAIRED_SMALL_CROP_ATTRIBUTION_COMPLETE' "$RUNNER_TEMP/paired-output/run.log"
+          cat "$RUNNER_TEMP/paired-output/summary.json" >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish anonymous matched region metrics only (no photo, model, transcript, APK)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paired-small-crop-122-holdout-only
+          path: ${{ runner.temp }}/paired-output/
+          retention-days: 10
+          if-no-files-found: warn
