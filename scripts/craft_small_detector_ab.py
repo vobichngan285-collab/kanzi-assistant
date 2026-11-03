@@ -18,6 +18,7 @@ import ocr_box_value_deep_dive as sdk
 SMALL_DET_SHA="d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e"
 SMALL_REC_SHA="5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634"
 SMALL_YML_SHA="ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1"
+CRAFT_MODEL_SHA="28c05f8b5e97f3c5765d00bca556ec2397c86c954d4ac5ef73aa10043db16388"
 CRAFT_LONG_SIDE=960
 CRAFT_TEXT=.7
 CRAFT_LINK=.4
@@ -39,7 +40,7 @@ def get_models(folder):
     p=Path(folder)
     d=model(p/"det.onnx",SMALL_DET_SHA)
     r=model(p/"small_rec.onnx",SMALL_REC_SHA)
-    c=model(p/"craft.onnx")
+    c=model(p/"craft.onnx",CRAFT_MODEL_SHA)
     config=p/"small_rec.yml"
     assert hashlib.sha256(config.read_bytes()).hexdigest()==SMALL_YML_SHA
     chars=list(yaml.safe_load(config.read_text())["PostProcess"]["character_dict"])
@@ -250,7 +251,7 @@ def main():
         miss_a=set(range(len(gt)))-set(pairs_a.values())
         covered_a=set(pairs_a.values())
         extra_matches=set(pairs_c.values())-covered_a
-        zero_gt=[j for j in miss_a if not any(overlap(g["box"],gt[j]["box"])>0 for g in boxes_a)]
+        zero_gt=[j for j in miss_a if not any(overlap(g["bbox"],gt[j]["box"])>0 for g in boxes_a)]
         meta["baseline_zero_overlap_gt"]+=len(zero_gt)
         meta["zero_overlap_recovered_by_craft_match"]+=sum(j in pairs_b.values() for j in zero_gt)
         meta["zero_overlap_any_craft_intersection"]+=sum(any(overlap(b["bbox"],gt[j]["box"])>0 for b in boxes_b) for j in zero_gt)
