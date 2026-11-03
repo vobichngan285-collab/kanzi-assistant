@@ -1,0 +1,50 @@
+name: Final OCR missed-line attribution on same real photos - NO APK
+on:
+  push:
+    branches: [test/ocr-final-error-attribution-20261103]
+    paths:
+      - scripts/ocr_final_error_attribution.py
+      - .github/workflows/ocr-final-error-attribution.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  small-ocr-error-forensics:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify source syntax
+        run: python3 -m py_compile scripts/ocr_final_error_attribution.py scripts/ocr_public_real_scene_ab.py scripts/ocr_box_value_deep_dive.py
+      - name: Install fixed CPU inference and geometry dependencies
+        run: pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
+      - name: Download SHA-pinned original Small DET and Small REC only
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-final-models
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx' -o /tmp/kanzi-final-models/det.onnx
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx' -o /tmp/kanzi-final-models/small_rec.onnx
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml' -o /tmp/kanzi-final-models/small_rec.yml
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  /tmp/kanzi-final-models/det.onnx' | sha256sum -c -
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/kanzi-final-models/small_rec.onnx' | sha256sum -c -
+          echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/kanzi-final-models/small_rec.yml' | sha256sum -c -
+      - name: Diagnose exact same 72 annotated real-scene photos
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-error-attribution
+          python3 -u scripts/ocr_final_error_attribution.py --models /tmp/kanzi-final-models --out /tmp/kanzi-error-attribution | tee /tmp/kanzi-error-attribution/run.log
+          grep -q 'OCR_FINAL_ATTRIBUTION_COMPLETE' /tmp/kanzi-error-attribution/run.log
+          echo '### Small-only real photo OCR error attribution (no new candidate method)' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/kanzi-error-attribution/summary.json >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/kanzi-error-attribution/limitations.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload public GT geometry diagnostics and numeric results only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kanzi-final-ocr-error-attribution
+          path: /tmp/kanzi-error-attribution/
+          retention-days: 10
+          if-no-files-found: warn
