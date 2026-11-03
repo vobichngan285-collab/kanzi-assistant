@@ -1,0 +1,49 @@
+name: Hybrid OCR rescue budget vs real photo speed - NO APK
+on:
+  push:
+    branches: [test/android-hybrid-12gb-performance-20261103]
+    paths:
+      - scripts/hybrid_rescue_budget_sweep.py
+      - .github/workflows/hybrid-budget-realphotos.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  capped-ocr-evaluation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        cohort: [dev, holdout]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Load prior public-photo Small and Medium results, never photos themselves
+        uses: actions/download-artifact@v4
+        with:
+          name: small-det-medium-rec-fullframe-${{ matrix.cohort }}
+          run-id: 41505548463
+          github-token: ${{ github.token }}
+          path: /tmp/hybrid-photo-input
+      - name: Compare caps 0/1/2/3/5/all and selection priority against same boxes
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/hybrid-budget-results
+          python3 -u scripts/hybrid_rescue_budget_sweep.py \
+            --boxes /tmp/hybrid-photo-input/per_box_ocr.csv \
+            --photos /tmp/hybrid-photo-input/per_photo_timing.csv \
+            --cohort ${{ matrix.cohort }} --out /tmp/hybrid-budget-results \
+            | tee /tmp/hybrid-budget-results/run.log
+          grep -q 'ANDROID_12GB_RESCUE_POLICY_SWEEP=PASS' /tmp/hybrid-budget-results/run.log
+          echo '### Real scene photo model rescue budget: ${{ matrix.cohort }}' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/hybrid-budget-results/rescue_budget_results.csv >> "$GITHUB_STEP_SUMMARY"
+          echo 'Original source study used RGB Python approximation; this is a policy+latency counterfactual only.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Save only numeric comparison and explanations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 12gb-rescue-budget-${{ matrix.cohort }}
+          path: /tmp/hybrid-budget-results/
+          retention-days: 10
+          if-no-files-found: warn
