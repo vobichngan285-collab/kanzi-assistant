@@ -220,9 +220,9 @@ public class MainActivity extends CameraActivity {
                             "\n提示：本页为诊断结果，诊断本身不自动朗读；可点「朗读这次诊断识别出的文字」试听。"
                             + "\n当前模型：" + report.getModelId()
                             + "\n\n" + report.getX200ProfileReport()
-                            + "\nOCR 输入方向：原始摄像头帧（固定 0°）"
+                            + "\n原版A/B输入方向：原始摄像头帧固定0°；整页自动纠正见上方独立候选"
                             + "\n实时文字输入旋转设置：" + liveTextRotationDegrees +
-                                "°（仅用于正式实时扫描；独立诊断保持原始0°画面）"
+                                "°（0°表示自动按需纠正；独立诊断保留0°原版）"
                             + "\n图像解码：OpenCV NV21 方式"
                             + "\n平均置信度：" + String.format(Locale.US, "%.3f", report.getAverageConfidence())
                             + "\n文字流组织方式：" + report.getFocusDescription()
@@ -517,7 +517,7 @@ public class MainActivity extends CameraActivity {
         enhancedOcr = prefs.getBoolean(PREF_ENHANCED_OCR, false);
         aiLayoutEnabled = prefs.getBoolean(PREF_AI_LAYOUT, false);
         liveTextRotationDegrees = prefs.getInt(PREF_REALTIME_TEXT_ROTATION, 0);
-        if (liveTextRotationDegrees != 90 && liveTextRotationDegrees != 270)
+        if (liveTextRotationDegrees != 90 && liveTextRotationDegrees != 180 && liveTextRotationDegrees != 270)
             liveTextRotationDegrees = 0;
         readingFocusMode = prefs.getString(PREF_READING_FOCUS, "AUTO");
         // Retired page-centric ALL setting is equivalent to continuous AUTO.
@@ -653,9 +653,10 @@ public class MainActivity extends CameraActivity {
         RadioGroup rotationGroup = new RadioGroup(this);
         rotationGroup.setOrientation(RadioGroup.VERTICAL);
         String[][] rotationOptions = {
-            {"0", "自动：按检测到的文字方向整理（默认，无额外 OCR）"},
-            {"90", "横放文字：将画面向右旋转 90° 识别"},
-            {"270", "横放文字：将画面向左旋转 90° 识别"}
+            {"0", "自动纠正整页方向（默认；仅明确异常时追加OCR）"},
+            {"90", "手动：将OCR输入向右旋转90°"},
+            {"180", "手动：将OCR输入旋转180°"},
+            {"270", "手动：将OCR输入向左旋转90°"}
         };
         for (String[] option : rotationOptions) {
             RadioButton radio = new RadioButton(this);
@@ -668,7 +669,7 @@ public class MainActivity extends CameraActivity {
         }
         panel.addView(rotationGroup);
         TextView liveRotationNote = new TextView(this);
-        liveRotationNote.setText("默认模式不增加额外模型。若书本横放后自动识别仍有乱码，可手动选择左转或右转：每次仍只执行一遍 OCR，白框保持与摄像头画面对应。该选项仅影响实时文字。");
+        liveRotationNote.setText("默认自动先执行一次原版OCR。只有可靠的整页旋转证据，才额外执行一次本机OCR；若候选没有显著改善，保留原文。手动可指定90°/180°/270°（仅实时扫描）。四向自动纠正不等于真正竖排排版。");
         liveRotationNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         liveRotationNote.setTextColor(0xFF667085);
         panel.addView(liveRotationNote);
@@ -1026,7 +1027,7 @@ public class MainActivity extends CameraActivity {
         diagnosticTitle.setPadding(0, dp(18), 0, dp(4));
         panel.addView(diagnosticTitle);
         TextView diagnosticNote = new TextView(this);
-        diagnosticNote.setText("单帧并行做原版、横排跨行、竖排裁剪和综合候选四路A/B；共享一次原始OCR，局部候选由同一Small实际识别。真竖排+横排价格可能产生假阳性，候选仅供人工核查，绝不接管实时朗读。日志可能包含私人文字，分享前请检查。");
+        diagnosticNote.setText("原版四路同帧A/B保持不变；新增按需整页方向识别0°/90°/180°/270°独立诊断。只有可靠几何或极低质量信号才追加一次整页OCR，输出候选和耗时，原版A/B不会被覆盖。真实竖排候选仍仅诊断。分享前检查隐私文字。");
         diagnosticNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         diagnosticNote.setTextColor(0xFF667085);
         panel.addView(diagnosticNote);
