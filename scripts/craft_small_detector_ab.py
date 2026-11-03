@@ -274,10 +274,11 @@ def main():
     if not a.max_photos:
         assert len(output)>=65
     for cohort in ("DEV","HOLDOUT"):
+        if not any(row["cohort"]==cohort for row in output):continue
         for mode in ("A","B","C"):
             summary=summarise(output,cohort,mode)
             print("CRAFT_SMALL_DET_REC_AB_RESULT",json.dumps(summary),flush=True)
-    all_summary=[summarise(output,cohort,mode) for cohort in ("DEV","HOLDOUT")
+    all_summary=[summarise(output,cohort,mode) for cohort in ("DEV","HOLDOUT") if any(row["cohort"]==cohort for row in output)
                  for mode in ("A","B","C")]
     with (out/"per_photo.csv").open("w",newline="",encoding="utf-8-sig") as f:
         w=csv.DictWriter(f,fieldnames=list(output[0]));w.writeheader();w.writerows(output)
