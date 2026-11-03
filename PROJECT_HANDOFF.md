@@ -115,3 +115,27 @@
 - 原始历史材料为 `看字助手_CRAFT实验工作交接记录_2026-11-03.md`；为方便未来查找，将其整理进这个固定文件名。
 
 **交接记录持续更新，切勿删除历史实验记录。**
+
+
+#### 2026-11-03 — DBNet → 单行白框源码专项静态审查（只读代码，不构建）
+
+- **用户批准范围：** 检查现有安卓代码和 SDK 处理链路，提出问题清单与修改建议；本次不修改 App/模型，不启动构建和真机压力测试。
+- **被审查的正式实验主线：** `feature/strict-offline-ocr-order-guard`，HEAD `c50855877c2d22a52333585e433528830a498e13`；注意仓库默认 `main` 只统一存放本交接档案，并不是最新安卓程序代码分支。
+- **模型与 SDK 路径：** `app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt` 在 202–237 行配置三个独立 DET/REC 资产路径，Small/Tiny 最长检测边 1600、v5 Mobile 960；CI 的 `.github/workflows/android.yml` 23–28 行固定检出官方 PaddleOCR `v3.7.0` SDK，125–160 行在构建时对识别预处理 BGR 做校验/补丁。
+- **源码确定的链路：** `MainActivity.java:180–188` USB NV21 相机回调；`MainActivity.java:256–343` 帧门控和单槽推理；`PaddleOcrEngine.kt:276–383` NV21→Bitmap→PaddleOCR→阅读排序文本和原始四点框→`OcrReadResult`；`MainActivity.java:334–343` 分别调用 `OcrOverlayView.show(...)` 与 `onRecognized(text,...)`；`MainActivity.java:1819–1915` TTS去重、音效和分段朗读。
+- **P1：白框与文本行分离（已确认的设计事实）：** `TextFlowRebuilder.java:104–231` 将 OCR `ReadingOrder.Box` 进行行/流的几何聚类，最终只返回 **String**；`ReadingOrder.java:170–218` 调用该文本重建；然而 `PaddleOcrEngine.kt:350–383` 返回的盒子是 OCR SDK 原始四边形列表，`OcrOverlayView.java:38–48,90–120` 原样遍历并绘制，**不使用重建后的行分组**。故“朗读合并成一行”不代表“白框也是一行”；原始碎框在视觉上仍碎。
+- **P1：输出结构缺少逐行对应关系（已确认的设计事实）：** `OcrReadResult` 当前只有 `text:String`、`boxes:List<FloatArray>`，没有 `lineId`、来源原始框索引集合、逐行文本/四边形/置信度、何行正在朗读等元数据；当前并不具备严格的 TTS 行级高亮绑定。朗读还可能经 `OcrContextRefiner.refine` 修改显示之外的文本（`MainActivity.java:1821–1845`），进一步需要明确原始字符和朗读文本的区别。
+- **P2：SDK 的跨行检测粘连不能靠应用层排序自动拆开（已确认的链路限制，非最终根因）：** 官方 `v3.7.0` `DBPostProcessor.kt:60–139` 在预测图上二值化→轮廓→`minAreaRect`→`PolygonUnclip`→再取四点框。官方 `OCREngine.kt:76–151` 对这些原始框排序、四点裁剪、逐框先识别，然后应用端才做文本流重建；如果两行已经落入一条检测轮廓，当前并无跨行拆分步骤。不能声称这是所有中文乱码或白框精度问题的唯一根因。
+- **P2：可能出现“无朗读文字却仍画白框”（静态代码路径推断，需样例验证）：** `PaddleOcrEngine.kt:350–373` 过滤条件仅是四点坐标数为 4，未筛掉 `item.text.isBlank()`；而 `toReadingBoxes(...):443–453` 明确过滤空白识别文本。是否真实出现须检查具体 SDK 返回和样本，不能直接说已在真机复现。
+- **P3：坐标映射需回归验证，不凭源码断言错位：** USB 模式 `OcrOverlayView.java:62–121` 通过视频视图的实际位置、旋转、缩放映射四点；`MainActivity.java:1183–1222` 尽量按完整画面做 FIT 显示，`MainActivity.java:1227–1235` 请求 1920×1080 MJPEG 原始 NV21 回调。手机 Camera2 模式另有 `PhonePreviewGeometry`；现有 JVM 几何烟雾测试不能替代真实 UVC 叠加层位置检查。
+- **已有测试保护：** `.github/workflows/strict-ocr-order-tests.yml` 含 `RealtimeTextFlowSmokeTest`、`RealtimeTextOrientationSmokeTest`、`PhonePreviewGeometrySmokeTest` 等阅读顺序与几何测试，但这次检查没有发现“分组后的白框严格对应一行”的端到端用例。**未运行新测试，未触发 GitHub Actions**。
+
+**下一步唯一建议（等待用户明确单步批准）：** 保持 DBNet/Small 模型、原始 OCR 字符和正式 APK 不变，在隔离实验分支对现有 `TextFlowRebuilder` 提取可测试的“逐行结构输出”（原框ID列表 + 行文本 + 行四边形/可回退多框），用固定人工标注样例检验“同一行碎框合并”“相邻两行不误合并”“旋转/竖排不破坏”“每个原框恰好对应一次”的不变量。先跑纯 Java 静态几何测试，不接入 TTS、不构建 APK；通过后再考虑影子模式叠加对照。
+
+**继续保留的限制：** CRAFT 768 INT8 已有 6×24 真机压力测试，局部补漏在 RCTW1400 36 图净 +2/219 行但 Linux CPU 平均多约 955ms/图；不要重做旧实验，也不要因纯静态代码检查就宣布真实图像框/朗读已修复。历史结论详见实验分支 `test/craft768-int8-roi-dense-text-v2-20261103` 的 `docs/craft768-int8-conditional-local-roi-v1-v2-results-20261103.md`。
+
+**审查使用的源码链接（可复核）：**
+- https://github.com/vobichngan285-collab/kanzi-assistant/blob/feature/strict-offline-ocr-order-guard/app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt
+- https://github.com/vobichngan285-collab/kanzi-assistant/blob/feature/strict-offline-ocr-order-guard/app/src/main/java/com/vobichngan/kanzi/OcrOverlayView.java
+- https://github.com/vobichngan285-collab/kanzi-assistant/blob/feature/strict-offline-ocr-order-guard/app/src/main/java/com/vobichngan/kanzi/TextFlowRebuilder.java
+- https://github.com/PaddlePaddle/PaddleOCR/blob/v3.7.0/deploy/ppocr-android/ppocr-sdk/src/main/java/com/paddle/ocr/postprocess/DBPostProcessor.kt
