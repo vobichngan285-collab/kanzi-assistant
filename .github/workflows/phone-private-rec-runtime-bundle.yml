@@ -1,0 +1,45 @@
+name: Public Small REC Linux local-only runtime bundle (NO private user data)
+on:
+  push:
+    branches: [test/phone-ocr-single-frame-diagnostic-20261103]
+    paths:
+      - '.github/workflows/phone-private-rec-runtime-bundle.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package-only:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Download verified public PP-OCRv6 Small REC model + Python wheel
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/public-rec-runtime"
+          cd "$RUNNER_TEMP/public-rec-runtime"
+          curl -fL --retry 3 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx' -o small_rec.onnx
+          curl -fL --retry 3 --max-time 120 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml?download=true' -o small_rec.yml
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  small_rec.onnx' | sha256sum -c -
+          echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  small_rec.yml' | sha256sum -c -
+          python3 -m pip download -q --no-deps --only-binary=:all: 'onnxruntime==1.21.1' -d .
+          python3 - <<'PY'
+          from pathlib import Path
+          wheels=list(Path('.').glob('onnxruntime-1.21.1-*.whl'))
+          assert len(wheels)==1, wheels
+          assert 'cp313' in wheels[0].name and 'x86_64' in wheels[0].name, wheels[0].name
+          print('PUBLIC_SMALL_REC_LINUX_BUNDLE_VERIFIED',wheels[0].name,
+                Path('small_rec.onnx').stat().st_size)
+          PY
+          sha256sum small_rec.onnx small_rec.yml *.whl > SHA256SUMS.txt
+          cat SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+          echo 'Public weights and Python wheel ONLY. User ZIP/images are never fetched or uploaded.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: public-small-rec-linux-cp313-runtime-only
+          path: ${{ runner.temp }}/public-rec-runtime/
+          retention-days: 7
+          if-no-files-found: error
