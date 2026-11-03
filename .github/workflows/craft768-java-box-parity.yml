@@ -1,0 +1,59 @@
+name: CRAFT768 INT8 Android Java vs Python text box real-photo parity - NO APK
+on:
+  push:
+    branches: [test/craft768-int8-portrait-boxes-20261103]
+    paths:
+      - scripts/craft768_android_java_box_realphoto_parity.py
+      - craft768-int8-probe/app/src/test/java/com/vobich/kanzi/craftprobe/CraftBoxDecoderParityCli.java
+      - craft768-int8-probe/app/src/main/java/com/vobich/kanzi/craftprobe/CraftBoxDecoder.java
+      - .github/workflows/craft768-java-box-parity.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  paired-java-python-geometry:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile Java production CRAFT box decoder with CLI without Android dependencies
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-craft-geometry/classes
+          javac -d /tmp/kanzi-craft-geometry/classes             craft768-int8-probe/app/src/main/java/com/vobich/kanzi/craftprobe/CraftBoxDecoder.java             craft768-int8-probe/app/src/test/java/com/vobich/kanzi/craftprobe/CraftBoxDecoderSelfTest.java             craft768-int8-probe/app/src/test/java/com/vobich/kanzi/craftprobe/CraftBoxDecoderParityCli.java
+          java -ea -cp /tmp/kanzi-craft-geometry/classes com.vobich.kanzi.craftprobe.CraftBoxDecoderSelfTest
+          python3 -m py_compile scripts/craft768_android_java_box_realphoto_parity.py
+      - name: Install exact original ONNX CPU research dependencies
+        run: |
+          python3 -m pip install --quiet 'numpy==1.26.4' 'onnx==1.17.0' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
+      - name: Fetch pinned CRAFT model and recreate exact INT8 weight from earlier experiments
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --retry-delay 2 --max-time 300 'https://huggingface.co/inference4j/craft-mlt-25k/resolve/290e4d5/model.onnx' -o /tmp/kanzi-craft-geometry/craft.onnx
+          echo '28c05f8b5e97f3c5765d00bca556ec2397c86c954d4ac5ef73aa10043db16388  /tmp/kanzi-craft-geometry/craft.onnx' | sha256sum -c -
+          python3 -u scripts/craft768_int8_static_quantize.py --source /tmp/kanzi-craft-geometry/craft.onnx --output /tmp/kanzi-craft-geometry/craft768_int8.onnx --report /tmp/kanzi-craft-geometry/quant.json
+          echo '9ab885d2f6669b77f70e9c8f68acfbe408c0b051501fd02d94bcaa0c7779ab15  /tmp/kanzi-craft-geometry/craft768_int8.onnx' | sha256sum -c -
+      - name: Compare 24 identical public-scene CRAFT scoremaps on Python and Android Java geometry
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-craft-geometry/report
+          python3 -u scripts/craft768_android_java_box_realphoto_parity.py             --model /tmp/kanzi-craft-geometry/craft768_int8.onnx             --classes /tmp/kanzi-craft-geometry/classes             --out /tmp/kanzi-craft-geometry/report | tee /tmp/kanzi-craft-geometry/report/run.log
+          grep -q 'CRAFT_BOX_REALPHOTO_PARITY_COMPLETE 24' /tmp/kanzi-craft-geometry/report/run.log
+          echo '### CRAFT raw INT8 scoremaps -> Python OpenCV versus compiled Android Java box decoder' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/kanzi-craft-geometry/report/summary.json >> "$GITHUB_STEP_SUMMARY"
+          echo 'Public ReCTS/RCTW/ART photos reused; no new blind accuracy, no real Android runtime or OCR transcription.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve numeric and text reports only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: craft768-int8-java-python-real-photo-box-parity
+          path: /tmp/kanzi-craft-geometry/report/
+          if-no-files-found: warn
+          retention-days: 10
