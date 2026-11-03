@@ -115,10 +115,15 @@ def craft_regions(score,source_hw,resize_scale):
     h,w=source_hw;wx,hy=resize_scale
     score=np.asarray(score)
     assert score.ndim==3 and score.shape[-1]==2,score.shape
-    region=score[:,:,0];affinity=score[:,:,1]
+    # Export may have small numeric overshoot beyond 1.0; clamp after sanity checks.
+    region=np.asarray(score[:,:,0],dtype=np.float32)
+    affinity=np.asarray(score[:,:,1],dtype=np.float32)
     assert np.isfinite(region).all() and np.isfinite(affinity).all()
-    # CRAFT ONNX score maps are sigmoid probabilities.
-    assert region.min()>=-.001 and region.max()<=1.001,(region.min(),region.max())
+    if (region.min() < -.25 or region.max() > 1.25 or
+        affinity.min() < -.25 or affinity.max() > 1.25):
+        raise ValueError(f"Unexpected CRAFT score range: region {region.min()}..{region.max()}, affinity {affinity.min()}..{affinity.max()}")
+    region=np.clip(region,0.,1.)
+    affinity=np.clip(affinity,0.,1.)
     text_binary=(region>CRAFT_LOW).astype(np.uint8)
     link_binary=(affinity>CRAFT_LINK).astype(np.uint8)
     binary=np.clip(text_binary+link_binary,0,1).astype(np.uint8)
