@@ -235,3 +235,12 @@
 - HOLDOUT 122 个未匹配区域中 80 个与检测框有交集、42 个没有任何 AABB 交集；该分类只是几何代理，不等同逐行实际读错原因。
 - **本轮新的、尚未完成的控制变量问题：** 同一 HOLDOUT 的 **恰好122个已 IoU 配对的 GT 区域**，在不改变 Small REC、预处理、照片与文字真值的条件下，用其 **GT polygon 裁剪**与**已存储的旧自动检测裁剪 REC**逐区域配对比较，避免旧全量 Oracle 与匹配子集样本分母不一致。原来的数据包 Artifact **13199760778** 仍有效、CSV 中有旧每区域 REC 编辑距离；只需对这122个 GT 裁剪做 Small REC，不重跑 DBNet/CRAFT/72图整体检测归因。
 - 本节点为**历史实验核实与后续设计**，没有声称新模型实验成功。仍不动正式 App、TTS、检测器或 APK。
+
+
+#### 2026-11-03 — 同样122个文字区域的 Small 自动框 vs 人工 GT 框配对识别：实验代码已提交，待 CI 核实
+
+- 先核查旧实验：Run **41566050026** 和 **41564703130** 均 success；旧全量 Oracle HOLDOUT244 行的 CER9.734% 与旧自动检测匹配122行的 CER16.087% 分母不同，旧报告禁止直接相减。本轮新增的**唯一问题**是按相同122个已配对 GT 区域逐个计算裁剪影响，不重复旧72图检测实验、CRAFT性能实验或旧全量 Oracle。
+- 旧 Run41566050026 Artifact **13199760778** 的 CSV 已实际读取、验证：HOLDOUT 244条 GT，其中122条 `matched_iou_040=1`，合计690正规化字符，旧自动裁剪 Small REC 编辑距离111，完全正确89行；这些**是旧实验数据，不是本次新发现的算法效果**。
+- 新隔离脚本 `test/line-overlay-plan-isolated-20261103:scripts/paired_small_crop_attribution_holdout.py`，提交 `1addfcf5f14d3663e4cac400828433b152078a42`，使用旧 CSV 原值，只对同122条人工多边形裁剪做 Small REC；强制旧图像索引、GT ID/文本、归一化字符数/历史编辑距离完全一致，不下载或运行任何 DBNet/CRAFT DET。
+- 新单项 Actions 工作流 `.github/workflows/paired-small-crop-attribution.yml`，提交 `856a2ae622e9fa3fc531f1e024446fb0208341ce`，使用旧成功研究 Commit `1e0c227f33fb0fbef4c681024972d107b09bfc99` 的固定原始 `sdk.crop_box`/`sdk.rec`、相同 SHA-pinned Small REC，输出逐配对匿名编辑距离和同分母 CER、四类精确/错误结果，不保存图片/原文字/模型/APK。
+- **状态必须区分**：代码和 CI 文件提交、远端回读成功；新实验运行结果和每个识别输出**尚未验收**，暂不宣称改善比例。只操作旧仓库原隔离分支；正式 App、模型、TTS、APK 保持不变。
