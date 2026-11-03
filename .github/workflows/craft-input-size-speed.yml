@@ -1,0 +1,60 @@
+name: Same CRAFT model 960 vs 768 vs 640 vs 512 real OCR A/B - NO APK
+on:
+  push:
+    branches: [test/craft-input-size-speed-20261103]
+    paths:
+      - scripts/craft_input_resolution_sweep.py
+      - .github/workflows/craft-input-size-speed.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  craft-resolution-sweep:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate benchmark syntax
+        run: python3 -m py_compile scripts/craft_input_resolution_sweep.py scripts/craft_small_detector_ab.py
+      - name: Install exact CPU stack used in previous CRAFT study
+        run: pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
+      - name: Download and verify unchanged CRAFT, Small DET and Small REC weights
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft-sweep-models
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/inference4j/craft-mlt-25k/resolve/290e4d5/model.onnx' -o /tmp/craft-sweep-models/craft.onnx
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx' -o /tmp/craft-sweep-models/det.onnx
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx' -o /tmp/craft-sweep-models/small_rec.onnx
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml' -o /tmp/craft-sweep-models/small_rec.yml
+          echo '28c05f8b5e97f3c5765d00bca556ec2397c86c954d4ac5ef73aa10043db16388  /tmp/craft-sweep-models/craft.onnx' | sha256sum -c -
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  /tmp/craft-sweep-models/det.onnx' | sha256sum -c -
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/craft-sweep-models/small_rec.onnx' | sha256sum -c -
+          echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/craft-sweep-models/small_rec.yml' | sha256sum -c -
+      - name: Real-photo smoke test before full benchmark
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft-size-smoke
+          python3 -u scripts/craft_input_resolution_sweep.py --models /tmp/craft-sweep-models --out /tmp/craft-size-smoke --max-photos 6 | tee /tmp/craft-size-smoke/run.log
+          grep -q 'CRAFT_SIZE_SWEEP_COMPLETE' /tmp/craft-size-smoke/run.log
+      - name: Complete same-run 72 real photos across all 4 CRAFT sizes
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft-size-full
+          python3 -u scripts/craft_input_resolution_sweep.py --models /tmp/craft-sweep-models --out /tmp/craft-size-full | tee /tmp/craft-size-full/run.log
+          grep -q 'CRAFT_SIZE_SWEEP_COMPLETE' /tmp/craft-size-full/run.log
+          echo '### Same ONNX CRAFT at max long-side 960 / 768 / 640 / 512 vs Small+Small, one identical CPU runner' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/craft-size-full/summary.json >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/craft-size-full/limitations.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve numeric metrics only, no source photos or model binaries
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: craft-resolution-960-768-640-512
+          path: |
+            /tmp/craft-size-smoke/
+            /tmp/craft-size-full/
+          retention-days: 10
+          if-no-files-found: warn
