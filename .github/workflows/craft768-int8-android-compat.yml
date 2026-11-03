@@ -1,0 +1,110 @@
+name: CRAFT768 INT8 Android ORT source compile and arm64-v8a ABI check - NO APK
+on:
+  push:
+    branches: [test/craft768-int8-arm64-android-compat-20261103]
+    paths:
+      - app/src/main/java/com/vobichngan/kanzi/Craft768Int8AndroidProbe.kt
+      - .github/workflows/craft768-int8-android-compat.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  android-compile-only:
+    name: Compile checksum-pinned 20.95MB INT8 QDQ CRAFT Android ORT probe, no APK
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: PaddlePaddle/PaddleOCR
+          ref: v3.7.0
+          path: third_party/PaddleOCR
+      - name: Prepare same original SDK, Small model files, Android dependencies
+        run: |
+          set -euo pipefail
+          SDK=third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk
+          test -s "$SDK/src/main/java/com/paddle/ocr/PaddleOCR.kt"
+          rm -f "$SDK/build.gradle.kts"
+          mkdir -p "$SDK/src/main/assets/models/det" "$SDK/src/main/assets/models/rec"
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/5994b4f/inference.onnx' -o "$SDK/src/main/assets/models/det/inference.onnx"
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx' -o "$SDK/src/main/assets/models/rec/inference.onnx"
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml?download=true' -o "$SDK/src/main/assets/models/rec/inference.yml"
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/assets/models/det/inference.onnx' | sha256sum -c -
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/assets/models/rec/inference.onnx' | sha256sum -c -
+          test -s "$SDK/src/main/assets/models/rec/inference.yml"
+          cat > "$SDK/build.gradle" <<'GRADLE'
+          plugins { id 'com.android.library'; id 'org.jetbrains.kotlin.android' }
+          android {
+              namespace 'com.paddle.ocr'
+              compileSdk 36
+              defaultConfig { minSdk 26 }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = '17' }
+              buildTypes { release { minifyEnabled false } }
+          }
+          dependencies {
+              implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.21.1'
+              api 'com.quickbirdstudios:opencv:4.5.3.0'
+              implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
+              implementation 'androidx.core:core-ktx:1.15.0'
+          }
+          GRADLE
+          # Preserve the existing branch's separate HybridMediumCompileProbe contracts.
+          # These temporary upstream SDK compatibility patches are compile-only;
+          # neither Medium nor CRAFT is deployed or integrated into MainActivity.
+          python3 scripts/patch_android_sdk_medium_probe.py "$SDK"
+          python3 scripts/upgrade_hybrid_medium_probe_budget.py "$SDK"
+          # INT8 QDQ model is never packaged. 20.95MB weight must be external, SHA-verified.
+          test ! -e app/src/main/assets/craft
+          test ! -e "$SDK/src/main/assets/craft"
+          grep -q 'class Craft768AndroidProbe' app/src/main/java/com/vobichngan/kanzi/Craft768AndroidProbe.kt
+          ! grep -R 'Craft768Int8AndroidProbe(' app/src/main/java/com/vobichngan/kanzi/MainActivity.java app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt
+          echo 'CRAFT768 INT8 model loader is source-only, never invoked by normal app flows.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: third_party/AndroidUSBCamera
+      - name: Apply previously validated UVC source compatibility patch
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_uvc_resolution.py third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/MultiCameraClient.kt
+          python3 scripts/patch_usbmonitor.py third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("third_party/AndroidUSBCamera/libnative/build.gradle")
+          s=p.read_text()
+          old="abiFilters 'armeabi-v7a','arm64-v8a', \"x86\", \"x86_64\""
+          if s.count(old)!=1:raise SystemExit("Unexpected UVC native ABI configuration")
+          p.write_text(s.replace(old,"abiFilters 'armeabi-v7a','arm64-v8a'",1))
+          print("Retained 2 Android phone ABIs")
+          PY
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile Android app and Paddle SDK source WITHOUT assemble or package
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --no-parallel --max-workers=2 --stacktrace             :ppocr-sdk:compileDebugKotlin             :app:compileDebugKotlin             :app:compileDebugJavaWithJavac
+          if find app/build -type f -name '*.apk' -print -quit | grep -q .; then
+            echo 'Unexpected APK: abort'
+            exit 1
+          fi
+          echo 'Android compile-only check completed successfully; no APK assembled, signed, installed or published.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Important: Android model execution / real phone PSS and TTS NOT tested by compilation.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify ONNX Runtime 1.21.1 AAR packages arm64-v8a native binaries
+        run: |
+          set -euo pipefail
+          aar=$(find "$HOME/.gradle/caches/modules-2/files-2.1/com.microsoft.onnxruntime/onnxruntime-android/1.21.1" -type f -name '*.aar' -print -quit)
+          test -n "$aar"
+          unzip -Z1 "$aar" | grep -F 'jni/arm64-v8a/libonnxruntime.so'
+          unzip -Z1 "$aar" | grep -F 'jni/arm64-v8a/libonnxruntime4j_jni.so'
+          echo 'Prebuilt ONNX Runtime Android AAR contains arm64-v8a native runtime / JNI libs; graph execution not yet device-verified.' >> "$GITHUB_STEP_SUMMARY"
