@@ -139,3 +139,19 @@
 - https://github.com/vobichngan285-collab/kanzi-assistant/blob/feature/strict-offline-ocr-order-guard/app/src/main/java/com/vobichngan/kanzi/OcrOverlayView.java
 - https://github.com/vobichngan285-collab/kanzi-assistant/blob/feature/strict-offline-ocr-order-guard/app/src/main/java/com/vobichngan/kanzi/TextFlowRebuilder.java
 - https://github.com/PaddlePaddle/PaddleOCR/blob/v3.7.0/deploy/ppocr-android/ppocr-sdk/src/main/java/com/paddle/ocr/postprocess/DBPostProcessor.kt
+
+
+#### 2026-11-03 — 单行白框隔离开发：纯 Java 几何模块 148 项断言全部通过
+
+- **用户明确批准：** 按上一轮源码审查建议开始隔离式“单行白框分组”模块与纯 Java 测试，不接入正式 App、不生成 APK、不重做现有 CRAFT 压力实验。
+- **原仓库地址：** https://github.com/vobichngan285-collab/kanzi-assistant
+- **代码基线：** `feature/strict-offline-ocr-order-guard` 的 `c50855877c2d22a52333585e433528830a498e13`。
+- **新隔离分支：** `test/line-overlay-plan-isolated-20261103`，验收 HEAD **`9f861680b0be514b2fa6dd92e1088cbe6a672950`**。此分支不覆盖原正式开发分支。
+- **提交内容：** 新增 `LineOverlayPlanner.java`（单行候选框 + 原始框 ID/文字的可追溯行结构）；只把 `TextFlowRebuilder.java` 的两个现有行几何判断方法改成 package-private 供同包复用，**没有改函数体**；新增 `LineOverlayPlannerSmokeTest.java` 与单独纯 Java CI；新增实验记录 `docs/line-overlay-isolated-pure-java-results-20261103.md`。
+- **真实 GitHub Actions：** https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41605234334 ，`pure-java-line-overlay` job **success**；取得日志 `LINE_OVERLAY_PLANNER_SMOKE_TEST=PASS assertions=148`。这些是 148 个 Java 断言，**不是** 148 张真实照片。
+- **代码提交差异检查：** 对原基线比较后，仅添加两个 Java 文件、一份独立测试 workflow，修改 `TextFlowRebuilder.java` 中两行方法可见性；正式 `MainActivity`、`PaddleOcrEngine`、`OcrOverlayView`、`TTS`、模型及 APK 构建工作流 **完全未修改**。
+- **已通过的测试类别：** 乱序碎框同一行合并、紧邻上下两行隔离、远离标签不误合并、重叠框保守隔离、轻微倾斜行角点全覆盖、竖排/空文本/非法坐标/空引用降级、每个原始 OCR 框恰好保留一次、原始四点坐标不被修改、旧朗读文本算法输出不变。
+- **真实限制：** 新模块仅在实验分支中存在，尚未进入正式预览绘制、尚未关联 TTS 行高亮；它不能凭空补回完全漏检的字，也不能将 DBNet 已经粘成一个大框的多行自动分开。**没有摄像头实拍 GT 对照，更没有安卓设备或 APK 验收**。
+- **完整实验报告：** https://github.com/vobichngan285-collab/kanzi-assistant/blob/test/line-overlay-plan-isolated-20261103/docs/line-overlay-isolated-pure-java-results-20261103.md
+- **推荐下一步（待用户下一条单步指令）：** 针对固定真实照片/人工标注单行框开展“原始四点框 vs 新候选行框”的影子模式几何对照，量化碎片合并收益与跨行误合并风险；优先复用已有样本与标注、只做评估，**先不接正式预览、不动识别和 TTS**。
+
