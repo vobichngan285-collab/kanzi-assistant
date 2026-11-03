@@ -1,0 +1,75 @@
+name: Real public-photo single-line overlay SHADOW evaluation (no APK)
+on:
+  push:
+    branches: [test/line-overlay-plan-isolated-20261103]
+    paths:
+      - 'scripts/LineOverlayRealPhotoReplay.java'
+      - 'scripts/line_overlay_realphoto_shadow.py'
+      - '.github/workflows/line-overlay-realphoto-shadow.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  realphoto-shadow-only:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read only prior pinned DBNet benchmark helpers
+        uses: actions/checkout@v4
+        with:
+          ref: test/craft768-int8-roi-dense-text-v2-20261103
+          path: baseline-research
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile ONLY existing geometry planner and isolated replay adapter
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-line-shadow/java
+          javac -encoding UTF-8 -d /tmp/kanzi-line-shadow/java \
+            app/src/main/java/com/vobichngan/kanzi/LayoutRegion.java \
+            app/src/main/java/com/vobichngan/kanzi/ReadingOrder.java \
+            app/src/main/java/com/vobichngan/kanzi/TextFlowRebuilder.java \
+            app/src/main/java/com/vobichngan/kanzi/LineOverlayPlanner.java \
+            scripts/LineOverlayRealPhotoReplay.java
+          python3 -m py_compile scripts/line_overlay_realphoto_shadow.py
+      - name: Install pinned prior CPU inference and image parsing stack
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
+      - name: Download unchanged #315 PP-OCRv6 Small DET and REC ONLY
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-line-shadow/models
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx' -o /tmp/kanzi-line-shadow/models/det.onnx
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx' -o /tmp/kanzi-line-shadow/models/small_rec.onnx
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml' -o /tmp/kanzi-line-shadow/models/small_rec.yml
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  /tmp/kanzi-line-shadow/models/det.onnx' | sha256sum -c -
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/kanzi-line-shadow/models/small_rec.onnx' | sha256sum -c -
+          echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/kanzi-line-shadow/models/small_rec.yml' | sha256sum -c -
+      - name: Replay actual DET rectangles through unchanged LineOverlayPlanner
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-line-shadow/output
+          PYTHONPATH=baseline-research/scripts python3 -u scripts/line_overlay_realphoto_shadow.py \
+            --models /tmp/kanzi-line-shadow/models \
+            --java-cp /tmp/kanzi-line-shadow/java \
+            --out /tmp/kanzi-line-shadow/output \
+            | tee /tmp/kanzi-line-shadow/output/run.log
+          grep -q '^LINE_OVERLAY_REALPHOTO_SHADOW_COMPLETE' /tmp/kanzi-line-shadow/output/run.log
+          cat /tmp/kanzi-line-shadow/output/summary.json >> "$GITHUB_STEP_SUMMARY"
+          echo "No Android build, no new CRAFT inference, no APK, no TTS and no photo upload." >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish metrics and geometry only (no photos, OCR text, weights or APK)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: line-overlay-realphoto-shadow-metrics
+          path: /tmp/kanzi-line-shadow/output/
+          retention-days: 10
+          if-no-files-found: warn
