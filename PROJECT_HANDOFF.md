@@ -1,6 +1,8 @@
 # 看字助手（Kanzi Assistant）安卓 OCR 项目工作交接记录
 
 **整理日期：2026-11-03（Asia/Taipei）**
+**GitHub 原仓库完整地址：** https://github.com/vobichngan285-collab/kanzi-assistant
+**本交接文件永久链接：** https://github.com/vobichngan285-collab/kanzi-assistant/blob/main/PROJECT_HANDOFF.md
 **长期存放位置：** GitHub 原仓库 `main` 分支根目录 `PROJECT_HANDOFF.md`。
 **交接目的：** 如果 ChatGPT 对话记录丢失，在新对话中先通过 GitHub 连接读取本文件。必须接手已有仓库与已完成实验，**不要从头建项目或重跑全部测试**。
 
