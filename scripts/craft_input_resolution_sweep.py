@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Controlled CRAFT MLT25K ONNX resolution sweep: 960/768/640/512 max side.
+"""Controlled CRAFT MLT25K ONNX resolution sweep: 768/720 nominal (704 aligned)/640 max side.
 
 The existing original CRAFT weight, postprocessing, confidence thresholds,
 same 72 public real images and same PP-OCRv6 Small REC are fixed.
@@ -13,7 +13,8 @@ import cv2
 import craft_small_detector_ab as craft
 import ocr_box_value_deep_dive as sdk
 
-SIZES=(960,768,640,512)
+SIZES=(768,720,640)
+EFFECTIVE_SIZE={768:768,720:704,640:640}  # CRAFT inputs require 32-aligned sizes, never round 720 UP to 736.
 
 def summarize(rows,cohort,mode):
     rr=[r for r in rows if r["cohort"]==cohort]
@@ -23,6 +24,7 @@ def summarize(rows,cohort,mode):
     ts=sorted(x[f"{mode}_ms"] for x in rr)
     return dict(cohort=cohort,configuration=mode,photos=len(rr),
        gt_lines=gt,matched_gt_lines=s("matched"),
+       effective_input_max_side=EFFECTIVE_SIZE[int(mode.replace("CRAFT",""))] if mode.startswith("CRAFT") else None,
        gt_line_recall=round(s("matched")/max(1,gt),5),
        missed_gt_chars=s("missed_chars"),
        matched_edit_distance=s("rec_edits"),
@@ -70,7 +72,7 @@ def main():
           not any(craft.overlap(gt[j]["box"],bb["bbox"])>0 for bb in baseline)]
         row["Small_zero_gt"]=len(zero)
         for size in SIZES:
-            craft.CRAFT_LONG_SIDE=size
+            craft.CRAFT_LONG_SIDE=EFFECTIVE_SIZE[size]
             t=time.perf_counter()
             boxes,c_ms,diag=craft.craft_detect(model,rgb)
             ps=craft.rec_predictions(rec,chars,rgb,boxes)
@@ -102,7 +104,7 @@ def main():
     (out/"limitations.txt").write_text(
       "Exactly same original CRAFT MLT25k weight SHA256 and same Small REC, "
       "fixed default CRAFT text/link thresholds for all max-side scales. "
-      "Input size is capped at 960,768,640,512 (no upscaling), rounded as "
+      "Nominal input max long side is 768,720,640; 720 uses effective 704, rounded DOWN to 32 alignment; rounded as "
       "the earlier 960px CRAFT baseline; no post hoc threshold selection. "
       "Same 72 public photos used in prior research: HOLDOUT not truly novel. "
       "GT AABB IoU >=0.4 matching is not real-page reading accuracy; "
