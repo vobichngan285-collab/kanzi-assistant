@@ -93,6 +93,7 @@ public class ProbeActivity extends Activity {
     private String frameSourceSize = "1920x1080 generated";
     private Uri pendingCameraUri;
     private TextToSpeech tts;
+    private CraftSmallRecLinkage experimentalRec;
 
     private long copiedModelMs;
     private long shaVerifiedMs;
@@ -141,6 +142,8 @@ public class ProbeActivity extends Activity {
         addButton(layout, "⑧ 导出匿名性能数据 JSON", this::exportJson);
         addButton(layout, "⑨ 当前图片重建并显示文字检测框", () ->
                 background("文字框重建", this::runBoxPreview));
+        addButton(layout, "⑩ 研究中：CRAFT + 飞桨 Small REC 联合文字识别", () ->
+                background("完整检测+识别联调", this::runCraftSmallRecLinkage));
 
         status = new TextView(this);
         status.setTextSize(17);
@@ -517,6 +520,62 @@ public class ProbeActivity extends Activity {
                 "\n下方黄框只表示可能含文字，尚未做真正的汉字内容识别。");
     }
 
+    /**
+     * Experimental CRAFT->Small REC linkage. Requires SHA-pinned model and
+     * dictionary assets which are NOT present in existing 0.2 diagnostic APK.
+     * This is compile-only until separately authorized for a new test build.
+     */
+    private void runCraftSmallRecLinkage() throws Exception {
+        if(model==null) throw new IllegalStateException("请先加载 CRAFT INT8 模型");
+        Bitmap src=frame;
+        if(src==null || src.isRecycled())
+            throw new IllegalStateException("请先使用真实图片");
+        long overallStart=SystemClock.elapsedRealtimeNanos();
+        Inference detection=one(src,true);
+        currentBoxes=detection.boxes;
+        if(experimentalRec==null)
+            experimentalRec=new CraftSmallRecLinkage(getApplicationContext(),environment);
+        long recLoad=experimentalRec.load();
+        CraftSmallRecLinkage.Report recognized=experimentalRec.recognize(src,detection.boxes);
+        long overallMs=millis(SystemClock.elapsedRealtimeNanos()-overallStart);
+        Bitmap display=drawPreview(src,detection.boxes);
+        ui.post(() -> preview.setImageBitmap(display));
+        JSONObject report=new JSONObject();
+        report.put("kind","craft_int8_small_rec_linkage");
+        report.put("modelSha256",MODEL_SHA);
+        report.put("smallRecSha256",CraftSmallRecLinkage.MODEL_SHA);
+        report.put("imageKind",frameKind);
+        report.put("preservesSourceOrientation",true);
+        report.put("sourceImageDimensions",frameSourceSize);
+        report.put("craftInputWidth",detection.inWidth);
+        report.put("craftInputHeight",detection.inHeight);
+        report.put("craftRawForwardMs",detection.forwardMs);
+        report.put("craftBoxPostprocessingMs",detection.boxPostprocessingMs);
+        report.put("smallRecLoadMs",recLoad);
+        report.put("smallRecModelInferenceMs",recognized.modelInferenceMs);
+        report.put("smallRecCropAndInferenceMs",recognized.cropAndRecognitionMs);
+        report.put("overallElapsedMs",overallMs);
+        report.put("detectedBoxes",recognized.offeredBoxes);
+        report.put("recognitionAttemptedCrops",recognized.attemptedCrops);
+        report.put("nonemptyRecognizedLines",recognized.recognizedBoxes);
+        report.put("skippedCrops",recognized.skippedBoxes);
+        report.put("pssKb",Debug.getPss());
+        report.put("fullPageCerMeasured",false);
+        report.put("ttsFirstWordMeasured",false);
+        report.put("textExported",false);
+        addReport(report);
+        String text=recognized.text;
+        if(text.length()>1600) text=text.substring(0,1600)+"…";
+        note("CRAFT+Small REC 研究联调完成："+recognized.offeredBoxes+
+             "个检测框，"+recognized.recognizedBoxes+"个非空识别结果。"+
+             "\nCRAFT原始推理"+detection.forwardMs+"ms，检测框后处理"+
+             detection.boxPostprocessingMs+"ms，Small REC 裁剪和识别"+
+             recognized.cropAndRecognitionMs+"ms，含模型初始化的合计"+
+             overallMs+"ms。\n仅本机显示的实验性识别文字（不上传）：\n"+
+             (text.isEmpty()?"（未识别到文字）":text)+
+             "\n注意：当前阅读顺序只是简单排序，没有真实语音首字测试。");
+    }
+
     private Bitmap demoFrame() {
         Bitmap next = Bitmap.createBitmap(FRAME_W, FRAME_H, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(next);
@@ -679,6 +738,9 @@ public class ProbeActivity extends Activity {
     @Override
     protected void onDestroy() {
         if (tts != null) { tts.stop(); tts.shutdown(); }
+        if (experimentalRec != null && executor.isTerminated()) {
+            try { experimentalRec.close(); } catch (Exception ignored) { }
+        }
         executor.shutdown();
         // Session is process-private and cannot mutate existing app.
         if (model != null && executor.isTerminated()) {
