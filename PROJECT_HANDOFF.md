@@ -216,3 +216,13 @@
 - 既有可视化专项 Run **41608904979** 在公开元数据请求 RCTW1400..1411 处被 HTTP 502 中断，已真实读取 job 日志；旧几何 Artifact 下载步骤成功，**未生成可视叠图**。
 - 只修改隔离分支 `test/line-overlay-plan-isolated-20261103:scripts/line_overlay_visual_audit.py` 的**公开图片读取**：对网络 502/429 等 `RequestException` 增加最多4次有限退避重试、12行元数据失败时按固定 `4+4+4` 分批请求；仍校验原来的12个 row_idx。新代码提交 `81599b8eb90c0a8bb3e6b420835f96530a6ad698`，远端 blob 已回读匹配。
 - 此项**绝不**改变 CRAFT、DBNet、Small、`LineOverlayPlanner`、读取的旧检测框、GT、评估指标、正式 App、TTS 或 APK；新一次工作流状态与图片像素仍须单独验收，不能宣称成功。
+
+
+#### 2026-11-03 — 真图白框可视检查完成：12张原图与唯一合并的覆盖冲突（已验收并保存）
+
+- **项目与研究分支保持不变**：`test/line-overlay-plan-isolated-20261103`。首个可视工作流 Run **41608904979** 因 Hugging Face RCTW 公开元数据 HTTP 502 失败；只修改取图有限重试（`81599b8eb90c0a8bb3e6b420835f96530a6ad698`），随后 Run **41610542427** 的 `public-photo-visual-review` **success**，Job 全部步骤成功，日志出现12条 `VISUAL_SOURCE` 与 `VISUAL_AUDIT_RENDERED 12 photos`。成功日志与具体产物：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41610542427 。
+- 产物 Artifact **13219151561**：12张公开场景叠画图 + RCTW-1406唯一合并的局部放大图 + manifest；ZIP SHA256 `fb6e665787aa87650cc4d1db301783018b780f776fd53ef6874c0bf7f5763507`，约2026-11-13到期，不可当永久图片备份。所有照片像素已逐张查看；无新的 OCR 推理、无 APK、无模型或 TTS 变更。
+- **新确认风险**：旧匿名原框 RCTW-1406 的绿色候选由 R3+R2 合并（仅有的一次），但其合并多边形与**未参与合并**的原框 R0/R1 相交面积分别 **740.93 / 96.00 px²**，覆盖后者各自面积 **37.05% / 15.79%**；用原四点与 OpenCV `intersectConvexConvex` 计算。存在候选白框视觉重叠风险，**不等于已证实跨行错误**。
+- **目视例子**：RCTW-1402 的同一水平带两个 GT 字区域已经由一个原 DBNet 框覆盖；RCTW-1403 下方LED字带也是一行多个 GT 实例，表明“一个框跨多个 GT”不能直接推断跨行粘连。1406有三列竖排文字和底部近邻横向文字；1409是斜店招，1411为弧形井盖文字，均提示保守处理。旧12图 52→51、71 GT、IoU代理36→34保持不变。
+- **永久完整报告**：`test/line-overlay-plan-isolated-20261103:docs/line-overlay-realphoto-visual-review-20261103.md`，提交 `c2747e70481a51aa8b763320cd0811fdc9bdc0f8`（已回读确认）。原先实验、文档和旧结果**未删除**。
+- **决策**：暂不更改 `LineOverlayPlanner` 算法阈值、不接入正式预览、不改 Small/DBNet/TTS、不出 APK。下一步可经用户指令在隔离测试中增加“合并候选与未纳入源框显著重叠”审计反例，并采集明确人工单行 GT 后再讨论保护逻辑，避免针对一个样本过拟合。
