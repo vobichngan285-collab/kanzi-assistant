@@ -1,0 +1,47 @@
+name: Public scene text row visual audit (no OCR and no APK)
+on:
+  push:
+    branches: [test/line-overlay-plan-isolated-20261103]
+    paths:
+      - 'scripts/line_overlay_visual_audit.py'
+      - '.github/workflows/line-overlay-visual-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  public-photo-visual-review:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Use existing immutable geometry artifact, do not repeat OCR inference
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/geometry"
+          gh run download 41607539013 --repo "$GITHUB_REPOSITORY" --name line-overlay-realphoto-shadow-metrics --dir "$RUNNER_TEMP/geometry"
+          test -s "$RUNNER_TEMP/geometry/box_replay_no_ocr_text.json"
+          python3 -m py_compile scripts/line_overlay_visual_audit.py
+      - name: Fetch only 12 public RCTW photographs and render labeled overlays
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'requests==2.32.3' 'Pillow==11.1.0'
+          python3 scripts/line_overlay_visual_audit.py \
+            --geometry "$RUNNER_TEMP/geometry/box_replay_no_ocr_text.json" \
+            --out "$RUNNER_TEMP/visual-review" | tee "$RUNNER_TEMP/visual-audit.log"
+          grep -q '^VISUAL_AUDIT_RENDERED 12 photos' "$RUNNER_TEMP/visual-audit.log"
+      - name: Upload annotated public-scene contact images (not model weights or OCR text)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: line-overlay-visual-review-public-images
+          path: |
+            ${{ runner.temp }}/visual-review/
+            ${{ runner.temp }}/visual-audit.log
+          retention-days: 10
+          if-no-files-found: warn
