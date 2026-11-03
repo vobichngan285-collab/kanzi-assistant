@@ -1,0 +1,83 @@
+name: CRAFT768 FP32 vs statically calibrated INT8 QDQ real photos - NO APK
+on:
+  push:
+    branches: [test/craft768-int8-qdq-vs-fp32-20261103]
+    paths:
+      - scripts/craft768_int8_static_quantize.py
+      - scripts/craft768_int8_realphoto_ab.py
+      - scripts/craft768_int8_1080p_host.py
+      - .github/workflows/craft768-int8-qdq-ab.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  quantize-and-compare-same-cpu:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify script syntax and isolate release
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/craft768_int8_static_quantize.py scripts/craft768_int8_realphoto_ab.py scripts/craft768_int8_1080p_host.py
+          test ! -e app/src/main/assets/craft
+          echo 'No Android runtime integration, no APK, no Medium.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Install fixed quantization and CPU runtime tooling
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'numpy==1.26.4' 'onnx==1.17.0' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' 'psutil==6.1.1' requests pyclipper
+      - name: Fetch verified unchanged FP32 CRAFT and original Small DET/REC
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft-int8-models
+          curl -fL --retry 3 --retry-delay 2 --max-time 360 'https://huggingface.co/inference4j/craft-mlt-25k/resolve/290e4d5/model.onnx' -o /tmp/craft-int8-models/craft.onnx
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx' -o /tmp/craft-int8-models/det.onnx
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx' -o /tmp/craft-int8-models/small_rec.onnx
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml' -o /tmp/craft-int8-models/small_rec.yml
+          echo '28c05f8b5e97f3c5765d00bca556ec2397c86c954d4ac5ef73aa10043db16388  /tmp/craft-int8-models/craft.onnx' | sha256sum -c -
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  /tmp/craft-int8-models/det.onnx' | sha256sum -c -
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/craft-int8-models/small_rec.onnx' | sha256sum -c -
+          echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/craft-int8-models/small_rec.yml' | sha256sum -c -
+      - name: Calibrate from 9 DEV-only photos and create INT8 S8S8 QDQ CNN
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft-int8-results
+          python3 -u scripts/craft768_int8_static_quantize.py --source /tmp/craft-int8-models/craft.onnx --output /tmp/craft-int8-models/craft768_int8.onnx --report /tmp/craft-int8-results/quantization.json | tee /tmp/craft-int8-results/quantization.log
+          grep -q 'CRAFT_INT8_QDQ_QUANTIZATION_PASS' /tmp/craft-int8-results/quantization.log
+          echo '### CRAFT768 calibrated INT8 QDQ model (DEV calibration only)' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/craft-int8-results/quantization.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Smoke test exact same existing FP32-versus-INT8 score pipeline
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft-int8-results/smoke
+          python3 -u scripts/craft768_int8_realphoto_ab.py --models /tmp/craft-int8-models --quant /tmp/craft-int8-models/craft768_int8.onnx --out /tmp/craft-int8-results/smoke --max-photos 6 | tee /tmp/craft-int8-results/smoke/run.log
+          grep -q 'CRAFT768_INT8_REALPHOTO_COMPLETE 6' /tmp/craft-int8-results/smoke/run.log
+      - name: Match full 72 photo FP32 INT8 OCR accuracy with same Small REC
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft-int8-results/full
+          python3 -u scripts/craft768_int8_realphoto_ab.py --models /tmp/craft-int8-models --quant /tmp/craft-int8-models/craft768_int8.onnx --out /tmp/craft-int8-results/full | tee /tmp/craft-int8-results/full/run.log
+          grep -q 'CRAFT768_INT8_REALPHOTO_COMPLETE 72' /tmp/craft-int8-results/full/run.log
+          echo '### 72 public real photos; identical CRAFT768 preprocessing and Small REC' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/craft-int8-results/full/summary.json >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/craft-int8-results/full/paired_gt_changes.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Paired 24-frame 1080p CRAFT FP32/INT8 sustained host benchmark
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft-int8-results/1080p
+          python3 -u scripts/craft768_int8_1080p_host.py --fp32 /tmp/craft-int8-models/craft.onnx --int8 /tmp/craft-int8-models/craft768_int8.onnx --out /tmp/craft-int8-results/1080p --frames 24 | tee /tmp/craft-int8-results/1080p/run.log
+          grep -q 'CRAFT768_INT8_1080P_COMPLETE 24' /tmp/craft-int8-results/1080p/run.log
+          echo '### Same-host FP32 versus INT8 1080p static public-photo frames, no Android/TTS' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/craft-int8-results/1080p/summary.json >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/craft-int8-results/1080p/combined_memory.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload only report JSON/CSV/logs; no models, photos or APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: craft768-fp32-vs-int8-qdq-results-only
+          path: /tmp/craft-int8-results/
+          retention-days: 10
+          if-no-files-found: warn
