@@ -75,6 +75,7 @@ public class MainActivity extends CameraActivity {
     private static final String PREF_PREVIEW_FLIP = "preview_flip";
     private static final String PREF_ENHANCED_OCR = "enhanced_ocr";
     private static final String PREF_OCR_MODEL = "ocr_model_id";
+    private static final String PREF_OCR_PROFILE = "x200_ocr_profile";
     private static final String PREF_PHONE_CAMERA = "phone_camera_source";
     private static final String PREF_FRONT_CAMERA = "phone_camera_front";
     private static final String PREF_QUALITY_PROMPTS = "quality_voice_prompts";
@@ -140,6 +141,7 @@ public class MainActivity extends CameraActivity {
     private volatile boolean previewVerticalFlip = false;
     private volatile boolean enhancedOcr = false;
     private volatile String ocrModelId = "ppocrv6_small";
+    private volatile String ocrProfileId = OcrPerformanceProfile.defaultId();
     private volatile String readingFocusMode = "AUTO";
     private volatile boolean aiLayoutEnabled = false;
     private volatile int liveTextRotationDegrees = 0;
@@ -217,6 +219,7 @@ public class MainActivity extends CameraActivity {
                                 "；中文语音：" + (canSpeak() ? "已就绪" : "尚未就绪") +
                             "\n提示：本页为诊断结果，诊断本身不自动朗读；可点「朗读这次诊断识别出的文字」试听。"
                             + "\n当前模型：" + report.getModelId()
+                            + "\\n\\n" + report.getX200ProfileReport()
                             + "\nOCR 输入方向：原始摄像头帧（固定 0°）"
                             + "\n实时文字输入旋转设置：" + liveTextRotationDegrees +
                                 "°（仅用于正式实时扫描；独立诊断保持原始0°画面）"
@@ -522,6 +525,8 @@ public class MainActivity extends CameraActivity {
         if (!"AUTO".equals(readingFocusMode) &&
             !"LEFT".equals(readingFocusMode) && !"RIGHT".equals(readingFocusMode))
             readingFocusMode = "AUTO";
+        ocrProfileId = OcrPerformanceProfile.forId(prefs.getString(PREF_OCR_PROFILE,
+            OcrPerformanceProfile.defaultId())).id;
         ocrModelId = prefs.getString(PREF_OCR_MODEL, "ppocrv6_small");
         if (!ocrModelId.equals("ppocrv6_small") && !ocrModelId.equals("ppocrv6_tiny") && !ocrModelId.equals("ppocrv5_mobile")) ocrModelId = "ppocrv6_small";
         speechNoEnglish = prefs.getBoolean(PREF_NO_ENGLISH, false);
@@ -576,7 +581,7 @@ public class MainActivity extends CameraActivity {
                     }
                 });
             }
-        }, modelId);
+        }, modelId, OcrPerformanceProfile.forId(ocrProfileId));
         recognizer.setFastScanMode(!longReadingMode);
         recognizer.setLiveTextRotationDegrees(liveTextRotationDegrees);
         recognizer.setReadingFocusMode(readingFocusMode);
@@ -985,6 +990,36 @@ public class MainActivity extends CameraActivity {
         maxCharsInput.setHint("0 = 不限，最大 5000");
         panel.addView(maxCharsInput);
 
+        TextView profileTitle = new TextView(this);
+        profileTitle.setText("X200 Pro / 12GB 离线OCR性能实验");
+        profileTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        profileTitle.setPadding(0, dp(16), 0, dp(4));
+        panel.addView(profileTitle);
+        RadioGroup profileGroup = new RadioGroup(this);
+        profileGroup.setOrientation(RadioGroup.VERTICAL);
+        OcrPerformanceProfile[] profiles = {
+            OcrPerformanceProfile.BASELINE, OcrPerformanceProfile.BALANCED,
+            OcrPerformanceProfile.QUALITY, OcrPerformanceProfile.THROUGHPUT
+        };
+        for (OcrPerformanceProfile profile : profiles) {
+            RadioButton radio = new RadioButton(this);
+            radio.setId(View.generateViewId());
+            radio.setTag(profile.id);
+            radio.setText(profile.label + "（异常框二次识别预算=" +
+                profile.maxShadowRescuesPerDiagnostic + "）");
+            radio.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            radio.setChecked(profile.id.equals(ocrProfileId));
+            profileGroup.addView(radio);
+        }
+        panel.addView(profileGroup);
+        TextView profileInfo = new TextView(this);
+        profileInfo.setText("独立实验包，不覆盖正式版。切换档位会重新加载Small模型；请在同一固定画面上手动诊断，比较DET/REC耗时、内存和系统热状态。"+
+            " 高质量档最多4次局部附加Small REC，仅在手动诊断对可疑竖排列执行；原OCR与实时朗读不变。"+
+            " Android热状态严重时停止附加识别；批量4不一定比批量2更快，需要真机验证。");
+        profileInfo.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        profileInfo.setTextColor(0xFF667085);
+        panel.addView(profileInfo);
+
         TextView diagnosticTitle = new TextView(this);
         diagnosticTitle.setText("OCR 诊断");
         diagnosticTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
@@ -1133,6 +1168,14 @@ public class MainActivity extends CameraActivity {
                 String selectedModelId = selectedModel != null && selectedModel.getTag() != null ? selectedModel.getTag().toString() : ocrModelId;
                 boolean modelChanged = !selectedModelId.equals(ocrModelId);
                 ocrModelId = selectedModelId;
+                RadioButton selectedProfile = profileGroup.findViewById(
+                    profileGroup.getCheckedRadioButtonId());
+                String requestedProfile = selectedProfile != null &&
+                    selectedProfile.getTag() != null ?
+                    selectedProfile.getTag().toString() : ocrProfileId;
+                String safeProfile = OcrPerformanceProfile.forId(requestedProfile).id;
+                boolean profileChanged = !ocrProfileId.equals(safeProfile);
+                ocrProfileId = safeProfile;
                 RadioButton selectedFocus = pageFocusGroup.findViewById(pageFocusGroup.getCheckedRadioButtonId());
                 String requestedFocus = selectedFocus != null && selectedFocus.getTag() != null
                     ? selectedFocus.getTag().toString() : readingFocusMode;
@@ -1175,6 +1218,7 @@ public class MainActivity extends CameraActivity {
                     .putBoolean(PREF_PREVIEW_FLIP, previewVerticalFlip)
                     .putBoolean(PREF_ENHANCED_OCR, enhancedOcr)
                     .putString(PREF_OCR_MODEL, ocrModelId)
+                    .putString(PREF_OCR_PROFILE, ocrProfileId)
                     .putString(PREF_READING_FOCUS, readingFocusMode)
                     .putBoolean(PREF_AI_LAYOUT, aiLayoutEnabled)
                     .putInt(PREF_REALTIME_TEXT_ROTATION, liveTextRotationDegrees)
@@ -1197,7 +1241,7 @@ public class MainActivity extends CameraActivity {
                     }
                     Toast.makeText(this, "已更新文字排序与识别方向", Toast.LENGTH_SHORT).show();
                 }
-                if (modelChanged) switchOcrModel(selectedModelId);
+                if (modelChanged || profileChanged) switchOcrModel(selectedModelId);
                 Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show();
             })
             .show();
@@ -1298,7 +1342,7 @@ public class MainActivity extends CameraActivity {
                     }
                 });
             }
-        }, ocrModelId);
+        }, ocrModelId, OcrPerformanceProfile.forId(ocrProfileId));
         recognizer.setFastScanMode(!longReadingMode);
         recognizer.setLiveTextRotationDegrees(liveTextRotationDegrees);
         recognizer.setReadingFocusMode(readingFocusMode);
