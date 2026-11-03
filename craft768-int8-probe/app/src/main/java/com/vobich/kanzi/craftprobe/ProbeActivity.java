@@ -114,7 +114,7 @@ public class ProbeActivity extends Activity {
         scroll.addView(layout);
 
         TextView title = new TextView(this);
-        title.setText("CRAFT 768 INT8 真机性能实验");
+        title.setText("CRAFT 768 INT8 竖屏文字框实验");
         title.setTextSize(23);
         title.setTextColor(Color.BLACK);
         title.setPadding(0, 6, 0, 12);
