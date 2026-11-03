@@ -106,10 +106,10 @@ internal class Craft768AndroidProbe : Closeable {
             environment, FloatBuffer.wrap(tensorData),
             longArrayOf(1L, 3L, inputHeight.toLong(), inputWidth.toLong())
         )
-        val outputShape: List<Long>
-        val sample: Float
+        var outputShape: List<Long> = emptyList()
+        var sample = Float.NaN
         val forwardStarted = System.nanoTime()
-        val forwardElapsed: Long
+        var forwardElapsed = 0L
         tensor.use { inputTensor ->
             loaded.run(mapOf(input to inputTensor)).use { result ->
                 val outTensor = result[0] as? OnnxTensor
