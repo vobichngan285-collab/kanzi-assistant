@@ -208,6 +208,8 @@ def main():
     ap.add_argument("--vertical-limit",type=int,default=791)
     ap.add_argument("--max-rec-affected",type=int,default=240)
     ap.add_argument("--vertical-tilt-limit",type=int,default=160)
+    ap.add_argument("--vertical-tilt-start",type=int,default=1)
+    ap.add_argument("--no-scenes",action="store_true")
     args=ap.parse_args()
     out=Path(args.out);out.mkdir(parents=True,exist_ok=True)
     assert sha(args.rec)==REC_SHA, "weight hash mismatch"
@@ -255,7 +257,7 @@ def main():
         # Deterministic artificial camera slant of *public existing vertical
         # pages*; annotation polygons are transformed in the exact same way.
         # Report as VERTICAL_TILT, not as extra real source photographs.
-        if idx<=args.vertical_tilt_limit:
+        if args.vertical_tilt_start<=idx<args.vertical_tilt_start+args.vertical_tilt_limit:
             h,w=rgb.shape[:2]
             slope=(-.23,-.14,.14,.23)[(idx-1)%4]
             border=int(math.ceil(abs(slope)*h*.5))+18
@@ -271,7 +273,7 @@ def main():
                 p2=(matrix@points.T).T
                 transformed.append((truth,p2.reshape(-1).tolist()))
             process("VERTICAL_TILT",idx,warped,transformed)
-    scenes=get_scene_metadata()
+    scenes=[] if args.no_scenes else get_scene_metadata()
     print("SCENE_REQUESTED",len(scenes),flush=True)
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
         for i,photo in enumerate(pool.map(fetch_scene,scenes)):
@@ -303,9 +305,15 @@ def main():
              "baseline_ms":round(otime,2),"candidate_ms":round(ntime,2),
              "margin":round(margin,2),"ratio":round(ratio,2),
              "different_prediction":otext!=ntext}
+        # Gate fixed from DEVELOPMENT partition indices 1..160. Test 321..480
+        # independently; keep the original OCR whenever confidence/length
+        # evidence is inconclusive. This is an abstaining TWO-REC policy,
+        # never semantic rewriting or a guarantee of no errors.
+        row["candidate_accepted"]=(len(otext)<=3 and len(ntext)>=10 and nconf>=.8)
         if has_gt:
             row["baseline_edits"]=edit(normalize(otext),gt)
             row["candidate_edits"]=edit(normalize(ntext),gt)
+            row["gated_edits"]=row["candidate_edits"] if row["candidate_accepted"] else row["baseline_edits"]
             row["reference_text"]=truth
         rows.append(row)
         summary["rec_comparisons"][sp]+=1
@@ -316,6 +324,7 @@ def main():
     chars_count=sum(r["source_text_length"] for r in scored)
     base_edits=sum(r["baseline_edits"] for r in scored)
     new_edits=sum(r["candidate_edits"] for r in scored)
+    gated_edits=sum(r["gated_edits"] for r in scored)
     summary["totals"]={
         "scene_images_downloaded":sum(v for k,v in summary["source_images"].items() if not k.startswith("VERTICAL")),
         "vertical_images_scanned":summary["source_images"].get("VERTICAL",0),
@@ -331,8 +340,15 @@ def main():
         "scored_gt_chars":chars_count,
         "baseline_edit_distance":base_edits,
         "candidate_edit_distance":new_edits,
+        "gated_edit_distance":gated_edits,
+        "gated_accepted_total":sum(r["candidate_accepted"] for r in rows),
+        "gated_accepted_scored":sum(r["candidate_accepted"] for r in scored),
+        "gated_improved_scored":sum(r["candidate_accepted"] and r["gated_edits"]<r["baseline_edits"] for r in scored),
+        "gated_worsened_scored":sum(r["candidate_accepted"] and r["gated_edits"]>r["baseline_edits"] for r in scored),
+        "gated_tied_scored":sum(r["candidate_accepted"] and r["gated_edits"]==r["baseline_edits"] for r in scored),
         "baseline_CER_affected":round(base_edits/chars_count,6) if chars_count else None,
-        "candidate_CER_affected":round(new_edits/chars_count,6) if chars_count else None
+        "candidate_CER_affected":round(new_edits/chars_count,6) if chars_count else None,
+        "gated_CER_affected":round(gated_edits/chars_count,6) if chars_count else None
     }
     for k in ("source_images","all_annotated_regions","eligible_regions","guard_trigger_regions","rec_comparisons"):
         summary[k]=dict(summary[k])
@@ -346,6 +362,6 @@ def main():
     if summary["totals"]["vertical_images_scanned"]<500:raise RuntimeError("vertical archive insufficient")
     if summary["eligible_regions"].get("VERTICAL",0)<3000:raise RuntimeError("vertical labels not parsed")
     if summary["totals"]["vertical_tilted_cases"]<100:raise RuntimeError("vertical stress subset insufficient")
-    if summary["totals"]["scene_images_downloaded"]<170:raise RuntimeError("scene holdout insufficient")
+    if not args.no_scenes and summary["totals"]["scene_images_downloaded"]<170:raise RuntimeError("scene holdout insufficient")
 if __name__=="__main__":
     main()
