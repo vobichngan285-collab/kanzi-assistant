@@ -1,0 +1,47 @@
+name: Small REC oracle GT boxes 72 real photos - NO APK
+on:
+  push:
+    branches: [test/visual-layout-vs-dual-rec-20261103]
+    paths:
+      - scripts/small_rec_gtbox_oracle_72.py
+      - .github/workflows/small-rec-gtbox-oracle.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  small-oracle-gt-crops:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Syntax validation
+        run: python3 -m py_compile scripts/small_rec_gtbox_oracle_72.py
+      - name: CPU ONNX dependencies
+        run: pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
+      - name: Download SHA-pinned Small REC only
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/gtbox-small
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx' -o /tmp/gtbox-small/small_rec.onnx
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml' -o /tmp/gtbox-small/small_rec.yml
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/gtbox-small/small_rec.onnx' | sha256sum -c -
+          echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/gtbox-small/small_rec.yml' | sha256sum -c -
+      - name: Recognize ground-truth text crops on identical DEV/HOLDOUT real photos
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/small-oracle-results
+          python3 -u scripts/small_rec_gtbox_oracle_72.py --models /tmp/gtbox-small --out /tmp/small-oracle-results | tee /tmp/small-oracle-results/run.log
+          grep -q 'SMALL_ORACLE_SAME_PHOTOS_COMPLETE' /tmp/small-oracle-results/run.log
+          cat /tmp/small-oracle-results/summary.json >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/small-oracle-results/limits.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload numeric results only
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: small-rec-oracle-72-gtboxes
+          path: /tmp/small-oracle-results/
+          retention-days: 10
+          if-no-files-found: warn
