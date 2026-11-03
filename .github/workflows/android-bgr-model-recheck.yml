@@ -1,0 +1,54 @@
+name: Verify #315 Android BGR Small vs Medium on real photo text
+on:
+  push:
+    branches: [test/android-hybrid-medium-feasibility-20261103]
+    paths:
+      - scripts/verify_android_bgr_model_comparison.py
+      - .github/workflows/android-bgr-model-recheck.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  color-check:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Original ONNX inference CPU libraries
+        run: |
+          python3 -m pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests
+      - name: Download exact Small and Medium recognition model/dictionary pairs
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-bgr-models
+          curl -fL --retry 3 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx' -o /tmp/kanzi-bgr-models/small.onnx
+          curl -fL --retry 3 'https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_rec_onnx/resolve/main/inference.onnx' -o /tmp/kanzi-bgr-models/medium.onnx
+          curl -fL --retry 3 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml?download=true' -o /tmp/kanzi-bgr-models/small.yml
+          curl -fL --retry 3 'https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_rec_onnx/resolve/main/inference.yml' -o /tmp/kanzi-bgr-models/medium.yml
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/kanzi-bgr-models/small.onnx' | sha256sum -c -
+          echo '9c09abf0957f7968c7586464b7397b84ad2387a0497a351af40e9acc71b673ba  /tmp/kanzi-bgr-models/medium.onnx' | sha256sum -c -
+          echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/kanzi-bgr-models/small.yml' | sha256sum -c -
+          echo '991b700facf5b50a7de193468207d5f4255b538dde0d312ae3b7c7a9b6873129  /tmp/kanzi-bgr-models/medium.yml' | sha256sum -c -
+          grep -q 'img_mode: BGR' /tmp/kanzi-bgr-models/small.yml
+          grep -q 'img_mode: BGR' /tmp/kanzi-bgr-models/medium.yml
+      - name: Compare SAME real Chinese scene text using BGR (app) versus RGB (earlier cloud)
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-bgr-results
+          python3 -u scripts/verify_android_bgr_model_comparison.py \
+            --models /tmp/kanzi-bgr-models --out /tmp/kanzi-bgr-results \
+            | tee /tmp/kanzi-bgr-results/console.log
+          grep -q 'RELEASE_BGR_COLOR_MODEL_ALIGNMENT=PASS' /tmp/kanzi-bgr-results/console.log
+          cat /tmp/kanzi-bgr-results/summary.csv >> "$GITHUB_STEP_SUMMARY"
+          echo 'This is a source crop model test using release BGR input; no Android device, UVC or APK.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload only CER and public annotation text, no photos or models
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corrected-android-bgr-vs-rgb-medium-model-comparison
+          path: /tmp/kanzi-bgr-results/
+          retention-days: 10
+          if-no-files-found: warn
