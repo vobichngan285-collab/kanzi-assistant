@@ -306,3 +306,12 @@
 - **重要研究判断**：此前同122 GT区域比较的自动框 CER16.087% vs 人工框 CER5.797% 证据保持；新发现支持此前的**旧 Python 裁剪逻辑本身与正式 SDK 较接近**，不用因此重复全量检测/识别实验。当前尚未验证手机 NV21 YUV色度采样、对焦/运动/曝光、Bitmap/旋转、自动增强与运行版 SDK 二进制；不能盲目修改 RGB/BGR 或检测阈值。
 - **永久报告**：`test/line-overlay-plan-isolated-20261103:docs/android-sdk-crop-tensor-parity-20261103.md`，提交 `bac195ff25f16c85d0b694a9641798ed84fc717c`（已远端回读确认）。适配器提交 `06eaa89dec966ef741642e42622ba2511edb7f80`、驱动 `ebede3d55c43af874f9a24328ac0f9de163cc36f`、CI `d7a988aaed6a33fcf36e5779889df28141d594e7`。只写原仓库隔离分支与此交接文件，旧结果全部保留，无正式 App 修改、无 APK。
 - **下一步门槛**：如需继续，先在隔离状态设计**用户主动触发、离线、不上传私人图片**的手机单帧真实 NV21/Bitmap/SDK 四点裁剪/张量诊断，再决定是否进行实验 APK 的真机验证；不得将上述 Linux 宿主测试冒充安卓实测。
+
+
+#### 2026-11-03 — 用户明确要求生成可安装手机单帧 OCR 诊断 APK（实现已隔离提交；暂未构建验收）
+
+- **本次目标**：可在真实 USB UVC 或手机 Camera2 视频源中，由用户**手动**捕获单帧，使用现有已加载 PP-OCR 模型真实推理；保留原始 NV21、解码 PNG、OCR 实际输入 PNG、SDK 原结果四点框/置信度、SDK 真实裁剪 PNG、后处理前 REC NCHW Float32 小端张量及 metadata.json；用户通过 Android SAF `ACTION_CREATE_DOCUMENT` 自行选择导出位置。默认只保存应用私有文件，不自动上传。应用限定最多导出24个框，原始框总数仍写元信息。
+- **独立分支**：`test/phone-ocr-single-frame-diagnostic-20261103`，从已验证正式开发基线 `feature/strict-offline-ocr-order-guard@c50855877c2d22a52333585e433528830a498e13` 创建，**不覆盖正式 app**；原正式应用 ID `com.vobich.kanzi` 不变，诊断 debug APK 为 `com.vobich.kanzi.framelab`（通过 debug applicationIdSuffix），单独可共存。
+- **已提交源码**：`SingleFrameEvidence.kt` `fe78d813f755d12e6576e4e273f0ac2aeb790cfe`；`PaddleOcrEngine.kt` `1101a95ab8cf05bac64aed5ec6eabc93f9c33248`；`MainActivity.java` `cc8be54400a538313aac4ee57bd307d70a8ddde7`；`app/build.gradle` `41d3c19a11e676e27c8498e0e3fe95707e795394`；`AndroidManifest.xml` `b1111f6da011b1b2325a9080c70a80f69cc82cd7`。已逐一从 GitHub 回读确认。诊断 APK Manifest **移除 INTERNET 权限**，防止此包通过网络上传摄像头文字；某些原来依赖网络下载的语音资源功能在此实验包不可用。
+- **范围与风险**：现有诊断按钮只显示文本，本次新增两键“手动采集一帧”“导出诊断 ZIP”与 SDK `QuadTextCrop`/`RecPreprocessor` 真实裁剪/张量调用；仅用户显式采集时执行，不改变正式自动识别或 TTS。ZIP 包含真实拍摄图像及可能的敏感文字，**只有用户自己有意识选择外部导出**。默认本地文件下次重新采集覆盖旧文件。
+- **阶段状态**：代码已经提交，**尚未编译、未安装真机、未验证 APK 行为**；后续独立 Actions 构建成功与安全审计必须分开记录，不能预先声称已可用。
