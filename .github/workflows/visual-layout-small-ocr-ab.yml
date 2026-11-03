@@ -1,0 +1,55 @@
+name: Visual layout + Small DET/REC vs original Small OCR - NO APK
+on:
+  push:
+    branches: [test/visual-layout-vs-dual-rec-20261103]
+    paths:
+      - scripts/layout_small_det_rec_ab.py
+      - scripts/ocr_box_value_deep_dive.py
+      - .github/workflows/visual-layout-small-ocr-ab.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  visual-small-realphotos:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Syntax check before downloading models
+        run: python3 -m py_compile scripts/layout_small_det_rec_ab.py scripts/layout_realphoto_diagnostic.py scripts/ocr_box_value_deep_dive.py
+      - name: Fixed CPU inference dependencies
+        run: pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
+      - name: Download verified layout, Small DET and Small REC models only
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/visual-small-models
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/stefanj0/PP-DocLayout-S-ONNX/resolve/main/pp_doclayout_s.onnx' -o /tmp/visual-small-models/layout.onnx
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx' -o /tmp/visual-small-models/det.onnx
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx' -o /tmp/visual-small-models/small_rec.onnx
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml' -o /tmp/visual-small-models/small_rec.yml
+          echo '33688dbee1c23e34b81777e97cb428eb40f24b242c02b5f623484959e830aec8  /tmp/visual-small-models/layout.onnx' | sha256sum -c -
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  /tmp/visual-small-models/det.onnx' | sha256sum -c -
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/visual-small-models/small_rec.onnx' | sha256sum -c -
+          echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/visual-small-models/small_rec.yml' | sha256sum -c -
+          python3 scripts/verify_layout_model.py /tmp/visual-small-models/layout.onnx
+      - name: Compare baseline A vs layout local Small DET B on 72 real photos
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/visual-small-ocr-results
+          python3 -u scripts/layout_small_det_rec_ab.py --models /tmp/visual-small-models --out /tmp/visual-small-ocr-results | tee /tmp/visual-small-ocr-results/run.log
+          grep -q 'LAYOUT_SMALL_DET_REC_AB_COMPLETE' /tmp/visual-small-ocr-results/run.log
+          echo '### Same-photo real Small OCR with and without visual layout local redetection' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/visual-small-ocr-results/summary.json >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/visual-small-ocr-results/paired.json >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/visual-small-ocr-results/limits.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Save only per-photo measurements, no photos or models
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: visual-small-ocr-ab-72-photos
+          path: /tmp/visual-small-ocr-results/
+          retention-days: 10
+          if-no-files-found: warn
