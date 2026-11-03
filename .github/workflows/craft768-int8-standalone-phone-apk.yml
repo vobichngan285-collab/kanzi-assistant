@@ -1,0 +1,99 @@
+name: Build isolated CRAFT768 INT8 phone diagnostic APK (not default app)
+on:
+  push:
+    branches: [test/craft768-int8-standalone-phone-apk-20261103]
+    paths:
+      - craft768-int8-probe/**
+      - .github/workflows/craft768-int8-standalone-phone-apk.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  standalone-phone-diagnostic:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check standalone package and offline privacy guards
+        run: |
+          set -euo pipefail
+          grep -q "applicationId 'com.vobich.kanzi.craftprobe'" craft768-int8-probe/app/build.gradle
+          ! grep -R 'android.permission.INTERNET' craft768-int8-probe/app/src/main/AndroidManifest.xml
+          ! grep -R 'com.vobich.kanzi.craftprobe' app/src/main
+          test ! -e craft768-int8-probe/app/src/main/assets/craft768_int8.onnx
+          echo "This project has a separate app ID; will not overwrite com.vobich.kanzi" >> "$GITHUB_STEP_SUMMARY"
+          echo "No INTERNET permission, no change to original application, no release signing." >> "$GITHUB_STEP_SUMMARY"
+      - name: Install identical pinned x86 calibration toolchain
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'numpy==1.26.4' 'onnx==1.17.0' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
+      - name: Download upstream official CRAFT FP32 and verify SHA
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-craft-lab
+          curl -fL --retry 4 --retry-delay 2 --max-time 360 'https://huggingface.co/inference4j/craft-mlt-25k/resolve/290e4d5/model.onnx' -o /tmp/kanzi-craft-lab/craft-original.onnx
+          echo '28c05f8b5e97f3c5765d00bca556ec2397c86c954d4ac5ef73aa10043db16388  /tmp/kanzi-craft-lab/craft-original.onnx' | sha256sum -c -
+      - name: Reproduce EXACT previously validated 20.95MB CRAFT768 INT8 weights using 9 DEV only
+        run: |
+          set -euo pipefail
+          mkdir -p craft768-int8-probe/app/src/main/assets
+          python3 -u scripts/craft768_int8_static_quantize.py --source /tmp/kanzi-craft-lab/craft-original.onnx --output craft768-int8-probe/app/src/main/assets/craft768_int8.onnx --report /tmp/kanzi-craft-lab/quantization.json | tee /tmp/kanzi-craft-lab/quantization.log
+          echo '9ab885d2f6669b77f70e9c8f68acfbe408c0b051501fd02d94bcaa0c7779ab15  craft768-int8-probe/app/src/main/assets/craft768_int8.onnx' | sha256sum -c -
+          test "$(stat -c '%s' craft768-int8-probe/app/src/main/assets/craft768_int8.onnx)" -eq 20946608
+          grep -q 'CRAFT_INT8_QDQ_QUANTIZATION_PASS' /tmp/kanzi-craft-lab/quantization.log
+          echo "Model input asset SHA256: 9ab885d2f6669b77f70e9c8f68acfbe408c0b051501fd02d94bcaa0c7779ab15" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Assemble standalone arm64 Android diagnostic APK (debug only)
+        run: |
+          set -euo pipefail
+          gradle -p craft768-int8-probe --no-daemon --no-parallel --max-workers=2 --stacktrace :app:assembleDebug
+          test -s craft768-int8-probe/app/build/outputs/apk/debug/app-debug.apk
+      - name: Audit APK package, native ONNX Android ABI, and embedded INT8 SHA
+        run: |
+          set -euo pipefail
+          apk='craft768-int8-probe/app/build/outputs/apk/debug/app-debug.apk'
+          python3 - "$apk" <<'PY'
+          import sys,hashlib,zipfile
+          p=sys.argv[1]
+          with zipfile.ZipFile(p) as z:
+              files=set(z.namelist())
+              asset='assets/craft768_int8.onnx'
+              assert asset in files, 'Missing CRAFT INT8 model from test APK'
+              digest=hashlib.sha256(z.read(asset)).hexdigest()
+              assert digest=='9ab885d2f6669b77f70e9c8f68acfbe408c0b051501fd02d94bcaa0c7779ab15', digest
+              for native in ['lib/arm64-v8a/libonnxruntime.so','lib/arm64-v8a/libonnxruntime4j_jni.so']:
+                  assert native in files, 'Missing ARM64 native runtime: '+native
+              assert 'classes.dex' in files, 'Missing app dex'
+              print("CRAFT_INT8_PHONE_APK_AUDIT_PASS",p,'bytes',__import__('os').path.getsize(p),
+                    'embedded_model_sha256',digest)
+          PY
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt -print | sort -V | tail -1)"
+          test -x "$AAPT"
+          "$AAPT" dump badging "$apk" | tee /tmp/kanzi-craft-lab/apk-badging.txt
+          grep -q "package: name='com.vobich.kanzi.craftprobe'" /tmp/kanzi-craft-lab/apk-badging.txt
+          echo "### Independent diagnostic APK built and audited" >> "$GITHUB_STEP_SUMMARY"
+          sha256sum "$apk" >> "$GITHUB_STEP_SUMMARY"
+          echo "Only a debug-signed standalone tool, not a tested real phone installation. No live camera/TTS end-to-end OCR measured in CI." >> "$GITHUB_STEP_SUMMARY"
+      - name: Rename APK and include human-readable local test instructions
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft-probe-distribution
+          cp craft768-int8-probe/app/build/outputs/apk/debug/app-debug.apk /tmp/craft-probe-distribution/CRAFT768_INT8_phone_lab_debug.apk
+          cp craft768-int8-probe/README.md /tmp/craft-probe-distribution/README.txt
+          sha256sum /tmp/craft-probe-distribution/CRAFT768_INT8_phone_lab_debug.apk > /tmp/craft-probe-distribution/SHA256SUMS.txt
+      - name: Publish only standalone test APK as short-lived downloadable workflow artifact (no release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: CRAFT768-INT8-standalone-phone-diagnostic-APK
+          path: /tmp/craft-probe-distribution/
+          retention-days: 10
+          if-no-files-found: error
