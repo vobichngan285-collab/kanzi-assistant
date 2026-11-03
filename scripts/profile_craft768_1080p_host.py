@@ -58,7 +58,7 @@ def main():
     assert len(photos)>=70,len(photos)
     chosen=photos[::6]
     assert len(chosen)==12
-    images=[scale1080p(p[3]) for p in chosen]
+    images=[scale1080p(p[2]) for p in chosen]
     # Keep 4 buffers in memory, roughly a small live capture queue.
     fake_nv21_buffers=[bytearray(1920*1080*3//2) for _ in range(4)]
     for buf in fake_nv21_buffers:
