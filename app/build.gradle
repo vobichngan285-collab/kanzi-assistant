@@ -22,8 +22,8 @@ android {
     }
     buildTypes {
         debug {
-            applicationIdSuffix '.x200lab'
-            versionNameSuffix '-x200pro-performance-lab'
+            applicationIdSuffix '.x200combined'
+            versionNameSuffix '-x200-combined-ab'
             minifyEnabled false
         }
         release {
@@ -43,7 +43,7 @@ android {
         applicationId 'com.vobich.kanzi'
         minSdk 26
         targetSdk 35
-        versionCode 41
+        versionCode 42
         versionName '0.9.9'
     }
 }
