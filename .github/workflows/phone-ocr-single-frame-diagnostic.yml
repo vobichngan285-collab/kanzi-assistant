@@ -1,11 +1,11 @@
-name: Independent phone single-frame OCR forensic APK (debug only)
+name: Independent vivo X200 Pro offline OCR performance and shadow A/B APK
 on:
   push:
     branches: [test/phone-ocr-single-frame-diagnostic-20261103]
     paths:
       - 'app/**'
       - '.github/workflows/phone-ocr-single-frame-diagnostic.yml'
-      - 'docs/phone-single-frame-diagnostic-20261103.md'
+      - 'docs/phone-x200-performance-lab-20261103.md'
   workflow_dispatch:
 concurrency:
   group: diagnostic-phone-ocr-${{ github.run_id }}
@@ -309,6 +309,7 @@ jobs:
       - name: Compile independent debug APK, do not use release signing key
         run: |
           set -euo pipefail
+          python3 scripts/patch_x200_shadow_sdk.py
           gradle --no-daemon --no-parallel --max-workers=2 --stacktrace :app:assembleDebug
           test -s app/build/outputs/apk/debug/app-debug.apk
       - name: Verify APK separate package, SDK model asset, no INTERNET, offline-only and ARM64
@@ -318,7 +319,7 @@ jobs:
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt -print | sort -V | tail -1)"
           test -x "$AAPT"
           "$AAPT" dump badging "$apk" | tee "$RUNNER_TEMP/ocr-frame-apk-info.txt"
-          grep -q "package: name='com.vobich.kanzi.framelab'" "$RUNNER_TEMP/ocr-frame-apk-info.txt"
+          grep -q "package: name='com.vobich.kanzi.x200lab'" "$RUNNER_TEMP/ocr-frame-apk-info.txt"
           "$AAPT" dump permissions "$apk" > "$RUNNER_TEMP/ocr-frame-permissions.txt"
           if grep -qi 'android.permission.INTERNET' "$RUNNER_TEMP/ocr-frame-permissions.txt"; then
             cat "$RUNNER_TEMP/ocr-frame-permissions.txt"
@@ -339,18 +340,18 @@ jobs:
               rec=hashlib.sha256(z.read('assets/models/rec/inference.onnx')).hexdigest()
               assert det == 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e',det
               assert rec == '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634',rec
-              print('PHONE_SINGLE_FRAME_DIAG_APK_AUDIT_PASS',apk.stat().st_size,det,rec)
+              print('X200_OFFLINE_SHADOW_AB_APK_AUDIT_PASS',apk.stat().st_size,det,rec)
           PY
           mkdir -p "$RUNNER_TEMP/diag-output"
-          cp "$apk" "$RUNNER_TEMP/diag-output/Kanzi_OCR_SingleFrame_Diagnostic_debug.apk"
-          cp docs/phone-single-frame-diagnostic-20261103.md "$RUNNER_TEMP/diag-output/README.txt"
-          sha256sum "$RUNNER_TEMP/diag-output/Kanzi_OCR_SingleFrame_Diagnostic_debug.apk" > "$RUNNER_TEMP/diag-output/SHA256SUMS.txt"
+          cp "$apk" "$RUNNER_TEMP/diag-output/Kanzi_X200_Offline_OCR_AB_debug.apk"
+          cp docs/phone-x200-performance-lab-20261103.md "$RUNNER_TEMP/diag-output/README.txt"
+          sha256sum "$RUNNER_TEMP/diag-output/Kanzi_X200_Offline_OCR_AB_debug.apk" > "$RUNNER_TEMP/diag-output/SHA256SUMS.txt"
           cat "$RUNNER_TEMP/diag-output/SHA256SUMS.txt" >> "$GITHUB_STEP_SUMMARY"
           echo 'DEBUG APK only; actual phone/UVC capture requires user device testing; no automatic image upload.' >> "$GITHUB_STEP_SUMMARY"
       - name: Publish installation APK (10-day archive, no release)
         uses: actions/upload-artifact@v4
         with:
-          name: phone-single-frame-ocr-diagnostic-apk
+          name: vivo-x200-pro-offline-ocr-ab-debug-apk
           path: ${{ runner.temp }}/diag-output/
           retention-days: 10
           if-no-files-found: error
