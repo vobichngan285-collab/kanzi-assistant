@@ -394,3 +394,14 @@
 - **实验代码和永久报告**：`test/phone-ocr-single-frame-diagnostic-20261103:scripts/public_axis_guard_heldout_benchmark.py`，固定门控脚本Commit `446402109f9df9a0c881f276e1875a7cfaab09a6`；公开批量成功Run https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41650574681 / Artifact `13236883266`；独立留出成功Run https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41651286089 / Artifact `13236639363`；单纯Java风险+安全策略 `VerticalCropAxisGuard.java` 与 `VerticalRecRescuePolicy.java` Commit `6c58a00f2acb00c45d58a31e10b3dcde8c69b442`，29项Java回归CI https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41652352025 **SUCCESS**；永久完整去敏报告`docs/public-horizontal-vertical-scale-ab-and-independent-gate-20261103.md`，最新Commit `5f9fef02683a1facee2574ee82df8cc3be5ca548`，已回读。
 - **交付研究数据**：用户会话本地压缩包 `/mnt/data/kanzi_ocr_public_horizontal_vertical_large_scale_ab_20261103.zip`，已验证CRC，含两轮公开JSON原始指标/案例、合成100图源码和数字总结（不含用户图/字体/模型）；ZIP SHA256`52c82bd11b42104a024eb336b173f663d192b8371ad8315fc7036e5bee5720b9`。**用户上传的两份手机原始ZIP、NV21、图片、实际私字和个人文件不进入GitHub/CI或公开研究包**。
 - **下一步**：如需走向产品，必须在**隔离Android试验版**实现按需双REC及原文本保留/退出条件、记录第二次推理单帧耗时/温度与真竖排反例，不可仅凭Linux synthetic直接覆盖正式APK；另开独立样本排查横排跨行DBNet误框。当前安全策略Java类**仅作影子纯Java源码，不接入摄像头/OCR/朗读，不是已可用修复版**。
+
+
+#### 2026-11-03 22:25（Asia/Taipei）— 用户提供真实目标设备配置：vivo X200 Pro 12GB RAM；后续优化不得对旗舰性能过度保守
+
+- **用户明确硬件**：“我的手机是 vivo X200 Pro，内存12G，所以你要综合我手机的性能，也不能过度地保守”。此为用户实物信息，**以用户的12GB实机为准**，切勿误用vivo台湾官网16GB版本当作这台设备；vivo中国官方X200 Pro规格页 https://www.vivo.com.cn/vivo/param/x200pro 确认 V2405A/V2405DA 12GB+256GB变体，并确认天玑9400 3nm/8核、LPDDR5X四通道、UFS4.0、Immortalis-G925 GPU（NPU 890见官网概览，但ONNX能否调用硬件AI加速必须实测，不能直接声称可用）。12GB RAM不是可供APP全部独占、也不等于推理必然更快；Android系统占用与热调度仍要测。系统/OS以手机日志为准，不要因出厂系统版本而误报用户当前系统。
+- **这台手机的已有真机数据**：两次用户诊断原始单帧来自手机，1080×1920，第一次DET831ms+REC780ms、第二次DET724ms+REC613ms（不含其他总开销）；合计已知核心OCR用时约1.34–1.61秒/次。测试时已是大幅超过30fps实时的单帧任务，不可把“旗舰芯片”直接当作已经有30fps识别。新实验必须抓 DET+REC 主瓶颈、额外REC真正成本、稳态功耗，不靠RAM大小猜测。
+- **新目标：旗舰自适应“均衡/高质量”档，不再一刀切超保守**。在**独立实验Android APK**上并排对比：1）原基线Small/DBNet，不变；2）均衡模式按异常风险最多额外2个Small REC候选/每次稳定场景；3）高质量模式尝试最多4个Small REC候选/每次稳定场景，前提是已有错误证据与实际耗时预算允许，**不是每一摄像头帧重复做4次**。每种模式必须保留原文字结果、置信度、候选及采纳证据，并在同一输入测试；原来的只读Java policy `MAX_EXTRA_REC_INFERENCES_PER_FRAME=2` 是初始影子安全阈值，**不是最后手机能力上限**。允许实验时探索更高ROI预算，依据实测停止；不能仅为了性能牺牲零语义幻觉和文字原文保真。
+- **性能实测组合**：相同角度/拍摄图在2、3、4个CPU intra-op线程、不同REC batch大小（例如1/2/4）、是否支持本机硬件EP（先验证支持与正确性，再基准比较）之间做可复现 A/B。专门分开测DET预处理/推理/后处理、REC各部分、额外候选、内存峰值、p50/p95延时、连续运行5/10/15分钟热状态、跳帧/缓存命中率。线程数或硬件EP未实测前**绝不提前判定4线程/GPU/NPU优于2线程CPU**。
+- **动态预算与稳态策略**：允许短暂高质量纠错尝试，但以相同场景首次捕获/新增困难文字优先，低变化画面复用稳定结果；当延迟突增、OS热限制、OOM压力、用户移动/场景变化时退回均衡/基线。针对本机正式建议应基于**同一台手机的端到端实测**，不能用Linux CPU耗时、合成图CER等替代。
+- **正确率底线不变**：离线、小模型OCR真实图像输出、绝不语义补字、真竖排不可误裁、正常原文不因更激进模式被覆盖。此前独立留出集107改善/0观测误伤仅是人工仿射竖排高风险框，不等于全局零失误。把“敢于充分利用旗舰手机资源”落实到**更多受控候选、合理batch/线程、动态负载**，不是无条件接受低可信内容。
+- **实施状态**：仅更新工程约束和下一阶段试验计划，**没有**更改现有正式APP、任何用户APK、已验证的OCR模型、即时朗读/TTS或上述2次影子Java上限；后续真正做手机实验版时再参数化并验收。
