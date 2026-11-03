@@ -23,7 +23,7 @@ import java.util.zip.ZipOutputStream
  * OCR quadrilaterals and the production SDK's exact cropping/preprocess code.
  */
 object SingleFrameEvidence {
-    private const val LIMIT = 24
+    private const val LIMIT = 96
     private const val NAME = "last-ocr-single-frame.zip"
 
     @JvmStatic fun lastFile(context: Context): File? {
@@ -49,6 +49,7 @@ object SingleFrameEvidence {
         rawBitmap: Bitmap, ocrBitmap: Bitmap,
         enhanced: Boolean, modelId: String, result: OCRRunResult,
         profile: OcrPerformanceProfile,
+        shadowReport: String,
     ): File {
         check(nv21.size.toLong() == width.toLong() * height.toLong() * 3L / 2L)
         val folder = File(context.filesDir, "ocr-single-frame")
@@ -66,6 +67,8 @@ object SingleFrameEvidence {
                     info.put("ocr_rec_batch", profile.recBatchSize)
                     info.put("shadow_rescue_budget", profile.maxShadowRescuesPerDiagnostic)
                     info.put("shadow_results_affect_live_ocr", false)
+                    info.put("shadow_four_way_diagnostic", true)
+                    info.put("shadow_report_is_ground_truth", false)
                     info.put("camera_frame_width", width)
                     info.put("camera_frame_height", height)
                     info.put("bitmap_width", ocrBitmap.width)
@@ -84,6 +87,9 @@ object SingleFrameEvidence {
                     info.put("upload", "never")
                     info.put("notes", "Raw NV21, source RGB bitmap, actual OCR input, SDK quads, SDK crop and SDK REC NCHW float32.  No human ground truth; never treat as CER.")
                     writeEntry(zip, "frame.nv21") { zip.write(nv21) }
+                    writeEntry(zip, "diagnostic/four-way-ab.txt") {
+                        zip.write(shadowReport.toByteArray(Charsets.UTF_8))
+                    }
                     writeBitmap(zip, "decoded-frame.png", rawBitmap)
                     writeBitmap(zip, "actual-ocr-input.png", ocrBitmap)
                     val bgr = BitmapUtils.bitmapToBGRMat(ocrBitmap)
