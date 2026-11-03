@@ -166,3 +166,16 @@
 - **对照设计：** 对同一图像先计算模型原始四点框及识别非空标志，再调用未经修改的 LineOverlayPlanner；按每个来源框 ID 保证一一归属，输出无文字的坐标证据；以公开 GT 的 AABB IoU≥0.40、一个 GT 区域被多个源框拆分的合并情况、跨 GT 区域误合并与原框角点越界为**几何代理指标**。GT 可能不是严格的单行标注，不能把该代理当作白框最终准确率。
 - **关键限制：** 当前阶段只确认实验代码推送完成，**尚未核实该次新 CI 是否完成及真实数值**；禁止把此条记录表述为测试通过。仅 Linux CPU 的 Python OpenCV DBNet 近似处理，不等于 Android SDK 原生实现、USB 实时画面或 TTS 全链路。
 - **实验输出计划：** 只上传汇总指标、逐图指标、无 OCR 文本的源框/GT/候选框坐标和日志；不上传相片、模型文件或 APK。CI 成功/失败及真实数据将在后续追加记录，不覆盖本条。
+
+
+#### 2026-11-03 — 真实照片单行白框影子对照结果：已完成，尚不具备正式集成依据
+
+- **完成的专项 GitHub Actions：** https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41607539013 ，Job realphoto-shadow-only 全部 success；没有触发 Android APK 构建、CRAFT 推理、真机负载或 TTS 改动。
+- **原实验代码提交：** 29bcedd075a731d86a2a55a9d5b85c3f0e36eefe；**追加正式报告提交：** a9a6c70f46fc5648f509202589d4956a92b4ac06，均位于原有 test/line-overlay-plan-isolated-20261103 分支。对基线 9f861680b0be514b2fa6dd92e1088cbe6a672950 的 diff：仅新增 3 个只用于评测的文件及此实验报告；正式 App、模型及原 LineOverlayPlanner 未改。
+- **固定照片与方法：** 复用公开 RCTW 1400–1411 的 12 张真实照片及 GT，不是新盲测集；沿用旧 PP-OCRv6 Small DET/REC 权重与配置，原框与候选框使用同一批模型预测，Java LineOverlayPlanner 不改源码。GT 仅用于评估；Linux Python/OpenCV 检测后处理属于 SDK 近似。
+- **本次真实数值：** 12 张照片，71 个 GT 文本实例（并非严格单行 GT），52 个原始 DBNet 框，其中 50 个识别非空；新规划后 51 个候选显示框，仅实际合并 **1 组**；一对一 AABB IoU≥0.4 匹配由原框 **36** 到候选框 **34**；“一个 GT 对应多个源框”的代理统计 0；与两个 GT 实例关联的合并组 1；合并后来源角点越界 >2px 的点 **0**。
+- **唯一合并具体说明：** RCTW-1406 原始 ID [3,2] 被合并，两个框在近似同一水平行、但人工 GT 为左右相邻的两个独立实例。该图的一对一 GT 匹配 6→4 主要暴露了实例级匹配与整行白框任务的评价差异，**不能直接宣称跨上下两行误合并或实际视觉质量变差**；需要真实图片可视复核和严格人工单行 GT。
+- **结论：** CI 运行成功不代表改善单行白框。现有样本仅一次合并，不能证明收益或安全性；**不将新模块合入正式预览，不生成 APK，不改 OCR/朗读**。下一步建议补充人工严格单行标注及真实图片可视对照，尤其同行碎框/邻行/密集字和竖排。
+- **完整长期报告：** https://github.com/vobichngan285-collab/kanzi-assistant/blob/test/line-overlay-plan-isolated-20261103/docs/line-overlay-realphoto-shadow-results-20261103.md
+- **短期原始匿名数据包：** https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41607539013/artifacts/13216669007 （预计 2026-11-13 到期；不能视作永久备份）。包括 per_photo.csv、summary.json、box_replay_no_ocr_text.json、run.log；不含图片/模型或识别文本。Artifact SHA256：cd9aa0a71adffb197c81d14966759c4b760216a549fcbf253e50981d537d44d9。
+- **备份与历史：** 此条在 main:PROJECT_HANDOFF.md **追加**，前一条“实验代码提交、结果待核查”及更早所有 CRAFT / 148 断言实验均保留。没有确认除该 GitHub 交接文件之外的专用备份文件夹路径。
