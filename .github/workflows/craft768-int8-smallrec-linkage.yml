@@ -1,0 +1,103 @@
+name: CRAFT768 INT8 + Small REC full recognition linkage check - NO APK
+on:
+  push:
+    branches: [test/craft768-int8-small-rec-linkage-20261103]
+    paths:
+      - scripts/craft768_int8_smallrec_newscene_fullpage_ab.py
+      - craft768-int8-probe/app/src/main/java/com/vobich/kanzi/craftprobe/CraftSmallRecLinkage.java
+      - craft768-int8-probe/app/src/main/java/com/vobich/kanzi/craftprobe/SmallRecCtc.java
+      - craft768-int8-probe/app/src/test/java/com/vobich/kanzi/craftprobe/SmallRecCtcSelfTest.java
+      - craft768-int8-probe/app/src/main/java/com/vobich/kanzi/craftprobe/ProbeActivity.java
+      - .github/workflows/craft768-int8-smallrec-linkage.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  android-linkage-compile-only:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify isolate, no release or APK paths
+        run: |
+          set -euo pipefail
+          grep -q "applicationId 'com.vobich.kanzi.craftprobe.portrait'" craft768-int8-probe/app/build.gradle
+          test ! -e craft768-int8-probe/app/src/main/assets/small_rec.onnx
+          ! grep -R 'CraftSmallRecLinkage' app/src/main/java/com/vobichngan/kanzi
+          ! grep -R 'android.permission.INTERNET' craft768-int8-probe/app/src/main/AndroidManifest.xml
+          echo 'Source-only research; normal 看字助手 package is unchanged.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Pure-Java CTC decode and CRAFT box decoder regressions
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft-small-rec-java
+          javac -d /tmp/craft-small-rec-java             craft768-int8-probe/app/src/main/java/com/vobich/kanzi/craftprobe/SmallRecCtc.java             craft768-int8-probe/app/src/test/java/com/vobich/kanzi/craftprobe/SmallRecCtcSelfTest.java             craft768-int8-probe/app/src/main/java/com/vobich/kanzi/craftprobe/CraftBoxDecoder.java             craft768-int8-probe/app/src/test/java/com/vobich/kanzi/craftprobe/CraftBoxDecoderSelfTest.java
+          java -ea -cp /tmp/craft-small-rec-java com.vobich.kanzi.craftprobe.SmallRecCtcSelfTest
+          java -ea -cp /tmp/craft-small-rec-java com.vobich.kanzi.craftprobe.CraftBoxDecoderSelfTest
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile linked independent Android CRAFT+Small REC Java code without assemble/bundle/APK
+        run: |
+          set -euo pipefail
+          gradle -p craft768-int8-probe --no-daemon --no-parallel --max-workers=2             --stacktrace :app:compileDebugJavaWithJavac
+          test ! -e craft768-int8-probe/app/build/outputs/apk
+          echo 'CRAFT box -> Small REC Bitmap crop -> dynamic-width Tensor -> CTC compile-only PASS.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No Android runtime/recognition inference verified by compilation. No APK built.' >> "$GITHUB_STEP_SUMMARY"
+  full-text-new-public-scene-ab:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install unchanged original ONNX CPU and data parser dependencies
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/craft768_int8_smallrec_newscene_fullpage_ab.py
+          python3 -m pip install --quiet 'numpy==1.26.4' 'onnx==1.17.0' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
+      - name: Download pinned official CRAFT and unchanged PP-OCRv6 Small DET/REC weights
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-craft-smallrec
+          curl -fL --retry 3 --retry-delay 3 --max-time 360 'https://huggingface.co/inference4j/craft-mlt-25k/resolve/290e4d5/model.onnx' -o /tmp/kanzi-craft-smallrec/craft.onnx
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx' -o /tmp/kanzi-craft-smallrec/det.onnx
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx' -o /tmp/kanzi-craft-smallrec/small_rec.onnx
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml' -o /tmp/kanzi-craft-smallrec/small_rec.yml
+          echo '28c05f8b5e97f3c5765d00bca556ec2397c86c954d4ac5ef73aa10043db16388  /tmp/kanzi-craft-smallrec/craft.onnx' | sha256sum -c -
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  /tmp/kanzi-craft-smallrec/det.onnx' | sha256sum -c -
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/kanzi-craft-smallrec/small_rec.onnx' | sha256sum -c -
+          echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/kanzi-craft-smallrec/small_rec.yml' | sha256sum -c -
+      - name: Recreate identical INT8 QDQ candidate after 9 DEV-only calibrations
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-small-rec-results
+          python3 -u scripts/craft768_int8_static_quantize.py             --source /tmp/kanzi-craft-smallrec/craft.onnx             --output /tmp/kanzi-craft-smallrec/craft768_int8.onnx             --report /tmp/kanzi-small-rec-results/quant.json | tee /tmp/kanzi-small-rec-results/quant.log
+          echo '9ab885d2f6669b77f70e9c8f68acfbe408c0b051501fd02d94bcaa0c7779ab15  /tmp/kanzi-craft-smallrec/craft768_int8.onnx' | sha256sum -c -
+      - name: Test six newly predeclared photo Small baseline versus CRAFT INT8 + Small REC
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-small-rec-results/smoke
+          python3 -u scripts/craft768_int8_smallrec_newscene_fullpage_ab.py             --models /tmp/kanzi-craft-smallrec             --quant /tmp/kanzi-craft-smallrec/craft768_int8.onnx             --out /tmp/kanzi-small-rec-results/smoke             --max-photos 6 | tee /tmp/kanzi-small-rec-results/smoke/run.log
+          grep -q 'CRAFT_SMALL_REC_NEW_SCENES_COMPLETE' /tmp/kanzi-small-rec-results/smoke/run.log
+      - name: Test all offset-800 natural scene photos using CRAFT INT8 + Small REC
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-small-rec-results/full
+          python3 -u scripts/craft768_int8_smallrec_newscene_fullpage_ab.py             --models /tmp/kanzi-craft-smallrec             --quant /tmp/kanzi-craft-smallrec/craft768_int8.onnx             --out /tmp/kanzi-small-rec-results/full | tee /tmp/kanzi-small-rec-results/full/run.log
+          grep -q 'CRAFT_SMALL_REC_NEW_SCENES_COMPLETE' /tmp/kanzi-small-rec-results/full/run.log
+          echo '### New predeclared offset 800 CRAFT768 INT8 + Small REC real text comparison' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/kanzi-small-rec-results/full/summary.json >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/kanzi-small-rec-results/full/limits.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Save only anonymous metrics and reports, no model/photograph/APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: craft768-int8-small-rec-newscene-fulltext-metrics
+          path: /tmp/kanzi-small-rec-results/
+          retention-days: 10
+          if-no-files-found: warn
