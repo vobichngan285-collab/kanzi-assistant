@@ -184,9 +184,17 @@ def main():
                 require(mediumRecModelAsset != null && mediumRecConfigAsset != null) {
                     "Medium model and dictionary must be provided together"
                 }
-                val mediumConfig = ModelConfig.parse(context, mediumRecConfigAsset)
-                ortManager.loadOptionalMediumRecognizer(mediumRecModelAsset)
-                optionalMediumCharacters = mediumConfig.characterList
+                try {
+                    val mediumConfig = ModelConfig.parse(context, mediumRecConfigAsset)
+                    ortManager.loadOptionalMediumRecognizer(mediumRecModelAsset)
+                    optionalMediumCharacters = mediumConfig.characterList
+                } catch (error: Throwable) {
+                    if (error is OutOfMemoryError) throw error
+                    // Optional model absence must never stop original Small OCR.
+                    android.util.Log.w("KanziHybridOCR",
+                        "Optional Medium model unavailable; continuing with Small only", error)
+                    optionalMediumCharacters = null
+                }
             }
             recModelConfig''',"engine secondary load")
     src=replace_once(src,
