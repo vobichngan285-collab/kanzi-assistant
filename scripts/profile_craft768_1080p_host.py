@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""12 representative public-photo 1080p buffers through CRAFT768 + ONNX CPU.
+"""12 representative public-photo 1080p buffers through CRAFT720/768 + ONNX CPU.
 
 Cloud Linux host-only forward/postprocess sustained profile; not Android device
 testing, no UVC camera, no PP-OCR REC, no TTS, no APK. Preserves source photo
@@ -35,10 +35,12 @@ def main():
     parser.add_argument("--model",required=True)
     parser.add_argument("--out",required=True)
     parser.add_argument("--frames",type=int,default=24)
+    parser.add_argument("--max-side",type=int,choices=(720,768),default=768)
     args=parser.parse_args()
     assert 12<=args.frames<=120
     outfile=Path(args.out);outfile.mkdir(exist_ok=True,parents=True)
-    craft.CRAFT_LONG_SIDE=768
+    craft.CRAFT_LONG_SIDE=704 if args.max_side==720 else 768
+    print("CRAFT_REQUESTED_MAX_LONG_SIDE",args.max_side,"ALIGNED_EFFECTIVE",craft.CRAFT_LONG_SIDE,flush=True)
     path=Path(args.model)
     sha=hashlib.sha256(path.read_bytes()).hexdigest()
     assert sha==CRAFT_SHA,sha
@@ -84,7 +86,7 @@ def main():
                  rss_mib=rss())
         samples.append(row)
         if (k-2)%8==0:
-            print("CRAFT768_HOST_1080P_PROGRESS",k-2,"/",args.frames,
+            print("CRAFT_HOST_1080P_PROGRESS",k-2,"/",args.frames,
               "inference_ms",row["infer_ms"],"RSS_MiB",row["rss_mib"],flush=True)
     middle=rss()
     del images,photos,chosen,session,data,raw,boxes,fake_nv21_buffers
@@ -92,6 +94,7 @@ def main():
     after=rss()
     summary=dict(
       craft_sha256=CRAFT_SHA,model_bytes=path.stat().st_size,
+      nominal_long_side=args.max_side,aligned_effective_long_side=craft.CRAFT_LONG_SIDE,
       frames=len(samples),real_public_photo_content=True,
       image_size="1920x1080 aspect-preserved letterbox",
       onnx_cpu_threads=2,load_ms=load_ms,
@@ -111,7 +114,7 @@ def main():
       cloud_CPU_host_only=True)
     (outfile/"summary.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2))
     (outfile/"frames.json").write_text(json.dumps(samples,ensure_ascii=False,indent=2))
-    print("CRAFT768_HOST_PROFILE",json.dumps(summary,ensure_ascii=False),flush=True)
-    print("CRAFT768_HOST_CPU_PROFILE_COMPLETE",len(samples),flush=True)
+    print("CRAFT_HOST_PROFILE",json.dumps(summary,ensure_ascii=False),flush=True)
+    print("CRAFT_HOST_CPU_PROFILE_COMPLETE",len(samples),flush=True)
 
 if __name__=="__main__":main()
