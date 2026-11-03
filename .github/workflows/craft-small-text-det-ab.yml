@@ -1,0 +1,62 @@
+name: Dedicated CRAFT vs Small text detection real-photo A/B/C - NO APK
+on:
+  push:
+    branches: [test/craft-small-text-det-20261103]
+    paths:
+      - scripts/craft_small_detector_ab.py
+      - .github/workflows/craft-small-text-det-ab.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  real-photo-craft:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify isolated script syntax
+        run: python3 -m py_compile scripts/craft_small_detector_ab.py scripts/ocr_box_value_deep_dive.py scripts/ocr_public_real_scene_ab.py
+      - name: Install fixed CPU inference and postprocessing libraries
+        run: pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
+      - name: Download exact Small detector/recognizer and CRAFT MLT25k ONNX
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft-small-models
+          curl -fL --retry 4 --retry-delay 3 --max-time 300 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx' -o /tmp/craft-small-models/det.onnx
+          curl -fL --retry 4 --retry-delay 3 --max-time 300 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx' -o /tmp/craft-small-models/small_rec.onnx
+          curl -fL --retry 4 --retry-delay 3 --max-time 300 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml' -o /tmp/craft-small-models/small_rec.yml
+          curl -fL --retry 4 --retry-delay 3 --max-time 300 'https://huggingface.co/inference4j/craft-mlt-25k/resolve/290e4d5/model.onnx' -o /tmp/craft-small-models/craft.onnx
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  /tmp/craft-small-models/det.onnx' | sha256sum -c -
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/craft-small-models/small_rec.onnx' | sha256sum -c -
+          echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/craft-small-models/small_rec.yml' | sha256sum -c -
+          test "$(stat -c '%s' /tmp/craft-small-models/craft.onnx)" -gt 75000000
+          sha256sum /tmp/craft-small-models/craft.onnx >> "$GITHUB_STEP_SUMMARY"
+      - name: CRAFT isolated smoke test on 6 actual source photos
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft-smoke
+          python3 -u scripts/craft_small_detector_ab.py --models /tmp/craft-small-models --max-photos 6 --out /tmp/craft-smoke | tee /tmp/craft-smoke/run.log
+          grep -q 'CRAFT_SMALL_DET_REC_EXPERIMENT_COMPLETE' /tmp/craft-smoke/run.log
+      - name: Same-source 72 real scene photo full A/B/C no Medium
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft-full
+          python3 -u scripts/craft_small_detector_ab.py --models /tmp/craft-small-models --out /tmp/craft-full | tee /tmp/craft-full/run.log
+          grep -q 'CRAFT_SMALL_DET_REC_EXPERIMENT_COMPLETE' /tmp/craft-full/run.log
+          echo '### 72 real photo Small / CRAFT / combined detector comparison with single Small REC' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/craft-full/summary.json >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/craft-full/recovery.json >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/craft-full/limitations.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Save only numerical metrics and explanation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: craft-small-det-realphoto-ab
+          path: |
+            /tmp/craft-smoke/
+            /tmp/craft-full/
+          retention-days: 10
+          if-no-files-found: warn
