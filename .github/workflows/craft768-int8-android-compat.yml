@@ -76,32 +76,25 @@ jobs:
           python3 scripts/patch_usbmonitor.py third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
           python3 - <<'PY'
           from pathlib import Path
+          def strip_gradle_block(text, marker):
+              pos=text.index(marker)
+              start=text.index("{",pos)
+              level=0
+              for offset in range(start,len(text)):
+                  if text[offset]=="{": level+=1
+                  elif text[offset]=="}":
+                      level-=1
+                      if level==0:
+                          return text[:pos]+text[offset+1:]
+              raise RuntimeError("Unbalanced Gradle block: "+marker)
           p=Path("third_party/AndroidUSBCamera/libnative/build.gradle")
           s=p.read_text()
-          old="abiFilters 'armeabi-v7a','arm64-v8a', \"x86\", \"x86_64\""
-          if s.count(old)!=1:raise SystemExit("Unexpected UVC native ABI configuration")
-          p.write_text(s.replace(old,"abiFilters 'armeabi-v7a','arm64-v8a'",1))
-          print("Retained 2 Android phone ABIs")
-          PY
-      - name: Disable UVC native C/C++ builds ONLY in ephemeral compile-validation checkout
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path("third_party/AndroidUSBCamera/libnative/build.gradle")
-          s=p.read_text()
-          start=s.index('        externalNativeBuild {')
-          end=s.index('        }', s.index('            ndk{',start))+len('        }')
-          s=s[:start]+s[end:]
-          start=s.index('    externalNativeBuild {')
-          end=s.index('    }',s.index('        cmake {',start))+len('    }')
-          s=s[:start]+s[end:]
+          for _ in range(2):
+              s=strip_gradle_block(s,"externalNativeBuild {")
           p.write_text(s)
           p=Path("third_party/AndroidUSBCamera/libuvc/build.gradle")
           s=p.read_text().replace('ndkVersion rootProject.ext.ndkVersion','// OMIT NDK VERSION FOR KOTLIN SOURCE COMPILE ONLY')
-          start=s.index('\texternalNativeBuild {')
-          end=s.index('\t}',s.index('\t\tndkBuild {',start))+len('\t}')
-          s=s[:start]+s[end:]
+          s=strip_gradle_block(s,"externalNativeBuild {")
           p.write_text(s)
           print("Kotlin-only research build: disabled ephemeral UVC native C/C++ tasks; does NOT validate USB/JNI binaries")
           PY
