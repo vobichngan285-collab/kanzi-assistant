@@ -1,0 +1,45 @@
+name: Verify exact Small REC Android character dictionary and CTC ONNX shape - no APK
+on:
+  push:
+    branches: [test/craft768-int8-small-rec-linkage-20261103]
+    paths:
+      - scripts/prepare_craft_smallrec_lab_chars.py
+      - .github/workflows/craft768-smallrec-charset-contract.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  character-contract-only:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pinned PP-OCRv6 Small REC ONNX parser
+        run: |
+          python3 -m pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'PyYAML==6.0.2'
+      - name: Obtain exact Small REC model and inference.yml
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-rec-contract
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx' -o /tmp/kanzi-rec-contract/small_rec.onnx
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml' -o /tmp/kanzi-rec-contract/small_rec.yml
+      - name: Validate exact SHA, run real Small REC ONNX and check output classes vs dictionary
+        run: |
+          set -euo pipefail
+          python3 -u scripts/prepare_craft_smallrec_lab_chars.py             --rec /tmp/kanzi-rec-contract/small_rec.onnx             --yml /tmp/kanzi-rec-contract/small_rec.yml             --out /tmp/kanzi-rec-contract/small_rec_chars.json | tee /tmp/kanzi-rec-contract/audit.log
+          grep -q 'SMALL_REC_ANDROID_CHAR_ASSET_VERIFIED' /tmp/kanzi-rec-contract/audit.log
+          echo '### Small REC exact-character dictionary vs ONNX CTC runtime shape' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/kanzi-rec-contract/audit.log >> "$GITHUB_STEP_SUMMARY"
+          echo 'Android handset recognition and actual crop-by-crop execution not claimed. No APK.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive dictionary and check summary, never ship APK or model
+        uses: actions/upload-artifact@v4
+        with:
+          name: craft768-smallrec-verified-ctc-characters
+          path: |
+            /tmp/kanzi-rec-contract/small_rec_chars.json
+            /tmp/kanzi-rec-contract/audit.log
+          retention-days: 10
+          if-no-files-found: error
