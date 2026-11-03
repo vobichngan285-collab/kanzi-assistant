@@ -66,3 +66,16 @@
 - 不继续无目标调检测阈值、不重做同一批72图完整 A/B 或 CRAFT 压力测试，不更换 Small 模型，不改正式 App、TTS、不出 APK，直到有新的机端证据和明确验收基准。
 
 **本次研究结论：已经用同分母的对照确认，定位/裁剪质量对 Small OCR 错字率影响显著。下一个缺失的证据是 Android 端实际图像/裁剪/张量与这套固定参考实现之间的等价性。**
+
+
+## 同步只读核查 Android 当前开发主线（不改代码）
+
+为避免看到 Linux 结果后盲目更换通道或反复调阈值，额外读取了 `feature/strict-offline-ocr-order-guard` 的现存源码：
+
+- `MainActivity.java:303–311` 实时帧是 NV21 `data.clone()`，根据 `enhancedOcr || (FrameQuality.dark && FrameQuality.possiblyBlurry)` 决定是否增强，显式 `legacyDecode=false`。因此**此处正常入口不会启用历史兼容的 NV21→JPEG(quality 82)→Bitmap 路径**。
+- `PaddleOcrEngine.kt:542–565` 在 `legacyDecode=false` 情况下使用 OpenCV `COLOR_YUV2RGBA_NV21` 转为 Bitmap，而非重新 JPEG 压缩；`250–311` 在此图上直接 OCR，可选旋转/灰度增强，非 fast 模式低置信还可能做第二次增强并选取置信指标较好的结果。
+- `FrameQuality.java:14–17` 的“暗且可能模糊”判断阈值是亮度<47、边缘均值<7.0，仅凭源码不能说这种增强一定有害或一定帮助。
+- `.github/workflows/android.yml:125–160` 的当前源码明确对官方 Paddle Android SDK `RecPreprocessor.kt` 做 **BGR 预处理保留**补丁，以匹配三份 `inference.yml` 的 `img_mode: BGR`；因此没有证据支持盲目把识别通道“统一改为RGB”。这份 CI 补丁必须在实际设备 APK 上核对所用构建 Commit 和二进制，**源码说明不是手机实测张量等价证明**。
+- 当前 `PaddleOcrEngine.kt` 的 SDK `recognize(bitmap)` 只暴露最终 OCR 结果/四点框及推理时间，**没有现成的逐步裁剪图与识别张量导出**。因此下一步真正的手机诊断应以明确的用户授权和隐私保护方式，单帧影子提取 NV21 解码 Bitmap、SDK 四点框、裁剪图和送入 REC 的形状/通道统计，禁止自动上传私人图像。
+
+以上是**2026-11-03 原开发分支的静态源码核查**，不是已执行的 Android 图像等价实验，也不修改以前的结论。
