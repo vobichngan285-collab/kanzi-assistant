@@ -1,7 +1,7 @@
-name: Verify #315 Android BGR Small vs Medium on real photo text
+name: 12GB hybrid policy with Android BGR model input - NO APK
 on:
   push:
-    branches: [test/android-hybrid-medium-feasibility-20261103]
+    branches: [test/android-hybrid-12gb-performance-20261103]
     paths:
       - scripts/verify_android_bgr_model_comparison.py
       - .github/workflows/android-bgr-model-recheck.yml
@@ -43,6 +43,8 @@ jobs:
             | tee /tmp/kanzi-bgr-results/console.log
           grep -q 'RELEASE_BGR_COLOR_MODEL_ALIGNMENT=PASS' /tmp/kanzi-bgr-results/console.log
           cat /tmp/kanzi-bgr-results/summary.csv >> "$GITHUB_STEP_SUMMARY"
+          echo "### 0.95 Small confidence, capped Medium 1/3 retries on BGR source crops" >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/kanzi-bgr-results/bgr_budget_policy.csv >> "$GITHUB_STEP_SUMMARY"
           echo 'This is a source crop model test using release BGR input; no Android device, UVC or APK.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload only CER and public annotation text, no photos or models
         if: always()
