@@ -332,7 +332,7 @@ def main():
          hybrid_gt=sum(r["SMALL_LOCAL_RESCUE_matched"] for r in rows if r["dataset"]==dataset),
          small_page_edits=sum(r["SMALL_fullpage_edits"] for r in rows if r["dataset"]==dataset),
          hybrid_page_edits=sum(r["SMALL_LOCAL_RESCUE_fullpage_edits"] for r in rows if r["dataset"]==dataset))
-         for dataset in ("ART","RCTW","ReCTS")}}
+         for dataset in ("ART","RCTW","ReCTS")})
     for row in summary:
         print("CRAFT_LOCAL_ROI_AB_RESULT",json.dumps(row,ensure_ascii=False),flush=True)
     print("CRAFT_LOCAL_ROI_META",json.dumps(general,ensure_ascii=False),flush=True)
