@@ -323,3 +323,14 @@
 - GitHub 已确认开始独立构建 Run `41617248713`（当前提交）；更早的 Run `41616956581` 来自说明文件加入之前的快照，不用于最后分发。新说明文档提交 `cc9f23fd65cc72d86738cefbb1a3a439c32cce15`。
 - 工作流使用已验证原正式开发分支的 PaddleOCR v3.7.0、Small/Tiny/v5 模型及 USB/手机摄像头支持，仅以 `:app:assembleDebug` 构建独立包名 `com.vobich.kanzi.framelab`；不读取原正式签名密钥、不生成 Release、不创建 GitHub Release。
 - 安全验收门槛：APK 必须真实存在、`aapt` 包名单独、Manifest 无 `INTERNET`、ZIP 内 Small DET/REC SHA 固定、带有 arm64 ONNX Runtime，且上传到 GitHub Actions Artifact 后才可称可下载。此条仅记录**构建已发起，尚未完成**；手机实际安装/USB 实拍仍待用户本人测试。
+
+
+#### 2026-11-03 — 已完成并下载：独立手机 OCR 单帧诊断 APK（交付锚点）
+
+- **本阶段已成功构建并验收 Debug APK（非正式版更新）**：GitHub Actions Run **41617248713** / Job `build` success；实际 `BUILD SUCCESSFUL` + `PHONE_SINGLE_FRAME_DIAG_APK_AUDIT_PASS`，Run：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41617248713 ，Artifact：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41617248713/artifacts/13222475520 （Actions ZIP临时保留约10天）。
+- **安装包**：`Kanzi_OCR_SingleFrame_Diagnostic_debug.apk`，**390367103 字节**，SHA256 **`4b11d1deac9c41cf61bd474dd7ad84e07133db2cd9dd0bff51e1249b85d6adfd`**；已实际下载 GitHub ZIP、解包、重新计算哈希并与 Actions SHA256SUMS 一致。Artifact ZIP SHA256 `d36481d327f51d583cc2becc8df8cda5312ea000d899e696d220a7e9a8666eb3`。
+- **应用分离与安全**：`com.vobich.kanzi.framelab`，应用名称“看字助手 · 单帧OCR诊断”，不覆盖原 `com.vobich.kanzi`；最终 APK Manifest 检查**没有 `android.permission.INTERNET`**，模型真实 SHA 匹配 Small DET `d73e0058...` + Small REC `5435fd74...`，含 arm64 原生 ONNX Runtime。保留 USB UVC/手机摄像头识别源码，独立 debug 签名而非正式签名。
+- **用户手动调用**：主界面 → 设置 → OCR诊断 → “手动采集一帧：图像＋真实裁剪＋输入张量（仅本机）” → “导出上次单帧诊断 ZIP（手动选择位置）”。内部私有保存 `frame.nv21`、`decoded-frame.png`、`actual-ocr-input.png`、`metadata.json`、SDK `crops/*.png` + `tensors/*.float32le`（最多前24框），不自动上传；ZIP 含可能的用户私人文字。
+- **永久安装/使用文档**：`test/phone-ocr-single-frame-diagnostic-20261103:docs/phone-single-frame-diagnostic-20261103.md`，成功构建后报告补充 Commit **`ece7eeec6af6818843279cdb0c4f9ce60f92199b`**（已回读）；工作流成功构建代码 Commit **`3d9a6ad02eb953d5ed6c2c57cd5c3e024eecb5bc`**。只改独立诊断分支与主交接记录，**正式 App、真实朗读/白框逻辑未更新**。
+- **注意验收边界**：已完成的是 GitHub CI/安装包静态与编译审核，**尚无用户手机上的 USB 连接、App安装、真实帧保存和 ZIP 文件完整性的验证**。下一步用户用非隐私文字手动采集，在手机上对比截帧/裁剪并自选导出，必要时发回 ZIP供排查。
+- 早先 Run **41616956581** 虽实际编译出同一 APK 并通过核心审核，但在拷贝晚于其快照提交的说明文档时失败；它不是交付 Run。已修正并重新构建，最终 Run 41617248713 完整 success。
