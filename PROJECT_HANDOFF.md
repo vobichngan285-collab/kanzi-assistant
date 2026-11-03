@@ -202,3 +202,10 @@
 - 已有 12 图中仅 RCTW-1406 出现源框 [3,2] 合并；两框分别与不同 GT 实例 3/4 关联，但近乎同一水平位置；候选 AABB x260–425/y402.4–447.6，下缘与另一个 GT 5 (x369–456/y435–454) 有少量交叠（AABB IoU≈0.084）。实际是否跨行**必须看原图，不得定性**。
 - 在 RCTW-1402/1403/1406/1409/1411 共有10个原 DBNet 框与至少两个 GT 实例重叠≥原框自身20%面积，属于需要像素检查的候选，可能同一行多标注，也可能检测粘连；不能凭此确定跨行错误。
 - 严格行级人工 GT 仍缺，视觉 CI 工作流已提交但本条不宣称完成；没有修改几何算法、正式 App、TTS、模型或构建 APK。旧 GT 代理匹配 36→34 的历史记录保持不变。
+
+
+#### 2026-11-03 — 可视叠图 CI 初次失败：公开数据集返回 HTTP 502（已核查运行日志）
+
+- 用户允许继续公开真图可视检查。已实际查询到独立工作流 Run **41608904979**：`public-photo-visual-review` = **failure**；链接：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41608904979 。
+- 分步日志：复用先前 Run 41607539013 几何 Artifact 和 Python 脚本编译均通过；失败发生在请求 `https://datasets-server.huggingface.co/rows`（RCTW offset=1400, length=12）时：`requests.exceptions.HTTPError: 502 Server Error: Bad Gateway`；**没有生成或验收任何原图叠画图片**。
+- 该错误属于公开数据源读取失败，**不证明模型或单行框算法好坏**。失败流程没有 OCR 推理、Android APK、TTS；后续只对图像获取方法做有限重试，不能改变既有盒子、标注与研究范围。
