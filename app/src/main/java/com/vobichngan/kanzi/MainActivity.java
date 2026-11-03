@@ -82,6 +82,8 @@ public class MainActivity extends CameraActivity {
     private static final String PREF_AI_LAYOUT = "experimental_ai_layout";
     private static final String PREF_REALTIME_TEXT_ROTATION = "realtime_text_rotation";
     private static final int REQUEST_PHONE_CAMERA = 4051;
+    private static final int REQUEST_SINGLE_FRAME_ZIP = 4916;
+    private final AtomicBoolean saveEvidenceNextDiagnostic = new AtomicBoolean(false);
     private final Handler diagnosticHandler = new Handler(Looper.getMainLooper());
     private int diagnosticAttempts = 0;
     private final Runnable diagnosticRunnable = new Runnable() {
@@ -203,6 +205,8 @@ public class MainActivity extends CameraActivity {
                 // The obsolete 0.7.0 NV21->JPEG comparison is retired.
                 // Keep one consistent low-overhead OpenCV NV21 decoder.
                 final boolean legacyForDiagnostic = false;
+                final boolean evidenceThisCapture = saveEvidenceNextDiagnostic.getAndSet(false);
+                if (evidenceThisCapture) recognizer.requestEvidenceForNextDiagnostic();
                 recognizer.diagnoseNv21(diagnosticFrame, width, height, enhancedOcr, legacyForDiagnostic,
                     report -> {
                         busy.set(false);
@@ -239,7 +243,8 @@ public class MainActivity extends CameraActivity {
                             "\n\n全部可见文字（对照）：\n" + report.getFullPageText()
                             + "\n\n实验候选阅读顺序（仅诊断，不影响当前播报）：\n"
                             + (report.getCandidateText().isEmpty() ? "（无可靠候选）" : report.getCandidateText())
-                            + "\n\n候选框序号与归属追溯：\n" + report.getCandidateDetails();
+                            + "\n\n候选框序号与归属追溯：\n" + report.getCandidateDetails()
+                            + (evidenceThisCapture ? "\n\n单帧图像证据：" + recognizer.lastEvidenceStatus() : "");
                         lastDiagnosticText = report.getText();
                         lastCandidateDiagnosticText = report.getCandidateText();
                         runOnUiThread(() -> { if (diagnosticReportView != null) diagnosticReportView.setText(result); });
@@ -1030,6 +1035,32 @@ public class MainActivity extends CameraActivity {
             diagnosticCaptureRequested.set(true);
         });
         panel.addView(runDiagnosticButton);
+        Button captureImageEvidenceButton = createControlButton("手动采集一帧：图像＋真实裁剪＋输入张量（仅本机）");
+        captureImageEvidenceButton.setOnClickListener(v -> {
+            if (!(usingPhoneCamera || previewCallbackAdded) ||
+                recognizer == null || !recognizer.isReady()) {
+                Toast.makeText(this, "先连接摄像头并等待 Small 模型加载", Toast.LENGTH_LONG).show();
+                return;
+            }
+            saveEvidenceNextDiagnostic.set(true);
+            runDiagnosticButton.performClick();
+        });
+        panel.addView(captureImageEvidenceButton);
+        Button exportImageEvidenceButton = createControlButton("导出上次单帧诊断 ZIP（手动选择位置）");
+        exportImageEvidenceButton.setOnClickListener(v -> {
+            java.io.File file = recognizer == null ? null : recognizer.latestEvidenceZip();
+            if (file == null) {
+                Toast.makeText(this, "请先点击「手动采集一帧」，完成后再导出", Toast.LENGTH_LONG).show();
+                return;
+            }
+            android.content.Intent intent =
+                new android.content.Intent(android.content.Intent.ACTION_CREATE_DOCUMENT);
+            intent.setType("application/zip");
+            intent.addCategory(android.content.Intent.CATEGORY_OPENABLE);
+            intent.putExtra(android.content.Intent.EXTRA_TITLE, "kanzi-ocr-single-frame.zip");
+            startActivityForResult(intent, REQUEST_SINGLE_FRAME_ZIP);
+        });
+        panel.addView(exportImageEvidenceButton);
         Button speakDiagnosticButton = createControlButton("朗读这次诊断识别出的文字");
         speakDiagnosticButton.setOnClickListener(v -> {
             String textToRead = lastDiagnosticText == null ? "" : lastDiagnosticText.trim();
@@ -2047,6 +2078,38 @@ public class MainActivity extends CameraActivity {
     }
 
     private int dp(int value) { return (int) (value * getResources().getDisplayMetrics().density); }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, android.content.Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_SINGLE_FRAME_ZIP || resultCode != Activity.RESULT_OK ||
+            data == null || data.getData() == null) return;
+        final android.net.Uri destination = data.getData();
+        final java.io.File source = recognizer == null ? null : recognizer.latestEvidenceZip();
+        if (source == null) {
+            Toast.makeText(this, "诊断包已不存在，请重新采集", Toast.LENGTH_LONG).show();
+            return;
+        }
+        // The app never uploads any captured image. Export only after the
+        // Android user chooses the precise destination via SAF.
+        new Thread(() -> {
+            try (java.io.FileInputStream from = new java.io.FileInputStream(source);
+                 java.io.OutputStream to = getContentResolver().openOutputStream(destination, "w")) {
+                if (to == null) throw new java.io.IOException("无法打开选择的保存位置");
+                byte[] buffer = new byte[16384];
+                int n;
+                while ((n = from.read(buffer)) != -1) to.write(buffer, 0, n);
+                to.flush();
+                runOnUiThread(() -> Toast.makeText(this,
+                    "单帧 ZIP 已保存到你选择的位置；分享前请检查其中可能包含的私人文字",
+                    Toast.LENGTH_LONG).show());
+            } catch (Exception e) {
+                Log.e("KanziDiag", "SAF ZIP export failed", e);
+                runOnUiThread(() -> Toast.makeText(this,
+                    "导出失败：" + e.getMessage(), Toast.LENGTH_LONG).show());
+            }
+        }, "kanzi-single-frame-export").start();
+    }
 
     @Override protected void onPause() {
         // Accessibility safety: a camera that is no longer foreground must
