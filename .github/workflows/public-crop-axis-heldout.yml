@@ -1,0 +1,71 @@
+name: Public vertical and mixed horizontal OCR crop-axis heldout AB
+on:
+  push:
+    branches: [test/phone-ocr-single-frame-diagnostic-20261103]
+    paths:
+      - '.github/workflows/public-crop-axis-heldout.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  disjoint-annotated-public-benchmark:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install numerical OCR runtime (not Android)
+        run: |
+          python3 -m pip install --quiet 'numpy==1.26.4' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' 'requests==2.32.3' 'onnxruntime==1.21.1'
+      - name: Download pinned public recognizer weights and vertical-only data archive
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/public-models" "$RUNNER_TEMP/public-archive"
+          curl -fL --retry 4 --retry-delay 3 --max-time 480 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx' -o "$RUNNER_TEMP/public-models/small_rec.onnx"
+          curl -fL --retry 4 --retry-delay 3 --max-time 120 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml' -o "$RUNNER_TEMP/public-models/small_rec.yml"
+          echo "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  $RUNNER_TEMP/public-models/small_rec.onnx" | sha256sum -c -
+          echo "ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  $RUNNER_TEMP/public-models/small_rec.yml" | sha256sum -c -
+          curl -fL --retry 4 --retry-delay 4 --max-time 900 \
+            'https://huggingface.co/datasets/AlroWilde/vertical_annotations/resolve/main/vertical_annotations.zip' \
+            -o "$RUNNER_TEMP/public-archive/vertical_annotations.zip"
+          python3 - <<'PY'
+          import zipfile,os
+          p=os.environ["RUNNER_TEMP"]+"/public-archive/vertical_annotations.zip"
+          with zipfile.ZipFile(p) as z:
+              names=z.namelist()
+              print("PUBLIC_VERTICAL_ARCHIVE",len(names),"entries",os.path.getsize(p),"bytes",flush=True)
+              print("ARCHIVE_ENTRIES_FIRST",names[:18],flush=True)
+              assert len(names)>100,"Archive is unexpectedly empty"
+          PY
+      - name: Run disjoint public scenes + vertical archive, old X-sort vs risk-guarded Y-sort
+        run: |
+          set -euo pipefail
+          python3 -u scripts/public_axis_guard_heldout_benchmark.py \
+            --rec "$RUNNER_TEMP/public-models/small_rec.onnx" \
+            --yml "$RUNNER_TEMP/public-models/small_rec.yml" \
+            --vertical-zip "$RUNNER_TEMP/public-archive/vertical_annotations.zip" \
+            --vertical-limit 791 \
+            --max-rec-affected 250 \
+            --out "$RUNNER_TEMP/public-axis-heldout" \
+            | tee "$RUNNER_TEMP/public-axis-run.log"
+          grep -q '^HOLDOUT_CROP_AXIS_AB_COMPLETE ' "$RUNNER_TEMP/public-axis-run.log"
+          python3 - <<'PY'
+          import json,os
+          p=os.environ["RUNNER_TEMP"]+"/public-axis-heldout/summary.json"
+          data=json.load(open(p))
+          print("SUMMARY",json.dumps(data["totals"],ensure_ascii=False))
+          with open(os.environ["GITHUB_STEP_SUMMARY"],"a") as f:
+              f.write("## Public held-out OCR crop-axis A/B\n\n")
+              f.write("Only public images and polygons; first 750 previously studied source offsets excluded.\n\n")
+              f.write("| Metric | Value |\n|---|---:|\n")
+              for k,v in data["totals"].items(): f.write(f"| {k} | {v} |\n")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-disjoint-horizontal-vertical-crop-axis-results
+          path: ${{ runner.temp }}/public-axis-heldout/
+          retention-days: 10
+          if-no-files-found: warn
