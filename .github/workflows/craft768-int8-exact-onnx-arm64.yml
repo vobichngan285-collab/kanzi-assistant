@@ -1,0 +1,90 @@
+name: Reproduce exact CRAFT768 INT8 SHA on x86 and test unchanged ONNX on ARM64 - NO APK
+on:
+  push:
+    branches: [test/craft768-int8-arm64-android-compat-20261103]
+    paths:
+      - .github/workflows/craft768-int8-exact-onnx-arm64.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  recreate-original-x86-quantized-craft:
+    name: Recreate exact 20.95MB CRAFT768 QDQ SHA from prior successful x86 test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pinned original x86 quantization stack
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'numpy==1.26.4' 'onnx==1.17.0' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
+      - name: Obtain unchanged CRAFT weights with SHA
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft768-identical
+          curl -fL --retry 3 --retry-delay 3 --max-time 360 'https://huggingface.co/inference4j/craft-mlt-25k/resolve/290e4d5/model.onnx' -o /tmp/craft768-identical/craft.onnx
+          echo '28c05f8b5e97f3c5765d00bca556ec2397c86c954d4ac5ef73aa10043db16388  /tmp/craft768-identical/craft.onnx' | sha256sum -c -
+      - name: Generate QDQ from exactly same 9 DEV images then require prior experiment SHA
+        run: |
+          set -euo pipefail
+          python3 -u scripts/craft768_int8_static_quantize.py --source /tmp/craft768-identical/craft.onnx --output /tmp/craft768-identical/craft768_int8.onnx --report /tmp/craft768-identical/quantization.json | tee /tmp/craft768-identical/quantization.log
+          echo '9ab885d2f6669b77f70e9c8f68acfbe408c0b051501fd02d94bcaa0c7779ab15  /tmp/craft768-identical/craft768_int8.onnx' | sha256sum -c -
+          grep -q 'CRAFT_INT8_QDQ_QUANTIZATION_PASS' /tmp/craft768-identical/quantization.log
+          echo 'Recreated byte-identical CRAFT768 INT8 model from initial x86 experiment.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Transfer exactly tested INT8 weight only to next native ARM CI job (not app release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ephemeral-exact-craft768-int8-onxx
+          path: /tmp/craft768-identical/craft768_int8.onnx
+          retention-days: 1
+          if-no-files-found: error
+  test-identical-onnx-on-arm64-linux:
+    name: ARM64 Linux runs EXACT previous x86 QDQ SHA, with same 1080p FP32/INT8 frames
+    needs: recreate-original-x86-quantized-craft
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify native ARM host / no Android claim
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          echo 'Hardware is native ARM64 Linux; not Android system libraries, JNI, or actual phone.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Install exactly pinned ORT1.21.1 ARM64 Linux CPU runtime
+        run: |
+          python3 -m pip install --quiet 'numpy==1.26.4' 'onnx==1.17.0' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' 'psutil==6.1.1' requests pyclipper
+      - name: Import same 20.95MB model bytes from x86 calibration, not re-quantized ARM variant
+        uses: actions/download-artifact@v4
+        with:
+          name: ephemeral-exact-craft768-int8-onxx
+          path: /tmp/craft768-exact
+      - name: Verify exact SHA before loading ARM model
+        run: |
+          set -euo pipefail
+          echo '9ab885d2f6669b77f70e9c8f68acfbe408c0b051501fd02d94bcaa0c7779ab15  /tmp/craft768-exact/craft768_int8.onnx' | sha256sum -c -
+          echo 'ARM Linux is loading byte-identical INT8 model from previous x86 accuracy study.' >> "$GITHUB_STEP_SUMMARY"
+          curl -fL --retry 3 --retry-delay 3 --max-time 360 'https://huggingface.co/inference4j/craft-mlt-25k/resolve/290e4d5/model.onnx' -o /tmp/craft768-exact/craft.onnx
+          echo '28c05f8b5e97f3c5765d00bca556ec2397c86c954d4ac5ef73aa10043db16388  /tmp/craft768-exact/craft.onnx' | sha256sum -c -
+      - name: Native ARM Linux paired 1080p model load and sustained forward, no Android APK
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft768-exact-reports
+          python3 -u scripts/craft768_int8_1080p_host.py --fp32 /tmp/craft768-exact/craft.onnx --int8 /tmp/craft768-exact/craft768_int8.onnx --out /tmp/craft768-exact-reports --frames 24 | tee /tmp/craft768-exact-reports/run.log
+          grep -q 'CRAFT768_INT8_1080P_COMPLETE 24' /tmp/craft768-exact-reports/run.log
+          echo '### Exact prior INT8 20.95MB ONNX weights on native ARM64 Linux' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/craft768-exact-reports/summary.json >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/craft768-exact-reports/combined_memory.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep results only, never deliver model as app install
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: craft768-exact-int8-on-native-arm64-reports
+          path: /tmp/craft768-exact-reports/
+          retention-days: 10
+          if-no-files-found: warn
