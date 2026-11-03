@@ -96,6 +96,17 @@ class PaddleOcrEngine(
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val busy = AtomicBoolean(false)
+    private val evidenceRequested = AtomicBoolean(false)
+    @Volatile private var evidenceStatus = "尚未采集单帧图像证据"
+
+    fun requestEvidenceForNextDiagnostic() {
+        SingleFrameEvidence.lastFile(appContext)?.delete()
+        evidenceStatus = "正在等待手动采集"
+        evidenceRequested.set(true)
+    }
+
+    fun lastEvidenceStatus(): String = evidenceStatus
+    fun latestEvidenceZip(): File? = SingleFrameEvidence.lastFile(appContext)
     @Volatile private var engine: PaddleOCR? = null
     @Volatile private var released = false
     @Volatile private var fastScanMode = false
@@ -143,12 +154,23 @@ class PaddleOcrEngine(
                     "摄像头 NV21 帧长度不正确"
                 }
                 var bitmap = nv21ToBitmap(data, width, height, legacyNv21Jpeg)
+                val decodedBitmap = bitmap
                 try {
                     if (enhancedPreprocessing) {
                         val enhanced = enhanceForOcr(bitmap)
-                        if (enhanced !== bitmap) { bitmap.recycle(); bitmap = enhanced }
+                        if (enhanced !== bitmap) { bitmap = enhanced }
                     }
                     val result = current.recognize(bitmap)
+                    if (evidenceRequested.getAndSet(false)) {
+                        evidenceStatus = try {
+                            val saved = SingleFrameEvidence.create(appContext, data, width, height,
+                                decodedBitmap, bitmap, enhancedPreprocessing, modelId, result)
+                            "已在手机本地采集：${saved.name}，点击「导出诊断 ZIP」选择保存位置"
+                        } catch (e: Exception) {
+                            Log.e(TAG, "One-shot evidence export failed", e)
+                            "单帧证据保存失败：${e.message ?: e.javaClass.simpleName}"
+                        }
+                    }
                     // A diagnostic must measure fresh model inference, not a cached result.
                     layoutReuse.reset()
                     val layout = layoutAi.analyze(bitmap, aiLayoutEnabled &&
@@ -191,7 +213,10 @@ class PaddleOcrEngine(
                             toReadingBoxes(result.results), bitmap.width, bitmap.height)
                     )
                     withContext(Dispatchers.Main) { onResult.onResult(report) }
-                } finally { bitmap.recycle() }
+                } finally {
+                    if (bitmap !== decodedBitmap) bitmap.recycle()
+                    decodedBitmap.recycle()
+                }
             } catch (t: Throwable) {
                 Log.e(TAG, "OCR diagnostic failed", t)
                 withContext(Dispatchers.Main) { onError.onError(t.message ?: t.javaClass.simpleName) }
