@@ -1,0 +1,68 @@
+name: Publish standalone X200 combined OCR APK as public browser download
+on:
+  push:
+    branches: [test/x200-combined-horizontal-vertical-ab-20261103]
+    paths:
+      - '.github/workflows/publish-x200-combined-direct-apk.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  release-one-verified-apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Fetch already-audited GitHub Actions APK artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/standalone"
+          gh run download 41661796519 -R vobichngan285-collab/kanzi-assistant \
+            --name vivo-x200-horizontal-vertical-combined-ab-debug-apk \
+            --dir "$RUNNER_TEMP/standalone"
+          find "$RUNNER_TEMP/standalone" -maxdepth 2 -type f -printf '%f %s bytes\n'
+          test -s "$RUNNER_TEMP/standalone/Kanzi_X200_Horizontal_Vertical_Combined_AB_debug.apk"
+          echo "d1ad468866507f116676415ddc8b6743db4a99c0c00026f562bbbd01ac32556b  $RUNNER_TEMP/standalone/Kanzi_X200_Horizontal_Vertical_Combined_AB_debug.apk" | sha256sum --check --status
+          python3 - <<'PY'
+          import os, zipfile
+          f=os.path.join(os.environ["RUNNER_TEMP"],"standalone","Kanzi_X200_Horizontal_Vertical_Combined_AB_debug.apk")
+          assert os.path.getsize(f)==390399875, "APK length mismatch"
+          with zipfile.ZipFile(f) as z:
+            assert z.testzip() is None,"APK CRC failed"
+            assert "classes.dex" in z.namelist()
+            assert "assets/models/rec/inference.onnx" in z.namelist()
+          print("STANDALONE_APK_RELEASE_CHECK_PASS",os.path.getsize(f))
+          PY
+      - name: Publish standalone download as explicitly experimental prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="x200-combined-ocr-ab-20261103-v42"
+          apk="$RUNNER_TEMP/standalone/Kanzi_X200_Horizontal_Vertical_Combined_AB_debug.apk"
+          if ! gh release view "$tag" --repo vobichngan285-collab/kanzi-assistant >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --repo vobichngan285-collab/kanzi-assistant \
+              --target c727566272664ac19e24806698ea92e8eb08d969 \
+              --title '看字助手 X200 Pro 横竖排综合 A/B 实验版 v42（独立APK）' \
+              --notes '独立测试包；仅本机离线。集成横排跨行及竖排裁剪候选、同帧四组A/B、4档X200 Pro性能设置。候选只用于手动诊断，绝不覆盖正式朗读。未进行真实X200 Pro端到端性能验收。可与正式版共存。' \
+              --prerelease
+          fi
+          gh release upload "$tag" "$apk" --repo vobichngan285-collab/kanzi-assistant --clobber
+          gh release view "$tag" --repo vobichngan285-collab/kanzi-assistant --json assets,url \
+            --jq '{url:.url,assets:[.assets[]|{name:.name,url:.url,size:.size}]}'
+      - name: Verify public release asset URL and sha256 checksum disclosure
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api repos/vobichngan285-collab/kanzi-assistant/releases/tags/x200-combined-ocr-ab-20261103-v42 \
+            --jq '.assets[] | select(.name=="Kanzi_X200_Horizontal_Vertical_Combined_AB_debug.apk") | [.browser_download_url,.size,.state] | @tsv' \
+            | tee "$RUNNER_TEMP/browser_download_url.txt"
+          grep -q '^https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/' "$RUNNER_TEMP/browser_download_url.txt"
+          grep -q $'\t390399875\tuploaded$' "$RUNNER_TEMP/browser_download_url.txt"
+          echo '## Browser-copyable standalone APK URL' >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/browser_download_url.txt" >> "$GITHUB_STEP_SUMMARY"
+          echo 'sha256: d1ad468866507f116676415ddc8b6743db4a99c0c00026f562bbbd01ac32556b' >> "$GITHUB_STEP_SUMMARY"
