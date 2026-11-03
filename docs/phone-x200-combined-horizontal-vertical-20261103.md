@@ -41,3 +41,5 @@
 - `scripts/patch_x200_shadow_sdk.py`：CI下载锁定的PaddleOCR Android v3.7.0后，按锚点安全补丁新增竖排/横排单ROI同Small REC接口；不改官方源`run(bitmap)`原始流程。
 - `PaddleOcrEngine.kt`：同帧调用A的原版一次，分别触发B/C的ROI REC，诊断中生成D文本，冲突时保留原文；正式`recognizeNv21`并没有接入新候选。
 - `.github/workflows/x200-combined-shadow-smoke.yml`：独立 Java 几何/回退/性能四档回归。 `.github/workflows/x200-combined-apk.yml`：独立 Android Debug 构建，严格验证无网络权限、两个Small模型哈希及包名。
+
+本次构建验证还要求保留手机摄像头预览生命周期回归、原始0°诊断原文、离线无INTERNET权限和v42签名对照的审计结果。
