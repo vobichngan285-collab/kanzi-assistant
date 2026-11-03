@@ -1,0 +1,74 @@
+name: CRAFT768 INT8 QDQ native ARM64 Linux CPU load and speed (NOT Android) - NO APK
+on:
+  push:
+    branches: [test/craft768-int8-arm64-android-compat-20261103]
+    paths:
+      - scripts/craft768_int8_static_quantize.py
+      - scripts/craft768_int8_1080p_host.py
+      - .github/workflows/craft768-int8-arm64-linux.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-aarch64-onnx:
+    name: Native aarch64 ORT1.21.1 model load + 1080p CRAFT FP32/INT8 CPU benchmark
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Strict native ARM64 platform and no-APK guards
+        run: |
+          set -euo pipefail
+          uname -m
+          test "$(uname -m)" = "aarch64"
+          python3 -m py_compile scripts/craft768_int8_static_quantize.py scripts/craft768_int8_1080p_host.py
+          test ! -e app/src/main/assets/craft
+          echo 'Runner: Native Linux aarch64, NOT an Android emulator, not the user phone.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Install same pinned ONNX Runtime 1.21.1 CPU and quantization libraries on ARM64
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'numpy==1.26.4' 'onnx==1.17.0' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' 'psutil==6.1.1' requests pyclipper
+          python3 - <<'PY'
+          import platform, onnxruntime, numpy
+          print("NATIVE_ARM_LINUX_CPU_ENVIRONMENT",
+                "os",platform.system(),"machine",platform.machine(),
+                "ort",onnxruntime.__version__,
+                "providers",onnxruntime.get_available_providers())
+          assert platform.system()=="Linux" and platform.machine()=="aarch64"
+          assert onnxruntime.__version__=="1.21.1"
+          PY
+      - name: SHA256-pin unchanged official CRAFT FP32 model
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-arm-craft
+          curl -fL --retry 3 --retry-delay 3 --max-time 300 'https://huggingface.co/inference4j/craft-mlt-25k/resolve/290e4d5/model.onnx' -o /tmp/kanzi-arm-craft/craft.onnx
+          echo '28c05f8b5e97f3c5765d00bca556ec2397c86c954d4ac5ef73aa10043db16388  /tmp/kanzi-arm-craft/craft.onnx' | sha256sum -c -
+      - name: Recreate DEV-only calibrated QDQ CRAFT768 INT8 on native ARM, test load and output
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-arm-craft/report
+          python3 -u scripts/craft768_int8_static_quantize.py --source /tmp/kanzi-arm-craft/craft.onnx --output /tmp/kanzi-arm-craft/craft768_int8.onnx --report /tmp/kanzi-arm-craft/report/quantization.json | tee /tmp/kanzi-arm-craft/report/quantization.log
+          grep -q 'CRAFT_INT8_QDQ_QUANTIZATION_PASS' /tmp/kanzi-arm-craft/report/quantization.log
+          echo '### ARM64 native generated INT8 SHA (compare original x86 9ab885d2f6669b77f70e9c8f68acfbe408c0b051501fd02d94bcaa0c7779ab15)' >> "$GITHUB_STEP_SUMMARY"
+          sha256sum /tmp/kanzi-arm-craft/craft768_int8.onnx >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/kanzi-arm-craft/report/quantization.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Same ARM64 runner sustained 1080p CRAFT FP32 vs INT8, 24 paired frames each
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-arm-craft/report/1080p
+          python3 -u scripts/craft768_int8_1080p_host.py --fp32 /tmp/kanzi-arm-craft/craft.onnx --int8 /tmp/kanzi-arm-craft/craft768_int8.onnx --frames 24 --out /tmp/kanzi-arm-craft/report/1080p | tee /tmp/kanzi-arm-craft/report/1080p/run.log
+          grep -q 'CRAFT768_INT8_1080P_COMPLETE 24' /tmp/kanzi-arm-craft/report/1080p/run.log
+          echo '### Linux ARM64 hardware model loading and sustained detection; not Android APK/PSS/TTS' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/kanzi-arm-craft/report/1080p/summary.json >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/kanzi-arm-craft/report/1080p/combined_memory.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve metrics only, no model weights / APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: craft768-int8-native-arm64-linux-reports-only
+          path: /tmp/kanzi-arm-craft/report/
+          retention-days: 10
+          if-no-files-found: warn
