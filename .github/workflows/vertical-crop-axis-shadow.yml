@@ -1,0 +1,33 @@
+name: Isolated vertical crop X-sort axis safety (NO APK)
+on:
+  push:
+    branches: [test/phone-ocr-single-frame-diagnostic-20261103]
+    paths:
+      - 'app/src/main/java/com/vobichngan/kanzi/VerticalCropAxisGuard.java'
+      - 'scripts/VerticalCropAxisGuardSmokeTest.java'
+      - '.github/workflows/vertical-crop-axis-shadow.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  synthetic-geometry-only:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Run geometry-only synthetic fail-safe regression
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/classes"
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/classes" \
+            app/src/main/java/com/vobichngan/kanzi/VerticalCropAxisGuard.java \
+            scripts/VerticalCropAxisGuardSmokeTest.java
+          java -cp "$RUNNER_TEMP/classes" VerticalCropAxisGuardSmokeTest \
+            | tee "$RUNNER_TEMP/axis.log"
+          grep -q '^VERTICAL_CROP_AXIS_SHADOW_TEST=PASS assertions=20$' \
+            "$RUNNER_TEMP/axis.log"
+          echo 'Geometry-only model-free safety audit; no private photos, no APK, no TTS changes.' >> "$GITHUB_STEP_SUMMARY"
