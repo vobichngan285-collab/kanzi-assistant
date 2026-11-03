@@ -296,3 +296,13 @@
 
 - 在原隔离分支新增只读实验工作流 `.github/workflows/android-sdk-crop-tensor-parity.yml`，提交 `d7a988aaed6a33fcf36e5779889df28141d594e7`，回读核实。仅构建**Linux Kotlin/JVM 最小适配器**，从官方 v3.7.0 SDK 逐字取 `QuadTextCrop`、`QuadGeometry`、`OCRBox`、`RecPreprocessor`，并按正式安卓 workflow 的**同一 BGR 删除转换补丁**运行，比较以前研究的 Python 参考。固定两张公开旧图、共不超过12个 GT 框；不下载 ONNX，不运行 DET/REC/CRAFT，不构建 APK，不采集手机用户照片。
 - 工作流尚未做成功/失败验收；需要先检查 GitHub Actions run / Job / artifact 与逐样本形状、像素/张量差数值。主项目算法和正式 APK 不变。
+
+
+#### 2026-11-03 — 完成上游 PaddleOCR v3.7.0 裁剪/REC 张量**真实源码宿主**数值对照；未发现明显 Python/SDK 实现偏差
+
+- **去重明确**：此前已有 Android BGR/RGB 模型对照、72张图错误归因和同122区域自动/人工框配对；本次**均未重跑**。本次唯一新实验是将真正的上游 Kotlin SDK `QuadTextCrop.crop` + 正式构建所用 BGR 源码补丁后的 `RecPreprocessor.preprocessBatch` 在 Linux JVM 执行，对原 Python 参考的裁剪像素和 NCHW 浮点张量做逐项数值比对，不使用任何 ONNX。
+- **成功 GitHub Actions**：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41614242483 ，`sdk-crop-and-bgr-tensor-reference` **success**，日志 12 个 `ACTUAL_SDK_CROP_TENSOR` + `ACTUAL_SDK_VS_PYTHON_PARITY_COMPLETE`；首次宿主 Gradle/Kotlin 编译 **success**。结果 Artifact **13220447622**（ZIP SHA256 `3e3b36c3fb58eae7fefb0381edfd15712d7ae6205bb1be5d031c57c2fd60d000`；预计2026-11-13 09:51UTC过期），已下载 ZIP 并逐个读取数值。
+- **实际数值**：旧公开 RCTW-1406、RCTW-1409 两张照片，共12个 GT 多边形：裁剪尺寸一致 **12/12**，`[1,3,48,W]` 张量形状一致 **12/12**，其中9个样本裁剪像素和归一化张量**完全一致**；另3个像素最大只差**一个8-bit数值**，归一化张量最大绝对差 **0.00784314**，预设数值容差 **PASS**。这只是旧公开图有限宿主样本，不能声称手机实际 SDK NV21/Bitmap 测过，更不代表手机 OCR 字符准确率提升。
+- **重要研究判断**：此前同122 GT区域比较的自动框 CER16.087% vs 人工框 CER5.797% 证据保持；新发现支持此前的**旧 Python 裁剪逻辑本身与正式 SDK 较接近**，不用因此重复全量检测/识别实验。当前尚未验证手机 NV21 YUV色度采样、对焦/运动/曝光、Bitmap/旋转、自动增强与运行版 SDK 二进制；不能盲目修改 RGB/BGR 或检测阈值。
+- **永久报告**：`test/line-overlay-plan-isolated-20261103:docs/android-sdk-crop-tensor-parity-20261103.md`，提交 `bac195ff25f16c85d0b694a9641798ed84fc717c`（已远端回读确认）。适配器提交 `06eaa89dec966ef741642e42622ba2511edb7f80`、驱动 `ebede3d55c43af874f9a24328ac0f9de163cc36f`、CI `d7a988aaed6a33fcf36e5779889df28141d594e7`。只写原仓库隔离分支与此交接文件，旧结果全部保留，无正式 App 修改、无 APK。
+- **下一步门槛**：如需继续，先在隔离状态设计**用户主动触发、离线、不上传私人图片**的手机单帧真实 NV21/Bitmap/SDK 四点裁剪/张量诊断，再决定是否进行实验 APK 的真机验证；不得将上述 Linux 宿主测试冒充安卓实测。
