@@ -991,7 +991,7 @@ public class MainActivity extends CameraActivity {
         panel.addView(maxCharsInput);
 
         TextView profileTitle = new TextView(this);
-        profileTitle.setText("X200 Pro / 12GB 离线OCR性能实验");
+        profileTitle.setText("X200 Pro / 12GB 横竖排综合A/B实验");
         profileTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         profileTitle.setPadding(0, dp(16), 0, dp(4));
         panel.addView(profileTitle);
@@ -1005,7 +1005,7 @@ public class MainActivity extends CameraActivity {
             RadioButton radio = new RadioButton(this);
             radio.setId(View.generateViewId());
             radio.setTag(profile.id);
-            radio.setText(profile.label + "（异常框二次识别预算=" +
+            radio.setText(profile.label + "（每类异常候选预算=" +
                 profile.maxShadowRescuesPerDiagnostic + "）");
             radio.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
             radio.setChecked(profile.id.equals(ocrProfileId));
@@ -1014,8 +1014,8 @@ public class MainActivity extends CameraActivity {
         panel.addView(profileGroup);
         TextView profileInfo = new TextView(this);
         profileInfo.setText("独立实验包，不覆盖正式版。切换档位会重新加载Small模型；请在同一固定画面上手动诊断，比较DET/REC耗时、内存和系统热状态。"+
-            " 高质量档最多4次局部附加Small REC，仅在手动诊断对可疑竖排列执行；原OCR与实时朗读不变。"+
-            " Android热状态严重时停止附加识别；批量4不一定比批量2更快，需要真机验证。");
+            " 高质量档对横排跨行和真实竖排方向分别最多4次局部Small REC，只在同一帧手动诊断运行；四组候选不改变原OCR与实时朗读。"+
+            " 中等热状态会降低预算，严重热限制时停止额外识别；批量4不一定更快，需X200 Pro实测。");
         profileInfo.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         profileInfo.setTextColor(0xFF667085);
         panel.addView(profileInfo);
@@ -1026,7 +1026,7 @@ public class MainActivity extends CameraActivity {
         diagnosticTitle.setPadding(0, dp(18), 0, dp(4));
         panel.addView(diagnosticTitle);
         TextView diagnosticNote = new TextView(this);
-        diagnosticNote.setText("抓取手机或 USB 摄像头的下一帧，进行一次独立的原始 OCR 与版面诊断。可试听当前顺序、候选顺序或复制完整日志。编号完整性通过不代表顺序正确。注意诊断可能包含私人文字，分享前请检查。实验排序不会自动取代正式朗读。");
+        diagnosticNote.setText("单帧并行做原版、横排跨行、竖排裁剪和综合候选四路A/B；共享一次原始OCR，局部候选由同一Small实际识别。真竖排+横排价格可能产生假阳性，候选仅供人工核查，绝不接管实时朗读。日志可能包含私人文字，分享前请检查。");
         diagnosticNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         diagnosticNote.setTextColor(0xFF667085);
         panel.addView(diagnosticNote);
