@@ -181,7 +181,8 @@ class PaddleOcrEngine(
                     if (evidenceRequested.getAndSet(false)) {
                         evidenceStatus = try {
                             val saved = SingleFrameEvidence.create(appContext, data, width, height,
-                                decodedBitmap, bitmap, enhancedPreprocessing, modelId, result)
+                                decodedBitmap, bitmap, enhancedPreprocessing, modelId, result,
+                                performanceProfile)
                             "已在手机本地采集：${saved.name}，点击「导出诊断 ZIP」选择保存位置"
                         } catch (e: Exception) {
                             Log.e(TAG, "One-shot evidence export failed", e)
