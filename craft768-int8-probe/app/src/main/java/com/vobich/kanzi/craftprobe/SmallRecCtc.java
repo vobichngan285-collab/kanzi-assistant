@@ -68,15 +68,34 @@ final class SmallRecCtc {
     /** Basic scene-reading approximation, not validated multi-column document layout. */
     static <T extends Positioned> List<T> topToBottom(List<T> items) {
         List<T> ordered = new ArrayList<>(items);
+        // Sort with a TRANSITIVE comparator first. Comparing pairwise line-height
+        // overlap directly in the comparator is non-transitive and can make
+        // TimSort throw "Comparison method violates its general contract".
         ordered.sort((a,b) -> {
-            float midAy = (a.top() + a.bottom())/2f;
-            float midBy = (b.top() + b.bottom())/2f;
-            float lineHeight = Math.max(8f,Math.min(a.bottom()-a.top(),b.bottom()-b.top()));
-            if (Math.abs(midAy-midBy) <= lineHeight * .45f)
-                return Float.compare(a.left(), b.left());
-            return Float.compare(midAy, midBy);
+            int y=Float.compare((a.top()+a.bottom())/2f,
+                                (b.top()+b.bottom())/2f);
+            return y!=0?y:Float.compare(a.left(),b.left());
         });
-        return ordered;
+        List<List<T>> rows=new ArrayList<>();
+        float anchor=Float.NaN;
+        float rowHeight=0f;
+        for(T item:ordered) {
+            float center=(item.top()+item.bottom())/2f;
+            float height=Math.max(1f,item.bottom()-item.top());
+            if(rows.isEmpty() ||
+               Math.abs(center-anchor)>Math.max(8f,Math.min(rowHeight,height)*.45f)) {
+                rows.add(new ArrayList<>());
+                anchor=center;
+                rowHeight=height;
+            }
+            rows.get(rows.size()-1).add(item);
+        }
+        List<T> result=new ArrayList<>(ordered.size());
+        for(List<T> row:rows) {
+            row.sort((a,b)->Float.compare(a.left(),b.left()));
+            result.addAll(row);
+        }
+        return result;
     }
 
     interface Positioned {
