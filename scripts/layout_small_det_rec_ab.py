@@ -141,8 +141,8 @@ def score(boxes,predictions,gt):
 
 def aggregate(rows,cohort,mode):
     filtered=[x for x in rows if x["cohort"]==cohort]
-    gt=sum(x["gt_lines"] for x in filtered)
-    chars=sum(x["gt_chars"] for x in filtered)
+    gt=sum(x["A_gt_lines"] for x in filtered)
+    chars=sum(x["A_gt_chars"] for x in filtered)
     def s(field):return sum(x[mode+"_"+field] for x in filtered)
     return dict(cohort=cohort,mode=mode,photos=len(filtered),gt_lines=gt,
                 matched_lines=s("matched_gt"),line_recall=round(s("matched_gt")/max(1,gt),5),
