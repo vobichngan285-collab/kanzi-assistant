@@ -209,3 +209,10 @@
 - 用户允许继续公开真图可视检查。已实际查询到独立工作流 Run **41608904979**：`public-photo-visual-review` = **failure**；链接：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41608904979 。
 - 分步日志：复用先前 Run 41607539013 几何 Artifact 和 Python 脚本编译均通过；失败发生在请求 `https://datasets-server.huggingface.co/rows`（RCTW offset=1400, length=12）时：`requests.exceptions.HTTPError: 502 Server Error: Bad Gateway`；**没有生成或验收任何原图叠画图片**。
 - 该错误属于公开数据源读取失败，**不证明模型或单行框算法好坏**。失败流程没有 OCR 推理、Android APK、TTS；后续只对图像获取方法做有限重试，不能改变既有盒子、标注与研究范围。
+
+
+#### 2026-11-03 — 可视图来源 HTTP 502 有限重试修正（未修改 OCR）
+
+- 既有可视化专项 Run **41608904979** 在公开元数据请求 RCTW1400..1411 处被 HTTP 502 中断，已真实读取 job 日志；旧几何 Artifact 下载步骤成功，**未生成可视叠图**。
+- 只修改隔离分支 `test/line-overlay-plan-isolated-20261103:scripts/line_overlay_visual_audit.py` 的**公开图片读取**：对网络 502/429 等 `RequestException` 增加最多4次有限退避重试、12行元数据失败时按固定 `4+4+4` 分批请求；仍校验原来的12个 row_idx。新代码提交 `81599b8eb90c0a8bb3e6b420835f96530a6ad698`，远端 blob 已回读匹配。
+- 此项**绝不**改变 CRAFT、DBNet、Small、`LineOverlayPlanner`、读取的旧检测框、GT、评估指标、正式 App、TTS 或 APK；新一次工作流状态与图片像素仍须单独验收，不能宣称成功。
