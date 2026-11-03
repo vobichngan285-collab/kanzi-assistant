@@ -31,3 +31,13 @@
 ## 研究目标
 
 先定位**源帧画质 / NV21 解码 / 增强 / DBNet 原框 / QuadTextCrop / REC 张量**是否存在实际手机端问题；对照此前固定公开真图的同122区域 CER（自动框16.087%，人工GT框5.797%），不要把公开云端实验误当成手机实测提升。实验 APK 的成功构建并不代表手机识别率提高，正式版模型/识别参数、白框/TTS 不因本次诊断自动改变。
+
+
+## 2026-11-03 构建验收记录（不可替代真机测试）
+
+- **成功 Actions**：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41617248713 ，Job `build` 全部步骤 success，日志 `BUILD SUCCESSFUL`、`PHONE_SINGLE_FRAME_DIAG_APK_AUDIT_PASS`。
+- **GitHub APK Artifact**：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41617248713/artifacts/13222475520 ，档案名 `phone-single-frame-ocr-diagnostic-apk`，ZIP SHA256 `d36481d327f51d583cc2becc8df8cda5312ea000d899e696d220a7e9a8666eb3`；ZIP约194.7MB，内含APK、README和SHA256清单。Artifact 10天保留，过期需按记录重构。
+- APK 文件 `Kanzi_OCR_SingleFrame_Diagnostic_debug.apk`，**390,367,103 字节**，SHA256 **`4b11d1deac9c41cf61bd474dd7ad84e07133db2cd9dd0bff51e1249b85d6adfd`**；已实际下载 ZIP 并解包独立重新计算哈希与 Actions生成清单一致。
+- 构建审核通过：`applicationId=com.vobich.kanzi.framelab`、`versionName=0.9.9-single-frame-diagnostic`，包含经 SHA 钉住的 Small DET `d73e0058...` 和 Small REC `5435fd74...`、原生 arm64 ONNX运行时，打包后的实际 Manifest 无 `android.permission.INTERNET`，符合分离和离线隐私目标。
+- **不可声称已通过真机实拍或USB/UVC集成测试**：Actions是 Linux Android交叉编译 + 静态 APK模型/Manifest检查；用户安装并手动采集后，需要检查生成的 ZIP 是否包含 `frame.nv21`、`actual-ocr-input.png`、`metadata.json`、`crops` 和 `tensors` 以验证手机实际运行。
+- 较早 Run `41616956581` 虽已成功编译及模型/包名/权限检查，但因 README 文件晚于其快照提交而在复制说明时失败；该提交**不是本次交付产物**。实际发布采用修正后成功 Run **41617248713**。
