@@ -1,0 +1,79 @@
+name: FAST-T (MSRA Chinese) vs existing Small OCR same 72 photos - NO APK
+on:
+  push:
+    branches: [test/fast-t-msra512-vs-small-20261103]
+    paths:
+      - scripts/fast_t_export_probe.py
+      - scripts/fast_t_small_ocr_ab.py
+      - .github/workflows/fast-t-msra-small-ocr-ab.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fast-t-onnx-realphoto:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout exact official FAST research source (ephemeral CI only)
+        uses: actions/checkout@v4
+        with:
+          repository: czczup/FAST
+          ref: 9cfeda29bfd16c4bc260740a5e39afb2cfdfd23f
+          path: _upstream_fast
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify export and scoring scripts before network downloads
+        run: python3 -m py_compile scripts/fast_t_export_probe.py scripts/fast_t_small_ocr_ab.py scripts/craft_small_detector_ab.py
+      - name: Install PyTorch CPU for one-time ONNX conversion
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet --index-url https://download.pytorch.org/whl/cpu 'torch==2.5.1'
+          python3 -m pip install --quiet 'numpy==1.26.4' 'onnx==1.17.0' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
+      - name: Fetch official FAST-T MSRA-512 and original Small recognition models
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fast-t-models
+          curl -fL --retry 4 --retry-delay 4 --max-time 300 'https://github.com/czczup/FAST/releases/download/release/fast_tiny_msra_512_finetune_ic17mlt.pth' -o /tmp/fast-t-models/fast_t_msra512.pth
+          curl -fL --retry 4 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx' -o /tmp/fast-t-models/small_det.onnx
+          curl -fL --retry 4 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx' -o /tmp/fast-t-models/small_rec.onnx
+          curl -fL --retry 4 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml' -o /tmp/fast-t-models/small_rec.yml
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  /tmp/fast-t-models/small_det.onnx' | sha256sum -c -
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/fast-t-models/small_rec.onnx' | sha256sum -c -
+          echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/fast-t-models/small_rec.yml' | sha256sum -c -
+          test "$(stat -c '%s' /tmp/fast-t-models/fast_t_msra512.pth)" -gt 15000000
+          sha256sum /tmp/fast-t-models/fast_t_msra512.pth >> "$GITHUB_STEP_SUMMARY"
+      - name: Convert official checkpoint into raw-logit ONNX with Torch-to-ONNX numerical parity
+        run: |
+          set -euo pipefail
+          python3 -u scripts/fast_t_export_probe.py --fast-repo ./_upstream_fast --checkpoint /tmp/fast-t-models/fast_t_msra512.pth --out /tmp/fast-t-models/fast_t_msra512.onnx | tee /tmp/fast_t_export.log
+          grep -q 'FAST_T_MSRA_ONNX_CPU_EXPORT_PASS' /tmp/fast_t_export.log
+      - name: First 6 public-photo smoke test on FAST/Small with original REC
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fast-t-smoke
+          python3 -u scripts/fast_t_small_ocr_ab.py --models /tmp/fast-t-models --out /tmp/fast-t-smoke --max-photos 6 | tee /tmp/fast-t-smoke/run.log
+          grep -q 'FAST_T_REALPHOTO_EXPERIMENT_COMPLETE' /tmp/fast-t-smoke/run.log
+      - name: Full original 72 public real-photo detector A/B/C and CPU latency
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fast-t-full
+          python3 -u scripts/fast_t_small_ocr_ab.py --models /tmp/fast-t-models --out /tmp/fast-t-full | tee /tmp/fast-t-full/run.log
+          grep -q 'FAST_T_REALPHOTO_EXPERIMENT_COMPLETE' /tmp/fast-t-full/run.log
+          echo '### FAST-T MSRA512 / original Small and fusion; one Small REC; no Android APK' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/fast-t-full/summary.json >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/fast-t-full/recovery.json >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/fast-t-full/limitations.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Save numeric reports and deployment caveats (no photos or weights)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fast-t-msra512-vs-small-realphoto-results
+          path: |
+            /tmp/fast-t-smoke/
+            /tmp/fast-t-full/
+            /tmp/fast_t_export.log
+          retention-days: 10
+          if-no-files-found: warn
