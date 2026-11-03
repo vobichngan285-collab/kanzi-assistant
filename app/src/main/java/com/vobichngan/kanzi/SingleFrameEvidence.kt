@@ -48,6 +48,7 @@ object SingleFrameEvidence {
         context: Context, nv21: ByteArray, width: Int, height: Int,
         rawBitmap: Bitmap, ocrBitmap: Bitmap,
         enhanced: Boolean, modelId: String, result: OCRRunResult,
+        profile: OcrPerformanceProfile,
     ): File {
         check(nv21.size.toLong() == width.toLong() * height.toLong() * 3L / 2L)
         val folder = File(context.filesDir, "ocr-single-frame")
@@ -60,6 +61,11 @@ object SingleFrameEvidence {
                     val info = JSONObject()
                     info.put("schema", 1)
                     info.put("model", modelId)
+                    info.put("x200_profile", profile.id)
+                    info.put("ocr_cpu_threads", profile.cpuThreads)
+                    info.put("ocr_rec_batch", profile.recBatchSize)
+                    info.put("shadow_rescue_budget", profile.maxShadowRescuesPerDiagnostic)
+                    info.put("shadow_results_affect_live_ocr", false)
                     info.put("camera_frame_width", width)
                     info.put("camera_frame_height", height)
                     info.put("bitmap_width", ocrBitmap.width)
