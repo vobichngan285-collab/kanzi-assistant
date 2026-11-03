@@ -40,7 +40,20 @@ internal object HybridMediumCompileProbe {
         mediumRecConfigAssetPath = mediumRecYamlPrivatePath
     )
 
-    /** Explicit opt-in only. Normal PaddleOCR.recognize() stays Small-only. */
-    suspend fun tryOneFrame(engine: PaddleOCR, bitmap: Bitmap) =
-        engine.recognizeWithMediumRescue(bitmap)
+    /**
+     * Research-only call: one retry in fast scan and three in long reading.
+     * If the reading epoch has changed, no further Medium retries are started.
+     * A native inference already in progress cannot be interrupted by this callback.
+     */
+    suspend fun tryOneFrame(
+        engine: PaddleOCR,
+        bitmap: Bitmap,
+        fastScan: Boolean,
+        readingEpoch: java.util.concurrent.atomic.AtomicInteger,
+        capturedEpoch: Int
+    ) = engine.recognizeWithMediumRescue(
+        bitmap = bitmap,
+        mediumBudget = if (fastScan) 1 else 3,
+        canContinue = { readingEpoch.get() == capturedEpoch }
+    )
 }
