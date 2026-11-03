@@ -293,7 +293,7 @@ final class CraftSmallRecLinkage implements AutoCloseable {
             loadMs,Debug.getPss(),reading);
     }
 
-    @Override public synchronized void close() {
+    @Override public synchronized void close() throws Exception {
         if(recSession!=null) {
             recSession.close();
             recSession=null;
