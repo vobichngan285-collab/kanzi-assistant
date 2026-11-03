@@ -231,7 +231,7 @@ public final class TextFlowRebuilder {
         return output.toString().trim();
     }
 
-    private static boolean sameVisualRow(ReadingOrder.Box aa,ReadingOrder.Box bb,
+    static boolean sameVisualRow(ReadingOrder.Box aa,ReadingOrder.Box bb,
                                          boolean crowdedA, boolean crowdedB) {
         ReadingOrder.Box a=aa.left()<=bb.left()?aa:bb;
         ReadingOrder.Box b=a==aa?bb:aa;
@@ -251,7 +251,7 @@ public final class TextFlowRebuilder {
         return dy < Math.max(3.2f,Math.min(ha,hb)*.39f);
     }
 
-    private static boolean[] denseTextStrips(List<ReadingOrder.Box> boxes) {
+    static boolean[] denseTextStrips(List<ReadingOrder.Box> boxes) {
         boolean[] result=new boolean[boxes.size()];
         for(int i=0;i<boxes.size();i++) {
             ReadingOrder.Box a=boxes.get(i);
