@@ -29,7 +29,7 @@ internal class Craft768Int8AndroidProbe(private val context: Context) : Closeabl
         val checksumVerificationMs: Long,
         val onnxSessionLoadMs: Long,
         val modelBytes: Long,
-        val pssAfterLoadKb: Int,
+        val pssAfterLoadKb: Long,
         val nativeHeapAfterLoadKb: Long
     )
 
@@ -39,7 +39,7 @@ internal class Craft768Int8AndroidProbe(private val context: Context) : Closeabl
         val outputShape: List<Long>,
         val preprocessingAndInferenceMs: Long,
         val inferenceOnlyMs: Long,
-        val pssAfterInferenceKb: Int,
+        val pssAfterInferenceKb: Long,
         val nativeHeapAfterInferenceKb: Long,
         val sampleOutput: Float
     )
