@@ -2,7 +2,7 @@
 """Ephemeral visual-only audit for fixed public RCTW 1400..1411 samples.
 No OCR inference, no APK, no TTS, no source image committed to repository.
 """
-import argparse, hashlib, io, json
+import argparse, hashlib, io, json, time
 from pathlib import Path
 from urllib.parse import urlparse
 import requests
@@ -20,6 +20,34 @@ def outline(draw, quad, color, scale=1, width=3, label=None):
         draw.rectangle([x,y-18,x+8*len(label)+8,y],fill='#171717')
         draw.text((x+3,y-16),label,fill=color)
 
+def get_with_retry(session, url, *, params=None, timeout=90, attempts=4):
+    # Retry transient public dataset HTTP 502 without repeating any OCR inference.
+    for attempt in range(attempts):
+        try:
+            response = session.get(url, params=params, timeout=timeout)
+            response.raise_for_status()
+            return response
+        except requests.RequestException as exc:
+            if attempt + 1 == attempts:
+                raise RuntimeError(f"public source failed after {attempts} attempts: {url}") from exc
+            delay = min(8, 2 ** attempt)
+            print("PUBLIC_SOURCE_RETRY", attempt + 1, type(exc).__name__, delay, flush=True)
+            time.sleep(delay)
+
+def fixed_rows(session):
+    params = {'dataset':'Yesianrohn/OCR-Data', 'config':'default', 'split':'RCTW'}
+    try:
+        rows = get_with_retry(session, BASE, params={**params, 'offset':1400, 'length':12}).json()['rows']
+    except (requests.RequestException, RuntimeError, KeyError):
+        print("PUBLIC_SOURCE_SPLIT_FALLBACK", "4+4+4", flush=True)
+        rows = []
+        for offset in (1400, 1404, 1408):
+            part = get_with_retry(session, BASE, params={**params, 'offset':offset, 'length':4}).json()['rows']
+            rows.extend(part)
+    if [r['row_idx'] for r in rows] != IDS:
+        raise RuntimeError("public RCTW rows no longer match frozen photo IDs")
+    return rows
+
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument('--geometry',required=True)
@@ -29,17 +57,14 @@ def main():
     evidence=json.loads(Path(a.geometry).read_text())
     assert [z['photo'] for z in evidence]==[f'RCTW-{i}' for i in IDS]
     session=requests.Session()
-    j=session.get(BASE,params={'dataset':'Yesianrohn/OCR-Data','config':'default',
-                                'split':'RCTW','offset':1400,'length':12},timeout=90)
-    j.raise_for_status();rows=j.json()['rows']
-    assert [r['row_idx'] for r in rows]==IDS
+    rows=fixed_rows(session)
     report=[]
     for sample,row in zip(evidence,rows):
         img_url=(row['row'].get('image') or {}).get('src','')
         p=urlparse(img_url)
         if p.scheme!='https' or not (p.hostname or '').endswith('huggingface.co'):
             raise RuntimeError('Unexpected public dataset image host')
-        resp=session.get(img_url,timeout=80);resp.raise_for_status()
+        resp=get_with_retry(session,img_url,timeout=80)
         if len(resp.content)>18000000:raise RuntimeError('Unexpected image size')
         original=Image.open(io.BytesIO(resp.content)).convert('RGB')
         w,h=original.size
