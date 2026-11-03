@@ -23,15 +23,14 @@ def photos():
 
 def detect(sess,im):
     h,w=im.shape[:2]
-    scale=min(480/w,480/h)
-    rw,rh=max(1,round(w*scale)),max(1,round(h*scale))
-    canvas=np.zeros((480,480,3),dtype=np.uint8)
-    canvas[:rh,:rw]=cv2.resize(im,(rw,rh))
+    # Match the existing Android LayoutAiEngine exactly: stretch to 480x480,
+    # rather than letterbox; scale_factor is [480/h,480/w].
+    canvas=cv2.resize(im,(480,480),interpolation=cv2.INTER_LINEAR)
     rgb=cv2.cvtColor(canvas,cv2.COLOR_BGR2RGB).astype(np.float32)/255.
-    # Explicitly a diagnostic preprocessing assumption; verify against exporter before accuracy claims.
+    # Matches Android LayoutAiEngine pixel normalization; exporter parity still unverified.
     chw=np.ascontiguousarray(((rgb-np.array([.485,.456,.406],dtype=np.float32))/
          np.array([.229,.224,.225],dtype=np.float32)).transpose(2,0,1)[None])
-    outputs=sess.run(None,{"image":chw,"scale_factor":np.array([[1/scale,1/scale]],np.float32)})
+    outputs=sess.run(None,{"image":chw,"scale_factor":np.array([[480/h,480/w]],np.float32)})
     raw=np.asarray(outputs[0]); n=int(np.asarray(outputs[1]).reshape(-1)[0])
     return raw[:n],(w,h)
 
@@ -93,7 +92,7 @@ def main():
     (out/"summary.json").write_text(json.dumps(summaries,indent=2))
     (out/"limitations.txt").write_text(
         "Layout center coverage is NOT OCR DET recall or CER. "
-        "Layout model preprocessing is provisional and needs exporter parity. "
+        "Layout preprocessing matches Android LayoutAiEngine but exporter parity is unverified. "
         "No local Small DET or Small REC ran in this first-stage diagnostic. "
         "No photos or model binaries stored in artifacts. "
         "No Android performance or APK test.\n")
