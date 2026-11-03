@@ -12,7 +12,6 @@ import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
-import android.graphics.RectF;
 import android.media.ExifInterface;
 import android.net.Uri;
 import android.os.BatteryManager;
@@ -593,18 +592,6 @@ public class ProbeActivity extends Activity {
             decoded = corrected;
         }
         return decoded;
-    }
-
-    private Bitmap letterbox1080(Bitmap src) {
-        Bitmap out = Bitmap.createBitmap(FRAME_W, FRAME_H, Bitmap.Config.ARGB_8888);
-        Canvas canvas = new Canvas(out);
-        canvas.drawColor(Color.WHITE);
-        float ratio = Math.min(FRAME_W / (float) src.getWidth(), FRAME_H / (float) src.getHeight());
-        float w = src.getWidth() * ratio, h = src.getHeight() * ratio;
-        canvas.drawBitmap(src, null,
-                new RectF((FRAME_W-w)/2f, (FRAME_H-h)/2f, (FRAME_W+w)/2f, (FRAME_H+h)/2f),
-                new Paint(3));
-        return out;
     }
 
     private void loadImage(Uri uri, String kind) {
