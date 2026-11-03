@@ -1,0 +1,133 @@
+name: CRAFT768 Android compatibility compile and 1080p host performance - NO APK
+on:
+  push:
+    branches: [test/craft768-android-compile-host-profile-20261103]
+    paths:
+      - app/src/main/java/com/vobichngan/kanzi/Craft768AndroidProbe.kt
+      - scripts/profile_craft768_1080p_host.py
+      - .github/workflows/craft768-android-compat-host-profile.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  android-compile-only:
+    name: Compile Android CRAFT768 ORT probe, no packaging and no device claim
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: PaddlePaddle/PaddleOCR
+          ref: v3.7.0
+          path: third_party/PaddleOCR
+      - name: Prepare same original SDK, Small model files, Android dependencies
+        run: |
+          set -euo pipefail
+          SDK=third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk
+          test -s "$SDK/src/main/java/com/paddle/ocr/PaddleOCR.kt"
+          rm -f "$SDK/build.gradle.kts"
+          mkdir -p "$SDK/src/main/assets/models/det" "$SDK/src/main/assets/models/rec"
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/5994b4f/inference.onnx' -o "$SDK/src/main/assets/models/det/inference.onnx"
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx' -o "$SDK/src/main/assets/models/rec/inference.onnx"
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml?download=true' -o "$SDK/src/main/assets/models/rec/inference.yml"
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/assets/models/det/inference.onnx' | sha256sum -c -
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/assets/models/rec/inference.onnx' | sha256sum -c -
+          test -s "$SDK/src/main/assets/models/rec/inference.yml"
+          cat > "$SDK/build.gradle" <<'GRADLE'
+          plugins { id 'com.android.library'; id 'org.jetbrains.kotlin.android' }
+          android {
+              namespace 'com.paddle.ocr'
+              compileSdk 36
+              defaultConfig { minSdk 26 }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = '17' }
+              buildTypes { release { minifyEnabled false } }
+          }
+          dependencies {
+              implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.21.1'
+              api 'com.quickbirdstudios:opencv:4.5.3.0'
+              implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
+              implementation 'androidx.core:core-ktx:1.15.0'
+          }
+          GRADLE
+          # This research probe is not invoked and does not package the 83MB ONNX.
+          test ! -e app/src/main/assets/craft
+          test ! -e "$SDK/src/main/assets/craft"
+          grep -q 'class Craft768AndroidProbe' app/src/main/java/com/vobichngan/kanzi/Craft768AndroidProbe.kt
+          ! grep -R 'Craft768AndroidProbe(' app/src/main/java/com/vobichngan/kanzi/MainActivity.java app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt
+          echo 'CRAFT768 Android code is compile-only, never invoked by normal app flows.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: third_party/AndroidUSBCamera
+      - name: Apply previously validated UVC source compatibility patch
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_uvc_resolution.py third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/MultiCameraClient.kt
+          python3 scripts/patch_usbmonitor.py third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("third_party/AndroidUSBCamera/libnative/build.gradle")
+          s=p.read_text()
+          old="abiFilters 'armeabi-v7a','arm64-v8a', \"x86\", \"x86_64\""
+          if s.count(old)!=1:raise SystemExit("Unexpected UVC native ABI configuration")
+          p.write_text(s.replace(old,"abiFilters 'armeabi-v7a','arm64-v8a'",1))
+          print("Retained 2 Android phone ABIs")
+          PY
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile Android app and Paddle SDK source WITHOUT assemble or package
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --no-parallel --max-workers=2 --stacktrace             :ppocr-sdk:compileDebugKotlin             :app:compileDebugKotlin             :app:compileDebugJavaWithJavac
+          if find app/build -type f -name '*.apk' -print -quit | grep -q .; then
+            echo 'Unexpected APK: abort'
+            exit 1
+          fi
+          echo 'Android compile-only check completed successfully; no APK assembled, signed, installed or published.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Important: Android model execution / real phone PSS and TTS NOT tested by compilation.' >> "$GITHUB_STEP_SUMMARY"
+  sustained-1080p-linux-host:
+    name: Actual 1080p-sized photo buffers, ONNX 768 CPU and RSS - HOST ONLY
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install fixed ONNX CPU profiling dependencies
+        run: |
+          python3 -m pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper 'psutil==6.1.1'
+      - name: Download SHA-pinned original CRAFT ONNX only
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft768-profile
+          curl -fL --retry 3 --retry-delay 2 --max-time 300 'https://huggingface.co/inference4j/craft-mlt-25k/resolve/290e4d5/model.onnx' -o /tmp/craft768-profile/craft.onnx
+          echo '28c05f8b5e97f3c5765d00bca556ec2397c86c954d4ac5ef73aa10043db16388  /tmp/craft768-profile/craft.onnx' | sha256sum -c -
+      - name: Profile one persistent CRAFT768 session on 24 1080p-like real photo buffers
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft768-profile/results
+          python3 -u scripts/profile_craft768_1080p_host.py --model /tmp/craft768-profile/craft.onnx --frames 24 --out /tmp/craft768-profile/results | tee /tmp/craft768-profile/results/run.log
+          grep -q 'CRAFT768_HOST_CPU_PROFILE_COMPLETE' /tmp/craft768-profile/results/run.log
+          echo '### CRAFT768 same session sustained 1920×1080 letterbox public-photo frames (Linux host ONLY)' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/craft768-profile/results/summary.json >> "$GITHUB_STEP_SUMMARY"
+          echo 'Not a mobile device inference, no actual UVC camera, no TTS, no phone temperature/PSS.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Save only numeric host profiling results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: craft768-1080p-host-only-no-apk
+          path: /tmp/craft768-profile/results/
+          retention-days: 10
+          if-no-files-found: warn
