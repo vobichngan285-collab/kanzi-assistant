@@ -54,6 +54,11 @@ jobs:
               implementation 'androidx.core:core-ktx:1.15.0'
           }
           GRADLE
+          # Preserve the existing branch's separate HybridMediumCompileProbe contracts.
+          # These temporary upstream SDK compatibility patches are compile-only;
+          # neither Medium nor CRAFT is deployed or integrated into MainActivity.
+          python3 scripts/patch_android_sdk_medium_probe.py "$SDK"
+          python3 scripts/upgrade_hybrid_medium_probe_budget.py "$SDK"
           # This research probe is not invoked and does not package the 83MB ONNX.
           test ! -e app/src/main/assets/craft
           test ! -e "$SDK/src/main/assets/craft"
