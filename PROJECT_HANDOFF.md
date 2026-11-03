@@ -278,3 +278,9 @@
 - 深入读取正式构建指定上游 **PaddleOCR v3.7.0** 的实际 `OCREngine.kt`、`QuadTextCrop.kt`、`QuadGeometry.kt`、`RecPreprocessor.kt`、`BitmapUtils.kt`。识别链路源码为：Android Bitmap→`BitmapUtils.bitmapToBGRMat`→`QuadTextCrop.crop`（`minAreaRect` + perspective warp, 竖排旋转）→`RecPreprocessor.preprocessBatch`（48高、最长3200、`/127.5-1`、NCHW）。正式 `.github/workflows/android.yml` 构建时会将上游 `RecPreprocessor` 的 BGR→RGB 变换**删除**，使其输入 BGR 与 `inference.yml` 保持一致。
 - **真正尚未验收的独立问题：** 在公开图像、同一多边形条件下执行**真实上游 SDK 的裁剪 + 构建补丁后的识别张量**，与前期 Python 参考 `crop_box + BGR` 做数值差异比对；这不需重新运行任何 DET/REC/CRAFT 模型，且不能冒称测试了 Android 真机 NV21→Bitmap。
 - 本条仅为开始前的只读源码核查与任务界定。正式 App 不动，未构建 APK；后续代码/CI和数值验收逐阶段追加到本交接文件。
+
+
+#### 2026-11-03 — Android SDK 真裁剪/张量宿主核对：最小 Kotlin 适配器已写入隔离分支
+
+- `test/line-overlay-plan-isolated-20261103:scripts/AndroidSdkCropTensorProbe.kt` 新增，提交 `06eaa89dec966ef741642e42622ba2511edb7f80`；已从 GitHub 回读源码确认一致。用途是在**Linux Kotlin/JVM** 执行上游 v3.7.0 的 `QuadTextCrop.crop` 和构建期 BGR 补丁后 `RecPreprocessor.preprocessBatch`，用固定公开图片/四点框输出匿名裁剪与张量数值供 Python 比对；不下载模型、无 OCR 推理、无真实 Android Bitmap/手机、无 APK。
+- **状态：只有适配器代码已提交，未编译、未执行、没有数值或准确率结果**；后续将追加独立测试驱动与工作流，再核查运行日志。正式 App/CRAFT/DBNet/REC 与历史实验未改。
