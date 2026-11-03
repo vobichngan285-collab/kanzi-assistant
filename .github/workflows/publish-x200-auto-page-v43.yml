@@ -23,7 +23,10 @@ jobs:
           apk="$RUNNER_TEMP/v43/Kanzi_X200_Horizontal_Vertical_Combined_AB_debug.apk"
           test -s "$apk"
           test "$(stat -c%s "$apk")" -eq 390399871
-          (cd "$RUNNER_TEMP/v43" && sha256sum -c SHA256SUMS.txt)
+          expected="$(awk 'NR==1 {print $1}' "$RUNNER_TEMP/v43/SHA256SUMS.txt")"
+          actual="$(sha256sum "$apk" | awk '{print $1}')"
+          test -n "$expected" && test "$expected" = "$actual"
+          echo "VERIFIED_SHA256=$actual" >> "$GITHUB_STEP_SUMMARY"
           unzip -t "$apk" | tail -1
           signer="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
           test -x "$signer"
