@@ -1,0 +1,76 @@
+name: CRAFT768 INT8 unchanged local-ROI on prior known offset800 dense cases - NO APK
+on:
+  push:
+    branches: [test/craft768-int8-conditional-local-roi-20261103]
+    paths:
+      - .github/workflows/craft768-int8-conditional-roi-known800.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  local-roi-36-freshish-public-scenes:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify this is public-scene research only and syntax-check predeclared GT-free ROI experiment
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/craft768_int8_conditional_local_roi_ab.py scripts/test_craft768_int8_conditional_local_roi.py
+          grep -q 'MAX_ROIS=2' scripts/craft768_int8_conditional_local_roi_ab.py
+          grep -q '1100,12' scripts/craft768_int8_conditional_local_roi_ab.py
+          echo 'Only tests research Python scripts; production Android source untouched and no APK built.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Install exact prior research CPU stack
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'numpy==1.26.4' 'onnx==1.17.0' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' 'psutil==6.1.1' requests pyclipper
+      - name: Check deterministic trigger, geometry and duplicate gate without GT
+        run: |
+          set -euo pipefail
+          PYTHONPATH=scripts python3 -u scripts/test_craft768_int8_conditional_local_roi.py | tee /tmp/craft-roi-gate.log
+          grep -q 'CRAFT_LOCAL_ROI_SYNTHETIC_GATE_TEST_PASS' /tmp/craft-roi-gate.log
+      - name: Download and SHA verify unchanged CRAFT and PP-OCRv6 Small DET REC
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft-local-roi-models
+          curl -fL --retry 3 --retry-delay 3 --max-time 360 'https://huggingface.co/inference4j/craft-mlt-25k/resolve/290e4d5/model.onnx' -o /tmp/craft-local-roi-models/craft.onnx
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx' -o /tmp/craft-local-roi-models/det.onnx
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx' -o /tmp/craft-local-roi-models/small_rec.onnx
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml' -o /tmp/craft-local-roi-models/small_rec.yml
+          echo '28c05f8b5e97f3c5765d00bca556ec2397c86c954d4ac5ef73aa10043db16388  /tmp/craft-local-roi-models/craft.onnx' | sha256sum -c -
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  /tmp/craft-local-roi-models/det.onnx' | sha256sum -c -
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/craft-local-roi-models/small_rec.onnx' | sha256sum -c -
+          echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/craft-local-roi-models/small_rec.yml' | sha256sum -c -
+      - name: Generate EXACT original 20.95MB INT8 QDQ CRAFT using 9 preset DEV-only calibration images
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft-local-roi-results
+          python3 -u scripts/craft768_int8_static_quantize.py             --source /tmp/craft-local-roi-models/craft.onnx             --output /tmp/craft-local-roi-models/craft768_int8.onnx             --report /tmp/craft-local-roi-results/quantization.json | tee /tmp/craft-local-roi-results/quantization.log
+          echo '9ab885d2f6669b77f70e9c8f68acfbe408c0b051501fd02d94bcaa0c7779ab15  /tmp/craft-local-roi-models/craft768_int8.onnx' | sha256sum -c -
+      - name: Smoke-check 6 previously studied offset-800 public photos, no annotation-guided proposals
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft-local-roi-results/smoke
+          python3 -u scripts/craft768_int8_conditional_local_roi_ab.py             --models /tmp/craft-local-roi-models             --quant /tmp/craft-local-roi-models/craft768_int8.onnx             --out /tmp/craft-local-roi-results/smoke --cohort DIAGNOSTIC_800 --max-photos 6             | tee /tmp/craft-local-roi-results/smoke/run.log
+          grep -q 'CRAFT_LOCAL_ROI_AB_COMPLETE 6' /tmp/craft-local-roi-results/smoke/run.log
+      - name: Evaluate full 36 previously studied offset-800 public scene photos, Small vs full CRAFT vs <=2-ROI fallback
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft-local-roi-results/check
+          python3 -u scripts/craft768_int8_conditional_local_roi_ab.py             --models /tmp/craft-local-roi-models             --quant /tmp/craft-local-roi-models/craft768_int8.onnx             --out /tmp/craft-local-roi-results/check --cohort DIAGNOSTIC_800             | tee /tmp/craft-local-roi-results/check/run.log
+          grep -q 'CRAFT_LOCAL_ROI_AB_COMPLETE 36' /tmp/craft-local-roi-results/check/run.log
+          echo '### Predeclared 36 public scene photos Small / full CRAFT / Small + 2 local CRAFT ROI' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/craft-local-roi-results/check/summary.json >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/craft-local-roi-results/check/meta.json >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/craft-local-roi-results/check/limitations.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload metrics only; no model weights, photos or APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: craft768-int8-small-conditional-roi-known800-diagnostics
+          path: /tmp/craft-local-roi-results/
+          retention-days: 10
+          if-no-files-found: warn
