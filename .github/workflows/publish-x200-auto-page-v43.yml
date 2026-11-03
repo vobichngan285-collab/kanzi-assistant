@@ -1,0 +1,76 @@
+name: Publish X200 auto page rotation v43 direct APK
+on:
+  push:
+    branches: [test/x200-combined-horizontal-vertical-ab-20261103]
+    paths:
+      - '.github/workflows/publish-x200-auto-page-v43.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish-compiled-apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - name: Download and verify previously compiled v43 APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/v43" "$RUNNER_TEMP/v42"
+          gh run download 41683998618 -R vobichngan285-collab/kanzi-assistant --name vivo-x200-horizontal-vertical-combined-ab-debug-apk --dir "$RUNNER_TEMP/v43"
+          apk="$RUNNER_TEMP/v43/Kanzi_X200_Horizontal_Vertical_Combined_AB_debug.apk"
+          test -s "$apk"
+          test "$(stat -c%s "$apk")" -eq 390399871
+          (cd "$RUNNER_TEMP/v43" && sha256sum -c SHA256SUMS.txt)
+          unzip -t "$apk" | tail -1
+          signer="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          test -x "$signer"
+          "$signer" verify --print-certs "$apk" | tee "$RUNNER_TEMP/v43-cert.txt"
+          new_cert="$(awk -F': ' '/Signer #1 certificate SHA-256 digest/{print $2;exit}' "$RUNNER_TEMP/v43-cert.txt")"
+          test -n "$new_cert"
+          old_cert=""
+          if gh release download x200-combined-ocr-ab-20261103-v42 -R vobichngan285-collab/kanzi-assistant --pattern 'Kanzi_X200_Horizontal_Vertical_Combined_AB_debug.apk' --dir "$RUNNER_TEMP/v42"; then
+            oldapk="$RUNNER_TEMP/v42/Kanzi_X200_Horizontal_Vertical_Combined_AB_debug.apk"
+            "$signer" verify --print-certs "$oldapk" > "$RUNNER_TEMP/v42-cert.txt"
+            old_cert="$(awk -F': ' '/Signer #1 certificate SHA-256 digest/{print $2;exit}' "$RUNNER_TEMP/v42-cert.txt")"
+          fi
+          echo "v42 signing cert: ${old_cert:-NOT_AVAILABLE}" >> "$GITHUB_STEP_SUMMARY"
+          echo "v43 signing cert: $new_cert" >> "$GITHUB_STEP_SUMMARY"
+          if [[ -n "$old_cert" && "$old_cert" == "$new_cert" ]]; then
+            printf 'SIGN_MATCH=YES\n' >> "$GITHUB_ENV"
+            echo 'Signature compatibility with v42: verified' >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf 'SIGN_MATCH=NO\n' >> "$GITHUB_ENV"
+            echo 'Signature compatibility with v42: NO or unverified. Cannot guarantee overwrite.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          cp "$apk" "$RUNNER_TEMP/Kanzi_X200_AutoPageRotation_AB_v43_debug.apk"
+      - name: Publish direct browser downloadable APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="x200-auto-page-rotation-ab-20261104-v43"
+          apk="$RUNNER_TEMP/Kanzi_X200_AutoPageRotation_AB_v43_debug.apk"
+          if [[ "$SIGN_MATCH" == YES ]]; then
+            installation="签名已核验和前版一致，Android允许的情况下可覆盖安装。"
+          else
+            installation="签名不同或无法核验，不能保证覆盖原版；如提示签名不兼容，请不要强制覆盖，可保留旧版。"
+          fi
+          cat > "$RUNNER_TEMP/notes.md" <<EOF
+          看字助手 X200 Pro 自动整页方向纠正 v0.9.10（v43）独立 APK。
+          - 90°/270°旋转检测及保守复识；180°可疑方向有限尝试；纯离线。
+          - 同帧诊断保留原版 OCR 及旋转候选；文本来自OCR像素，不凭空补字。
+          - 实机准确率与延迟需后续测试；不是已经验证提升的正式版本。
+          - $installation
+          - Build: https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41683998618
+          EOF
+          if ! gh release view "$tag" -R vobichngan285-collab/kanzi-assistant >/dev/null 2>&1; then
+            gh release create "$tag" --repo vobichngan285-collab/kanzi-assistant --target 40737516dd8ae451104dfe758ee5df5f9ee5b047 --title "看字助手 X200 Pro 自动整页方向纠正 v43" --notes-file "$RUNNER_TEMP/notes.md" --prerelease
+          fi
+          gh release upload "$tag" "$apk" -R vobichngan285-collab/kanzi-assistant --clobber
+          gh api "repos/vobichngan285-collab/kanzi-assistant/releases/tags/$tag" --jq '.assets[] | select(.name=="Kanzi_X200_AutoPageRotation_AB_v43_debug.apk") | [.browser_download_url,.size,.state] | @tsv' | tee "$RUNNER_TEMP/result.txt"
+          grep -q '^https://github.com/' "$RUNNER_TEMP/result.txt"
+          sha256sum "$apk" | tee -a "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/result.txt" >> "$GITHUB_STEP_SUMMARY"
