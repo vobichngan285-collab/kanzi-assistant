@@ -263,3 +263,9 @@
 - 原构建 `.github/workflows/android.yml:125–160` 明确为识别器 `img_mode:BGR` 在构建时修补 SDK RecPreprocessor，保留 BGR；不能在无真机等价证据下盲目改 RGB/BGR。**构建补丁存在，不代表已经逐字节验证实际手机 REC 张量。**
 - 有条件增强路径：`enhancedOcr || (brightness<47 && edgeStrength<7)`，以及非快速模式低置信条件下的额外增强尝试；来源 `MainActivity.java`、`FrameQuality.java` 和 `PaddleOcrEngine.kt`。要核实手机画面及 SDK crop/REC tensor，**先做明确范围的安全单帧诊断**，不得擅自上传用户图像。
 - 维持刚验收的配对结果：同122区域自动框 CER16.087% → GT框5.797%，**不是手机准确率提升声明**。正式 App、模型、TTS、APK及原有历史记录均未改变。
+
+
+#### 2026-11-03 — 配对实验报告校对（仅文档）
+
+- 修正永久研究报告中的剩余样本敏感性分析文字笔误：排除一条52字符的 RCTW-508/GT#1 后剩121区域、638字符，旧自动框85编辑错误、GT框37编辑错误，差距48/638=7.52个百分点；与已核实的数值一致，**没有新实验推理或指标更改**。
+- 隔离分支文档校对提交：`eee1e1de7701c67e956c205aeb10cf9ec02e9e31`。保留全部旧实验记录。
