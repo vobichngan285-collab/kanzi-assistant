@@ -1,0 +1,83 @@
+name: Actual Paddle SDK crop/REC tensor host parity (NO APK, NO inference)
+on:
+  push:
+    branches: [test/line-overlay-plan-isolated-20261103]
+    paths:
+      - 'scripts/AndroidSdkCropTensorProbe.kt'
+      - 'scripts/android_sdk_crop_tensor_parity.py'
+      - '.github/workflows/android-sdk-crop-tensor-parity.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sdk-crop-and-bgr-tensor-reference:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read exact PaddleOCR v3.7.0 Android SDK source (not a release build)
+        uses: actions/checkout@v4
+        with:
+          repository: PaddlePaddle/PaddleOCR
+          ref: v3.7.0
+          path: third_party/PaddleOCR
+          persist-credentials: false
+      - name: Read unchanged previous Python crop reference from earlier successful experiment
+        uses: actions/checkout@v4
+        with:
+          ref: 1e0c227f33fb0fbef4c681024972d107b09bfc99
+          path: prior-study
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Install fixed crop-only reference dependencies; no models
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'numpy==1.26.4' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'requests==2.32.3' 'PyYAML==6.0.2' 'onnxruntime==1.21.1' pyclipper
+          python3 -m py_compile scripts/android_sdk_crop_tensor_parity.py
+      - name: Prepare just 2 previously used public photos and up to 12 GT crops
+        run: |
+          set -euo pipefail
+          PYTHONPATH=prior-study/scripts python3 -u scripts/android_sdk_crop_tensor_parity.py \
+            --mode prepare --root "$RUNNER_TEMP/sdk-parity"
+      - name: Assemble minimal JVM harness from ACTUAL pinned SDK crop and production BGR patch
+        run: |
+          set -euo pipefail
+          PYTHONPATH=prior-study/scripts python3 -u scripts/android_sdk_crop_tensor_parity.py \
+            --mode make-project --root "$RUNNER_TEMP/sdk-parity" \
+            --upstream third_party/PaddleOCR \
+            --project "$RUNNER_TEMP/sdk-gradle" \
+            --adapter scripts/AndroidSdkCropTensorProbe.kt
+      - name: Run upstream QuadTextCrop and patched RecPreprocessor in Linux JVM
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/actual-sdk"
+          gradle --no-daemon -p "$RUNNER_TEMP/sdk-gradle" run \
+            --args="$RUNNER_TEMP/sdk-parity/fixtures.tsv $RUNNER_TEMP/sdk-parity/input $RUNNER_TEMP/actual-sdk" \
+            | tee "$RUNNER_TEMP/sdk-host.log"
+          grep -q '^ACTUAL_SDK_CROP_TENSOR_COMPLETE' "$RUNNER_TEMP/sdk-host.log"
+      - name: Compare real SDK crop pixels and NCHW tensors to unchanged Python reference
+        run: |
+          set -euo pipefail
+          PYTHONPATH=prior-study/scripts python3 -u scripts/android_sdk_crop_tensor_parity.py \
+            --mode verify --root "$RUNNER_TEMP/sdk-parity" \
+            --actual "$RUNNER_TEMP/actual-sdk" | tee "$RUNNER_TEMP/sdk-audit.log"
+          grep -q '^ACTUAL_SDK_VS_PYTHON_PARITY_COMPLETE' "$RUNNER_TEMP/sdk-audit.log"
+          cat "$RUNNER_TEMP/sdk-parity/parity_summary.json" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Only PUBLIC photographs, no ONNX inference and no Android UVC runtime.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish numeric metrics ONLY (never crops, raw frames, tensor bytes or APK)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: actual-sdk-crop-tensor-public-metrics
+          path: ${{ runner.temp }}/sdk-parity/parity_summary.json
+          retention-days: 10
+          if-no-files-found: warn
