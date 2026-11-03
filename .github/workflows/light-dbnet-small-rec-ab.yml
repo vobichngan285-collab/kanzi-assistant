@@ -1,0 +1,63 @@
+name: 1.8MB ChineseOCR Lite DBNet vs default Small text detection - NO APK
+on:
+  push:
+    branches: [test/light-dbnet-vs-craft-20261103]
+    paths:
+      - scripts/light_dbnet_small_rec_ab.py
+      - .github/workflows/light-dbnet-small-rec-ab.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  lightweight-detector-real-photo-ocr:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Python syntax validation
+        run: python3 -m py_compile scripts/light_dbnet_small_rec_ab.py scripts/craft_small_detector_ab.py scripts/ocr_box_value_deep_dive.py
+      - name: Install pinned CPU ONNX dependencies
+        run: pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
+      - name: Fetch pinned original Small detector/recognizer and lite Chinese detector
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/light-dbnet-models
+          curl -fL --retry 4 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx' -o /tmp/light-dbnet-models/small_det.onnx
+          curl -fL --retry 4 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx' -o /tmp/light-dbnet-models/small_rec.onnx
+          curl -fL --retry 4 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml' -o /tmp/light-dbnet-models/small_rec.yml
+          curl -fL --retry 4 --retry-delay 2 'https://raw.githubusercontent.com/DayBreak-u/chineseocr_lite/54a3df53af823f3bffdde9393d0c021b4f6d94cd/models/dbnet.onnx' -o /tmp/light-dbnet-models/light_dbnet.onnx
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  /tmp/light-dbnet-models/small_det.onnx' | sha256sum -c -
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/light-dbnet-models/small_rec.onnx' | sha256sum -c -
+          echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/light-dbnet-models/small_rec.yml' | sha256sum -c -
+          test "$(stat -c '%s' /tmp/light-dbnet-models/light_dbnet.onnx)" -gt 1000000
+          sha256sum /tmp/light-dbnet-models/light_dbnet.onnx >> "$GITHUB_STEP_SUMMARY"
+          echo 'Upstream ChineseOCR Lite GPL-2.0 source: this is research-only, never copy into release/Android.' >> "$GITHUB_STEP_SUMMARY"
+      - name: First smoke-test model input/output and 6 source photos
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/light-dbnet-smoke
+          python3 -u scripts/light_dbnet_small_rec_ab.py --models /tmp/light-dbnet-models --out /tmp/light-dbnet-smoke --max-photos 6 | tee /tmp/light-dbnet-smoke/run.log
+          grep -q 'LIGHT_DB_A_B_C_COMPLETE' /tmp/light-dbnet-smoke/run.log
+      - name: Compare 72 same annotated photos with one Small REC
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/light-dbnet-full
+          python3 -u scripts/light_dbnet_small_rec_ab.py --models /tmp/light-dbnet-models --out /tmp/light-dbnet-full | tee /tmp/light-dbnet-full/run.log
+          grep -q 'LIGHT_DB_A_B_C_COMPLETE' /tmp/light-dbnet-full/run.log
+          echo '### ChineseOCR Lite 1.8MB DBNet DET + existing Small REC vs baseline' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/light-dbnet-full/summary.json >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/light-dbnet-full/recovery.json >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/light-dbnet-full/limitations.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Save numerical results only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: light-dbnet-vs-small-ab-realphotos
+          path: |
+            /tmp/light-dbnet-smoke/
+            /tmp/light-dbnet-full/
+          retention-days: 10
+          if-no-files-found: warn
