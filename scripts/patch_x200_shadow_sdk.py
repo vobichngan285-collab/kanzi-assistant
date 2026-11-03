@@ -92,4 +92,56 @@ edit("PaddleOCR.kt",
     }
 
     private suspend fun recognizeResult(runEngine: () -> OCREngineResult): OCRRunResult {""")
-print("X200_SHADOW_SDK_PATCH_PASS: baseline QuadTextCrop preserved; second Small REC exposed")
+# This SECOND shadow path is deliberately independent of the true-vertical
+# axis repair above. Crop only horizontal strips proposed from detector geometry
+# and run the same Small recognizer; never run a second DBNet pass.
+edit("engine/OCREngine.kt",
+     "    fun release() {",
+     """    fun recognizeHorizontalCandidates(
+        bitmap: Bitmap, xyxy: List<FloatArray>
+    ): List<Triple<String, Float, Long>> {
+        require(xyxy.size <= 4) { "Excess horizontal shadow REC budget" }
+        if (xyxy.isEmpty()) return emptyList()
+        val srcMat = BitmapUtils.bitmapToBGRMat(bitmap)
+        try {
+            return xyxy.map { box ->
+                val start = System.nanoTime()
+                require(box.size == 4 && box.all { it.isFinite() }) {
+                    "Invalid horizontal crop"
+                }
+                val left = kotlin.math.floor(box[0].toDouble()).toInt().coerceIn(0, srcMat.cols())
+                val top = kotlin.math.floor(box[1].toDouble()).toInt().coerceIn(0, srcMat.rows())
+                val right = kotlin.math.ceil(box[2].toDouble()).toInt().coerceIn(0, srcMat.cols())
+                val bottom = kotlin.math.ceil(box[3].toDouble()).toInt().coerceIn(0, srcMat.rows())
+                if (right - left < 4 || bottom - top < 4) {
+                    Triple("", 0f, (System.nanoTime()-start)/1000000L)
+                } else {
+                    val crop = srcMat.submat(top, bottom, left, right)
+                    try {
+                        // Keep horizontal strips horizontal. No forced text rotation.
+                        val candidate = recognitionEngine.recognize(listOf(crop))
+                            .texts.firstOrNull() ?: Pair("", 0f)
+                        Triple(candidate.first, candidate.second,
+                            (System.nanoTime()-start)/1000000L)
+                    } finally {
+                        crop.release()
+                    }
+                }
+            }
+        } finally {
+            srcMat.release()
+        }
+    }
+
+    fun release() {""")
+edit("PaddleOCR.kt",
+     "    private suspend fun recognizeResult(runEngine: () -> OCREngineResult): OCRRunResult {",
+     """    suspend fun recognizeHorizontalCandidates(
+        bitmap: Bitmap, xyxy: List<FloatArray>
+    ): List<Triple<String, Float, Long>> = withContext(Dispatchers.IO) {
+        engine.recognizeHorizontalCandidates(bitmap, xyxy)
+    }
+
+    private suspend fun recognizeResult(runEngine: () -> OCREngineResult): OCRRunResult {""")
+print("COMBINED_HORIZONTAL_VERTICAL_SHADOW_SDK_PATCH_PASS: source DET/REC preserved")
+
