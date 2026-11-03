@@ -1,0 +1,32 @@
+name: vivo X200 Pro profile/budget pure Java regression
+on:
+  push:
+    branches: [test/phone-ocr-single-frame-diagnostic-20261103]
+    paths:
+      - '.github/workflows/x200-profile-regression.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  profile:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile four profiles and nonsemantic bounded rescue rule
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/classes"
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/classes" \
+            app/src/main/java/com/vobichngan/kanzi/OcrPerformanceProfile.java \
+            app/src/main/java/com/vobichngan/kanzi/VerticalCropAxisGuard.java \
+            app/src/main/java/com/vobichngan/kanzi/VerticalRecRescuePolicy.java \
+            scripts/X200OfflineProfileSmokeTest.java \
+            scripts/VerticalRecRescuePolicySmokeTest.java
+          java -cp "$RUNNER_TEMP/classes" X200OfflineProfileSmokeTest
+          java -cp "$RUNNER_TEMP/classes" VerticalRecRescuePolicySmokeTest
+          echo '4 profiles and no-hallucination shadow budget passed. No private photos and no Android install.' >> "$GITHUB_STEP_SUMMARY"
