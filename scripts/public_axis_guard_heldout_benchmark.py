@@ -9,7 +9,7 @@ Evaluate ORIGINAL vs CANDIDATE on identical publicly annotated regions.
 This is recognition ON ANNOTATION POLYGON, not an end-to-end DBNet benchmark.
 """
 from __future__ import annotations
-import argparse, collections, concurrent.futures, hashlib, io, json, math, re, statistics, time, unicodedata, zipfile
+import argparse, collections, concurrent.futures, hashlib, io, json, math, random, re, statistics, time, unicodedata, zipfile
 from pathlib import Path
 
 import cv2
@@ -165,12 +165,20 @@ def collect_zip(zip_path,max_images):
     print("VERTICAL_ARCHIVE_INVENTORY",json.dumps({
         "files":len(names),"image_files":len(imgs),"annotation_files":len(ann),
         "example_paths":names[:12]},ensure_ascii=False),flush=True)
-    # Match by image stem; when a dataset uses train.txt line listing,
-    # parse that index as an additional fallback.
-    labels=collections.defaultdict(list)
-    for path in ann:
-        labels[Path(path).stem].append(path)
-    count=0; with_labels=0
+    # Dataset has one metadata.jsonl with 791 image→annotations records,
+    # not 791 separate .txt files; verified against actual archive inventory.
+    image_meta={}
+    if "metadata.jsonl" in names:
+        for ln in z.read("metadata.jsonl").decode("utf-8-sig").splitlines():
+            if not ln.strip():continue
+            info=json.loads(ln)
+            key=Path(str(info.get("image",""))).stem
+            if key:image_meta[key]=info.get("annotations",[])
+    else:
+        # Fail closed rather than falsely calling unlabelled scans "tested".
+        raise RuntimeError("vertical dataset format changed; missing metadata.jsonl")
+    print("VERTICAL_ANNOTATED_IMAGES",len(image_meta),flush=True)
+    count=0;with_labels=0
     for imgpath in sorted(imgs)[:max_images]:
         try:
             data=z.read(imgpath)
@@ -179,23 +187,12 @@ def collect_zip(zip_path,max_images):
         except Exception as e:
             print("VERTICAL_DECODE_SKIP",str(e)[:100],flush=True)
             continue
-        matches=labels.get(Path(imgpath).stem,[])
         records=[]
-        if matches:
-            name=matches[0]
-            try:
-                txt=z.read(name).decode("utf-8-sig")
-                entries=json.loads(txt)
-                if isinstance(entries,dict):
-                    entries=entries.get("annotations",entries.get("labels",[]))
-                if isinstance(entries,list):
-                    for e in entries:
-                        if not isinstance(e,dict):continue
-                        coords=e.get("points",e.get("polygon",e.get("quad")))
-                        if isinstance(coords,list):
-                            records.append((str(e.get("transcription",e.get("text","###"))),coords))
-            except Exception:
-                pass
+        for e in image_meta.get(Path(imgpath).stem,[]):
+            if not isinstance(e,dict):continue
+            coords=e.get("points",e.get("polygon",e.get("quad")))
+            if isinstance(coords,list):
+                records.append((str(e.get("transcription",e.get("text","###"))),coords))
         if records:with_labels+=1
         count+=1
         yield "VERTICAL",count,rgb,records
@@ -210,6 +207,7 @@ def main():
     ap.add_argument("--out",required=True)
     ap.add_argument("--vertical-limit",type=int,default=791)
     ap.add_argument("--max-rec-affected",type=int,default=240)
+    ap.add_argument("--vertical-tilt-limit",type=int,default=160)
     args=ap.parse_args()
     out=Path(args.out);out.mkdir(parents=True,exist_ok=True)
     assert sha(args.rec)==REC_SHA, "weight hash mismatch"
@@ -228,7 +226,11 @@ def main():
              "eligible_regions":collections.Counter(),"guard_trigger_regions":collections.Counter(),
              "rec_comparisons":collections.Counter(),"scene_errors":0,
              "changed_cases":[],"timings_ms":{"baseline":[],"candidate":[]}}
-    risky=[]
+    # Separate deterministic reservoirs ensure the many vertical samples
+    # do not crowd out the small number of genuine, unperturbed scene risks.
+    risky_by_source=collections.defaultdict(list)
+    seen_by_source=collections.Counter()
+    rng=random.Random(20261103)
     def process(sp,idx,rgb,pairs):
         summary["source_images"][sp]+=1
         for line,(truth,poly) in enumerate(pairs):
@@ -239,10 +241,36 @@ def main():
             rect,flag,margin,ratio,top,bottom=minrect_risk(pts)
             if flag:
                 summary["guard_trigger_regions"][sp]+=1
-                if len(risky)<args.max_rec_affected:
-                    risky.append((sp,idx,line,rgb,rect,ysort_order(top,bottom),str(truth),margin,ratio))
+                seen_by_source[sp]+=1
+                record=(sp,idx,line,rgb,rect,ysort_order(top,bottom),str(truth),margin,ratio)
+                sample=risky_by_source[sp]
+                cap=args.max_rec_affected if sp=="VERTICAL_TILT" else 40
+                if len(sample)<cap:sample.append(record)
+                else:
+                    select=rng.randrange(seen_by_source[sp])
+                    if select<cap:sample[select]=record
     for item in collect_zip(args.vertical_zip,args.vertical_limit):
         process(*item)
+        sp,idx,rgb,pairs=item
+        # Deterministic artificial camera slant of *public existing vertical
+        # pages*; annotation polygons are transformed in the exact same way.
+        # Report as VERTICAL_TILT, not as extra real source photographs.
+        if idx<=args.vertical_tilt_limit:
+            h,w=rgb.shape[:2]
+            slope=(-.23,-.14,.14,.23)[(idx-1)%4]
+            border=int(math.ceil(abs(slope)*h*.5))+18
+            matrix=np.float32([[1,slope,border-slope*h*.5],[0,1,0]])
+            warped=cv2.warpAffine(rgb,matrix,(w+2*border,h),
+                flags=cv2.INTER_LINEAR,borderMode=cv2.BORDER_CONSTANT,
+                borderValue=(255,255,255))
+            transformed=[]
+            for truth,poly in pairs:
+                p=poly_np(poly)
+                if p is None:continue
+                points=np.concatenate((p,np.ones((len(p),1),np.float32)),axis=1)
+                p2=(matrix@points.T).T
+                transformed.append((truth,p2.reshape(-1).tolist()))
+            process("VERTICAL_TILT",idx,warped,transformed)
     scenes=get_scene_metadata()
     print("SCENE_REQUESTED",len(scenes),flush=True)
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
@@ -253,6 +281,7 @@ def main():
             if (i+1)%60==0:print("SCENE_PROGRESS",i+1,len(scenes),flush=True)
 
     # A/B only *affected* cases. No-op cases have identical ordering by definition.
+    risky=[r for name in sorted(risky_by_source) for r in risky_by_source[name]]
     rows=[]
     for k,(sp,idx,line,rgb,rect,newquad,truth,margin,ratio) in enumerate(risky):
         old=quad_crop(rgb,sdk_xsort_order(rect))
@@ -288,8 +317,9 @@ def main():
     base_edits=sum(r["baseline_edits"] for r in scored)
     new_edits=sum(r["candidate_edits"] for r in scored)
     summary["totals"]={
-        "scene_images_downloaded":sum(v for k,v in summary["source_images"].items() if k!="VERTICAL"),
+        "scene_images_downloaded":sum(v for k,v in summary["source_images"].items() if not k.startswith("VERTICAL")),
         "vertical_images_scanned":summary["source_images"].get("VERTICAL",0),
+        "vertical_tilted_cases":summary["source_images"].get("VERTICAL_TILT",0),
         "all_annotated_regions":sum(summary["all_annotated_regions"].values()),
         "valid_annotation_regions":sum(summary["eligible_regions"].values()),
         "trigger_regions":sum(summary["guard_trigger_regions"].values()),
@@ -314,6 +344,8 @@ def main():
     (out/"summary.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding="utf-8")
     print("HOLDOUT_CROP_AXIS_AB_COMPLETE",json.dumps(summary["totals"],ensure_ascii=False),flush=True)
     if summary["totals"]["vertical_images_scanned"]<500:raise RuntimeError("vertical archive insufficient")
+    if summary["eligible_regions"].get("VERTICAL",0)<3000:raise RuntimeError("vertical labels not parsed")
+    if summary["totals"]["vertical_tilted_cases"]<100:raise RuntimeError("vertical stress subset insufficient")
     if summary["totals"]["scene_images_downloaded"]<170:raise RuntimeError("scene holdout insufficient")
 if __name__=="__main__":
     main()
