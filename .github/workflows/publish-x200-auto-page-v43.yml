@@ -31,13 +31,13 @@ jobs:
           signer="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
           test -x "$signer"
           "$signer" verify --print-certs "$apk" | tee "$RUNNER_TEMP/v43-cert.txt"
-          new_cert="$(awk -F': ' '/Signer #1 certificate SHA-256 digest/{print $2;exit}' "$RUNNER_TEMP/v43-cert.txt")"
+          new_cert="$(awk -F': ' '/certificate SHA-256 digest/{print $2;exit}' "$RUNNER_TEMP/v43-cert.txt")"
           test -n "$new_cert"
           old_cert=""
           if gh release download x200-combined-ocr-ab-20261103-v42 -R vobichngan285-collab/kanzi-assistant --pattern 'Kanzi_X200_Horizontal_Vertical_Combined_AB_debug.apk' --dir "$RUNNER_TEMP/v42"; then
             oldapk="$RUNNER_TEMP/v42/Kanzi_X200_Horizontal_Vertical_Combined_AB_debug.apk"
             "$signer" verify --print-certs "$oldapk" > "$RUNNER_TEMP/v42-cert.txt"
-            old_cert="$(awk -F': ' '/Signer #1 certificate SHA-256 digest/{print $2;exit}' "$RUNNER_TEMP/v42-cert.txt")"
+            old_cert="$(awk -F': ' '/certificate SHA-256 digest/{print $2;exit}' "$RUNNER_TEMP/v42-cert.txt")"
           fi
           echo "v42 signing cert: ${old_cert:-NOT_AVAILABLE}" >> "$GITHUB_STEP_SUMMARY"
           echo "v43 signing cert: $new_cert" >> "$GITHUB_STEP_SUMMARY"
