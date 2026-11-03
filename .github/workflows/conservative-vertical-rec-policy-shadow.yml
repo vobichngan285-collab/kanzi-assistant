@@ -1,0 +1,29 @@
+name: Conservative vertical OCR retry policy safety (shadow only)
+on:
+  push:
+    branches: [test/phone-ocr-single-frame-diagnostic-20261103]
+    paths: ['.github/workflows/conservative-vertical-rec-policy-shadow.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pure-java:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile and assert strict fallbacks without recognition inference
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/classes"
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/classes" \
+            app/src/main/java/com/vobichngan/kanzi/VerticalCropAxisGuard.java \
+            app/src/main/java/com/vobichngan/kanzi/VerticalRecRescuePolicy.java \
+            scripts/VerticalRecRescuePolicySmokeTest.java
+          java -cp "$RUNNER_TEMP/classes" VerticalRecRescuePolicySmokeTest | tee "$RUNNER_TEMP/policy.log"
+          grep -q '^VERTICAL_REC_CONSERVATIVE_POLICY_TEST=PASS assertions=29$' "$RUNNER_TEMP/policy.log"
+          echo 'Shadow-only, no private data, no Android APK, no TTS or OCR text mutated.' >> "$GITHUB_STEP_SUMMARY"
