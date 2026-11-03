@@ -62,14 +62,16 @@ data class OcrDiagnosticResult(
     val layoutReuseStats: String,
     val candidateText: String,
     val candidateDetails: String,
-    val realtimeText: String
+    val realtimeText: String,
+    val x200ProfileReport: String
 )
 fun interface OcrDiagnosticCallback { fun onResult(result: OcrDiagnosticResult) }
 
 class PaddleOcrEngine(
     context: Context,
     private val listener: Listener,
-    private val modelId: String = "ppocrv6_small"
+    private val modelId: String = "ppocrv6_small",
+    private val performanceProfile: OcrPerformanceProfile = OcrPerformanceProfile.BASELINE
 ) {
     interface Listener {
         fun onReady()
@@ -160,7 +162,22 @@ class PaddleOcrEngine(
                         val enhanced = enhanceForOcr(bitmap)
                         if (enhanced !== bitmap) { bitmap = enhanced }
                     }
+                    val performanceBefore = OcrHardwareProbe.capture(appContext)
+                    val startedNanos = System.nanoTime()
                     val result = current.recognize(bitmap)
+                    val originalOcrWallMs = (System.nanoTime() - startedNanos) / 1_000_000L
+                    // Second real Small REC only inside MANUAL diagnostics.
+                    // Candidate output NEVER replaces live recognition/TTS.
+                    val shadow = inspectVerticalRescues(current, bitmap, result.results,
+                        OcrHardwareProbe.safeShadowBudget(performanceProfile, performanceBefore))
+                    val performanceAfter = OcrHardwareProbe.capture(appContext)
+                    val profileDiagnostic = "X200实验档：${performanceProfile.label}" +
+                        "；CPU线程=${performanceProfile.cpuThreads}，REC批=${performanceProfile.recBatchSize}" +
+                        "；本轮普通OCR墙钟=${originalOcrWallMs}ms" +
+                        "\n推理前：${performanceBefore.describe()}" +
+                        "\n推理后：${performanceAfter.describe()}" +
+                        "\n本帧影子二次识别：$shadow" +
+                        "\n说明：这是用户手动诊断，候选绝不会自动写入正式朗读。"
                     if (evidenceRequested.getAndSet(false)) {
                         evidenceStatus = try {
                             val saved = SingleFrameEvidence.create(appContext, data, width, height,
@@ -210,7 +227,8 @@ class PaddleOcrEngine(
                         // Exactly the geometry-only order used by the new
                         // real-time scanner; no additional ONNX inference.
                         realtimeText = RealtimeTextOrientation.arrange(
-                            toReadingBoxes(result.results), bitmap.width, bitmap.height)
+                            toReadingBoxes(result.results), bitmap.width, bitmap.height),
+                        x200ProfileReport = profileDiagnostic
                     )
                     withContext(Dispatchers.Main) { onResult.onResult(report) }
                 } finally {
@@ -221,6 +239,67 @@ class PaddleOcrEngine(
                 Log.e(TAG, "OCR diagnostic failed", t)
                 withContext(Dispatchers.Main) { onError.onError(t.message ?: t.javaClass.simpleName) }
             } finally { busy.set(false) }
+        }
+    }
+
+    /**
+     * Explicit diagnostic-only same-frame REC rescue. The first recognized text
+     * is NEVER altered. Candidate is produced by the same pinned offline model,
+     * through the isolated SDK Y-sorted crop API (no repeat DBNet pass).
+     */
+    private suspend fun inspectVerticalRescues(
+        current: PaddleOCR, bitmap: Bitmap, originals: List<OCRResult>, budget: Int
+    ): String {
+        if (budget <= 0) return "本档不额外识别，或设备热/内存状态要求回退"
+        val selected = mutableListOf<Pair<Int, Pair<OCRResult, VerticalCropAxisGuard.Inspection>>>()
+        for ((index, item) in originals.withIndex()) {
+            if (selected.size >= budget) break
+            val pts = item.box.points
+            if (pts.size != 4) continue
+            val source = org.opencv.core.MatOfPoint2f()
+            try {
+                source.fromList(pts.map {
+                    org.opencv.core.Point(it.x.toDouble(), it.y.toDouble())
+                })
+                val minRect = Imgproc.minAreaRect(source)
+                val rect = Array(4) { org.opencv.core.Point() }
+                minRect.points(rect)
+                val q = FloatArray(8)
+                for (i in rect.indices) {
+                    q[2 * i] = rect[i].x.toFloat()
+                    q[2 * i + 1] = rect[i].y.toFloat()
+                }
+                val evidence = VerticalCropAxisGuard.inspect(q)
+                if (VerticalRecRescuePolicy.shouldRetry(evidence, item.text,
+                        selected.size, budget))
+                    selected.add(Pair(index, Pair(item, evidence)))
+            } catch (t: RuntimeException) {
+                Log.w(TAG, "Skip invalid shadow geometry", t)
+            } finally {
+                source.release()
+            }
+        }
+        if (selected.isEmpty()) return "0个满足严格条件的竖排风险框（无额外推理）"
+        val stamp = System.nanoTime()
+        return try {
+            val candidates = current.recognizeVerticalCandidates(bitmap,
+                selected.map { it.second.first.box })
+            val elapsedMs = (System.nanoTime() - stamp) / 1_000_000L
+            val lines = selected.mapIndexed { i, pair ->
+                val candidate = candidates.getOrNull(i)
+                val old = pair.second.first
+                val decision = VerticalRecRescuePolicy.decide(pair.second.second,
+                    old.text, candidate?.first, candidate?.second ?: 0f, i, budget)
+                val newText = candidate?.first ?: ""
+                "框#${pair.first + 1} 原「${old.text}」→候选「$newText」" +
+                    "，候选conf=${candidate?.second ?: 0f}" +
+                    "，单框耗时=${candidate?.third ?: -1}ms" +
+                    "，保守门控=${decision.reason}（仅提示）"
+            }
+            "${selected.size}次真实额外Small REC，合计${elapsedMs}ms\n" + lines.joinToString("\n")
+        } catch (t: Throwable) {
+            Log.e(TAG, "Shadow vertical REC failed; baseline OCR kept", t)
+            "附加REC出错（${t.javaClass.simpleName}），原OCR完整保留"
         }
     }
 
@@ -244,9 +323,9 @@ class PaddleOcrEngine(
                     detUnclipRatio = if (isV5) 1.50f else 1.40f,
                     // Do not discard recognition rows before diagnostics can inspect them.
                     recScoreThresh = 0.0f,
-                    recBatchSize = 1
+                    recBatchSize = performanceProfile.recBatchSize
                 )
-                val engineConfig = EngineConfig(numThreads = 2)
+                val engineConfig = EngineConfig(numThreads = performanceProfile.cpuThreads)
                 val modelPrefix = when (modelId) {
                     "ppocrv6_tiny" -> "models/ppocrv6_tiny"
                     "ppocrv5_mobile" -> "models/ppocrv5_mobile"
