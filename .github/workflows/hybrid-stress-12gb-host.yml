@@ -1,0 +1,51 @@
+name: Three ONNX sessions sustained workload, 12GB phone risk proxy
+on:
+  push:
+    branches: [test/android-hybrid-12gb-performance-20261103]
+    paths:
+      - scripts/profile_sustained_hybrid_load.py
+      - .github/workflows/hybrid-stress-12gb-host.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sustained-synthetic:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 24
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install native ONNX CPU runtime
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1'
+      - name: Download exact original Small DET/REC and Medium REC ONNX
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/12gb-models
+          curl --fail --location --retry 4 --max-time 260 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/5994b4f/inference.onnx' -o /tmp/12gb-models/det.onnx
+          curl --fail --location --retry 4 --max-time 260 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx' -o /tmp/12gb-models/small_rec.onnx
+          curl --fail --location --retry 4 --max-time 260 'https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_rec_onnx/resolve/main/inference.onnx' -o /tmp/12gb-models/medium_rec.onnx
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  /tmp/12gb-models/det.onnx' | sha256sum -c -
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/12gb-models/small_rec.onnx' | sha256sum -c -
+          echo '9c09abf0957f7968c7586464b7397b84ad2387a0497a351af40e9acc71b673ba  /tmp/12gb-models/medium_rec.onnx' | sha256sum -c -
+      - name: Sustained CPU + RAM test; no Android runtime, no camera, no TTS
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/12gb-host-stress
+          python3 -u scripts/profile_sustained_hybrid_load.py \
+            --models /tmp/12gb-models --out /tmp/12gb-host-stress \
+            --frames 32 --lines 10 | tee /tmp/12gb-host-stress/run.log
+          grep -q 'TWELVE_GB_HYBRID_SUSTAINED_HOST_PASS' /tmp/12gb-host-stress/run.log
+          cat /tmp/12gb-host-stress/summary.json >> "$GITHUB_STEP_SUMMARY"
+          echo 'Synthetic 736x1280 detector, 48x480 crops, 1080p sized buffers; NOT phone performance, UVC, TTS or thermal validation.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Save CPU/RAM profiles, no models or installation packages
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 12gb-phone-hybrid-host-stress-estimates
+          path: /tmp/12gb-host-stress/
+          retention-days: 10
+          if-no-files-found: warn
