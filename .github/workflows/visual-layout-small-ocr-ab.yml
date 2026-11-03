@@ -5,6 +5,7 @@ on:
     paths:
       - scripts/layout_small_det_rec_ab.py
       - scripts/ocr_box_value_deep_dive.py
+      - scripts/ocr_public_real_scene_ab.py
       - .github/workflows/visual-layout-small-ocr-ab.yml
   workflow_dispatch:
 permissions:
@@ -19,7 +20,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: Syntax check before downloading models
-        run: python3 -m py_compile scripts/layout_small_det_rec_ab.py scripts/layout_realphoto_diagnostic.py scripts/ocr_box_value_deep_dive.py
+        run: python3 -m py_compile scripts/layout_small_det_rec_ab.py scripts/layout_realphoto_diagnostic.py scripts/ocr_box_value_deep_dive.py scripts/ocr_public_real_scene_ab.py
       - name: Fixed CPU inference dependencies
         run: pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
       - name: Download verified layout, Small DET and Small REC models only
