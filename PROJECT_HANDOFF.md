@@ -315,3 +315,11 @@
 - **已提交源码**：`SingleFrameEvidence.kt` `fe78d813f755d12e6576e4e273f0ac2aeb790cfe`；`PaddleOcrEngine.kt` `1101a95ab8cf05bac64aed5ec6eabc93f9c33248`；`MainActivity.java` `cc8be54400a538313aac4ee57bd307d70a8ddde7`；`app/build.gradle` `41d3c19a11e676e27c8498e0e3fe95707e795394`；`AndroidManifest.xml` `b1111f6da011b1b2325a9080c70a80f69cc82cd7`。已逐一从 GitHub 回读确认。诊断 APK Manifest **移除 INTERNET 权限**，防止此包通过网络上传摄像头文字；某些原来依赖网络下载的语音资源功能在此实验包不可用。
 - **范围与风险**：现有诊断按钮只显示文本，本次新增两键“手动采集一帧”“导出诊断 ZIP”与 SDK `QuadTextCrop`/`RecPreprocessor` 真实裁剪/张量调用；仅用户显式采集时执行，不改变正式自动识别或 TTS。ZIP 包含真实拍摄图像及可能的敏感文字，**只有用户自己有意识选择外部导出**。默认本地文件下次重新采集覆盖旧文件。
 - **阶段状态**：代码已经提交，**尚未编译、未安装真机、未验证 APK 行为**；后续独立 Actions 构建成功与安全审计必须分开记录，不能预先声称已可用。
+
+
+#### 2026-11-03 — 单帧手机诊断 APK 独立 Actions 构建已发起
+
+- 独立 Debug 工作流 `test/phone-ocr-single-frame-diagnostic-20261103:.github/workflows/phone-ocr-single-frame-diagnostic.yml`，初次提交 `78afc28754017e9bfb74193e8becb02c8e1c83d9`，随后为纳入已提交的安装/隐私说明文件 `docs/phone-single-frame-diagnostic-20261103.md` 更新为 `3d9a6ad02eb953d5ed6c2c57cd5c3e024eecb5bc`。
+- GitHub 已确认开始独立构建 Run `41617248713`（当前提交）；更早的 Run `41616956581` 来自说明文件加入之前的快照，不用于最后分发。新说明文档提交 `cc9f23fd65cc72d86738cefbb1a3a439c32cce15`。
+- 工作流使用已验证原正式开发分支的 PaddleOCR v3.7.0、Small/Tiny/v5 模型及 USB/手机摄像头支持，仅以 `:app:assembleDebug` 构建独立包名 `com.vobich.kanzi.framelab`；不读取原正式签名密钥、不生成 Release、不创建 GitHub Release。
+- 安全验收门槛：APK 必须真实存在、`aapt` 包名单独、Manifest 无 `INTERNET`、ZIP 内 Small DET/REC SHA 固定、带有 arm64 ONNX Runtime，且上传到 GitHub Actions Artifact 后才可称可下载。此条仅记录**构建已发起，尚未完成**；手机实际安装/USB 实拍仍待用户本人测试。
