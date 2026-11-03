@@ -8,7 +8,7 @@
     <!-- No INTERNET permission, no camera hardware permission (system camera intent handles capture). -->
     <application
         android:allowBackup="false"
-        android:label="CRAFT INT8 真机实验"
+        android:label="CRAFT竖屏文字框实验"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="false"
         android:supportsRtl="true">
