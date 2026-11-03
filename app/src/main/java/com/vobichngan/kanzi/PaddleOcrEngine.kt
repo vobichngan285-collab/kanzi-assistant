@@ -166,18 +166,26 @@ class PaddleOcrEngine(
                     val startedNanos = System.nanoTime()
                     val result = current.recognize(bitmap)
                     val originalOcrWallMs = (System.nanoTime() - startedNanos) / 1_000_000L
-                    // Second real Small REC only inside MANUAL diagnostics.
-                    // Candidate output NEVER replaces live recognition/TTS.
-                    val shadow = inspectVerticalRescues(current, bitmap, result.results,
-                        OcrHardwareProbe.safeShadowBudget(performanceProfile, performanceBefore))
-                    val performanceAfter = OcrHardwareProbe.capture(appContext)
-                    val profileDiagnostic = "X200实验档：${performanceProfile.label}" +
+                    // Original SDK result is immutable. Two independent, real
+                    // same-frame REC experiments share it; never repeat DBNet.
+                    val budget=OcrHardwareProbe.safeShadowBudget(
+                        performanceProfile,performanceBefore)
+                    val horizontal=inspectHorizontalRescues(current,bitmap,result.results,budget)
+                    val vertical=inspectVerticalRescues(current,bitmap,result.results,budget)
+                    val performanceAfter=OcrHardwareProbe.capture(appContext)
+                    val allElapsed=(System.nanoTime()-startedNanos)/1_000_000L
+                    val profileDiagnostic="X200综合实验：${performanceProfile.label}" +
                         "；CPU线程=${performanceProfile.cpuThreads}，REC批=${performanceProfile.recBatchSize}" +
-                        "；本轮普通OCR墙钟=${originalOcrWallMs}ms" +
+                        "；原始整图OCR墙钟=${originalOcrWallMs}ms" +
+                        "；横排附加REC=${horizontal.attempts}次/${horizontal.elapsedMs}ms" +
+                        "；竖排附加REC=${vertical.attempts}次/${vertical.elapsedMs}ms" +
+                        "；全部实验阶段墙钟=${allElapsed}ms" +
                         "\n推理前：${performanceBefore.describe()}" +
                         "\n推理后：${performanceAfter.describe()}" +
-                        "\n本帧影子二次识别：$shadow" +
-                        "\n说明：这是用户手动诊断，候选绝不会自动写入正式朗读。"
+                        "\n\n【横排跨行修复候选】\n${horizontal.summary}" +
+                        "\n\n【真正竖排方向修复候选】\n${vertical.summary}" +
+                        "\n\n${fourWayShadowComparison(result.results,horizontal,vertical)}" +
+                        "\n\n所有修复仅在手动诊断中进行，绝不覆盖正式朗读或原始框。"
                     if (evidenceRequested.getAndSet(false)) {
                         evidenceStatus = try {
                             val saved = SingleFrameEvidence.create(appContext, data, width, height,
@@ -243,64 +251,160 @@ class PaddleOcrEngine(
         }
     }
 
+    private data class ShadowPath(
+        val summary: String,
+        val replacements: Map<Int, List<String>> = emptyMap(),
+        val touchedIds: Set<Int> = emptySet(),
+        val attempts: Int = 0,
+        val elapsedMs: Long = 0L
+    )
+
     /**
-     * Explicit diagnostic-only same-frame REC rescue. The first recognized text
-     * is NEVER altered. Candidate is produced by the same pinned offline model,
-     * through the isolated SDK Y-sorted crop API (no repeat DBNet pass).
+     * One immutable SDK OCR result generates four visual alternatives on the
+     * SAME CAMERA FRAME. Neither the alternatives nor the score gate may modify
+     * Android real-time OCR/TTS or a private single-frame original export.
+     *
+     * The horizontal classifier has a known hard false positive: actual vertical
+     * Chinese columns beside a horizontal price column. Even a highly confident
+     * candidate remains labelled "HYPOTHESIS", never automatically accepted.
      */
+    private fun fourWayShadowComparison(
+        originals: List<OCRResult>, horizontal: ShadowPath, vertical: ShadowPath
+    ): String {
+        fun render(replacements: Map<Int, List<String>>): String {
+            val lines = mutableListOf<String>()
+            for ((index,item) in originals.withIndex()) {
+                val texts = replacements[index] ?: listOf(item.text)
+                for (text in texts) if (text.isNotBlank()) lines.add(text)
+            }
+            return lines.joinToString(" ｜ ").ifBlank { "（无文字）" }
+        }
+        val collision = horizontal.touchedIds.intersect(vertical.touchedIds)
+        // Unresolvable conflict => preserve the ORIGINAL string(s) at those IDs.
+        val combined = mutableMapOf<Int,List<String>>()
+        for ((id, texts) in horizontal.replacements)
+            if (id !in collision) combined[id] = texts
+        for ((id, texts) in vertical.replacements)
+            if (id !in collision) combined[id] = texts
+        val a = render(emptyMap())
+        val b = render(horizontal.replacements)
+        val c = render(vertical.replacements)
+        val d = render(combined)
+        return "四路同帧A/B（SDK原有框序；非完整人工GT）：" +
+            "\nA. 原版（真实保留）：" + a +
+            "\nB. 横排跨行（假设，不自动采纳）：" + b +
+            "\nC. 竖排方向（仅保守候选）：" + c +
+            "\nD. 综合（冲突回退原文）：" + d +
+            "\n冲突源框数量=" + collision.size +
+            "；四路展示均来自图像OCR，无法凭置信度判定哪个最正确。" +
+            "\n提示：B/D中合并后的候选顺序仍需人工对照原照片；" +
+            "C/D中任何候选也都不影响实时TTS。"
+    }
+
+    /** Real same-frame second Small REC for verified skewed vertical rectangles. */
     private suspend fun inspectVerticalRescues(
         current: PaddleOCR, bitmap: Bitmap, originals: List<OCRResult>, budget: Int
-    ): String {
-        if (budget <= 0) return "本档不额外识别，或设备热/内存状态要求回退"
-        val selected = mutableListOf<Pair<Int, Pair<OCRResult, VerticalCropAxisGuard.Inspection>>>()
+    ): ShadowPath {
+        if (budget <= 0) return ShadowPath("热/内存回退或基线模式：竖排0次")
+        val selected =
+            mutableListOf<Triple<Int,OCRResult,VerticalCropAxisGuard.Inspection>>()
         for ((index, item) in originals.withIndex()) {
             if (selected.size >= budget) break
             val pts = item.box.points
             if (pts.size != 4) continue
             val source = org.opencv.core.MatOfPoint2f()
             try {
-                source.fromList(pts.map {
-                    org.opencv.core.Point(it.x.toDouble(), it.y.toDouble())
-                })
+                source.fromList(pts.map { org.opencv.core.Point(it.x.toDouble(),it.y.toDouble()) })
                 val minRect = Imgproc.minAreaRect(source)
                 val rect = Array(4) { org.opencv.core.Point() }
                 minRect.points(rect)
                 val q = FloatArray(8)
                 for (i in rect.indices) {
-                    q[2 * i] = rect[i].x.toFloat()
-                    q[2 * i + 1] = rect[i].y.toFloat()
+                    q[2*i] = rect[i].x.toFloat()
+                    q[2*i+1] = rect[i].y.toFloat()
                 }
-                val evidence = VerticalCropAxisGuard.inspect(q)
-                if (VerticalRecRescuePolicy.shouldRetry(evidence, item.text,
-                        selected.size, budget))
-                    selected.add(Pair(index, Pair(item, evidence)))
-            } catch (t: RuntimeException) {
-                Log.w(TAG, "Skip invalid shadow geometry", t)
-            } finally {
-                source.release()
-            }
+                val guard = VerticalCropAxisGuard.inspect(q)
+                if (VerticalRecRescuePolicy.shouldRetry(guard,item.text,selected.size,budget))
+                    selected.add(Triple(index,item,guard))
+            } catch (e: RuntimeException) {
+                Log.w(TAG,"Invalid vertical shadow geometry: skipped",e)
+            } finally { source.release() }
         }
-        if (selected.isEmpty()) return "0个满足严格条件的竖排风险框（无额外推理）"
+        if (selected.isEmpty())return ShadowPath("0个符合严格条件的真竖排错轴框")
         val stamp = System.nanoTime()
         return try {
-            val candidates = current.recognizeVerticalCandidates(bitmap,
-                selected.map { it.second.first.box })
-            val elapsedMs = (System.nanoTime() - stamp) / 1_000_000L
-            val lines = selected.mapIndexed { i, pair ->
-                val candidate = candidates.getOrNull(i)
-                val old = pair.second.first
-                val decision = VerticalRecRescuePolicy.decide(pair.second.second,
-                    old.text, candidate?.first, candidate?.second ?: 0f, i, budget)
-                val newText = candidate?.first ?: ""
-                "框#${pair.first + 1} 原「${old.text}」→候选「$newText」" +
-                    "，候选conf=${candidate?.second ?: 0f}" +
-                    "，单框耗时=${candidate?.third ?: -1}ms" +
-                    "，保守门控=${decision.reason}（仅提示）"
+            val results = current.recognizeVerticalCandidates(bitmap,
+                selected.map { it.second.box })
+            val elapsed = (System.nanoTime()-stamp)/1_000_000L
+            val replacements = mutableMapOf<Int,List<String>>()
+            val logLines=selected.mapIndexed { i,p ->
+                val candidate=results.getOrNull(i)
+                val decision=VerticalRecRescuePolicy.decide(
+                    p.third,p.second.text,candidate?.first,candidate?.second?:0f,i,budget)
+                if(decision.accepted && candidate!=null)
+                    replacements[p.first]=listOf(candidate.first)
+                "源框#${p.first+1} 原「${p.second.text}」→同Small候选「${candidate?.first?:""}」" +
+                    "，置信度=${candidate?.second?:0f}，附加耗时=${candidate?.third?:-1}ms" +
+                    "，保守门控=${decision.reason}（仅实验）"
             }
-            "${selected.size}次真实额外Small REC，合计${elapsedMs}ms\n" + lines.joinToString("\n")
+            ShadowPath("额外真竖排REC=${selected.size}次，耗时${elapsed}ms\n" +
+                logLines.joinToString("\n"),replacements,selected.map {it.first}.toSet(),
+                selected.size,elapsed)
         } catch (t: Throwable) {
-            Log.e(TAG, "Shadow vertical REC failed; baseline OCR kept", t)
-            "附加REC出错（${t.javaClass.simpleName}），原OCR完整保留"
+            Log.e(TAG,"Vertical shadow failed: baseline unchanged",t)
+            ShadowPath("竖排候选失败（${t.javaClass.simpleName}），原始文字完整保留")
+        }
+    }
+
+    /**
+     * Independently replay the first real-phone PRICE-ANCHORED cross-row case.
+     * This is NOT a robust text orientation classifier: genuine vertical writing
+     * next to aligned prices is known to satisfy the same geometry.
+     */
+    private suspend fun inspectHorizontalRescues(
+        current:PaddleOCR,bitmap:Bitmap,originals:List<OCRResult>,budget:Int
+    ): ShadowPath {
+        if (budget<=0) return ShadowPath("热/内存回退或基线模式：横排0次")
+        val geometry=originals.mapIndexedNotNull { index,item ->
+            val p=item.box.points
+            if(p.size!=4 || p.any { !it.x.isFinite() || !it.y.isFinite() }) null
+            else CrossRowOrientationAudit.Box(index,floatArrayOf(
+                p[0].x,p[0].y,p[1].x,p[1].y,p[2].x,p[2].y,p[3].x,p[3].y),
+                item.confidence)
+        }
+        val proposal=HorizontalCrossRowProposal.propose(
+            geometry,bitmap.width,bitmap.height,budget.coerceIn(1,4))
+        if(proposal.xyxy.isEmpty())
+            return ShadowPath("无高可信几何跨行候选（${proposal.status}）；不增加REC")
+        val stamp=System.nanoTime()
+        return try {
+            val rows=current.recognizeHorizontalCandidates(bitmap,
+                proposal.xyxy.toList())
+            val elapsed=(System.nanoTime()-stamp)/1_000_000L
+            val valid = rows.size==proposal.xyxy.size &&
+                rows.size>=3 && rows.any { it.first.isNotBlank() }
+            val suspects=proposal.suspectIds.toSet()
+            val replacements=mutableMapOf<Int,List<String>>()
+            if(valid) {
+                // Shadow hypothetical only. These boxes may in fact be genuine
+                // vertical writing; NEVER use for auto replacement or speech.
+                for(id in proposal.suspectIds)replacements[id]=emptyList()
+                replacements[proposal.suspectIds.minOrNull()!!]=rows.map { it.first }
+            }
+            val details=rows.mapIndexed { i,r ->
+                val q=proposal.xyxy.getOrNull(i) ?: floatArrayOf()
+                "横行#${i+1} 原帧裁剪=${q.joinToString(",")}, 候选「${r.first}」" +
+                    ", conf=${r.second}, ROI+Small耗时=${r.third}ms"
+            }
+            ShadowPath("跨行警报源框=${proposal.suspectIds.joinToString(",")}" +
+                "；独立横排价格锚点=${proposal.anchorIds.joinToString(",")}" +
+                "；${rows.size}次真Small局部REC，耗时${elapsed}ms" +
+                "；存在真竖排+横排价格误报反例，**此输出只是假设**\n" +
+                details.joinToString("\n"),
+                replacements,if(valid)suspects else emptySet(),rows.size,elapsed)
+        } catch(t:Throwable) {
+            Log.e(TAG,"Horizontal row shadow failed: baseline unchanged",t)
+            ShadowPath("横排候选失败（${t.javaClass.simpleName}），原始OCR全部保留")
         }
     }
 
