@@ -1,0 +1,104 @@
+name: CRAFT 720 (aligned 704) vs 768 and 640 OCR + 1080p timing - NO APK
+on:
+  push:
+    branches: [test/craft720-vs768-vs640-20261103]
+    paths:
+      - scripts/craft_input_resolution_sweep.py
+      - scripts/profile_craft768_1080p_host.py
+      - .github/workflows/craft720-comparison.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  paired-ocr-72-realphotos:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify CRAFT720 aligned dimension and script syntax
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/craft_input_resolution_sweep.py scripts/craft_small_detector_ab.py
+          grep -q '720:704' scripts/craft_input_resolution_sweep.py
+      - name: Install pinned ONNX CPU libraries
+        run: pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper
+      - name: SHA256-verify same unchanged CRAFT and Small baseline model files
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft720-models
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/inference4j/craft-mlt-25k/resolve/290e4d5/model.onnx' -o /tmp/craft720-models/craft.onnx
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx' -o /tmp/craft720-models/det.onnx
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx' -o /tmp/craft720-models/small_rec.onnx
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml' -o /tmp/craft720-models/small_rec.yml
+          echo '28c05f8b5e97f3c5765d00bca556ec2397c86c954d4ac5ef73aa10043db16388  /tmp/craft720-models/craft.onnx' | sha256sum -c -
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  /tmp/craft720-models/det.onnx' | sha256sum -c -
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/craft720-models/small_rec.onnx' | sha256sum -c -
+          echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/craft720-models/small_rec.yml' | sha256sum -c -
+      - name: 6-photo smoke test with three predeclared sizes
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft720-smoke
+          python3 -u scripts/craft_input_resolution_sweep.py --models /tmp/craft720-models --out /tmp/craft720-smoke --max-photos 6 | tee /tmp/craft720-smoke/run.log
+          grep -q 'CRAFT_SIZE_SWEEP_COMPLETE' /tmp/craft720-smoke/run.log
+      - name: Final 72 public real-scene photos DEV/HOLDOUT with one Small REC
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft720-full
+          python3 -u scripts/craft_input_resolution_sweep.py --models /tmp/craft720-models --out /tmp/craft720-full | tee /tmp/craft720-full/run.log
+          grep -q 'CRAFT_SIZE_SWEEP_COMPLETE 72' /tmp/craft720-full/run.log
+          echo '### OCR accuracy / latency comparison: unchanged Small REC and CRAFT weights, nominal 720 is aligned 704' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/craft720-full/summary.json >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/craft720-full/limitations.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve numerical accuracy and CPU timings, not models or photos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: craft720-vs768-640-real-scene-ocr
+          path: |
+            /tmp/craft720-smoke/
+            /tmp/craft720-full/
+          if-no-files-found: warn
+          retention-days: 10
+  paired-1080p-sustained-host:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install same ONNX CPU and RSS toolchain
+        run: pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' requests pyclipper 'psutil==6.1.1'
+      - name: Download exact unchanged CRAFT MLT25K ONNX
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft720-host
+          curl -fL --retry 3 --retry-delay 2 'https://huggingface.co/inference4j/craft-mlt-25k/resolve/290e4d5/model.onnx' -o /tmp/craft720-host/craft.onnx
+          echo '28c05f8b5e97f3c5765d00bca556ec2397c86c954d4ac5ef73aa10043db16388  /tmp/craft720-host/craft.onnx' | sha256sum -c -
+      - name: Same-run 1080p-like public scenes and 24 warm frames at 768 and 720 nominal (704 effective)
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/craft720-host/768 /tmp/craft720-host/720
+          python3 -u scripts/profile_craft768_1080p_host.py --model /tmp/craft720-host/craft.onnx --max-side 768 --frames 24 --out /tmp/craft720-host/768 | tee /tmp/craft720-host/768/run.log
+          python3 -u scripts/profile_craft768_1080p_host.py --model /tmp/craft720-host/craft.onnx --max-side 720 --frames 24 --out /tmp/craft720-host/720 | tee /tmp/craft720-host/720/run.log
+          grep -q 'CRAFT_HOST_CPU_PROFILE_COMPLETE 24' /tmp/craft720-host/768/run.log
+          grep -q 'CRAFT_HOST_CPU_PROFILE_COMPLETE 24' /tmp/craft720-host/720/run.log
+          echo '### 1920x1080 RGB photos, same GitHub Linux CPU runner, 24 CRAFT-only frames each; no rec/TTS/device' >> "$GITHUB_STEP_SUMMARY"
+          echo '### 768' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/craft720-host/768/summary.json >> "$GITHUB_STEP_SUMMARY"
+          echo '### 720 nominal (704 effective)' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/craft720-host/720/summary.json >> "$GITHUB_STEP_SUMMARY"
+          echo 'Caveat: no Android ARM model runtime, Android PSS, real camera, Small REC or spoken first word.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Save host-only 1080p timing and memory observations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: craft720-vs768-1080p-host-only
+          path: |
+            /tmp/craft720-host/768/
+            /tmp/craft720-host/720/
+          if-no-files-found: warn
+          retention-days: 10
