@@ -244,3 +244,13 @@
 - 新隔离脚本 `test/line-overlay-plan-isolated-20261103:scripts/paired_small_crop_attribution_holdout.py`，提交 `1addfcf5f14d3663e4cac400828433b152078a42`，使用旧 CSV 原值，只对同122条人工多边形裁剪做 Small REC；强制旧图像索引、GT ID/文本、归一化字符数/历史编辑距离完全一致，不下载或运行任何 DBNet/CRAFT DET。
 - 新单项 Actions 工作流 `.github/workflows/paired-small-crop-attribution.yml`，提交 `856a2ae622e9fa3fc531f1e024446fb0208341ce`，使用旧成功研究 Commit `1e0c227f33fb0fbef4c681024972d107b09bfc99` 的固定原始 `sdk.crop_box`/`sdk.rec`、相同 SHA-pinned Small REC，输出逐配对匿名编辑距离和同分母 CER、四类精确/错误结果，不保存图片/原文字/模型/APK。
 - **状态必须区分**：代码和 CI 文件提交、远端回读成功；新实验运行结果和每个识别输出**尚未验收**，暂不宣称改善比例。只操作旧仓库原隔离分支；正式 App、模型、TTS、APK 保持不变。
+
+
+#### 2026-11-03 — 同一122个区域的自动框/人工框 Small REC 配对实验成功；框裁剪确有明显影响
+
+- **去重前提：** 之前已经完成的 72图检测归因 Run 41566050026 及全量人工框 Oracle Run 41564703130 均未重跑。本次唯一新的推理是在同一 HOLDOUT36张照片里，对原本**已经成功匹配**的122个 GT 区域补做**人工 polygon 裁剪 Small REC**，把它们与旧自动框裁剪原始记录逐区域配对。
+- **成功 Actions**：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41612404136 ，`paired-crop-small-rec-only` = **success**；Artifact 13218859906（ZIP SHA256 `51449fc6e489b3672df0555edf9fc068b9f2a1b045564df9f0952c9b238126e0`，预计2026-11-13到期）；远端日志显示36张固定HOLDOUT、244个 GT、122个配对，已下载 ZIP 并用每区域 CSV 独立重算核心结果。
+- **新证据（**同一122个区域、相同690个字符**）：**既有自动框裁剪 Small REC 编辑距离 **111**、CER **16.087%**、精确89区域；此次**人工正确框裁剪**编辑距离 **40**、CER **5.797%**、精确99区域。净减少71个字符编辑错误，配对 CER 差距 **10.290个百分点**；18个区域人工框错误数更少，3个区域自动框更少，其余101个持平；11个原自动框错、人工框完全正确，1个相反，22个两种都错误。
+- **关键限制：** 这**不是**正式手机 OCR准确率提升10个百分点；只有已IoU配对的122/244个区域，而且是同一公开照片 Linux Python/ONNX 的控制变量结果，并不证明真实 Android SDK RGB/BGR、裁剪和预览路径等价。其余122未匹配的 GT 区域仍有漏检/粘连/匹配问题。人工 GT 只能作为实验 Oracle，不能直接上线使用。
+- **永久研究报告**：`test/line-overlay-plan-isolated-20261103:docs/paired-small-crop-attribution-holdout-20261103.md`，提交 `dbf6c76a5ac63374464ed4b8ff3337e03410475f`；实验脚本提交 `1addfcf5f14d3663e4cac400828433b152078a42`，工作流提交 `856a2ae622e9fa3fc531f1e024446fb0208341ce`。均属于原仓库隔离分支，不改正式代码、模型或 APK，旧记录保留。
+- **下一步应避免重复试验：** 优先核对 Android 真正从 NV21/Bitmap 到 SDK 四点裁剪与 Small REC 的颜色、旋转、归一化及张量输入能否与固定参考对齐；必要时按用户批准做安全的影子诊断，而不是继续广泛重跑同一72图、尝试未经证实的检测阈值修改。
