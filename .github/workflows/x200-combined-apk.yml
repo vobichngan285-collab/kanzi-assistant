@@ -11,7 +11,7 @@ concurrency:
   group: diagnostic-phone-ocr-${{ github.run_id }}
   cancel-in-progress: false
 permissions:
-  contents: read
+  contents: write
   actions: read
 jobs:
   build:
@@ -316,6 +316,11 @@ jobs:
             app/src/main/java/com/vobichngan/kanzi/HorizontalCrossRowProposal.java \
             scripts/CombinedHorizontalVerticalSmokeTest.java
           java -cp "$RUNNER_TEMP/combined-classes" CombinedHorizontalVerticalSmokeTest
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/combined-classes" \
+            app/src/main/java/com/vobichngan/kanzi/ReadingOrder.java \
+            app/src/main/java/com/vobichngan/kanzi/AutoPageRotation.java \
+            scripts/AutoPageRotationSmokeTest.java
+          java -cp "$RUNNER_TEMP/combined-classes" AutoPageRotationSmokeTest
           gradle --no-daemon --no-parallel --max-workers=2 --stacktrace :app:assembleDebug
           test -s app/build/outputs/apk/debug/app-debug.apk
       - name: Verify APK separate package, SDK model asset, no INTERNET, offline-only and ARM64
@@ -326,6 +331,7 @@ jobs:
           test -x "$AAPT"
           "$AAPT" dump badging "$apk" | tee "$RUNNER_TEMP/ocr-frame-apk-info.txt"
           grep -q "package: name='com.vobich.kanzi.x200combined'" "$RUNNER_TEMP/ocr-frame-apk-info.txt"
+          grep -q "versionCode='43'" "$RUNNER_TEMP/ocr-frame-apk-info.txt"
           "$AAPT" dump permissions "$apk" > "$RUNNER_TEMP/ocr-frame-permissions.txt"
           if grep -qi 'android.permission.INTERNET' "$RUNNER_TEMP/ocr-frame-permissions.txt"; then
             cat "$RUNNER_TEMP/ocr-frame-permissions.txt"
@@ -340,7 +346,7 @@ jobs:
               files=set(z.namelist())
               assert 'classes.dex' in files
               dex=b''.join(z.read(n) for n in files if n.endswith('.dex') and n.startswith('classes'))
-              for required in (b'HorizontalCrossRowProposal',b'recognizeHorizontalCandidates',b'fourWayShadowComparison'):
+              for required in (b'HorizontalCrossRowProposal',b'recognizeHorizontalCandidates',b'fourWayShadowComparison',b'AutoPageRotation'):
                   assert required in dex,required
               assert 'assets/models/det/inference.onnx' in files
               assert 'assets/models/rec/inference.onnx' in files
@@ -364,3 +370,58 @@ jobs:
           path: ${{ runner.temp }}/diag-output/
           retention-days: 10
           if-no-files-found: error
+
+      - name: Compare previous v42 installation certificate and publish standalone v43 APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          head_sha="$(gh api repos/vobichngan285-collab/kanzi-assistant/branches/test/x200-combined-horizontal-vertical-ab-20261103 --jq '.commit.sha')"
+          if [ "$head_sha" != "$GITHUB_SHA" ]; then
+            echo "An older branch run finished after newer source was pushed; skip stale release." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          apk="app/build/outputs/apk/debug/app-debug.apk"
+          newest_apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          test -x "$newest_apksigner"
+          new_cert="$("$newest_apksigner" verify --print-certs "$apk" | awk -F': ' '/Signer #1 certificate SHA-256 digest/{print $2;exit}')"
+          test -n "$new_cert"
+          old_cert=""
+          mkdir -p "$RUNNER_TEMP/previous"
+          if gh release download x200-combined-ocr-ab-20261103-v42 \
+              -R vobichngan285-collab/kanzi-assistant \
+              --pattern 'Kanzi_X200_Horizontal_Vertical_Combined_AB_debug.apk' \
+              --dir "$RUNNER_TEMP/previous"; then
+            old_apk="$RUNNER_TEMP/previous/Kanzi_X200_Horizontal_Vertical_Combined_AB_debug.apk"
+            old_cert="$("$newest_apksigner" verify --print-certs "$old_apk" | awk -F': ' '/Signer #1 certificate SHA-256 digest/{print $2;exit}')"
+          fi
+          echo "v42 signing certificate: ${old_cert:-UNAVAILABLE}" >> "$GITHUB_STEP_SUMMARY"
+          echo "v43 signing certificate: $new_cert" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$old_cert" ] && [ "$old_cert" = "$new_cert" ]; then
+            install_note="签名与原X200 v42一致，可在Android允许的条件下覆盖安装。"
+            echo "OVERWRITE_CERTIFICATE_MATCH=YES" >> "$GITHUB_STEP_SUMMARY"
+          else
+            install_note="原X200 v42调试签名未匹配或无法验证，不能承诺直接覆盖；Android可能要求先卸载旧版。"
+            echo "OVERWRITE_CERTIFICATE_MATCH=NO_OR_UNKNOWN" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          tag=x200-auto-page-rotation-ab-20261104-v43
+          name=Kanzi_X200_AutoPageRotation_AB_v43_debug.apk
+          cp "$apk" "$RUNNER_TEMP/$name"
+          cat > "$RUNNER_TEMP/release-notes.md" <<EOF
+          看字助手 X200 自动整页方向实验版 v43（独立 APK，非正式版）。
+          新增保守的90°/270°整页自动纠正，极低质量且横向行异常时可尝试180°；新增同帧方向诊断，保留原版四路A/B、离线模型与原始OCR不编造文字。诊断候选仅供人工复核。真机准确率/耗时需实测。
+          $install_note
+          源代码提交: $GITHUB_SHA
+          EOF
+          if ! gh release view "$tag" -R vobichngan285-collab/kanzi-assistant >/dev/null 2>&1; then
+            gh release create "$tag" -R vobichngan285-collab/kanzi-assistant \
+              --target "$GITHUB_SHA" --title "看字助手 X200 自动整页方向 A/B v43" \
+              --notes-file "$RUNNER_TEMP/release-notes.md" --prerelease
+          fi
+          gh release upload "$tag" "$RUNNER_TEMP/$name" -R vobichngan285-collab/kanzi-assistant --clobber
+          gh api repos/vobichngan285-collab/kanzi-assistant/releases/tags/"$tag" \
+            --jq '.assets[] | select(.name=="Kanzi_X200_AutoPageRotation_AB_v43_debug.apk") | [.browser_download_url,.size,.state] | @tsv' \
+            | tee "$RUNNER_TEMP/auto-apk-link.txt"
+          grep -q '^https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/' "$RUNNER_TEMP/auto-apk-link.txt"
+          sha256sum "$RUNNER_TEMP/$name" >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/auto-apk-link.txt" >> "$GITHUB_STEP_SUMMARY"
