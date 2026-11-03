@@ -155,3 +155,14 @@
 - **完整实验报告：** https://github.com/vobichngan285-collab/kanzi-assistant/blob/test/line-overlay-plan-isolated-20261103/docs/line-overlay-isolated-pure-java-results-20261103.md
 - **推荐下一步（待用户下一条单步指令）：** 针对固定真实照片/人工标注单行框开展“原始四点框 vs 新候选行框”的影子模式几何对照，量化碎片合并收益与跨行误合并风险；优先复用已有样本与标注、只做评估，**先不接正式预览、不动识别和 TTS**。
 
+
+
+#### 2026-11-03 — 真实公开照片单行白框影子对照：实验代码已提交，结果待核查
+
+- **用户授权：** 现在执行单行白框真实照片对照，并要求每次重要变化都写入原仓库长期交接文件。当前未识别出另外约定的“备份文件夹”准确路径，继续以既定唯一固定位置 main:PROJECT_HANDOFF.md 作为持续备份，保留 Git 历史。
+- **工作分支：** test/line-overlay-plan-isolated-20261103；本次新提交 **29bcedd075a731d86a2a55a9d5b85c3f0e36eefe**，以前已通过的 148 项 Java 断言的独立实验结果和已有代码未覆盖。
+- **本次新增内容：** scripts/LineOverlayRealPhotoReplay.java、scripts/line_overlay_realphoto_shadow.py、.github/workflows/line-overlay-realphoto-shadow.yml。只新增影子几何对照的 Java 桥接程序、公开图片评测脚本和**非 Android** 专项 CI；没有修改 LineOverlayPlanner、主 App、PaddleOCR/TTS、模型和 APK 签名流程。
+- **预先固定样本：** 公开 Yesianrohn/OCR-Data RCTW 数据集索引 1400–1411 的最多 12 张自然场景照片，沿用已验证的原 PP-OCRv6 Small DBNet+Small REC 推理模型、SHA256 与预处理，**不是新的盲测样本**，仅为新的“原始框与逐行候选框”几何对照重新提取必要的源框坐标。
+- **对照设计：** 对同一图像先计算模型原始四点框及识别非空标志，再调用未经修改的 LineOverlayPlanner；按每个来源框 ID 保证一一归属，输出无文字的坐标证据；以公开 GT 的 AABB IoU≥0.40、一个 GT 区域被多个源框拆分的合并情况、跨 GT 区域误合并与原框角点越界为**几何代理指标**。GT 可能不是严格的单行标注，不能把该代理当作白框最终准确率。
+- **关键限制：** 当前阶段只确认实验代码推送完成，**尚未核实该次新 CI 是否完成及真实数值**；禁止把此条记录表述为测试通过。仅 Linux CPU 的 Python OpenCV DBNet 近似处理，不等于 Android SDK 原生实现、USB 实时画面或 TTS 全链路。
+- **实验输出计划：** 只上传汇总指标、逐图指标、无 OCR 文本的源框/GT/候选框坐标和日志；不上传相片、模型文件或 APK。CI 成功/失败及真实数据将在后续追加记录，不覆盖本条。
