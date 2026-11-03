@@ -434,3 +434,12 @@
 - **已从GitHub Artifact下载并本地提取完整可直接安装APK**：GitHub Artifact ID **13242921453**，名`vivo-x200-horizontal-vertical-combined-ab-debug-apk`；实际APK大小 **390,399,875 bytes**，SHA256 **`d1ad468866507f116676415ddc8b6743db4a99c0c00026f562bbbd01ac32556b`**，与CI带的`SHA256SUMS.txt`一致；APK本身内部ZIP CRC完整验证通过，所需4个关键类函数从DEX bytes回验。**本对话精确sandbox路径** `/mnt/data/kanzi_x200_combined_four_way/Kanzi_X200_Horizontal_Vertical_Combined_AB_debug.apk` 由容器实际创建、确认存在。若未来会话引用必须重新查路径不可猜。GitHub Artifact页 https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41661796519/artifacts/13242921453 （GitHub下载的是ZIP, 给用户优先直接sandbox APK）。
 - **安装与使用**：直接点APK安装（不是压缩包）；设置里选择高质量4线程/批2，在同一固定画面（横排价目表、真正竖排介绍牌）点击“开始OCR诊断”，复制/导出结果重点查看A/B/C/D；选“手动采集一帧”后导出ZIP可带原图+本地四路对照。**只要没有实机验证就不能宣称整机提速/功耗提升/误伤为零。**
 - 代码文件：`HorizontalCrossRowProposal.java`、`PaddleOcrEngine.kt`、`scripts/patch_x200_shadow_sdk.py`、`SingleFrameEvidence.kt`及Android四档设置UI，隔离分支均已推送；安装指引`docs/phone-x200-combined-horizontal-vertical-20261103.md`。
+
+
+#### 2026-11-03（安装文件直链用户偏好，已真正公开发布APK，而非聊天内sandbox或Actions ZIP）
+
+- **用户新明确永久交付要求**：“给我能复制到浏览器下载的下载链接，以后只要是安装文件都按这个套路”。**从今每次发布安卓APK必须同时主动提供已真正发布、经过URL和资源验证、可复制的`https://`直达`.apk`链接**，不能只给`sandbox:/...`、ChatGPT附件、GitHub Actions ZIP Artifact 或仅给Github运行页面。先发布/验证真实独立APK再告诉用户；不要提前猜链接、不要用压缩包充当APK。
+- **已实际完成首个直接HTTPS APK发布**，使用公共GitHub仓库Release（pre-release）与独立GitHub Actions上传校验，成功 workflow run **41666779621**、final status SUCCESS。Tag `x200-combined-ocr-ab-20261103-v42`，资产 `Kanzi_X200_Horizontal_Vertical_Combined_AB_debug.apk`，大小 **390399875 bytes**，状态 `uploaded`，公开release文件API回读真实 `browser_download_url`：
+  **https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/x200-combined-ocr-ab-20261103-v42/Kanzi_X200_Horizontal_Vertical_Combined_AB_debug.apk**
+- 原APK SHA256 **d1ad468866507f116676415ddc8b6743db4a99c0c00026f562bbbd01ac32556b**，publish CI从此前完成并审计过的run `41661796519`官方Artifact下载，重新校验哈希、实际390399875 bytes及ZIP CRC，再通过`gh release upload`在GitHub公开Prerelease上传，已从`api.github.com/.../releases/tags/...`读取该资产`state=uploaded`/实际直链，**无需用户GitHub登录的公开APK托管地址**。工作流在隔离分支：`.github/workflows/publish-x200-combined-direct-apk.yml`，构建head对应集成版`c727566272664ac19e24806698ea92e8eb08d969`；并没有为发布再次编译其他不同APK。
+- 今后如果GitHub发布公共Release需要文件小于2GB，仍要用已成功的Actions产物校验/上传，再读回实际API资产，不可仅通过预设tag推测直链；最终回应应包含纯文本可复制`https://`完整URL，最好附“复制链接”控制，必要时还有仓库Release页，明确安装包包名/版本/功能。不需要提及旧sandbox内文件。
