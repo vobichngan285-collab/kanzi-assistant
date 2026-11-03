@@ -23,10 +23,16 @@ public final class VerticalRecRescuePolicy {
 
     public static boolean shouldRetry(VerticalCropAxisGuard.Inspection inspection,
                                       String original, int extraRecAlreadyPerformed) {
+        return shouldRetry(inspection, original, extraRecAlreadyPerformed,
+                           MAX_EXTRA_REC_INFERENCES_PER_FRAME);
+    }
+    /** Explicit higher diagnostic budget for a flagship device; never for automatic speech. */
+    public static boolean shouldRetry(VerticalCropAxisGuard.Inspection inspection,
+                                      String original, int already, int maxBudget) {
+        if (maxBudget < 0 || maxBudget > 4) return false;
         if (inspection == null ||
             inspection.status != VerticalCropAxisGuard.Status.X_SORT_AXIS_RISK) return false;
-        if (original == null || extraRecAlreadyPerformed < 0 ||
-            extraRecAlreadyPerformed >= MAX_EXTRA_REC_INFERENCES_PER_FRAME) return false;
+        if (original == null || already < 0 || already >= maxBudget) return false;
         return original.codePointCount(0, original.length()) <= MAX_ORIGINAL_CODEPOINTS_FOR_RETRY;
     }
 
@@ -37,7 +43,14 @@ public final class VerticalRecRescuePolicy {
     public static Decision decide(VerticalCropAxisGuard.Inspection inspection,
                                   String original, String candidate, float candidateConfidence,
                                   int extraRecAlreadyPerformedBeforeCandidate) {
-        if (!shouldRetry(inspection, original, extraRecAlreadyPerformedBeforeCandidate))
+        return decide(inspection, original, candidate, candidateConfidence,
+                      extraRecAlreadyPerformedBeforeCandidate,
+                      MAX_EXTRA_REC_INFERENCES_PER_FRAME);
+    }
+    public static Decision decide(VerticalCropAxisGuard.Inspection inspection,
+                                  String original, String candidate, float candidateConfidence,
+                                  int already, int maxBudget) {
+        if (!shouldRetry(inspection, original, already, maxBudget))
             return new Decision(original, false, "RETRY_NOT_ALLOWED");
         if (candidate == null || !Float.isFinite(candidateConfidence) ||
             candidateConfidence < MIN_NEW_CONFIDENCE_FOR_ACCEPT ||
