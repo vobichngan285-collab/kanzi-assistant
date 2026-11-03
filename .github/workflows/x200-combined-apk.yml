@@ -316,11 +316,10 @@ jobs:
             app/src/main/java/com/vobichngan/kanzi/HorizontalCrossRowProposal.java \
             scripts/CombinedHorizontalVerticalSmokeTest.java
           java -cp "$RUNNER_TEMP/combined-classes" CombinedHorizontalVerticalSmokeTest
-          javac -encoding UTF-8 -d "$RUNNER_TEMP/combined-classes" \
-            app/src/main/java/com/vobichngan/kanzi/ReadingOrder.java \
+          javac -encoding UTF-8 -cp "$RUNNER_TEMP/reading-flow-classes" -d "$RUNNER_TEMP/combined-classes" \
             app/src/main/java/com/vobichngan/kanzi/AutoPageRotation.java \
             scripts/AutoPageRotationSmokeTest.java
-          java -cp "$RUNNER_TEMP/combined-classes" AutoPageRotationSmokeTest
+          java -cp "$RUNNER_TEMP/combined-classes:$RUNNER_TEMP/reading-flow-classes" AutoPageRotationSmokeTest
           gradle --no-daemon --no-parallel --max-workers=2 --stacktrace :app:assembleDebug
           test -s app/build/outputs/apk/debug/app-debug.apk
       - name: Verify APK separate package, SDK model asset, no INTERNET, offline-only and ARM64
