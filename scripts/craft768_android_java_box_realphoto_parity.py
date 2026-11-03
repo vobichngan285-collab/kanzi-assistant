@@ -128,7 +128,7 @@ def run():
     (out/"summary.json").write_text(json.dumps(overall,ensure_ascii=False,indent=2))
     with (out/"per_scene.csv").open("w",encoding="utf-8-sig",newline="") as f:
         writer=csv.DictWriter(f,fieldnames=list(rows[0]));writer.writeheader();writer.writerows(rows)
-    print("CRAFT_BOX_PARITY_SUMMARY",json.dumps(overall,flush=True))
+    print("CRAFT_BOX_PARITY_SUMMARY",json.dumps(overall),flush=True)
     if len(rows)!=24:raise RuntimeError("Incomplete parity run")
     if overall["python_boxes"]<20:raise RuntimeError("CRAFT Python reference failed to decode")
     print("CRAFT_BOX_REALPHOTO_PARITY_COMPLETE",len(rows),flush=True)
