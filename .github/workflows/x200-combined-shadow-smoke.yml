@@ -1,0 +1,41 @@
+name: X200 combined horizontal+vertical shadow geometry and text safety tests
+on:
+  push:
+    branches: [test/x200-combined-horizontal-vertical-ab-20261103]
+    paths: ['.github/workflows/x200-combined-shadow-smoke.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile and run cross-row, vertical and combined safety suites
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/classes"
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/classes" \
+            app/src/main/java/com/vobichngan/kanzi/CrossRowOrientationAudit.java \
+            app/src/main/java/com/vobichngan/kanzi/HorizontalCrossRowProposal.java \
+            app/src/main/java/com/vobichngan/kanzi/VerticalCropAxisGuard.java \
+            app/src/main/java/com/vobichngan/kanzi/VerticalRecRescuePolicy.java \
+            app/src/main/java/com/vobichngan/kanzi/OcrPerformanceProfile.java \
+            scripts/CrossRowOrientationAuditSmokeTest.java \
+            scripts/CombinedHorizontalVerticalSmokeTest.java \
+            scripts/VerticalCropAxisGuardSmokeTest.java \
+            scripts/VerticalRecRescuePolicySmokeTest.java \
+            scripts/X200OfflineProfileSmokeTest.java
+          for task in CrossRowOrientationAuditSmokeTest \
+                      CombinedHorizontalVerticalSmokeTest \
+                      VerticalCropAxisGuardSmokeTest \
+                      VerticalRecRescuePolicySmokeTest \
+                      X200OfflineProfileSmokeTest; do
+            java -cp "$RUNNER_TEMP/classes" "$task"
+          done
+          echo 'All geometry and original-text invariants passed; true-vertical price-alignment false-positive remains shadow only.' >> "$GITHUB_STEP_SUMMARY"
