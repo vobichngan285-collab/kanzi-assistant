@@ -367,3 +367,15 @@
 - **强限制与风险**：原错误竖框3条与候选新横行4条不是同分割单位，不能直接相减得所谓手机CER提升百分点；原始手机仅保留前24/36框，整页漏检尚未验证。**真竖排+横向价格锚点有已构造的误报强反例**，此算法不能安全自动删除、旋转、拆分或覆盖正常真竖排字。因此正式APP和TTS/白框/认字一律不变；尚未做真实手机上的额外REC延迟、热负担与能耗测试。
 - **已永久去敏报告**：`test/phone-ocr-single-frame-diagnostic-20261103:docs/phone-small-crop-rec-ab-first-real-frame-20261103.md`，Commit **`cacf91b110e7dd297e7f68a7f4b8de1b683ca1e8`**，从 GitHub 回读核实。仅放匿名指标和限制，不含原照片/中文原文。本会话可分享**仅给用户**的可视化 `/mnt/data/private_phone_rec_ab/private_small_rec_original_vs_auto_rows.jpg`，它包含用户图像，不要推GitHub。
 - **继续步骤**：收集至少1张真正竖排字+水平价格锚点的真实反例和另1张同一价目表不同角度，先标注几何方向真值，再做只读A/B；仅在无误伤且手机延迟可接受时考虑独立实验APK的局部第二次Small REC开关。**结论：这张实际手机图首次得到与历史原始手机结果完全复现的同Small真识别证据，错误纵向跨横行改成正确横向裁剪后4/4行真正读对；“有机会提升”已被实验验证，但不能保证其它照片或直接上线。**
+
+
+#### 2026-11-03 — 第二份真手机竖排照片证明 SDK 顶点按X排序错轴，局部修正后同Small由1字恢复24字
+
+- **样本**：用户主动上传 `kanzi-ocr-single-frame (1).zip`（CRC PASS，30条文件，SHA256 `c95f2e3ceed56a4c8ae8dbc65e9b2e20d8bf5b5dfb28153de0c1253e4569f699`），1080×1920、PP-OCRv6 Small、未增强、DET724ms、REC613ms、13/13最终框全导出；图片为**真实从上到下右到左的竖排中文说明板**，不是上一张“横排被误识别成竖排”的价目表。用户图、原始NV21/四点/全部中文结果/张量**均不上传GitHub**。
+- **旧影子横排跨行风险检测器实际回放**：本张13框**0个误报**、`NO_CONTEXTUAL_RISK_DETECTED`，原上一张价目表24框仍标记15/16/17号；并非所有真竖排会被保护，已知“真竖排+横排价格行对齐”合成强反例仍不可自动改文本。NV21转PNG最大像素差1级，解码PNG和实际OCR输入PNG完全相同。
+- **同原Small ONNX逐字复现**：新ZIP全部13份真实 Float32 REC tensor用本地已SHA锁定的相同Small权重+`inference.yml`+官方CTC解码重新推理，**13/13预测逐字同手机原metadata**。然后只对源第12号真实长竖框的裁剪图做180°方向对照：手机原输出**1字**（conf0.876877）；反转后同Small输出**24字**（conf约0.988），匹配用户照片实际长竖列的视觉阅读；邻近四条原本正确的真竖列2/3/4/5原输出约24/25/25/21字，强行反转后只读3/0/6/1字，**不能普遍反转所有竖排**。
+- **查明SDK源具体失效**：官方 PaddleOCR `v3.7.0` 的 `postprocess/QuadGeometry.kt:orderMinAreaRectPoints` **按X将4顶点分两组，假定左两点为左边缘**；真实第12号长竖列倾斜使**全部顶部两个点的X都位于底部两点右方（X不交叠）**，导致长轴被当作宽度，`QuadTextCrop.kt` 的垂直旋转条件未触发，输出列方向不正确。这是**SDK裁剪顶点排序**具体风险，不是Small中文识别能力必然不足。
+- **本地反事实修正同Small**：对minAreaRect4顶点先以Y分组上下端、再以X定每端左右，然后保留官方透视/旋转法，真正SDK原图片、同Small REC重新运行后，异常第12号恢复**24字**（confidence约0.989652），其它四条真竖排2/3/4/5识别文本逐字不变；同旧横排跨行误框15/16/17输出不变（**这是两类不同错误，不能互称已修复**）。对两张手机图9个长竖框按上下X完全不交叠检测，**只命中本张第12号**；数据仍不足以泛化。
+- **独立纯Java安全预警器**：只读 `test/phone-ocr-single-frame-diagnostic-20261103:app/src/main/java/com/vobichngan/kanzi/VerticalCropAxisGuard.java`，提交 `6524183bf265af417ae4c84c07caa26d368daa3f`，不接手机OCR、TTS或白框；合成20项安全断言 `scripts/VerticalCropAxisGuardSmokeTest.java`，提交 `178d7ff24d892c1d26ed8c3241775efa93d5c040`。独立纯Java CI `41645471102` https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41645471102 **SUCCESS**，日志 `VERTICAL_CROP_AXIS_SHADOW_TEST=PASS assertions=20`，提交 `5b03a25d6f498772dbb09e4e8139e67b27c368fb`。注意诊断分支的旧`app/**` CI触发器可能在加入只读类时额外启动独立Debug构建Run`41645323181`，**不是已实现新的手机修复，也不是正式版更新**。
+- **永久去敏报告**：`test/phone-ocr-single-frame-diagnostic-20261103:docs/second-real-phone-vertical-sdk-crop-axis-20261103.md`，提交 **`0193a3b054b6c192a8dd55973bce23762d1eaf15`**，已经GitHub回读核对。实验照片/裁剪/实际OCR中文不进入公开仓库，本地用户私有图：`/mnt/data/phone_vertical_analysis/phone_vertical_crop12_before_after.jpg`；原用户ZIP仅在对话文件上下文。
+- **下一步**：优先设计**独立、保留回退的SDK内部MinAreaRect顶点排序修复实验**，只针对垂直长框上下X不交叠情形，仍使用Small一次REC，避免无必要的新模型或整张二次推理；拿真实竖排不同倾斜角、水平误框、横排文本测试零失字/不倒转，再评估是否授权新实验APK。**当前正式看字助手和用户已安装诊断工具均未被升级/覆盖，也没有自动更改原文。**
