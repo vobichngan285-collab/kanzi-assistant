@@ -47,7 +47,8 @@ jobs:
             --yml "$RUNNER_TEMP/public-models/small_rec.yml" \
             --vertical-zip "$RUNNER_TEMP/public-archive/vertical_annotations.zip" \
             --vertical-limit 791 \
-            --max-rec-affected 250 \
+            --vertical-tilt-limit 160 \
+            --max-rec-affected 240 \
             --out "$RUNNER_TEMP/public-axis-heldout" \
             | tee "$RUNNER_TEMP/public-axis-run.log"
           grep -q '^HOLDOUT_CROP_AXIS_AB_COMPLETE ' "$RUNNER_TEMP/public-axis-run.log"
@@ -58,7 +59,7 @@ jobs:
           print("SUMMARY",json.dumps(data["totals"],ensure_ascii=False))
           with open(os.environ["GITHUB_STEP_SUMMARY"],"a") as f:
               f.write("## Public held-out OCR crop-axis A/B\n\n")
-              f.write("Only public images and polygons; first 750 previously studied source offsets excluded.\n\n")
+              f.write("Only public images and metadata.jsonl polygons; first 750 previously studied source offsets excluded. Tilted vertical variants are simulated camera shear, NOT independent real photos.\n\n")
               f.write("| Metric | Value |\n|---|---:|\n")
               for k,v in data["totals"].items(): f.write(f"| {k} | {v} |\n")
           PY
