@@ -1,0 +1,44 @@
+name: Isolated line overlay geometry (no Android build)
+
+on:
+  push:
+    branches:
+      - test/line-overlay-plan-isolated-20261103
+    paths:
+      - 'app/src/main/java/com/vobichngan/kanzi/LineOverlayPlanner.java'
+      - 'app/src/main/java/com/vobichngan/kanzi/TextFlowRebuilder.java'
+      - 'scripts/LineOverlayPlannerSmokeTest.java'
+      - '.github/workflows/line-overlay-isolated.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pure-java-line-overlay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile existing text-flow classes and isolated overlay module
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/line-overlay"
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/line-overlay" \
+            app/src/main/java/com/vobichngan/kanzi/LayoutRegion.java \
+            app/src/main/java/com/vobichngan/kanzi/ReadingOrder.java \
+            app/src/main/java/com/vobichngan/kanzi/TextFlowRebuilder.java \
+            app/src/main/java/com/vobichngan/kanzi/LineOverlayPlanner.java \
+            scripts/LineOverlayPlannerSmokeTest.java
+      - name: Run only shadow-mode line geometry invariants
+        run: |
+          set -euo pipefail
+          java -cp "$RUNNER_TEMP/line-overlay" LineOverlayPlannerSmokeTest | tee "$RUNNER_TEMP/line-overlay-results.log"
+          grep -q '^LINE_OVERLAY_PLANNER_SMOKE_TEST=PASS' "$RUNNER_TEMP/line-overlay-results.log"
+          cat "$RUNNER_TEMP/line-overlay-results.log" >> "$GITHUB_STEP_SUMMARY"
+          echo "Isolated pure-Java check only: no camera, no TTS, no Android APK." >> "$GITHUB_STEP_SUMMARY"
