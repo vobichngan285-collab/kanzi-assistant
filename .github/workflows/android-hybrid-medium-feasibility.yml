@@ -1,10 +1,11 @@
-name: Android Hybrid Medium Feasibility - NO APK, NO RELEASE
+name: Android 12GB Medium priority rescue compile-only - NO APK
 on:
   push:
-    branches: [test/android-hybrid-medium-feasibility-20261103]
+    branches: [test/android-hybrid-12gb-performance-20261103]
     paths:
       - app/src/main/java/com/vobichngan/kanzi/HybridMediumCompileProbe.kt
       - scripts/patch_android_sdk_medium_probe.py
+      - scripts/upgrade_hybrid_medium_probe_budget.py
       - scripts/profile_small_medium_host_load.py
       - .github/workflows/android-hybrid-medium-feasibility.yml
   workflow_dispatch:
@@ -59,9 +60,11 @@ jobs:
           }
           GRADLE
           python3 scripts/patch_android_sdk_medium_probe.py "$SDK"
+          python3 scripts/upgrade_hybrid_medium_probe_budget.py "$SDK"
           # Confirm Medium weights are NOT copied into Android app/assets in compile-only research.
           ! find app/src/main/assets "$SDK/src/main/assets" -iname '*medium*.onnx' -print -quit 2>/dev/null | grep .
-          echo "One real Small detector + optional Medium recognition SDK API patched in CI only." >> "$GITHUB_STEP_SUMMARY"
+          echo "One Small detector, Small-first all lines, lowest-confidence Medium rescue budget 1/3." >> "$GITHUB_STEP_SUMMARY"
+          echo "Stale-page callback skips new rescues, not already running native inference." >> "$GITHUB_STEP_SUMMARY"
       - name: Checkout existing USB camera dependency without modification to source
         uses: actions/checkout@v4
         with:
@@ -104,50 +107,3 @@ jobs:
           fi
           echo 'Android compile-only checks passed. No APK was produced, signed or published.' >> "$GITHUB_STEP_SUMMARY"
           echo 'Android APIs compile, but no device-side Android model load was executed.' >> "$GITHUB_STEP_SUMMARY"
-  host-memory:
-    name: Load exact ONNX models together and profile host CPU/RSS (not phone)
-    runs-on: ubuntu-22.04
-    timeout-minutes: 18
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install host-only ONNX runtime
-        run: python3 -m pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1'
-      - name: Download SHA-pinned exact #315 detector, Small REC and Medium REC
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/kanzi-medium-models
-          curl -fL --retry 4 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/5994b4f/inference.onnx' -o /tmp/kanzi-medium-models/det.onnx
-          curl -fL --retry 4 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx' -o /tmp/kanzi-medium-models/small_rec.onnx
-          curl -fL --retry 4 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_rec_onnx/resolve/main/inference.onnx' -o /tmp/kanzi-medium-models/medium_rec.onnx
-          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  /tmp/kanzi-medium-models/det.onnx' | sha256sum -c -
-          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/kanzi-medium-models/small_rec.onnx' | sha256sum -c -
-          echo '9c09abf0957f7968c7586464b7397b84ad2387a0497a351af40e9acc71b673ba  /tmp/kanzi-medium-models/medium_rec.onnx' | sha256sum -c -
-      - name: Isolated process A - original detector + Small recognizer
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/kanzi-load-results
-          python3 -u scripts/profile_small_medium_host_load.py \
-            --models /tmp/kanzi-medium-models --scenario small \
-            --out /tmp/kanzi-load-results | tee /tmp/kanzi-load-results/small.log
-          grep -q 'TWO_RECOGNIZER_LOADING_BENCHMARK=PASS small' /tmp/kanzi-load-results/small.log
-      - name: Isolated process B - ONE Small detector + Small and Medium recognizers
-        run: |
-          set -euo pipefail
-          python3 -u scripts/profile_small_medium_host_load.py \
-            --models /tmp/kanzi-medium-models --scenario hybrid \
-            --out /tmp/kanzi-load-results | tee /tmp/kanzi-load-results/hybrid.log
-          grep -q 'TWO_RECOGNIZER_LOADING_BENCHMARK=PASS hybrid' /tmp/kanzi-load-results/hybrid.log
-          cat /tmp/kanzi-load-results/small_memory_latency.json >> "$GITHUB_STEP_SUMMARY"
-          cat /tmp/kanzi-load-results/hybrid_memory_latency.json >> "$GITHUB_STEP_SUMMARY"
-          echo 'Host-only RAM, CPU and ONNX loading; cannot establish Android thermal/USB/TTS performance.' >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload JSON measurement reports only, no model or app binaries
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: hybrid-small-medium-host-memory-cpu-report
-          path: /tmp/kanzi-load-results/
-          retention-days: 10
-          if-no-files-found: warn
