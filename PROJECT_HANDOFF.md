@@ -269,3 +269,12 @@
 
 - 修正永久研究报告中的剩余样本敏感性分析文字笔误：排除一条52字符的 RCTW-508/GT#1 后剩121区域、638字符，旧自动框85编辑错误、GT框37编辑错误，差距48/638=7.52个百分点；与已核实的数值一致，**没有新实验推理或指标更改**。
 - 隔离分支文档校对提交：`eee1e1de7701c67e956c205aeb10cf9ec02e9e31`。保留全部旧实验记录。
+
+
+#### 2026-11-03 — Android SDK 图像/裁剪链路专项：去重后确立真正缺口（开始前检查）
+
+- 用户允许继续诊断，并特别要求**每次先去重旧实验、变更后追加备份**。核查原仓库 HEAD：`main=0195250777cb481f8715d78b63cc4be06ba53b23`；`feature/strict-offline-ocr-order-guard=c50855877c2d22a52333585e433528830a498e13`；`test/line-overlay-plan-isolated-20261103=eee1e1de7701c67e956c205aeb10cf9ec02e9e31`。
+- 已有历史 `android-bgr-model-recheck.yml`、`verify_android_bgr_model_comparison.py` 是**公开图片 BGR/RGB ONNX 模型结果对比**，此前还有72图检测归因和122区域自动框/GT框配对，**不得重复当作新实验**。
+- 深入读取正式构建指定上游 **PaddleOCR v3.7.0** 的实际 `OCREngine.kt`、`QuadTextCrop.kt`、`QuadGeometry.kt`、`RecPreprocessor.kt`、`BitmapUtils.kt`。识别链路源码为：Android Bitmap→`BitmapUtils.bitmapToBGRMat`→`QuadTextCrop.crop`（`minAreaRect` + perspective warp, 竖排旋转）→`RecPreprocessor.preprocessBatch`（48高、最长3200、`/127.5-1`、NCHW）。正式 `.github/workflows/android.yml` 构建时会将上游 `RecPreprocessor` 的 BGR→RGB 变换**删除**，使其输入 BGR 与 `inference.yml` 保持一致。
+- **真正尚未验收的独立问题：** 在公开图像、同一多边形条件下执行**真实上游 SDK 的裁剪 + 构建补丁后的识别张量**，与前期 Python 参考 `crop_box + BGR` 做数值差异比对；这不需重新运行任何 DET/REC/CRAFT 模型，且不能冒称测试了 Android 真机 NV21→Bitmap。
+- 本条仅为开始前的只读源码核查与任务界定。正式 App 不动，未构建 APK；后续代码/CI和数值验收逐阶段追加到本交接文件。
