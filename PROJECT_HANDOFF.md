@@ -284,3 +284,9 @@
 
 - `test/line-overlay-plan-isolated-20261103:scripts/AndroidSdkCropTensorProbe.kt` 新增，提交 `06eaa89dec966ef741642e42622ba2511edb7f80`；已从 GitHub 回读源码确认一致。用途是在**Linux Kotlin/JVM** 执行上游 v3.7.0 的 `QuadTextCrop.crop` 和构建期 BGR 补丁后 `RecPreprocessor.preprocessBatch`，用固定公开图片/四点框输出匿名裁剪与张量数值供 Python 比对；不下载模型、无 OCR 推理、无真实 Android Bitmap/手机、无 APK。
 - **状态：只有适配器代码已提交，未编译、未执行、没有数值或准确率结果**；后续将追加独立测试驱动与工作流，再核查运行日志。正式 App/CRAFT/DBNet/REC 与历史实验未改。
+
+
+#### 2026-11-03 — Android SDK 数值对照公开图驱动脚本已写入（未运行）
+
+- 新增隔离脚本 `test/line-overlay-plan-isolated-20261103:scripts/android_sdk_crop_tensor_parity.py`，提交 `ebede3d55c43af874f9a24328ac0f9de163cc36f`，远端已回读一致。只选以前使用过的 RCTW-1406 与 RCTW-1409，至多各6个已标注四点框，准备**相同 BGR 像素输入**；参考使用旧成功研究的 Python `crop_box`；目标运行的是 PaddleOCR v3.7.0 原始 `QuadTextCrop` + 正式 Android CI BGR 补丁后的 `RecPreprocessor`。数值比较仅包含裁剪像素、张量形状、最大差/平均差，不下载/运行任何识别器或检测器。
+- **仍属实验准备，尚未执行**：Linux/JVM 宿主测试不是安卓机的真实 NV21/Bitmap 或相机实拍测试；不上传任何用户私有照片。全部原像素、裁剪与张量必须在 CI 临时目录，产物仅匿名数值指标。
