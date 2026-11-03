@@ -179,3 +179,11 @@
 - **完整长期报告：** https://github.com/vobichngan285-collab/kanzi-assistant/blob/test/line-overlay-plan-isolated-20261103/docs/line-overlay-realphoto-shadow-results-20261103.md
 - **短期原始匿名数据包：** https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41607539013/artifacts/13216669007 （预计 2026-11-13 到期；不能视作永久备份）。包括 per_photo.csv、summary.json、box_replay_no_ocr_text.json、run.log；不含图片/模型或识别文本。Artifact SHA256：cd9aa0a71adffb197c81d14966759c4b760216a549fcbf253e50981d537d44d9。
 - **备份与历史：** 此条在 main:PROJECT_HANDOFF.md **追加**，前一条“实验代码提交、结果待核查”及更早所有 CRAFT / 148 断言实验均保留。没有确认除该 GitHub 交接文件之外的专用备份文件夹路径。
+
+
+#### 2026-11-03 — 下一阶段：真实图片可视化审查，准备阶段
+
+- **用户授权：** 继续原有真实图行框审查；每次重要变化必须及时追加到此文件并提交 GitHub。
+- **复用而非重跑：** 沿用已核实的 Run 41607539013 的12张 RCTW 1400–1411坐标产物；先前 52 原框→51候选，仅一处合并（RCTW-1406），代理 GT 36→34，无法判定合并是否符合人眼单行要求。旧结果保持不变。
+- **新增隔离审查辅助脚本：** `test/line-overlay-plan-isolated-20261103:scripts/line_overlay_visual_audit.py`；提交 `855f5dbb898128c539eac06319380b7ca31f0b26`。只准备从公开数据集取回原图并叠画 GT/原检测框/候选框，供可视检查；不执行 OCR 推理、不改 `LineOverlayPlanner`、不改正式 App、不做 APK。
+- **当前状态：** 可视化任务尚未执行，不宣称已有人工严格单行 GT，也不把旧区域/实例标注冒充严格单行标注；待 CI 和逐图检查完成后继续追加真实结果与风险。
