@@ -35,6 +35,24 @@ public final class SmallRecCtcSelfTest {
             SmallRecCtc.decode(ctc(5,2),new long[]{1,1,6},labels);
         } catch(IllegalArgumentException expected){refused=true;}
         check(refused,"Wrong ONNX class-count should fail closed");
+        final class Row implements SmallRecCtc.Positioned {
+            final float x,y;
+            final String content;
+            Row(String content,float x,float y) {
+                this.content=content;this.x=x;this.y=y;
+            }
+            public float left() {return x;}
+            public float top() {return y;}
+            public float bottom() {return y+12;}
+        }
+        List<Row> sorted=SmallRecCtc.topToBottom(Arrays.asList(
+            new Row("right_top",90,11),new Row("bottom",5,65),
+            new Row("left_top",5,10),new Row("middle",8,40)));
+        check("left_top".equals(sorted.get(0).content) &&
+              "right_top".equals(sorted.get(1).content) &&
+              "middle".equals(sorted.get(2).content) &&
+              "bottom".equals(sorted.get(3).content),
+              "Deterministic row/column order failed");
         System.out.println("SMALL_REC_CTC_SELFTEST_PASS");
     }
 }
