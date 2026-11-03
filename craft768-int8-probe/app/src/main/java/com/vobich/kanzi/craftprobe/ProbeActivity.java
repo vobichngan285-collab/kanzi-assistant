@@ -11,6 +11,7 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.RectF;
 import android.media.ExifInterface;
 import android.net.Uri;
@@ -28,6 +29,7 @@ import android.speech.tts.UtteranceProgressListener;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -82,6 +84,8 @@ public class ProbeActivity extends Activity {
     private final List<JSONObject> tests = new ArrayList<>();
 
     private TextView status;
+    private ImageView preview;
+    private List<CraftBoxDecoder.Box> currentBoxes = Collections.emptyList();
     private OrtEnvironment environment;
     private OrtSession model;
     private String inputName;
@@ -119,8 +123,8 @@ public class ProbeActivity extends Activity {
 
         TextView intro = new TextView(this);
         intro.setText("独立安装，不替换看字助手。离线测试20.95MB量化模型，固定768检测输入。\n" +
-                "本工具只测CRAFT找字阶段：不包含百度飞桨Small文字识别，" +
-                "也不代表完整阅读的语音首字延迟。模型与图片不上传。");
+                "新版保留真实照片的横竖方向和宽高比，不再强制横向1920×1080留白。" +
+                "可查看CRAFT文字检测框，但不包含百度飞桨Small文字识别及完整语音朗读。");
         intro.setTextSize(17);
         layout.addView(intro);
 
@@ -136,6 +140,8 @@ public class ProbeActivity extends Activity {
         addButton(layout, "⑥ 当前图片连续24次推理（含两次预热）", () -> background("连续24次推理", () -> runRepeated(24)));
         addButton(layout, "⑦ 可选：独立试听系统语音（非OCR朗读）", this::testTts);
         addButton(layout, "⑧ 导出匿名性能数据 JSON", this::exportJson);
+        addButton(layout, "⑨ 当前图片重建并显示文字检测框", () ->
+                background("文字框重建", this::runBoxPreview));
 
         status = new TextView(this);
         status.setTextSize(17);
@@ -146,6 +152,11 @@ public class ProbeActivity extends Activity {
                 "推荐纸面小字、包装、菜单、复杂背景三类图片分别测试。\n" +
                 "本工具不修改系统语音引擎设置。");
         layout.addView(status);
+        preview = new ImageView(this);
+        preview.setAdjustViewBounds(true);
+        preview.setContentDescription("已选照片与CRAFT检测框预览，黄色轮廓表示找到的候选文字区域");
+        preview.setMinimumHeight((int)(120*getResources().getDisplayMetrics().density));
+        layout.addView(preview);
         setContentView(scroll);
     }
 
@@ -162,7 +173,9 @@ public class ProbeActivity extends Activity {
     private void note(String message) {
         Log.i(TAG, message);
         ui.post(() -> {
-            status.setText(message + "\n\n" + status.getText());
+            String existing = status.getText().toString();
+            if (existing.length() > 5000) existing = existing.substring(0, 5000);
+            status.setText(message + "\n\n" + existing);
             status.announceForAccessibility(message);
         });
     }
@@ -265,9 +278,17 @@ public class ProbeActivity extends Activity {
         int inWidth;
         int inHeight;
         float sample;
+        long boxPostprocessingMs;
+        int rawComponents;
+        int survivingComponents;
+        List<CraftBoxDecoder.Box> boxes = Collections.emptyList();
     }
 
     private Inference one(Bitmap src) throws Exception {
+        return one(src, false);
+    }
+
+    private Inference one(Bitmap src, boolean reconstructBoxes) throws Exception {
         if (model == null) throw new IllegalStateException("模型尚未加载");
         long start = SystemClock.elapsedRealtimeNanos();
         double scale = Math.min(1.0, (double) LONG_SIDE / Math.max(src.getWidth(), src.getHeight()));
@@ -302,6 +323,16 @@ public class ProbeActivity extends Activity {
                 if (!Float.isFinite(result.sample))
                     throw new IllegalStateException("CRAFT输出出现NaN或无穷");
                 result.forwardMs = millis(SystemClock.elapsedRealtimeNanos() - startedForward);
+                if (reconstructBoxes) {
+                    long boxStart = SystemClock.elapsedRealtimeNanos();
+                    CraftBoxDecoder.Result decoded = CraftBoxDecoder.decode(
+                            output.getFloatBuffer(), (int)shape[1], (int)shape[2],
+                            src.getWidth(), src.getHeight(), w, h);
+                    result.boxes = decoded.boxes;
+                    result.rawComponents = decoded.rawComponents;
+                    result.survivingComponents = decoded.survivingComponents;
+                    result.boxPostprocessingMs = millis(SystemClock.elapsedRealtimeNanos() - boxStart);
+                }
             }
         }
         result.totalMs = millis(SystemClock.elapsedRealtimeNanos() - start);
@@ -355,7 +386,9 @@ public class ProbeActivity extends Activity {
         entry.put("modelSha256", MODEL_SHA);
         entry.put("imageKind", frameKind);
         entry.put("sourceImageDimensions", frameSourceSize);
-        entry.put("benchmarkFrame", FRAME_W + "x" + FRAME_H);
+        entry.put("benchmarkFrame", src.getWidth() + "x" + src.getHeight());
+        entry.put("preservesSourceOrientation", true);
+        entry.put("forced1920x1080Letterbox", false);
         entry.put("fixedImageRepeatedNotCameraStreaming", true);
         entry.put("frames", count);
         entry.put("warmupFrames", count > 1 ? 2 : 0);
@@ -377,7 +410,8 @@ public class ProbeActivity extends Activity {
         entry.put("ttsIncluded", false);
         addReport(entry);
         note(count + "次测试完成（同一张图片重复运行，不是实时摄像头流）。\n" +
-                "图像：" + frameKind + "；1920×1080→CRAFT " + inW + "×" + inH +
+                "图像：" + frameKind + "；" + src.getWidth() + "×" + src.getHeight() +
+                "→CRAFT " + inW + "×" + inH +
                 "\n纯模型P50：" + entry.get("inferenceP50Ms") + "ms，P95：" + entry.get("inferenceP95Ms") +
                 "ms\n前处理+推理P50：" + entry.get("totalForwardAndPreprocessingP50Ms") +
                 "ms，P95：" + entry.get("totalForwardAndPreprocessingP95Ms") + "ms" +
@@ -401,7 +435,7 @@ public class ProbeActivity extends Activity {
         root.put("appPackage", getPackageName());
         root.put("modelSha256", MODEL_SHA);
         root.put("privacy", "No image content or actual photo path exported. No network permission.");
-        root.put("caveat", "Only raw CRAFT INT8 inference; no text boxes/Small REC/TTS first word. Camera uses ACTION_IMAGE_CAPTURE.");
+        root.put("caveat", "Orientation-preserving CRAFT INT8 inference; optional text box visualization is approximate Java CRAFT geometry, not OCR transcription. No Small REC/TTS first word. Camera uses ACTION_IMAGE_CAPTURE.");
         root.put("measurements", new JSONArray(tests));
         lastReport = root.toString(2);
     }
@@ -411,7 +445,77 @@ public class ProbeActivity extends Activity {
         frame = next;
         frameKind = kind;
         frameSourceSize = sourceDimensions;
+        currentBoxes = Collections.emptyList();
+        if (preview != null && next != null) {
+            Bitmap localPreview = drawPreview(next, currentBoxes);
+            ui.post(() -> preview.setImageBitmap(localPreview));
+        }
         if (old != null && old != next && !old.isRecycled()) old.recycle();
+    }
+
+    private Bitmap drawPreview(Bitmap original, List<CraftBoxDecoder.Box> boxes) {
+        final int maxSide = 1200;
+        float scale = Math.min(1f, maxSide / (float)Math.max(original.getWidth(), original.getHeight()));
+        int width = Math.max(1, Math.round(original.getWidth() * scale));
+        int height = Math.max(1, Math.round(original.getHeight() * scale));
+        Bitmap resized = Bitmap.createScaledBitmap(original, width, height, true);
+        Bitmap annotated = resized.copy(Bitmap.Config.ARGB_8888, true);
+        if (resized != original) resized.recycle();
+        Canvas canvas = new Canvas(annotated);
+        Paint outline = new Paint(3);
+        outline.setColor(Color.YELLOW);
+        outline.setStyle(Paint.Style.STROKE);
+        outline.setStrokeWidth(Math.max(2f, width/250f));
+        outline.setShadowLayer(2f, 1f, 1f, Color.BLACK);
+        float sx = width/(float)original.getWidth();
+        float sy = height/(float)original.getHeight();
+        for (CraftBoxDecoder.Box box : boxes) {
+            float[] q = box.quad;
+            Path path = new Path();
+            path.moveTo(q[0]*sx, q[1]*sy);
+            for (int i=1; i<4; ++i) path.lineTo(q[2*i]*sx,q[2*i+1]*sy);
+            path.close();
+            canvas.drawPath(path, outline);
+        }
+        return annotated;
+    }
+
+    private void runBoxPreview() throws Exception {
+        if (model == null) throw new IllegalStateException("请先按①加载模型");
+        Bitmap src=frame;
+        if (src==null || src.isRecycled())
+            throw new IllegalStateException("请先选择一张真实照片或模拟测试图");
+        Inference infer=one(src,true);
+        currentBoxes = infer.boxes;
+        Bitmap overlay=drawPreview(src,currentBoxes);
+        ui.post(() -> preview.setImageBitmap(overlay));
+        JSONObject report = new JSONObject();
+        report.put("kind","text_box_visualization");
+        report.put("modelSha256",MODEL_SHA);
+        report.put("imageKind",frameKind);
+        report.put("sourceImageDimensions",frameSourceSize);
+        report.put("preservesSourceOrientation",true);
+        report.put("craftInputWidth",infer.inWidth);
+        report.put("craftInputHeight",infer.inHeight);
+        report.put("rawComponents",infer.rawComponents);
+        report.put("survivingComponents",infer.survivingComponents);
+        report.put("displayedBoxes",infer.boxes.size());
+        report.put("preprocessingMs",infer.preprocessMs);
+        report.put("forwardMs",infer.forwardMs);
+        report.put("boxPostprocessingMs",infer.boxPostprocessingMs);
+        report.put("totalMs",infer.totalMs);
+        report.put("pssKb",Debug.getPss());
+        report.put("noTextTranscription",true);
+        report.put("geometryDecoder","pure-Java component/dilation/minAreaRect equivalent, visualization-only");
+        // Avoid exporting photo pixels, actual text, or box coordinates.
+        addReport(report);
+        note("文字框重建完成：找到 "+infer.boxes.size()+
+                " 个候选框（初始连通区域 "+infer.rawComponents+" 个）。"+
+                "\n图片 "+src.getWidth()+"×"+src.getHeight()+" → 输入 "+
+                infer.inWidth+"×"+infer.inHeight+
+                "\nCRAFT推理 "+infer.forwardMs+"ms；文字框后处理 "+
+                infer.boxPostprocessingMs+"ms；总计 "+infer.totalMs+"ms。"+
+                "\n下方黄框只表示可能含文字，尚未做真正的汉字内容识别。");
     }
 
     private Bitmap demoFrame() {
@@ -507,11 +611,9 @@ public class ProbeActivity extends Activity {
         background("读取真实图片", () -> {
             Bitmap decoded = readPhoto(uri);
             String dims = decoded.getWidth() + "x" + decoded.getHeight();
-            Bitmap normalized = letterbox1080(decoded);
-            decoded.recycle();
-            replaceFrame(normalized, kind, dims);
-            note(kind + "：已将 " + dims + " 图片等比例填充到1920×1080（留白不拉伸）。\n" +
-                    "现在可运行⑤或⑥。图片只保存在本机，不上传。");
+            replaceFrame(decoded, kind, dims);
+            note(kind + "：已保留原图方向和宽高比 (" + dims + ")，"+
+                    "不再强制横屏留白。\n现在可运行⑤、⑥或⑨。图片只保存在本机，不上传。");
         });
     }
 
