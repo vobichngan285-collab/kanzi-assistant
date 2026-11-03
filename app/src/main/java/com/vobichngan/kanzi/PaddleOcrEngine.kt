@@ -126,7 +126,7 @@ class PaddleOcrEngine(
     }
     fun setFastScanMode(enabled: Boolean) { fastScanMode = enabled }
     fun setLiveTextRotationDegrees(degrees: Int) {
-        liveTextRotationDegrees = if (degrees == 90 || degrees == 270) degrees else 0
+        liveTextRotationDegrees = if (degrees == 90 || degrees == 180 || degrees == 270) degrees else 0
     }
     fun setReadingFocusMode(mode: String) {
         readingFocusMode = try { ReadingFocus.Mode.valueOf(mode) }
@@ -166,6 +166,31 @@ class PaddleOcrEngine(
                     val startedNanos = System.nanoTime()
                     val result = current.recognize(bitmap)
                     val originalOcrWallMs = (System.nanoTime() - startedNanos) / 1_000_000L
+                    // Independent same-frame rotation evidence: preserve original A/B output.
+                    val frameBoxes = toReadingBoxes(result.results)
+                    val geometryAngle = AutoPageRotation.candidate(frameBoxes)
+                    val autoAngle = if (geometryAngle != 0) geometryAngle
+                        else if (AutoPageRotation.considerUpsideDown(frameBoxes)) 180 else 0
+                    var autoDirectionReport = "未触发：无可靠的整页方向候选，保留0°原版"
+                    if (autoAngle != 0 &&
+                        OcrHardwareProbe.safeShadowBudget(performanceProfile, performanceBefore) > 0) {
+                        val autoStarted = System.nanoTime()
+                        val transform = Matrix().apply { postRotate(autoAngle.toFloat()) }
+                        val trialBitmap = Bitmap.createBitmap(bitmap,0,0,bitmap.width,bitmap.height,transform,true)
+                        try {
+                            val trialResult = current.recognize(trialBitmap)
+                            val accepted = AutoPageRotation.accept(frameBoxes,toReadingBoxes(trialResult.results))
+                            autoDirectionReport = "候选整页旋转=${autoAngle}°；额外整图OCR=1次；" +
+                                "耗时=${(System.nanoTime()-autoStarted)/1_000_000L}ms；" +
+                                "候选框=${trialResult.results.size}；结果校验=${if(accepted) "通过" else "拒绝"}" +
+                                "\n自动方向纠正候选文本（仅诊断，不覆盖原版A/B）：\n" +
+                                ReadingOrder.arrange(toReadingBoxes(trialResult.results)).ifBlank { "（空）" }
+                        } finally {
+                            if (trialBitmap !== bitmap) trialBitmap.recycle()
+                        }
+                    } else if (autoAngle != 0) {
+                        autoDirectionReport = "候选旋转=${autoAngle}°，性能/温控预算不允许追加整图OCR"
+                    }
                     // Original SDK result is immutable. Two independent, real
                     // same-frame REC experiments share it; never repeat DBNet.
                     val budget=OcrHardwareProbe.safeShadowBudget(
@@ -182,6 +207,7 @@ class PaddleOcrEngine(
                         "；全部实验阶段墙钟=${allElapsed}ms" +
                         "\n推理前：${performanceBefore.describe()}" +
                         "\n推理后：${performanceAfter.describe()}" +
+                        "\n\n【自动整页方向纠正 A/B（同帧）】\n${autoDirectionReport}" +
                         "\n\n【横排跨行修复候选】\n${horizontal.summary}" +
                         "\n\n【真正竖排方向修复候选】\n${vertical.summary}" +
                         "\n\n${fourWayShadowComparison(result.results,horizontal,vertical)}" +
@@ -483,7 +509,7 @@ class PaddleOcrEngine(
                     "NV21 数据长度不匹配：收到 ${data.size} 字节，预期 ${expectedBytes} 字节"
                 }
                 var bitmap = nv21ToBitmap(data, width, height, legacyNv21Jpeg)
-                val liveAngle = if (fastScanMode) liveTextRotationDegrees else 0
+                var liveAngle = if (fastScanMode) liveTextRotationDegrees else 0
                 try {
                     if (liveAngle != 0) {
                         val transform = Matrix()
@@ -503,6 +529,34 @@ class PaddleOcrEngine(
                         }
                     }
                     var result = current.recognize(bitmap)
+                    // Normal pages stay one-pass. Sideways pages may earn one extra
+                    // OCR inference, and replace text only with real pixel evidence.
+                    if (liveAngle == 0) {
+                        val sourceBoxes = toReadingBoxes(result.results)
+                        val geometricAngle = AutoPageRotation.candidate(sourceBoxes)
+                        val suggested = if (geometricAngle != 0) geometricAngle
+                            else if (AutoPageRotation.considerUpsideDown(sourceBoxes)) 180 else 0
+                        if (suggested != 0) {
+                            val phone = OcrHardwareProbe.capture(appContext)
+                            if (!phone.memoryPressure && (phone.thermalStatus < 0 || phone.thermalStatus < 3)) {
+                                val mat = Matrix().apply { postRotate(suggested.toFloat()) }
+                                val candidateImage = Bitmap.createBitmap(bitmap,0,0,bitmap.width,bitmap.height,mat,true)
+                                try {
+                                    val candidateOcr = current.recognize(candidateImage)
+                                    if (AutoPageRotation.accept(sourceBoxes,toReadingBoxes(candidateOcr.results))) {
+                                        result = candidateOcr
+                                        if (candidateImage !== bitmap) {
+                                            bitmap.recycle()
+                                            bitmap = candidateImage
+                                        }
+                                        liveAngle = suggested
+                                    }
+                                } finally {
+                                    if (candidateImage !== bitmap) candidateImage.recycle()
+                                }
+                            }
+                        }
+                    }
                     // Retry only low-confidence frames. This avoids paying for enhancement
                     // on every frame while giving difficult text a second preprocessing pass.
                     if (!fastScanMode && !enhancedPreprocessing && shouldRetryWithEnhancement(result.results)) {
@@ -568,11 +622,13 @@ class PaddleOcrEngine(
                                 // Map them back to native camera coordinates.
                                 coordinates[2 * i] = when (liveAngle) {
                                     90 -> y
+                                    180 -> width - x
                                     270 -> width - y
                                     else -> x
                                 }
                                 coordinates[2 * i + 1] = when (liveAngle) {
                                     90 -> height - x
+                                    180 -> height - y
                                     270 -> x
                                     else -> y
                                 }
