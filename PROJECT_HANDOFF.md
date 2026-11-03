@@ -187,3 +187,10 @@
 - **复用而非重跑：** 沿用已核实的 Run 41607539013 的12张 RCTW 1400–1411坐标产物；先前 52 原框→51候选，仅一处合并（RCTW-1406），代理 GT 36→34，无法判定合并是否符合人眼单行要求。旧结果保持不变。
 - **新增隔离审查辅助脚本：** `test/line-overlay-plan-isolated-20261103:scripts/line_overlay_visual_audit.py`；提交 `855f5dbb898128c539eac06319380b7ca31f0b26`。只准备从公开数据集取回原图并叠画 GT/原检测框/候选框，供可视检查；不执行 OCR 推理、不改 `LineOverlayPlanner`、不改正式 App、不做 APK。
 - **当前状态：** 可视化任务尚未执行，不宣称已有人工严格单行 GT，也不把旧区域/实例标注冒充严格单行标注；待 CI 和逐图检查完成后继续追加真实结果与风险。
+
+
+#### 2026-11-03 — 公开图单行白框可视化专项 CI 已提交（待运行结论）
+
+- 原有隔离分支新增最小独立 CI：`.github/workflows/line-overlay-visual-audit.yml`，提交 `3233dd7f2c29c2cc4e67afa9b1052b4a2fd11dc2`；脚本基线提交 `855f5dbb898128c539eac06319380b7ca31f0b26`。
+- CI 只读取已存在的 Actions Run 41607539013 几何 JSON，取回固定 12 张公开 RCTW 图片制作原框/GT/候选框叠加图与唯一合并处放大图；没有新的 CRAFT/DBNet/Small 推理、Android 编译、模型参数调整或 TTS 修改。
+- 结果待实际查看 Actions 状态与渲染图片，不会把图像绘制成功冒充严格人工单行标注或算法效果提升。
