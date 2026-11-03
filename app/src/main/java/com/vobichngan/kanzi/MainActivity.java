@@ -219,7 +219,7 @@ public class MainActivity extends CameraActivity {
                                 "；中文语音：" + (canSpeak() ? "已就绪" : "尚未就绪") +
                             "\n提示：本页为诊断结果，诊断本身不自动朗读；可点「朗读这次诊断识别出的文字」试听。"
                             + "\n当前模型：" + report.getModelId()
-                            + "\\n\\n" + report.getX200ProfileReport()
+                            + "\n\n" + report.getX200ProfileReport()
                             + "\nOCR 输入方向：原始摄像头帧（固定 0°）"
                             + "\n实时文字输入旋转设置：" + liveTextRotationDegrees +
                                 "°（仅用于正式实时扫描；独立诊断保持原始0°画面）"
