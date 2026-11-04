@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Fail-closed patch of pinned upstream PaddleOCR v3.7.0 for a SHADOW ONLY
+"""Fail-closed patch of pinned upstream PaddleOCR v3.7.0 for a a narrowly gated automatic first-crop axis repair and optional SHADOW
 second recognition of skewed vertical source polygons. No private images.
-Original SDK run(), source REC tensors, live speech and detector are unchanged.
+Only proven long-vertical X-axis crop defects enter the automatic first REC; detector, model weights and all normal crop geometries stay unchanged.
 Run AFTER checkout of exact v3.7.0 SDK, BEFORE Gradle compilation.
 """
 from pathlib import Path
@@ -26,17 +26,25 @@ edit("postprocess/QuadTextCrop.kt",
     private fun cropInternal(src: Mat, box: OCRBox, repair: Boolean): Mat {""")
 edit("postprocess/QuadTextCrop.kt",
      "        val ordered = QuadGeometry.orderMinAreaRectPoints(boxPoints)",
-     """        val ordered = if (!repair) {
-            QuadGeometry.orderMinAreaRectPoints(boxPoints)
+     """        // Correct *only* the minAreaRect X-sorting defect on very long
+        // skewed vertical detections, using observed pixels/coordinates.
+        // This is the original (first) SDK crop, not another detector/REC.
+        // Two non-overlapping top/bottom X intervals prove X-first sorting
+        // would exchange the long and short rectangle axes. All normal
+        // horizontal and stable vertical boxes keep SDK's original crop.
+        val byY = boxPoints.sortedWith(compareBy<Point> { it.y }.thenBy { it.x })
+        val upper = byY.take(2).sortedBy { it.x }
+        val lower = byY.drop(2).sortedBy { it.x }
+        val spanX = boxPoints.maxOf { it.x } - boxPoints.minOf { it.x }
+        val spanY = boxPoints.maxOf { it.y } - boxPoints.minOf { it.y }
+        val gap = kotlin.math.max(upper[0].x - lower[1].x,
+                                  lower[0].x - upper[1].x)
+        val provenAxisRisk = spanX >= 8.0 && spanY >= 160.0 &&
+            spanY >= spanX * 4.0 && gap > 2.0
+        val ordered = if (repair || provenAxisRisk) {
+            listOf(upper[0], upper[1], lower[1], lower[0])
         } else {
-            // For extremely long slanted vertical lines, sorting the four
-            // vertices by X groups both bottom corners as the "left edge".
-            // Group by Y into top/bottom pairs then sort X within each pair.
-            // Caller must separately prove the axis-risk predicate.
-            val byY = boxPoints.sortedWith(compareBy<Point> { it.y }.thenBy { it.x })
-            val top = byY.take(2).sortedBy { it.x }
-            val bottom = byY.drop(2).sortedBy { it.x }
-            listOf(top[0], top[1], bottom[1], bottom[0])
+            QuadGeometry.orderMinAreaRectPoints(boxPoints)
         }""")
 edit("engine/OCREngine.kt",
      "import com.paddle.ocr.model.OCRResult",
@@ -143,5 +151,5 @@ edit("PaddleOCR.kt",
     }
 
     private suspend fun recognizeResult(runEngine: () -> OCREngineResult): OCRRunResult {""")
-print("COMBINED_HORIZONTAL_VERTICAL_SHADOW_SDK_PATCH_PASS: source DET/REC preserved")
+print("PROVEN_VERTICAL_AXIS_FIRST_CROP_REPAIR_PASS: only narrow long/skewed quads; original DET/model preserved")
 
