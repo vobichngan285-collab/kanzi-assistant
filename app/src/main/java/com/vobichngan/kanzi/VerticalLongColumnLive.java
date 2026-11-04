@@ -5,7 +5,9 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * User-OPT-IN true vertical Chinese live reading, NOT an automatic classifier.
+ * Conservative, fully offline recognition of likely *upright traditional vertical*
+ * Chinese reading order. No per-scan manual switching is required; normal
+ * horizontal writing must fail closed to the original algorithm.
  *
  * Uses ONLY existing OCR quadrilaterals/text. Fails closed on unstable geometry
  * and leaves normal live OCR text untouched. No preview matrix, frame rotation,
@@ -49,7 +51,7 @@ public final class VerticalLongColumnLive {
     public static Result tryArrange(boolean explicitVerticalMode,
                                     List<ReadingOrder.Box> boxes,
                                     int bitmapWidth, int bitmapHeight) {
-        if(!explicitVerticalMode) return fallback("竖排实验模式未开启",boxes==null?0:boxes.size());
+        if(!explicitVerticalMode) return fallback("自动竖排判断已关闭",boxes==null?0:boxes.size());
         if(boxes==null || boxes.size()<4 || bitmapWidth<240 || bitmapHeight<320)
             return fallback("画面/文字框不足",boxes==null?0:boxes.size());
         VerticalLongColumnShadow.Result order=VerticalLongColumnShadow.inspect(boxes);
@@ -72,6 +74,25 @@ public final class VerticalLongColumnLive {
         }
         if(allCodepoints<75 || allHan<allCodepoints*.65f || shortest<240f)
             return fallback("并非可信的成段中文竖排长列",boxes.size());
+
+        // A horizontal book rotated sideways may have identical tall bounding
+        // rectangles and perfectly readable Han text. Requiring at least one
+        // clearly *upright* OCR quad among the body columns protects that case.
+        // On true vertical signs, some slanted columns have OpenCV's long
+        // edge first while another gives a clean short, near-horizontal
+        // first edge. Use these existing quadrilaterals, no extra inference.
+        int uprightAnchors = 0;
+        for (int id:order.columnIds) {
+            ReadingOrder.Box b = boxes.get(id);
+            float firstX=b.x[1]-b.x[0], firstY=b.y[1]-b.y[0];
+            float secondX=b.x[2]-b.x[1], secondY=b.y[2]-b.y[1];
+            float e1=(float)Math.hypot(firstX,firstY);
+            float e2=(float)Math.hypot(secondX,secondY);
+            if(e1<=e2*.45f && Math.abs(firstY)<=Math.abs(firstX)*.45f)
+                uprightAnchors++;
+        }
+        if(uprightAnchors < 1)
+            return fallback("可能是横排书页旋转拍摄：没有可靠的竖排朝向锚点",boxes.size());
 
         // A visibly tall *unrecovered* crop between neighboring OCR columns
         // must fail the whole proposal. Otherwise four good columns can hide
@@ -103,7 +124,7 @@ public final class VerticalLongColumnLive {
                countHan(b.text)!=1) continue;
             float dx=lastX-b.centerX();
             float by=b.centerY();
-            if(dx>=Math.max(8f,(last.right()-last.left())*.16f) &&
+            if(dx>=Math.max(8f,(last.right()-last.left())*.12f) &&
                dx<=Math.max(46f,(last.right()-last.left())*.95f) &&
                by>=last.top()-.06f*lastHeight &&
                by<=last.top()+.14f*lastHeight) {
@@ -137,7 +158,7 @@ public final class VerticalLongColumnLive {
         String speech=main.toString();
         if(others.length()>0) speech+="\n\n"+others;
         return new Result(true,speech,
-            "显式竖排模式：原始OCR "+order.columnIds.size()+
+            "自动判定为竖排：原始OCR "+order.columnIds.size()+
             " 个长列从右往左；独立续字="+(trailing>=0?"#"+(trailing+1):"无")+
             "；全部"+preserved+"个OCR框不丢弃，不补字",
             order.columnIds,trailing,preserved);
