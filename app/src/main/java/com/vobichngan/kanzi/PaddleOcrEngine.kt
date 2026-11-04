@@ -112,6 +112,8 @@ class PaddleOcrEngine(
     @Volatile private var engine: PaddleOCR? = null
     @Volatile private var released = false
     @Volatile private var fastScanMode = false
+    @Volatile private var verticalLiveReadingEnabled = false
+    fun setVerticalLiveReadingEnabled(enabled: Boolean) { verticalLiveReadingEnabled = enabled }
     // Optional 90/270 degree correction in the live text scanner.
     // Manual correction performs just ONE normal OCR inference.
     @Volatile private var liveTextRotationDegrees = 0
@@ -221,6 +223,8 @@ class PaddleOcrEngine(
                     // ReadingOrder.verticalColumns(), which groups single glyphs.
                     val verticalColumnOrder = VerticalLongColumnShadow.inspect(frameBoxes)
                         .describe(frameBoxes)
+                    val verticalSpeechPreview = VerticalLongColumnLive.tryArrange(
+                        verticalLiveReadingEnabled, frameBoxes, bitmap.width, bitmap.height)
                     val performanceAfter=OcrHardwareProbe.capture(appContext)
                     val allElapsed=(System.nanoTime()-startedNanos)/1_000_000L
                     val profileDiagnostic="X200综合实验：${performanceProfile.label}" +
@@ -237,6 +241,8 @@ class PaddleOcrEngine(
                         "\n\n【横排跨行修复候选】\n${horizontal.summary}" +
                         "\n\n【真正竖排方向修复候选】\n${vertical.summary}" +
                         "\n\n【长列竖排阅读顺序候选（仅诊断）】\n${verticalColumnOrder}" +
+                        "\n\n【竖排实时朗读门控（按实际OCR图像）】\n" +
+                        "${verticalSpeechPreview.status}" +
                         "\n\n${fourWayShadowComparison(result.results,horizontal,vertical)}" +
                         "\n\n所有修复仅在手动诊断中进行，绝不覆盖正式朗读或原始框。"
                     if (evidenceRequested.getAndSet(false)) {
@@ -288,8 +294,9 @@ class PaddleOcrEngine(
                         candidateDetails = candidate.second,
                         // Exactly the geometry-only order used by the new
                         // real-time scanner; no additional ONNX inference.
-                        realtimeText = RealtimeTextOrientation.arrange(
-                            toReadingBoxes(result.results), bitmap.width, bitmap.height),
+                        realtimeText = if (verticalSpeechPreview.used)
+                            verticalSpeechPreview.text else RealtimeTextOrientation.arrange(
+                                frameBoxes, bitmap.width, bitmap.height),
                         x200ProfileReport = profileDiagnostic
                     )
                     withContext(Dispatchers.Main) { onResult.onResult(report) }
@@ -614,15 +621,27 @@ class PaddleOcrEngine(
                         result.results.size)
                     val text: String
                     val flowDescription: String
-                    if (realtime) {
+                    // Only the user's explicit vertical reading mode may enter
+                    // the live TTS path; normal horizontal pages stay identical.
+                    // The SDK first-crop repair already used real pixel evidence.
+                    val readingBoxes = toReadingBoxes(result.results)
+                    val verticalLive = VerticalLongColumnLive.tryArrange(
+                        verticalLiveReadingEnabled && readingFocusMode == ReadingFocus.Mode.AUTO,
+                        readingBoxes, bitmap.width, bitmap.height)
+                    if (verticalLive.used) {
+                        text = verticalLive.text
+                        flowDescription = verticalLive.status + "；输入旋转${liveAngle}°"
+                    } else if (realtime) {
                         text = RealtimeTextOrientation.arrange(
-                            toReadingBoxes(result.results), bitmap.width, bitmap.height)
-                        flowDescription = "实时文字：按文字方向、从上至下连续朗读（输入旋转${liveAngle}°）"
+                            readingBoxes, bitmap.width, bitmap.height)
+                        flowDescription = "实时文字：按文字方向、从上至下连续朗读（输入旋转${liveAngle}°）；" +
+                            "竖排门控未采纳：${verticalLive.status}"
                     } else {
                         val focus = arrangeInReadingOrder(result.results, bitmap.width,
                             bitmap.height, layout.regions)
                         text = focus.text
-                        flowDescription = focus.description
+                        flowDescription = focus.description +
+                            "；竖排门控未采纳：${verticalLive.status}"
                     }
                     val verification = if (!realtime && aiLayoutEnabled &&
                         readingFocusMode == ReadingFocus.Mode.AUTO)
