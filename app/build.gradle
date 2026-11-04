@@ -22,8 +22,8 @@ android {
     }
     buildTypes {
         debug {
-            applicationIdSuffix '.x200usbdirection53'
-            versionNameSuffix '-usb-auto-full-reading'
+            applicationIdSuffix '.x200quietspeech54'
+            versionNameSuffix '-quiet-speech-stability'
             minifyEnabled false
         }
         release {
@@ -43,8 +43,8 @@ android {
         applicationId 'com.vobich.kanzi'
         minSdk 26
         targetSdk 35
-        versionCode 53
-        versionName '0.9.20'
+        versionCode 54
+        versionName '0.9.21'
     }
 }
 
