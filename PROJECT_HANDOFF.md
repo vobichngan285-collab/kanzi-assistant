@@ -555,3 +555,19 @@
 - **公开Release经GitHub API确认**：tag `x200-usb-full-auto-20261104-v50`，APK `Kanzi_X200_USBFullAuto_v50_debug.apk`，**390416255 bytes**，SHA256 `48437a416a4966ed60416915f6df817ea6b6391bdbefc9ab91ac8d647a7b5540`，直接浏览器下载：
   https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/x200-usb-full-auto-20261104-v50/Kanzi_X200_USBFullAuto_v50_debug.apk
 - 真实测试：用户只需安装v50独立APP，确保USB“自动校准”默认选中，连接之前同一USB摄像头对准刮痧宣传牌、**无需手动选择270°**，点击开始识别和单帧诊断，查看`USB自动方向决策`是否显示采纳270°、实际Bitmap=1080×1920、OCR长列是否恢复，试听竖排。再测试正常横排材料无误判。构建成功不代表**用户手机自动校准已验收**。如果自动未触发/无法确认，先不要强行切换；发来新诊断数据核查。README/用户交接中不要宣传成已在手机成功自动识别。
+
+#### 2026-11-04 v51 模块化阅读/中央目标优先（先公开素材实验再构建APK）
+
+- 用户要求将看字助手的文字处理像医院科室那样清晰分类，每个模块有明确职责，避免一锅粥式迭代及额外算力；用户确认“镜头中央科室门牌优先朗读”，强调单列竖排（“耳鼻喉科”、甚至“眼科”两字）、多列传统竖排、普通横排、混排在一个界面自动运行、无需手动模式。明确工作顺序：**先写代码→自行寻找网上公开素材→完成针对性实验并报告结果→再生成测试APK**。所有数据须原文保真、离线、低发热。
+- 分支 `test/x200-modular-reading-center-v51` 基于已成功发布的v50 USB真实OCR方向自动校准版本，仅改OCR推理**后的阅读策略**，不改USB/手机NV21输入、预览变换、OCR权重、温控和TTS队列。新纯Java职责模块：
+  1. `TextRegionPartition.java`: 对已有文字框作O(n²)保守几何连通归区，横排段、竖排长列、竖排单字分组。每个区域维护源框ID/置信度/位置；不能删除原始OCR诊断框。
+  2. `SingleVerticalFlow.java`: 对单框竖排OCR文本直接保留；对2~18个按竖直位置排列的高可信单字框，经过中心X、行距和汉字属性校验后，从上到下连接，原文不变。特别加入“眼科”**两字**边界回归（第一轮发现3字阈值漏报，已修复）。
+  3. `CenterTargetTracker.java`: 对互不相连的区域按光学中心距离评分，保留上一目标轻度抖动的连续性；无法证明中心区域时不强行猜测。
+  4. `ReadingStrategyRouter.java`: 优先选择通过原保守校验的整篇传统多列竖排；强横排长文维持原完整文字流；多独立门牌/标签场景只在**快速实时扫读**时选择中央完整区域；单列2/4字走单列模块；分区不稳回退v50算法。所有选中文字通过字符**多重集相等**校验确保既不增字也不漏字。诊断保留全框，选中不是删除其它OCR数据。
+- `PaddleOcrEngine.kt` 快扫调用模块化路由和持久中央目标tracker，手动冻结帧诊断通过新的单独tracker展示首次快扫预计的“分区/中央目标/阅读策略/候选文本”，不干扰正在播报的焦点。BOOK长文路径仍原样保留。`MainActivity.java` 调整设置说明、保留v50 USB自动方向/预览独立行为。新App versionName0.9.18、versionCode51，独立debug包名`com.vobich.kanzi.x200modularcenter`。
+- **在线真实公开素材**：HuggingFace `sdcb/simdpaddleocr-dataset-v1`（Apache-2.0），来源 https://huggingface.co/datasets/sdcb/simdpaddleocr-dataset-v1 ，取100张公开发布的合成OCR图像、1036条文字行与bbox/orientation标注。下载16.3MB parquet；对嵌入的每张JPEG按公开`sha256`逐张校验100/100通过；包含185条90°或-90°横侧文字行，分布在74张图。**注意：这些图片本身是公开发布的合成图片，不是真实医院手机拍摄图；这次使用官方完美GT行文本与坐标测的是阅读区域/排序策略，绝不声称是对这100张图做了真实PP-OCR模型端到端准确率测试。** Python导出`scripts/export_public_ocr_layout_cases.py`，Java实验`scripts/PublicOcrLayoutCorpusTest.java`。真实输出：`PUBLIC_LAYOUT_GROUND_TRUTH_VERIFIED images=100 lines=1036 rotated_lines=185`，`PUBLIC_ONLINE_LAYOUT=PASS images=100 gt_lines=1036 image_with_90deg_lines=74 center_focused=47 full_page=53 multi_vertical=0 multi_vertical_on_rotated=0 all_original_ids_preserved=true no_char_invention=true`。47/53是策略分流数量，不是正确率。
+- **匿名合成几何场景回归**：`scripts/ModularReadingRoutingSmokeTest.java`，结果`MODULAR_READING_ROUTER=PASS assertions=29`，涵盖3个医院科室竖排（中央耳鼻喉科优先、左右内科/眼科不串读）；一OCR框整列；2字竖排眼科；正常横排7行不截断；混合横排302房号+竖排门牌；5列长文章按右到左全篇保留、无漏字重字；低置信度回退；镜头轻微晃动与明显移向新标牌。原v49自动竖排9项、竖排长列27项、竖排长列shadow34项均通过。
+- **先实验后APK证据**：纯Java/公开图片政策专用workflow `.github/workflows/x200-modular-reading-policy-tests.yml` 首先SUCCESS https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41793542008 ，同时执行旧手机预览独立、USB输入方向、书籍阅读保护源码脚本。确认成功后才创建构建workflow `.github/workflows/x200-modular-reading-apk.yml`。完整Android独立APK工作流SUCCESS https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41793684142 ，JDK17、3个模型真实ONNX中文测试、SDK编译、手机摄像头预览回归、书页回归、签名/包名/ARM64/模型SHA256/无INTERNET权限审计通过。
+- GitHub Release已通过API核实：tag `x200-modular-center-20261104-v51`，安装APK `Kanzi_X200_ModularCenter_v51_debug.apk`，大小 **390432643 bytes**，sha256 `88d6b55176630eeaf40e4c17480c84a9393ccf28e4b7dca83bfc0b9a6d7db678`，有效下载地址：
+  https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/x200-modular-center-20261104-v51/Kanzi_X200_ModularCenter_v51_debug.apk
+- **未做用户vivo真机新v51的实际拍照OCR/TTS、功耗与高温长时间实验；绝不宣布真机通过。** 建议用户安装独立v51后，保持默认快扫自动，先对准多个医院科室标牌的正中央，检查先读中央完整门牌、左右不插话，轻微手抖不跳目标；移动相机至另一个门牌检查切换。再测试普通横排整页，五列真竖排和USB自动270°朝向是否仍然正常。不必设置旋转或开启竖排模式。失败反馈一帧诊断即可按模块定位，绝不能擅自改OCR主模型。
