@@ -439,7 +439,6 @@ jobs:
           模拟3分钟无重复朗读不是手机真机连续3分钟验收；温控、真实USB和室外TTS需安装验证。
           私有照片与诊断ZIP不进入公开仓库。
           TXT
-          sha256sum          TXT
           sha256sum "$RUNNER_TEMP/diag-output/Kanzi_X200_QuietSpeech_v54_debug.apk" > "$RUNNER_TEMP/diag-output/SHA256SUMS.txt"
           cat "$RUNNER_TEMP/diag-output/SHA256SUMS.txt" >> "$GITHUB_STEP_SUMMARY"
           echo 'V54_APK_AUDIT=PASS; v53 isolated; offline; quiet auto TTS; real phone 3-min A/B pending.' >> "$GITHUB_STEP_SUMMARY"
@@ -478,10 +477,9 @@ jobs:
           - 使用独立Debug临时签名，私人照片和诊断ZIP没有公开。
           - source commit: $GITHUB_SHA
           EOF
-          if ! gh release view          EOF
           if ! gh release view "$tag" -R vobichngan285-collab/kanzi-assistant >/dev/null 2>&1; then
             gh release create "$tag" -R vobichngan285-collab/kanzi-assistant \
-              --target "$GITHUB_SHA" --title "看字助手 X200 USB自动方向与全文阅读 v54（独立测试包）" \
+              --target "$GITHUB_SHA" --title "看字助手 X200 安静稳定朗读 v54（独立测试包）" \
               --notes-file "$RUNNER_TEMP/release-notes.md" --prerelease
           fi
           gh release upload "$tag" "$RUNNER_TEMP/$name" -R vobichngan285-collab/kanzi-assistant --clobber
