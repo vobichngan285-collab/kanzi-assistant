@@ -1,0 +1,50 @@
+name: X200 first-pass auto-row frozen rule independent public DET audit (no APK)
+on:
+  push:
+    branches: [test/x200-firstpass-autoline-ab-20261104]
+    paths:
+      - 'scripts/validate_firstpass_crossrow_public.py'
+      - '.github/workflows/x200-firstpass-autoline-public-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  unseen-public-photos:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: 1e0c227f33fb0fbef4c681024972d107b09bfc99
+          path: original-ocr-study
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Fixed same OCR detector runtime and syntax validation
+        run: |
+          python3 -m pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' 'requests==2.32.3' pyclipper
+          python3 -m py_compile scripts/validate_firstpass_crossrow_public.py
+      - name: Download pinned public Small DET and separate public vertical dataset
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/firstpass-public/models /tmp/firstpass-public/out
+          curl -fL --retry 4 --retry-delay 3 --max-time 240 \
+            'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx' -o /tmp/firstpass-public/models/det.onnx
+          echo "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  /tmp/firstpass-public/models/det.onnx" | sha256sum -c -
+          curl -fL --retry 4 --retry-delay 4 --max-time 900 \
+            'https://huggingface.co/datasets/AlroWilde/vertical_annotations/resolve/main/vertical_annotations.zip' -o /tmp/firstpass-public/vertical.zip
+      - name: Same model real DET on 36 other street and 8 other vertical photos
+        run: |
+          set -euo pipefail
+          PYTHONPATH=original-ocr-study/scripts python3 -u scripts/validate_firstpass_crossrow_public.py | tee /tmp/firstpass-public/out/run.log
+          grep -q '^INDEPENDENT_CROSSROW_PUBLIC_VALIDATION_COMPLETE' /tmp/firstpass-public/out/run.log
+          cat /tmp/firstpass-public/out/summary.json >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: x200-crossrow-firstpass-independent-public-44-numeric-only
+          path: /tmp/firstpass-public/out/
+          retention-days: 10
+          if-no-files-found: warn
