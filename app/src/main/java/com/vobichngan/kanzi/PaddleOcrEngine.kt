@@ -254,8 +254,12 @@ class PaddleOcrEngine(
                 }
                 var bitmap = nv21ToBitmap(data, width, height, legacyNv21Jpeg)
                 val decodedBitmap = bitmap
-                val manualAngle = OcrInputOrientation.normalize(inputRotationDegrees)
+                val usbAutomatic = inputRotationDegrees == -1
+                var manualAngle = if (usbAutomatic) 0 else
+                    OcrInputOrientation.normalize(inputRotationDegrees)
                 var rotatedBitmap: Bitmap? = null
+                var enhancedBitmap: Bitmap? = null
+                var usbAutoReport = "USB自动定向：未启用（独立手动/手机方向）"
                 try {
                     // The same explicit USB OCR input angle is used by manual
                     // diagnostics and real-time OCR. Preview matrix is not read.
@@ -270,22 +274,36 @@ class PaddleOcrEngine(
                     }
                     if (enhancedPreprocessing) {
                         val enhanced = enhanceForOcr(bitmap)
-                        if (enhanced !== bitmap) { bitmap = enhanced }
+                        if (enhanced !== bitmap) {
+                            enhancedBitmap = enhanced
+                            bitmap = enhanced
+                        }
                     }
                     val performanceBefore = OcrHardwareProbe.capture(appContext)
                     val startedNanos = System.nanoTime()
-                    val result = current.recognize(bitmap)
+                    val usbAuto = if (usbAutomatic)
+                        recognizeUsbAutomatically(current,bitmap) else null
+                    if (usbAuto != null) {
+                        bitmap = usbAuto.bitmap
+                        manualAngle = usbAuto.angle
+                        usbAutoReport = usbAuto.report
+                        if (bitmap !== decodedBitmap && bitmap !== enhancedBitmap)
+                            rotatedBitmap = bitmap
+                    }
+                    val result = usbAuto?.result ?: current.recognize(bitmap)
                     val originalOcrWallMs = (System.nanoTime() - startedNanos) / 1_000_000L
                     // Independent same-frame rotation evidence: preserve original A/B output.
                     val frameBoxes = toReadingBoxes(result.results)
-                    val geometryAngle = if (manualAngle == 0)
+                    val geometryAngle = if (!usbAutomatic && manualAngle == 0)
                         AutoPageRotation.candidate(frameBoxes) else 0
-                    val autoAngle = if (manualAngle != 0) 0
+                    val autoAngle = if (usbAutomatic || manualAngle != 0) 0
                         else if (geometryAngle != 0) geometryAngle
                         else if (AutoPageRotation.considerUpsideDown(frameBoxes)) 180 else 0
-                    var autoDirectionReport = if (manualAngle == 0)
+                    var autoDirectionReport = if (usbAutomatic)
+                        usbAutoReport
+                        else if (manualAngle == 0)
                         "未触发：无可靠的整页方向候选，保留0°输入"
-                        else "已按USB OCR手动设置旋转${manualAngle}°并执行实际OCR；" +
+                        else "已按摄像头OCR设置旋转${manualAngle}°并执行实际OCR；" +
                             "不再追加自动整页候选，原始NV21帧仍保留"
                     if (autoAngle != 0 &&
                         OcrHardwareProbe.safeShadowBudget(performanceProfile, performanceBefore) > 0) {
@@ -325,7 +343,8 @@ class PaddleOcrEngine(
                         "；真正OCR输入旋转=${manualAngle}°；原始NV21=${width}×${height}" +
                         "；模型输入Bitmap=${bitmap.width}×${bitmap.height}" +
                         "；CPU线程=${performanceProfile.cpuThreads}，REC批=${performanceProfile.recBatchSize}" +
-                        "；原始整图OCR墙钟=${originalOcrWallMs}ms" +
+                        "；本次OCR及自动定向校准墙钟=${originalOcrWallMs}ms" +
+                        "\nUSB自动方向决策：${usbAutoReport}" +
                         "；横排附加REC=${horizontal.attempts}次/${horizontal.elapsedMs}ms" +
                         "；竖排附加REC=${vertical.attempts}次/${vertical.elapsedMs}ms" +
                         "；全部实验阶段墙钟=${allElapsed}ms" +
@@ -395,9 +414,10 @@ class PaddleOcrEngine(
                     )
                     withContext(Dispatchers.Main) { onResult.onResult(report) }
                 } finally {
-                    if (bitmap !== decodedBitmap) bitmap.recycle()
-                    rotatedBitmap?.let { if (it !== bitmap && !it.isRecycled) it.recycle() }
-                    decodedBitmap.recycle()
+                    if (bitmap !== decodedBitmap && !bitmap.isRecycled) bitmap.recycle()
+                    rotatedBitmap?.let { if (it !== bitmap && it !== decodedBitmap && !it.isRecycled) it.recycle() }
+                    enhancedBitmap?.let { if (it !== bitmap && it !== decodedBitmap && !it.isRecycled) it.recycle() }
+                    if (!decodedBitmap.isRecycled) decodedBitmap.recycle()
                 }
             } catch (t: Throwable) {
                 Log.e(TAG, "OCR diagnostic failed", t)
@@ -639,9 +659,11 @@ class PaddleOcrEngine(
                     "NV21 数据长度不匹配：收到 ${data.size} 字节，预期 ${expectedBytes} 字节"
                 }
                 var bitmap = nv21ToBitmap(data, width, height, legacyNv21Jpeg)
-                // Capture->OCR input orientation is explicit per frame.
-                // Never infer it from USB preview scale, mirror or rotation.
-                var liveAngle = OcrInputOrientation.normalize(inputRotationDegrees)
+                // -1 means USB automatic, otherwise the caller's explicit
+                // phone/USB input angle. Never infer from preview display.
+                val usbAutomatic = inputRotationDegrees == -1
+                var liveAngle = if (usbAutomatic) 0 else
+                    OcrInputOrientation.normalize(inputRotationDegrees)
                 try {
                     if (liveAngle != 0) {
                         val transform = Matrix()
@@ -660,10 +682,20 @@ class PaddleOcrEngine(
                             bitmap = enhanced
                         }
                     }
-                    var result = current.recognize(bitmap)
+                    val usbAuto = if (usbAutomatic)
+                        recognizeUsbAutomatically(current,bitmap) else null
+                    if (usbAuto != null) {
+                        if (usbAuto.bitmap !== bitmap) {
+                            bitmap.recycle()
+                            bitmap = usbAuto.bitmap
+                        }
+                        liveAngle = usbAuto.angle
+                        Log.i(TAG,usbAuto.report)
+                    }
+                    var result = usbAuto?.result ?: current.recognize(bitmap)
                     // Normal pages stay one-pass. Sideways pages may earn one extra
                     // OCR inference, and replace text only with real pixel evidence.
-                    if (liveAngle == 0) {
+                    if (liveAngle == 0 && !usbAutomatic) {
                         val sourceBoxes = toReadingBoxes(result.results)
                         val geometricAngle = AutoPageRotation.candidate(sourceBoxes)
                         val suggested = if (geometricAngle != 0) geometricAngle
