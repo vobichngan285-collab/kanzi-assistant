@@ -1,0 +1,34 @@
+name: Download 4 new public Chinese scene categories (no old photo reuse)
+on:
+  push:
+    branches: [test/x200-commons-four-scenes-prefocus-20261105]
+    paths:
+      - "scripts/x200_commons_scene_download.py"
+      - ".github/workflows/x200-commons-four-scenes-get.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  assemble-new-scene-photos:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install publicly distributable open-source photo processing tools
+        run: python3 -m pip install --quiet requests Pillow
+      - name: Download 4 genuinely different categories and save license metadata
+        run: |
+          set -euo pipefail
+          python3 -u scripts/x200_commons_scene_download.py | tee /tmp/kanzi-scene-download.log
+          grep -q '^FOUR_REAL_SCENE_DOWNLOAD_COMPLETE' /tmp/kanzi-scene-download.log
+          cp /tmp/kanzi-scene-download.log /tmp/kanzi-commons-scene/out/download.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: x200-commons-4-new-categories-real-photo-contact-sheets
+          path: /tmp/kanzi-commons-scene/
+          retention-days: 3
+          if-no-files-found: warn
