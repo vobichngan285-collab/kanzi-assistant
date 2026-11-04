@@ -3,138 +3,154 @@ package com.paddle.ocr.postprocess
 import android.graphics.PointF
 import com.paddle.ocr.model.OCRBox
 import kotlin.math.abs
-import kotlin.math.ceil
-import kotlin.math.floor
-import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 
-/** Experimental detector-geometry-only first-pass repair, before Small REC.
- * Never invents text or chooses OCR candidates by language confidence.
- * When ambiguous, return the exact untouched detector boxes.
+/**
+ * Simple horizontal text-line merge BEFORE the first recognizer call.
+ *
+ * Steps: sort into rows by y + comparable text height; within each row merge
+ * horizontally continuous boxes; REMOVE their old boxes; crop/recognize each
+ * new row ONCE in the existing OCREngine pipeline.
+ *
+ * The original detector and Small recognizer are unchanged. No text guesses,
+ * extra DET/REC, confidence reranking, second-pass fallback or TTS changes.
+ * Single nonmatching boxes (including vertical and tiny labels) stay untouched.
  */
 object CrossRowFirstPass {
     @Volatile var enabled: Boolean = true
     @Volatile var lastDecision: String = "未运行"
         private set
-    private data class B(
-        val id: Int, val x1: Float, val y1: Float, val x2: Float,
-        val y2: Float, val cx: Float, val cy: Float,
-        val width: Float, val height: Float
-    )
-    private data class Cluster(val center: Float, val count: Int)
-    private data class Plan(
-        val first: B, val second: B,
-        val x1: Int, val x2: Int, val centers: List<Cluster>
-    )
-    private fun cluster(points: List<Float>): List<Cluster> {
-        val groups = mutableListOf<MutableList<Float>>()
-        for (v in points.sorted()) {
-            val prior = groups.lastOrNull()
-            if (prior != null && abs(v - prior.last()) <= 14f) prior.add(v)
-            else groups.add(mutableListOf(v))
-        }
-        return groups.map { Cluster(it.average().toFloat(), it.size) }
+
+    private data class R(
+        val id: Int,
+        val left: Float,
+        val top: Float,
+        val right: Float,
+        val bottom: Float
+    ) {
+        val width: Float get() = right - left
+        val height: Float get() = bottom - top
+        val cy: Float get() = (top + bottom) * 0.5f
     }
-    private fun shortAnchor(b: B): Boolean =
-        b.height < 60f && b.width < 115f
+
+    private class Row(val first: R) {
+        val parts = mutableListOf(first)
+        var centerY: Float = first.cy
+        var height: Float = first.height
+
+        fun accepts(r: R): Boolean {
+            val ratio = max(r.height, height) / max(1f, min(r.height, height))
+            if (ratio > 1.8f) return false
+            // A normal printed line has centers near one y, even if split
+            // into words. Distinct rows separated by a line gap stay apart.
+            return abs(r.cy - centerY) <= 0.43f * min(r.height, height)
+        }
+
+        fun add(r: R) {
+            parts.add(r)
+            centerY = parts.map { it.cy }.average().toFloat()
+            height = parts.map { it.height }.average().toFloat()
+        }
+    }
 
     fun repartition(boxes: List<OCRBox>, frameWidth: Int, frameHeight: Int): List<OCRBox> {
         if (!enabled) {
-            lastDecision = "原版模式：保持所有检测框"
+            lastDecision = "关闭：保留原始文字框 " + boxes.size + " 个"
             return boxes
         }
-        if (frameWidth <= 0 || frameHeight <= 0 || boxes.size < 6 || boxes.size > 140) {
-            lastDecision = "未触发：输入文字框数量或尺寸不满足安全条件"
+        if (boxes.size < 2 || frameWidth < 30 || frameHeight < 30) {
+            lastDecision = "未合并：框数不足"
             return boxes
         }
-        val data = boxes.mapIndexed { index, box ->
-            val q = box.points
-            val x1 = q.minOf { it.x }; val x2 = q.maxOf { it.x }
-            val y1 = q.minOf { it.y }; val y2 = q.maxOf { it.y }
-            val w = hypot(q[1].x - q[0].x, q[1].y - q[0].y)
-            val h = hypot(q[3].x - q[0].x, q[3].y - q[0].y)
-            B(index, x1, y1, x2, y2, (x1 + x2) / 2f, (y1 + y2) / 2f, w, h)
+
+        val rects = boxes.mapIndexed { i, box ->
+            val x1 = box.points.minOf { it.x }
+            val x2 = box.points.maxOf { it.x }
+            val y1 = box.points.minOf { it.y }
+            val y2 = box.points.maxOf { it.y }
+            R(i, x1, y1, x2, y2)
         }
-        val suspicious = data.filter { t ->
-            t.height / max(1f, t.width) > 2.4f &&
-            t.height > 60f && t.height < 260f && t.width < 70f &&
-            run {
-                val centers = cluster(data.filter { a ->
-                    a.id != t.id && shortAnchor(a) &&
-                    a.x1 > t.x2 + 4f && a.x1 < t.x2 + 210f &&
-                    a.cy > t.y1 + 4f && a.cy < t.y2 - 4f
-                }.map { it.cy })
-                centers.size >= 2 && centers.zipWithNext().all { (a,b) ->
-                    b.center - a.center >= 20f
+        // Only horizontal-looking, readable-size regions participate.
+        // Other boxes remain in the OCR result; they are NOT silently deleted.
+        val candidates = rects.filter { r ->
+            r.height >= 7f &&
+            r.height <= min(frameWidth, frameHeight) * 0.18f &&
+            r.width >= r.height * 0.80f
+        }.sortedWith(compareBy<R> { it.cy }.thenBy { it.left })
+
+        val rows = mutableListOf<Row>()
+        for (rect in candidates) {
+            var best: Row? = null
+            var distance = Float.MAX_VALUE
+            for (row in rows) {
+                if (!row.accepts(rect)) continue
+                val d = abs(rect.cy - row.centerY)
+                if (d < distance) {
+                    distance = d
+                    best = row
                 }
             }
+            if (best == null) rows.add(Row(rect)) else best.add(rect)
         }
-        if (suspicious.size < 2) {
-            lastDecision = "未触发：不足两个可信跨横行长框"
-            return boxes
-        }
-        val plans = mutableListOf<Plan>()
-        for (i in suspicious.indices) {
-            for (j in i + 1 until suspicious.size) {
-                val a = suspicious[i]; val b = suspicious[j]
-                // Adjacent traditional vertical columns are not a horizontal row.
-                if (abs(a.cx - b.cx) < max(65f, 1.8f * max(a.width,b.width))) continue
-                val commonY = min(a.y2, b.y2) - max(a.y1, b.y1)
-                if (commonY < 0.60f * min(a.height, b.height)) continue
-                val left = max(0, floor(min(a.x1,b.x1) - 6).toInt())
-                val right = min(frameWidth, ceil(max(a.x2,b.x2) + 9).toInt())
-                val top = min(a.y1,b.y1)
-                val bottom = max(a.y2,b.y2)
-                if (right - left > 230 || bottom - top > 270) continue
-                val centers = cluster(data.filter { q ->
-                    q.id != a.id && q.id != b.id && shortAnchor(q) &&
-                    q.cx >= left && q.cx <= right + 10 &&
-                    q.cy > top - 8f && q.cy < bottom + 38f
-                }.map { it.cy })
-                if (centers.size !in 3..8) continue
-                if (!centers.zipWithNext().all { (x,y) ->
-                    y.center - x.center >= 22f &&
-                    y.center - x.center <= 52f
-                }) continue
-                plans.add(Plan(a,b,left,right,centers))
+
+        val removed = mutableSetOf<Int>()
+        val merged = mutableListOf<OCRBox>()
+        var mergedGroups = 0
+        for (row in rows) {
+            val byX = row.parts.sortedWith(compareBy<R> { it.left }.thenBy { it.right })
+            var group = mutableListOf<R>()
+
+            fun flush() {
+                if (group.size >= 2) {
+                    // Replace every participating old box. This is NOT an
+                    // additional drawing-only overlay: downstream Small REC
+                    // consumes this new crop in place of the original crops.
+                    val x1 = group.minOf { it.left }.coerceIn(0f, frameWidth.toFloat()-1)
+                    val y1 = group.minOf { it.top }.coerceIn(0f, frameHeight.toFloat()-1)
+                    val x2 = group.maxOf { it.right }.coerceIn(x1+1f, frameWidth.toFloat())
+                    val y2 = group.maxOf { it.bottom }.coerceIn(y1+1f, frameHeight.toFloat())
+                    val pad = max(1f, row.height * 0.08f)
+                    val lx = max(0f, x1-pad)
+                    val ty = max(0f, y1-pad)
+                    val rx = min(frameWidth.toFloat(), x2+pad)
+                    val by = min(frameHeight.toFloat(), y2+pad)
+                    merged.add(OCRBox(listOf(
+                        PointF(lx,ty), PointF(rx,ty),
+                        PointF(rx,by), PointF(lx,by)
+                    )))
+                    removed.addAll(group.map { it.id })
+                    mergedGroups++
+                }
+                group = mutableListOf()
             }
-        }
-        if (plans.size != 1) {
-            lastDecision = "未触发：候选数量=" + plans.size + "；歧义一律保持原框"
-            return boxes
-        }
-        val plan = plans.single()
-        val centers = plan.centers.map { it.center }
-        val rows = mutableListOf<OCRBox>()
-        for (cy in centers) {
-            val y1 = max(0, (cy - 19f).toInt())
-            val y2 = min(frameHeight, (cy + 19f).toInt())
-            if (y2 - y1 < 28) {
-                lastDecision = "未触发：候选裁切高度不足"
-                return boxes
+
+            for (rect in byX) {
+                if (group.isEmpty()) {
+                    group.add(rect)
+                    continue
+                }
+                val prior = group.last()
+                val gap = rect.left - prior.right
+                // One simple relative-gap rule: text-height is the scale.
+                // Blocks/columns with a visibly wider blank remain separate.
+                val maxGap = 1.65f * min(prior.height, rect.height)
+                if (gap <= maxGap) group.add(rect)
+                else {
+                    flush()
+                    group.add(rect)
+                }
             }
-            rows.add(OCRBox(listOf(
-                PointF(plan.x1.toFloat(),y1.toFloat()),
-                PointF(plan.x2.toFloat(),y1.toFloat()),
-                PointF(plan.x2.toFloat(),y2.toFloat()),
-                PointF(plan.x1.toFloat(),y2.toFloat())
-            )))
+            flush()
         }
-        val toRemove = data.filter { b ->
-            b.id == plan.first.id || b.id == plan.second.id ||
-            (shortAnchor(b) && b.cx >= plan.x1 && b.cx <= plan.x2 + 10 &&
-              centers.any { abs(b.cy - it) <= 19f })
-        }.map { it.id }.toSet()
-        if (toRemove.size < 4 || toRemove.size > 24 ||
-            toRemove.any { i -> data[i].id != plan.first.id &&
-                data[i].id != plan.second.id && !shortAnchor(data[i]) }) {
-            lastDecision = "未触发：替换范围不安全"
-            return boxes
+        lastDecision = if (merged.isEmpty()) {
+            "无可合并同行：保持原版 " + boxes.size + " 框"
+        } else {
+            "实际合并 " + mergedGroups + " 行；删旧框 " + removed.size +
+                " 个、生成整行框 " + merged.size + " 个；" +
+                "原 " + boxes.size + " 框 → 新 " + (boxes.size-removed.size+merged.size) +
+                " 框；合并后从原图重裁并首次Small识别"
         }
-        lastDecision = "自动分行：原检测框移除" + toRemove.size + "个，" +
-            "按相同原图像素生成" + rows.size + "个完整横行ROI，" +
-            "X范围=" + plan.x1 + ".." + plan.x2 + "；保持一次Small REC流程"
-        return boxes.filterIndexed { i,_ -> i !in toRemove } + rows
+        return boxes.filterIndexed { i, _ -> i !in removed } + merged
     }
 }

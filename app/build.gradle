@@ -22,8 +22,8 @@ android {
     }
     buildTypes {
         debug {
-            applicationIdSuffix '.x200autolineab'
-            versionNameSuffix '-experimental-firstpass-auto-row'
+            applicationIdSuffix '.x200simplelinemerge'
+            versionNameSuffix '-experimental-simple-line-merge'
             minifyEnabled false
         }
         release {
