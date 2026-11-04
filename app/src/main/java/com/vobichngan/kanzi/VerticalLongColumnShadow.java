@@ -114,9 +114,19 @@ public final class VerticalLongColumnShadow {
             Entry e = new Entry(i, b);
             if (e.width <= 0 || e.height <= 0) continue;
             int codepoints = b.text.codePointCount(0, b.text.length());
-            if (codepoints >= 9 && e.height >= 160f &&
-                e.width >= 8f && e.height >= e.width * 4.0f &&
-                b.confidence >= 0.45f) {
+            // A separately typeset vertical English title can resemble a body
+            // column geometrically, but must not restrict the shared overlap
+            // of Chinese traditional columns. No language completion: only
+            // Unicode script of the already recognized OCR characters.
+            int han = 0;
+            for (int pos=0;pos<b.text.length();) {
+                int c=b.text.codePointAt(pos);
+                if (Character.UnicodeScript.of(c)==Character.UnicodeScript.HAN) han++;
+                pos+=Character.charCount(c);
+            }
+            if (codepoints >= 9 && han>=6 && han*10>=codepoints*7 &&
+                e.height >= 160f && e.width >= 8f &&
+                e.height >= e.width * 4.0f && b.confidence >= 0.45f) {
                 longColumns.add(e);
             }
         }
