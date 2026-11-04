@@ -19,7 +19,7 @@ public final class SingleVerticalFlow {
             return h>=110f&&h>=w*2.5f&&n>=2&&b.confidence>=.65f
                 ? b.text : null;
         }
-        if(boxes.size()<3||boxes.size()>18)return null;
+        if(boxes.size()<2||boxes.size()>18)return null;
         List<ReadingOrder.Box> sorted=new ArrayList<>(boxes);
         float sumX=0,avgHeight=0,avgWidth=0;
         for(ReadingOrder.Box b:sorted){
