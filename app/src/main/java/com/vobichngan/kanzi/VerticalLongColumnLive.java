@@ -91,8 +91,26 @@ public final class VerticalLongColumnLive {
             if(e1<=e2*.45f && Math.abs(firstY)<=Math.abs(firstX)*.45f)
                 uprightAnchors++;
         }
-        if(uprightAnchors < 1)
-            return fallback("可能是横排书页旋转拍摄：没有可靠的竖排朝向锚点",boxes.size());
+        if(uprightAnchors < 1) {
+            // Some real PP-OCR vertical Chinese columns use the LONG edge as
+            // polygon edge 0->1, so they never satisfy the legacy short-first
+            // anchor despite being correctly oriented. Accept that convention
+            // only when independent, high-confidence horizontal HAN captions
+            // sit to the RIGHT of the body. Rotated horizontal book pages
+            // without such evidence must still fall back unchanged.
+            float rightmostBodyX=boxes.get(order.columnIds.get(0)).centerX();
+            int rightSideCaptions=0;
+            for(int id:order.remainingIds) {
+                ReadingOrder.Box b=boxes.get(id);
+                if(b==null||b.text==null)continue;
+                float w=b.right()-b.left(), h=b.bottom()-b.top();
+                if(h>0 && w>=h*2f && countHan(b.text)>=4 &&
+                   b.confidence>=.88f && b.centerX()>rightmostBodyX+65f)
+                    rightSideCaptions++;
+            }
+            if(rightSideCaptions<2)
+                return fallback("长竖列缺少朝向锚点及独立横排汉字佐证，保留原版顺序",boxes.size());
+        }
 
         // A visibly tall *unrecovered* crop between neighboring OCR columns
         // must fail the whole proposal. Otherwise four good columns can hide
