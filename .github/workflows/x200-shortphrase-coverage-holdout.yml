@@ -1,0 +1,51 @@
+name: X200 clear short phrase full-line quality gate independent 45-image Small A/B
+on:
+  push:
+    branches: [test/x200-shortline-complete-holdout-20261104]
+    paths:
+      - 'scripts/x200_shortphrase_coverage_holdout.py'
+      - '.github/workflows/x200-shortphrase-coverage-holdout.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  complete-short-phrase-real-model:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: 1e0c227f33fb0fbef4c681024972d107b09bfc99
+          path: prior-ocr-sdk
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Pinned dependencies
+        run: |
+          python3 -m pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' 'requests==2.32.3' pyclipper
+          python3 -m py_compile scripts/x200_shortphrase_coverage_holdout.py
+      - name: Download SHA-fixed official Small models
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-short-holdout/models /tmp/kanzi-short-holdout/output
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx' -o /tmp/kanzi-short-holdout/models/det.onnx
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx' -o /tmp/kanzi-short-holdout/models/small_rec.onnx
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml' -o /tmp/kanzi-short-holdout/models/small_rec.yml
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  /tmp/kanzi-short-holdout/models/det.onnx' | sha256sum -c -
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/kanzi-short-holdout/models/small_rec.onnx' | sha256sum -c -
+          echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/kanzi-short-holdout/models/small_rec.yml' | sha256sum -c -
+      - name: Run actual full DET+REC on unseen annotated short text
+        run: |
+          set -euo pipefail
+          PYTHONPATH=prior-ocr-sdk/scripts python3 -u scripts/x200_shortphrase_coverage_holdout.py | tee /tmp/kanzi-short-holdout/output/run.log
+          grep -q '^INDEPENDENT_SHORT_PHRASE_TRUE_SMALL_AB_COMPLETE' /tmp/kanzi-short-holdout/output/run.log
+          cat /tmp/kanzi-short-holdout/output/summary.json >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: short-phrase-true-small-coverage-numeric-holdout
+          path: /tmp/kanzi-short-holdout/output
+          retention-days: 10
+          if-no-files-found: warn
