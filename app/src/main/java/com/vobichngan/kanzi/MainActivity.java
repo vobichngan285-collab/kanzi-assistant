@@ -59,7 +59,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.9.16";
+    private static final String APP_VERSION = "0.9.17";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -152,7 +152,8 @@ public class MainActivity extends CameraActivity {
     private volatile boolean verticalLiveReadingEnabled = true;
     private volatile int liveTextRotationDegrees = 0;
     // Independent USB capture->OCR input direction, never touches TextureView preview.
-    private volatile int usbOcrInputRotationDegrees = 0;
+    // -1 = auto camera-frame OCR orientation (default); manual values are diagnostic override.
+    private volatile int usbOcrInputRotationDegrees = -1;
     private volatile String lastDiagnosticText = "";
     private volatile String lastCandidateDiagnosticText = "";
     private volatile boolean speechNoEnglish = false;
@@ -538,8 +539,8 @@ public class MainActivity extends CameraActivity {
         aiLayoutEnabled = prefs.getBoolean(PREF_AI_LAYOUT, false);
         verticalLiveReadingEnabled = prefs.getBoolean(PREF_VERTICAL_LIVE_READING, true);
         liveTextRotationDegrees = prefs.getInt(PREF_REALTIME_TEXT_ROTATION, 0);
-        usbOcrInputRotationDegrees = OcrInputOrientation.normalize(
-            prefs.getInt(PREF_USB_OCR_INPUT_ROTATION, 0));
+        usbOcrInputRotationDegrees = UsbAutoOcrOrientation.normalizePreference(
+            prefs.getInt(PREF_USB_OCR_INPUT_ROTATION, -1));
         if (liveTextRotationDegrees != 90 && liveTextRotationDegrees != 180 && liveTextRotationDegrees != 270)
             liveTextRotationDegrees = 0;
         readingFocusMode = prefs.getString(PREF_READING_FOCUS, "AUTO");
@@ -710,14 +711,15 @@ public class MainActivity extends CameraActivity {
         panel.addView(liveRotationNote);
 
         TextView usbOcrRotationTitle = new TextView(this);
-        usbOcrRotationTitle.setText("USB摄像头 → OCR输入方向（与预览完全独立）");
+        usbOcrRotationTitle.setText("USB摄像头的OCR方向（通常无需操作）");
         usbOcrRotationTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         usbOcrRotationTitle.setPadding(0, dp(14), 0, dp(4));
         panel.addView(usbOcrRotationTitle);
         RadioGroup usbOcrRotationGroup = new RadioGroup(this);
         usbOcrRotationGroup.setOrientation(RadioGroup.VERTICAL);
         String[][] usbOcrOptions = {
-            {"0", "USB OCR保持原始0°（不改变旧行为）"},
+            {"-1", "自动校准并记住USB摄像头方向（推荐）"},
+            {"0", "仅用于故障排查：保持原始0°"},
             {"90", "USB OCR向右旋转90°"},
             {"180", "USB OCR旋转180°"},
             {"270", "USB OCR向左旋转90°（当前刮痧宣传牌建议）"}
@@ -733,9 +735,28 @@ public class MainActivity extends CameraActivity {
         }
         panel.addView(usbOcrRotationGroup);
         TextView usbOcrNote = new TextView(this);
-        usbOcrNote.setText("只旋转USB原始NV21解码后送入OCR的Bitmap。USB预览镜像/显示旋转完全不参与；实时识别与手动诊断使用相同的USB OCR输入角度。0°不额外转换，节省耗时。");
+        usbOcrNote.setText("首次遇到原始方向明显错误的文字时，才追加本地OCR对照并缓存方向；后续直接复用。无法确认则保留原文。手动角度仅供排障；预览旋转/镜像仍完全独立。");
         usbOcrNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         panel.addView(usbOcrNote);
+
+        // Users normally need one Start button, not eight orientation radios.
+        // Keep manual overrides accessible when needed, but collapse by default.
+        CheckBox advancedDirectionCheck = new CheckBox(this);
+        advancedDirectionCheck.setText("高级：展开摄像头OCR方向手动设置（故障排查）");
+        advancedDirectionCheck.setChecked(false);
+        advancedDirectionCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        panel.addView(advancedDirectionCheck);
+        TextView autoDirectionSummary = new TextView(this);
+        autoDirectionSummary.setText("方向设置：自动，手机和USB分别处理，不需逐页调整。");
+        autoDirectionSummary.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        panel.addView(autoDirectionSummary);
+        View[] extraDirections = {liveRotationTitle,rotationGroup,liveRotationNote,
+            usbOcrRotationTitle,usbOcrRotationGroup,usbOcrNote};
+        for(View extra:extraDirections)extra.setVisibility(View.GONE);
+        advancedDirectionCheck.setOnCheckedChangeListener((button,checked)-> {
+            for(View extra:extraDirections)
+                extra.setVisibility(checked?View.VISIBLE:View.GONE);
+        });
 
         TextView modelManagementTitle = new TextView(this);
         modelManagementTitle.setText("OCR 引擎选择");
@@ -1267,7 +1288,7 @@ public class MainActivity extends CameraActivity {
                             selectedUsbOcrRotation.getTag().toString());
                     } catch (NumberFormatException ignored) {}
                 }
-                requestedUsbOcrRotation = OcrInputOrientation.normalize(requestedUsbOcrRotation);
+                requestedUsbOcrRotation = UsbAutoOcrOrientation.normalizePreference(requestedUsbOcrRotation);
                 boolean usbOcrRotationChanged =
                     requestedUsbOcrRotation != usbOcrInputRotationDegrees;
                 usbOcrInputRotationDegrees = requestedUsbOcrRotation;
