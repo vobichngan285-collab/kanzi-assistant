@@ -1,0 +1,67 @@
+name: Publish existing same-frame DET-only APK without rebuilding
+on:
+  push:
+    branches: [test/x200-cn-lite-small-sameframe-phone-det-20261105]
+    paths: ['.github/workflows/x200-cnlite-small-sameframe-publish-only.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish-existing-tested-apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and verify original signed APK (no new build)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/det-release
+          gh run download 41897878359 -R vobichngan285-collab/kanzi-assistant \
+            -n x200-same-frame-small-vs-cnlite-det-only-apk -D /tmp/det-release
+          cd /tmp/det-release
+          echo '51f7a27dd78d74ae78f3964708a761f16eb19bb056500d2443f3df3af5df9ac5  Kanzi_Small_vs_ChineseOCRLite_SameFrame_DET_only_debug.apk' | sha256sum -c -
+          test -s ChineseOCR-Lite_GPL-2.0_LICENSE.txt
+          test -s README.md
+          printf '%s\n' '51f7a27dd78d74ae78f3964708a761f16eb19bb056500d2443f3df3af5df9ac5  Kanzi_Small_vs_ChineseOCRLite_SameFrame_DET_only_debug.apk' > SHA256SUMS.txt
+          sha256sum -c SHA256SUMS.txt
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt -print | sort -V | tail -1)"
+          "$AAPT" dump badging Kanzi_Small_vs_ChineseOCRLite_SameFrame_DET_only_debug.apk | grep -q "package: name='com.vobich.kanzi.detcompare'"
+          ! "$AAPT" dump permissions Kanzi_Small_vs_ChineseOCRLite_SameFrame_DET_only_debug.apk | grep -q 'android.permission.INTERNET'
+          echo 'No Gradle, no DET inference; original audited APK reused.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish new research prerelease without overwriting
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=x200-cnlite-small-sameframe-20261105-det-only-experiment
+          cd /tmp/det-release
+          cat > /tmp/release-notes.md <<'EOF'
+          # 独立 DET 同一静态帧 A/B 研究 APK
+
+          - 固定源码 Commit: 9a9b531ae252f35771c070587fd842022624692e。
+          - 原始安卓成功构建: https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41897878359
+          - PP-OCRv6 Small DET 与 ChineseOCR-Lite DET，独立包名 com.vobich.kanzi.detcompare。无网络权限，没有 REC/TTS。
+          - 相机/相册的一张冻结照片供两模型使用；显示检测框、P50/P95、温度、PSS，支持匿名JSON。
+          - 非实时摄像头流，尚未经过 vivo X200 Pro 真机准确率/时延/发热验收。
+          - 各用原生模型输入尺度，后处理包含旋转矩形扩边近似；不能当作旧Linux准确率的手机复现。
+          - ChineseOCR-Lite 上游采用 GPL-2.0，附原许可证与实验源码；模型单独权利条款仍待核实，不可直接集成正式/商业程序。
+          - APK SHA256: 51f7a27dd78d74ae78f3964708a761f16eb19bb056500d2443f3df9ac5df9ac5
+          EOF
+          if gh release view "$tag" -R vobichngan285-collab/kanzi-assistant >/dev/null 2>&1; then
+            echo 'Release already exists, do not overwrite' >&2
+            exit 1
+          fi
+          gh release create "$tag" -R vobichngan285-collab/kanzi-assistant \
+            --target 9a9b531ae252f35771c070587fd842022624692e \
+            --notes-file /tmp/release-notes.md --prerelease
+          gh release upload "$tag" \
+            Kanzi_Small_vs_ChineseOCRLite_SameFrame_DET_only_debug.apk \
+            README.md ChineseOCR-Lite_GPL-2.0_LICENSE.txt SHA256SUMS.txt \
+            -R vobichngan285-collab/kanzi-assistant
+          gh api repos/vobichngan285-collab/kanzi-assistant/releases/tags/"$tag" \
+            --jq '.assets[] | [.name,.size] | @tsv' | tee /tmp/release-assets.txt
+          grep -q 'Kanzi_Small_vs_ChineseOCRLite_SameFrame_DET_only_debug.apk' /tmp/release-assets.txt
+          gh release view "$tag" -R vobichngan285-collab/kanzi-assistant --json url --jq '.url' >> "$GITHUB_STEP_SUMMARY"
