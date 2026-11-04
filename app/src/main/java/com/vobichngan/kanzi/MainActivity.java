@@ -156,6 +156,8 @@ public class MainActivity extends CameraActivity {
     private volatile boolean speechNoNumbers = false;
     private volatile int maxSpeechChars = 0;
     private final AtomicBoolean diagnosticCaptureRequested = new AtomicBoolean(false);
+    // One-shot experimental A/B; never changes live OCR or user preferences.
+    private final AtomicBoolean simpleSameFrameAbRequested = new AtomicBoolean(false);
     private volatile TextView diagnosticReportView;
     private volatile long diagnosticStartedAt = 0;
     private volatile boolean ttsReady = false;
@@ -215,8 +217,10 @@ public class MainActivity extends CameraActivity {
                 final boolean evidenceThisCapture = saveEvidenceNextDiagnostic.getAndSet(false);
                 if (evidenceThisCapture) recognizer.requestEvidenceForNextDiagnostic();
                 final int effectiveDiagnosticAngle = isPhoneCamera ? 0 : usbOcrInputRotationDegrees;
+                final boolean simpleSameFrameAb = simpleSameFrameAbRequested.getAndSet(false);
                 recognizer.diagnoseNv21(diagnosticFrame, width, height,
                     enhancedOcr, legacyForDiagnostic, effectiveDiagnosticAngle,
+                    simpleSameFrameAb,
                     report -> {
                         busy.set(false);
                         String result = "诊断完成\n摄像头帧：已获取 " + width + "×" + height
@@ -1157,9 +1161,30 @@ public class MainActivity extends CameraActivity {
                 "\n实时朗读状态：" + (running ? "已启动" : "未启动，请点开始识别") +
                 "；扫描模式：" + (automaticMode ? "自动" : "手动") +
                 "；中文语音：" + (canSpeak() ? "已就绪" : "尚未就绪"));
+            simpleSameFrameAbRequested.set(false);
             diagnosticCaptureRequested.set(true);
         });
         panel.addView(runDiagnosticButton);
+        Button simpleSameFrameButton = createControlButton("实验：同一画面原向0°与左转90°真实OCR对照");
+        simpleSameFrameButton.setOnClickListener(v -> {
+            if (!(usingPhoneCamera || previewCallbackAdded) ||
+                recognizer == null || !recognizer.isReady()) {
+                Toast.makeText(this, "请先开启摄像头并等待OCR模型就绪", Toast.LENGTH_LONG).show();
+                return;
+            }
+            if (!"ppocrv6_small".equals(ocrModelId)) {
+                Toast.makeText(this, "请在设置中选择PP-OCRv6 Small，再进行固定模型A/B", Toast.LENGTH_LONG).show();
+                return;
+            }
+            diagnosticStartedAt = System.currentTimeMillis();
+            lastDiagnosticText = "";
+            lastCandidateDiagnosticText = "";
+            diagnosticReportView.setText("正在获取同一帧，分别用0°和左转90°运行完整Small OCR。" +
+                "\n仅诊断，不改变自动识别、朗读或已有v54设置。请用照片原文判断正确性。");
+            simpleSameFrameAbRequested.set(true);
+            diagnosticCaptureRequested.set(true);
+        });
+        panel.addView(simpleSameFrameButton);
         Button captureImageEvidenceButton = createControlButton("手动采集一帧：图像＋真实裁剪＋输入张量（仅本机）");
         captureImageEvidenceButton.setOnClickListener(v -> {
             if (!(usingPhoneCamera || previewCallbackAdded) ||

@@ -253,12 +253,127 @@ class PaddleOcrEngine(
 
     fun isReady(): Boolean = engine != null && !released
 
+
+    /**
+     * Deliberately small, user-triggered ONLY: original decoded NV21 bitmap
+     * -> fixed PP-OCRv6 Small once at 0 degrees, once at CCW 90 degrees.
+     * Never runs auto orientation, layout, local rescue, filtering or live TTS.
+     * Neither score decides which direction is "correct"; only visible source
+     * pixels and eventual human transcription can establish accuracy.
+     */
+    private fun diagnoseSimpleSameFrameNv21(
+        data: ByteArray, width: Int, height: Int,
+        onResult: OcrDiagnosticCallback, onError: OcrErrorCallback
+    ) {
+        val current = engine ?: run { onError.onError("OCR 引擎尚未初始化"); return }
+        if (modelId != "ppocrv6_small") {
+            onError.onError("同帧极简实验要求先选择 PP-OCRv6 Small，禁止混用模型")
+            return
+        }
+        if (released || !busy.compareAndSet(false, true)) {
+            onError.onError("OCR 引擎正忙，请稍后重试")
+            return
+        }
+        scope.launch {
+            try {
+                require(width > 0 && height > 0 && width % 2 == 0 && height % 2 == 0)
+                require(data.size.toLong() == width.toLong() * height.toLong() * 3L / 2L) {
+                    "NV21 原始字节长度不符"
+                }
+                val source = nv21ToBitmap(data, width, height, false)
+                var rotated: Bitmap? = null
+                try {
+                    val before = OcrHardwareProbe.capture(appContext)
+                    val startZero = System.nanoTime()
+                    val zero = current.recognize(source)
+                    val zeroWall = (System.nanoTime() - startZero) / 1_000_000L
+                    val leftBitmap = Bitmap.createBitmap(
+                        source, 0, 0, source.width, source.height,
+                        Matrix().apply { postRotate(270f) }, true)
+                    rotated = leftBitmap
+                    val startLeft = System.nanoTime()
+                    val left = current.recognize(leftBitmap)
+                    val leftWall = (System.nanoTime() - startLeft) / 1_000_000L
+                    val after = OcrHardwareProbe.capture(appContext)
+                    val zeroLines = zero.results.joinToString("\n") { it.text }
+                    val leftLines = left.results.joinToString("\n") { it.text }
+                    val zeroConfidence = if (zero.results.isEmpty()) 0.0
+                        else zero.results.map { it.confidence.toDouble() }.average()
+                    val leftConfidence = if (left.results.isEmpty()) 0.0
+                        else left.results.map { it.confidence.toDouble() }.average()
+                    val note = "【极简同帧真实 Small OCR A/B】" +
+                        "\n同一份原始 NV21：${width}×${height}；OpenCV 解码1次，保持原始比例。" +
+                        "\n固定模型=ppocrv6_small；固定CPU线程=${performanceProfile.cpuThreads}、REC批=${performanceProfile.recBatchSize}。" +
+                        "\n没有整页自动方向判定、二次ROI、分区、置信度删字、AI补字；不影响正式实时朗读。" +
+                        "\n【A 原始0°】输入=${source.width}×${source.height}；文字框=${zero.results.size}" +
+                        "；平均模型置信度=${"%.3f".format(java.util.Locale.US, zeroConfidence)}" +
+                        "；检测=${zero.detectionTimeMs}ms；识别=${zero.recognitionTimeMs}ms" +
+                        "；本次OCR墙钟=${zeroWall}ms" +
+                        "\nA原始SDK文字（按框返回顺序；非人工真值）：\n" +
+                        zeroLines.ifBlank { "（未识别到文字）" } +
+                        "\n\n【B 向左转90°】输入=${leftBitmap.width}×${leftBitmap.height}；文字框=${left.results.size}" +
+                        "；平均模型置信度=${"%.3f".format(java.util.Locale.US, leftConfidence)}" +
+                        "；检测=${left.detectionTimeMs}ms；识别=${left.recognitionTimeMs}ms" +
+                        "；本次OCR墙钟=${leftWall}ms" +
+                        "\nB原始SDK文字（按框返回顺序；非人工真值）：\n" +
+                        leftLines.ifBlank { "（未识别到文字）" } +
+                        "\n\n【端侧状态】A前：${before.describe()}；B后：${after.describe()}" +
+                        "\n判读规则：对照照片中的真实原文，人工逐字核对错、漏、多字；" +
+                        "不能用框数、置信度或读得更少代替真实准确率。" +
+                        "\n这是一次手动诊断附加整图OCR，不可当成逐帧实时性能。"
+                    val details = zero.results.mapIndexed { index, item ->
+                        val points = item.box.points.joinToString(";") { p ->
+                            "(${"%.1f".format(java.util.Locale.US,p.x)},${"%.1f".format(java.util.Locale.US,p.y)})"
+                        }
+                        "#${index + 1} conf=${item.confidence} box=${points} raw=${item.text}"
+                    }.joinToString("\n")
+                    val report = OcrDiagnosticResult(
+                        text = zeroLines,
+                        rawDetails = details.ifEmpty { "（SDK没有返回文字框）" },
+                        modelId = modelId,
+                        boxCount = zero.results.size,
+                        averageConfidence = zeroConfidence,
+                        detectionTimeMs = zero.detectionTimeMs.toLong(),
+                        recognitionTimeMs = zero.recognitionTimeMs.toLong(),
+                        totalTimeMs = zero.totalTimeMs.toLong(),
+                        detectorInputShape = zero.detInputShape.joinToString("×"),
+                        recognitionInputShapes = zero.recInputShapes.joinToString("；") { it.joinToString("×") },
+                        focusDescription = "实验A原始SDK框序；无阅读排序、无二次修复",
+                        fullPageText = zeroLines,
+                        layoutStatus = "极简实验：未运行版面AI",
+                        layoutRegions = 0,
+                        layoutElapsedMs = 0,
+                        layoutReuseStats = "极简实验：未使用版面缓存",
+                        candidateText = leftLines,
+                        candidateDetails = "实验B为同帧左转90°后的SDK原文；未排序、未补字",
+                        realtimeText = zeroLines,
+                        x200ProfileReport = note
+                    )
+                    withContext(Dispatchers.Main) { onResult.onResult(report) }
+                } finally {
+                    if (rotated != null && rotated !== source && !rotated.isRecycled) rotated.recycle()
+                    if (!source.isRecycled) source.recycle()
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "Simple same-frame OCR A/B failed", t)
+                withContext(Dispatchers.Main) {
+                    onError.onError(t.message ?: t.javaClass.simpleName)
+                }
+            } finally { busy.set(false) }
+        }
+    }
+
     fun diagnoseNv21(
         data: ByteArray, width: Int, height: Int,
         enhancedPreprocessing: Boolean, legacyNv21Jpeg: Boolean,
         inputRotationDegrees: Int,
+        simpleSameFrameAb: Boolean,
         onResult: OcrDiagnosticCallback, onError: OcrErrorCallback
     ) {
+        if (simpleSameFrameAb) {
+            diagnoseSimpleSameFrameNv21(data, width, height, onResult, onError)
+            return
+        }
         val current = engine ?: run { onError.onError("OCR 引擎尚未初始化"); return }
         if (released || !busy.compareAndSet(false, true)) {
             onError.onError("OCR 引擎正忙，请稍后重试")
