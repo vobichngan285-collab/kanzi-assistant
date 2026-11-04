@@ -1,0 +1,66 @@
+name: Publish v53 verified USB APK from completed Android build
+on:
+  push:
+    branches: [test/x200-usb-zero-cache-fix-v53]
+    paths:
+      - '.github/workflows/publish-v53-verified-apk.yml'
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 12
+    steps:
+      - name: Verify original signed Android build and retrieve its APK artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repo=vobichngan285-collab/kanzi-assistant
+          run=41807827975
+          source=1e26b6d3b2d21793c73878608a9cc7ff0dd1d42c
+          test "$(gh api repos/$repo/actions/runs/$run --jq '.head_sha')" = "$source"
+          test "$(gh api repos/$repo/actions/runs/$run --jq '.conclusion')" = success
+          mkdir -p "$RUNNER_TEMP/v53"
+          gh run download "$run" -R "$repo" -n vivo-x200-usb-autofull-v53-debug-apk -D "$RUNNER_TEMP/v53"
+          apk="$RUNNER_TEMP/v53/Kanzi_X200_USBAutoFull_v53_debug.apk"
+          test -s "$apk"
+          python3 - "$apk" <<'PY'
+          import hashlib,sys,zipfile
+          p=sys.argv[1]
+          with zipfile.ZipFile(p) as z:
+              names=set(z.namelist())
+              assert 'classes.dex' in names
+              assert 'assets/models/det/inference.onnx' in names
+              assert 'assets/models/rec/inference.onnx' in names
+              assert any(s.startswith('lib/arm64-v8a/') and 'onnxruntime' in s for s in names)
+          print('V53_VERIFIED_APK_RETRIEVAL=PASS sha256='+hashlib.sha256(open(p,'rb').read()).hexdigest())
+          PY
+          sha256sum "$apk" | tee "$RUNNER_TEMP/v53-sha256.txt"
+          cat "$RUNNER_TEMP/v53-sha256.txt" >> "$GITHUB_STEP_SUMMARY"
+      - name: Create release and upload exact signed APK artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repo=vobichngan285-collab/kanzi-assistant
+          tag=x200-usb-direction-20261104-v53
+          apk="$RUNNER_TEMP/v53/Kanzi_X200_USBAutoFull_v53_debug.apk"
+          cat > "$RUNNER_TEMP/release-notes.md" <<'EOF'
+          看字助手 X200 v53（0.9.20）USB自动方向校准与完整朗读实验版。
+          - 独立包 com.vobich.kanzi.x200usbdirection53，不覆盖v52。
+          - 默认USB 0°为暂用而非锁定：识别可读但实际横置的价目表，以及5条横向碎字的传统竖排海报时，触发低频真实270°优先/90°备选OCR A/B，严格结果门控。
+          - 保留原始OCR字符；横排行优先朗读服务名与同行价格；传统多列竖排维持右到左；无联网权限，保留温控及预览独立性。
+          - 纯Java独立策略57项、USB方向25项、相机通道42项与公开100图1036标注框不丢字测试通过。
+          - GitHub原始Android构建、模型SHA、ARM64、包名版本与APK v2签名核验通过：run 41807827975。
+          - 真实vivo X200 Pro USB自动270°实际采纳、朗读顺序、漏字与发热仍需用户安装真机验证；不能把模拟测试当实拍成功。
+          - 用户照片与诊断ZIP未上传仓库。
+          EOF
+          if ! gh release view "$tag" -R "$repo" >/dev/null 2>&1; then
+            gh release create "$tag" -R "$repo" --target 1e26b6d3b2d21793c73878608a9cc7ff0dd1d42c --title "看字助手 USB自动方向与全文朗读 v53（独立测试）" --notes-file "$RUNNER_TEMP/release-notes.md" --prerelease
+          fi
+          gh release upload "$tag" "$apk" -R "$repo" --clobber
+          gh api "repos/$repo/releases/tags/$tag" --jq '.assets[] | select(.name=="Kanzi_X200_USBAutoFull_v53_debug.apk") | [.browser_download_url,.size,.state,.digest] | @tsv' | tee "$RUNNER_TEMP/released-apk.txt"
+          grep -q '^https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/' "$RUNNER_TEMP/released-apk.txt"
+          cat "$RUNNER_TEMP/released-apk.txt" >> "$GITHUB_STEP_SUMMARY"
