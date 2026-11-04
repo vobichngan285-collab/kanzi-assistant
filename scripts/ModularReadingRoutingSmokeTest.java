@@ -146,6 +146,63 @@ public final class ModularReadingRoutingSmokeTest {
             ok(r.text.indexOf(cols[i])<r.text.indexOf(cols[i+1]),
                 "traditional order right-to-left");
     }
+    /** Generated, not copied from user data: mild vertical perspective on prices. */
+    static void perspectivePricePairing() {
+        List<ReadingOrder.Box> b=new ArrayList<>();
+        for(int i=0;i<8;i++) {
+            int y=150+i*58;
+            b.add(box("服务项目"+i,120,y,245,44,.98f));
+            b.add(box("价格"+i+"元",650,y+22,105,36,.98f));
+        }
+        var r=read(b,1080,1920);
+        ok("HORIZONTAL_ROWS_FULL".equals(r.strategy),"perspective price list must be line-oriented");
+        String[] lines=r.text.split("\\n");
+        ok(lines.length==8,"8 services must remain 8 separate horizontal lines, got "+lines.length);
+        for(int i=0;i<8;i++) {
+            ok(lines[i].equals("服务项目"+i+" 价格"+i+"元"),
+                "service must be paired with its own same-row price, not the next: "+lines[i]);
+        }
+    }
+    /** OCR polygons sometimes enumerate the LONG vertical edge first.
+     * A nearby vertical Latin branding line is NOT a sixth Chinese body column.
+     */
+    static ReadingOrder.Box longFirst(String text,float x,float top,float h) {
+        return new ReadingOrder.Box(text,.98f,
+            new float[]{x,x+56,x+99,x+43},
+            new float[]{top+h,top,top+3,top+h+3});
+    }
+    static void fiveLongFirstChineseColumnsAndLatinLabel() {
+        List<ReadingOrder.Box> b=new ArrayList<>();
+        String[] cols={
+            "甲列原文甲乙丙丁戊己庚辛壬癸十一个字继续识别",
+            "乙列原文甲乙丙丁戊己庚辛壬癸十一个字继续识别",
+            "丙列原文甲乙丙丁戊己庚辛壬癸十一个字继续识别",
+            "丁列原文甲乙丙丁戊己庚辛壬癸十一个字继续识别",
+            "戊列原文甲乙丙丁戊己庚辛壬癸十一个字继续识别"
+        };
+        b.add(box("VERTICAL ENGLISH TITLE",725,230,30,200,.99f));
+        b.add(box("专业技能培训",740,750,200,66,.99f));
+        b.add(box("中医保健服务",790,840,215,70,.99f));
+        for(int i=0;i<5;i++)
+            b.add(longFirst(cols[i],540-i*69,i==0?120:5,i==0?730:850));
+        var r=read(b,1080,1920);
+        ok("MULTI_VERTICAL".equals(r.strategy),
+            "five long-first Chinese columns must not be rejected by Latin title or polygon edge order: "+r.description);
+        for(int i=0;i<4;i++)
+            ok(r.text.indexOf(cols[i])<r.text.indexOf(cols[i+1]),
+                "each Chinese body column must follow right-to-left order");
+        ok(r.text.contains("VERTICAL ENGLISH TITLE"),"English caption still spoken, not dropped");
+        // Sideways horizontal Chinese paragraphs can resemble vertical columns:
+        // do not use long-first quads as proof without independent captions.
+        List<ReadingOrder.Box> ambiguous=new ArrayList<>();
+        ambiguous.add(box("VERTICAL ENGLISH TITLE",725,230,30,200,.99f));
+        for(int i=0;i<5;i++)
+            ambiguous.add(longFirst(cols[i],540-i*69,i==0?120:5,i==0?730:850));
+        var safe=read(ambiguous,1080,1920);
+        ok(!"MULTI_VERTICAL".equals(safe.strategy),
+            "long-first OCR polygons alone must not falsely certify traditional reading order");
+    }
+
     static void unchangedBookAndLowConfidence() {
         List<ReadingOrder.Box> b=Arrays.asList(
             box("甲",160,250,30,30,.20f),box("乙",310,260,30,30,.32f));
@@ -161,7 +218,8 @@ public final class ModularReadingRoutingSmokeTest {
         separateDoorSigns();twoCharacterSign();wholeVerticalSignBoxes();
         horizontalSignNumbers();horizontalPage();mixedDoorAndRoomNumber();
         priceListRegression();closeVerticalPriceColumnsFallback();
-        traditionalFiveColumns();unchangedBookAndLowConfidence();
+        traditionalFiveColumns();perspectivePricePairing();
+        fiveLongFirstChineseColumnsAndLatinLabel();unchangedBookAndLowConfidence();
         System.out.println("SIMPLE_COMPLETE_READING=PASS assertions="+checks);
     }
 }
