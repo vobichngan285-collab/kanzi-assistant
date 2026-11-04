@@ -6,109 +6,113 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * An independent, inexpensive policy router over EXISTING OCR text/boxes:
+ * v52: a minimal, OFFLINE, geometry-only reading order policy.
+ * Every valid OCR source box must be spoken exactly once. No center selection,
+ * text replacement, new inference, scene classification or extra model call.
  *
- *   coherent page -> previously verified traditional columns or old flow;
- *   one vertical door sign -> single-column character order;
- *   several independent signs -> prioritize the camera-center COMPLETE sign;
- *   ordinary horizontal book -> original full-text policy.
+ * - Ordinary / mixed / price-list content: complete top-first reading flow.
+ * - One or several separated vertical door signs: top-down in each sign,
+ *   signs left-to-right.
+ * - Confident traditional long vertical article: columns right-to-left.
+ * - Unclear layout: complete legacy flow; never choose a partial region.
  *
- * All original OCR detections remain available for overlay and diagnosis.
- * This class never rotates pixels, calls an inference model, edits characters
- * or cancels TTS. Selection is only applied to LIVE QUICK SCAN, never BOOK.
+ * BOOK still uses its original implementation outside this router.
  */
 public final class ReadingStrategyRouter {
-    private ReadingStrategyRouter(){}
+    private ReadingStrategyRouter() {}
 
     public static final class Result {
-        public final String text,description;
-        public final String strategy;
-        public final int regions,selectedBoxes,totalBoxes;
-        public final boolean centerSelected;
-        Result(String s,String d,String type,int regions,int chosen,int total,boolean center) {
-            text=s;description=d;strategy=type;
-            this.regions=regions;selectedBoxes=chosen;totalBoxes=total;
-            centerSelected=center;
+        public final String text, description, strategy;
+        public final int regions, selectedBoxes, totalBoxes;
+        /** Kept for diagnostic compatibility; v52 never selects the center. */
+        public final boolean centerSelected = false;
+        Result(String text, String description, String strategy, int regions, int total) {
+            this.text=text; this.description=description; this.strategy=strategy;
+            this.regions=regions; this.selectedBoxes=total; this.totalBoxes=total;
         }
     }
 
-    private static String keyChars(String s) {
+    private static String withoutWhitespace(String s) {
         return s==null?"":s.replaceAll("[\\p{Z}\\p{Cc}\\p{Cf}]+","");
     }
-    /** Multiset equality detects accidental deletion/duplication, not word meaning. */
+
+    /** Character multiset equality: no source character may vanish or appear twice. */
     public static boolean preservesCharacters(List<ReadingOrder.Box> source,String output) {
-        Map<Integer,Integer> expected=new HashMap<>(),actual=new HashMap<>();
+        if(source==null || output==null)return false;
+        Map<Integer,Integer> expected=new HashMap<>(), actual=new HashMap<>();
         for(ReadingOrder.Box b:source) {
             if(b==null||b.text==null)return false;
-            for(int ch:keyChars(b.text).codePoints().toArray())
-                expected.merge(ch,1,Integer::sum);
+            withoutWhitespace(b.text).codePoints().forEach(c -> expected.merge(c,1,Integer::sum));
         }
-        for(int ch:keyChars(output).codePoints().toArray())
-            actual.merge(ch,1,Integer::sum);
+        withoutWhitespace(output).codePoints().forEach(c -> actual.merge(c,1,Integer::sum));
         return expected.equals(actual);
     }
-    private static boolean strongHorizontalPage(List<ReadingOrder.Box> boxes) {
-        int rows=0;
+
+    private static String originalBoxes(List<ReadingOrder.Box> boxes) {
+        StringBuilder result=new StringBuilder();
         for(ReadingOrder.Box b:boxes) {
-            float w=b.right()-b.left(),h=b.bottom()-b.top();
-            if(w>Math.max(260f,h*6f) &&
-               b.text.codePointCount(0,b.text.length())>=10 &&
-               b.confidence>=.72f)rows++;
+            if(b==null||b.text==null||b.text.isBlank())continue;
+            if(result.length()>0)result.append('\n');
+            result.append(b.text);
         }
-        return rows>=3;
+        return result.toString();
+    }
+
+    private static String completeFlow(List<ReadingOrder.Box> boxes,int width,int height) {
+        String legacy=RealtimeTextOrientation.arrange(boxes,width,height);
+        return preservesCharacters(boxes,legacy)?legacy:originalBoxes(boxes);
+    }
+
+    /** This is deliberately NOT a general-purpose layout classifier. */
+    private static String separateVerticalSigns(List<ReadingOrder.Box> boxes) {
+        // Complicated price lists are never cropped to sign-like regions.
+        if(boxes.size()>24)return null;
+        List<TextRegionPartition.Region> parts=TextRegionPartition.partition(boxes);
+        if(parts.isEmpty() || parts.size()>6)return null;
+        StringBuilder speech=new StringBuilder();
+        TextRegionPartition.Region previous=null;
+        for(TextRegionPartition.Region region:parts) {
+            List<ReadingOrder.Box> source=new ArrayList<>();
+            for(int id:region.ids)source.add(boxes.get(id));
+            String column=SingleVerticalFlow.tryArrange(source);
+            if(column==null || !preservesCharacters(source,column))return null;
+            // Independent doorplates have clear space between their X bounds.
+            // Closely packed price-list columns must NOT be reinterpreted as signs.
+            if(previous!=null) {
+                float gap=region.left-previous.right;
+                float widths=Math.max(region.right-region.left,
+                                      previous.right-previous.left);
+                if(gap<Math.max(20f,widths*.60f))return null;
+            }
+            if(speech.length()>0)speech.append('\n');
+            speech.append(column);
+            previous=region;
+        }
+        if(!preservesCharacters(boxes,speech.toString()))return null;
+        return speech.toString();
     }
 
     public static Result arrange(List<ReadingOrder.Box> boxes,int width,int height,
-                                 boolean automaticVertical,boolean quickScan,
-                                 CenterTargetTracker focus) {
+                                 boolean automaticVertical, boolean quickScan) {
         if(boxes==null||boxes.isEmpty())
-            return new Result("","无OCR文字","EMPTY",0,0,0,false);
-        final String legacy=RealtimeTextOrientation.arrange(boxes,width,height);
+            return new Result("","没有OCR文字","EMPTY",0,0);
+        final String full=completeFlow(boxes,width,height);
         if(!quickScan)
-            return new Result(legacy,"长文模式保持原排序","BOOK_FALLBACK",0,boxes.size(),boxes.size(),false);
+            return new Result(full,"完整文字流（长文模式不截断）","BOOK_FALLBACK",0,boxes.size());
 
-        // Most body columns belong to ONE article. Its traditional right-to-
-        // left order must win BEFORE focus can mistakenly choose just one.
-        VerticalLongColumnLive.Result multi =
+        VerticalLongColumnLive.Result longVertical=
             VerticalLongColumnLive.tryArrange(automaticVertical,boxes,width,height);
-        if(multi.used && preservesCharacters(boxes,multi.text))
-            return new Result(multi.text,multi.status,"MULTI_VERTICAL",
-                1,boxes.size(),boxes.size(),false);
+        if(longVertical.used && preservesCharacters(boxes,longVertical.text))
+            return new Result(longVertical.text,
+                "传统竖排：从右往左逐列读，完整保留原框",
+                "MULTI_VERTICAL",1,boxes.size());
 
-        if(strongHorizontalPage(boxes))
-            return new Result(legacy,"连续横排书页：使用原有完整文字流","HORIZONTAL_PAGE",
-                1,boxes.size(),boxes.size(),false);
+        String signs=separateVerticalSigns(boxes);
+        if(signs!=null && !signs.isBlank())
+            return new Result(signs,"独立竖排标牌：从左到右，每列从上到下（全文）",
+                "VERTICAL_SIGNS_FULL",TextRegionPartition.partition(boxes).size(),boxes.size());
 
-        List<TextRegionPartition.Region> regions=TextRegionPartition.partition(boxes);
-        if(regions.size()<2 || focus==null)
-            return new Result(legacy,"单区域或无法独立分区：原有文字流",
-                "LEGACY_FLOW",regions.size(),boxes.size(),boxes.size(),false);
-
-        TextRegionPartition.Region selected=focus.choose(regions,boxes,width,height);
-        if(selected==null)
-            return new Result(legacy,"无可信中央区域：原有文字流",
-                "NO_TARGET",regions.size(),boxes.size(),boxes.size(),false);
-        // A label must be sufficiently near the optical center. If camera is
-        // pointed at empty space, never pretend an off-screen sign was aimed at.
-        float centerDx=(selected.centerX-width*.5f)/width;
-        float centerDy=(selected.centerY-height*.5f)/height;
-        if(Math.hypot(centerDx,centerDy)>.48f)
-            return new Result(legacy,"中央没有清晰文字目标，回退全部文字",
-                "OFF_CENTER",regions.size(),boxes.size(),boxes.size(),false);
-
-        List<ReadingOrder.Box> target=new ArrayList<>();
-        for(int id:selected.ids)target.add(boxes.get(id));
-        String oneColumn=SingleVerticalFlow.tryArrange(target);
-        String candidate=oneColumn!=null?oneColumn:
-            RealtimeTextOrientation.arrange(target,width,height);
-        if(candidate.isBlank()||!preservesCharacters(target,candidate))
-            return new Result(legacy,"区域排序未能保持原文字，回退全部OCR",
-                "INTEGRITY_FALLBACK",regions.size(),boxes.size(),boxes.size(),false);
-        String strategy=oneColumn!=null?"SINGLE_VERTICAL":"CENTER_REGION";
-        String description="中央优先："+regions.size()+"个独立区域；选中"+
-            target.size()+"/"+boxes.size()+"个源框；"+strategy+
-            "；所有其他框仍保留在诊断/预览";
-        return new Result(candidate,description,strategy,regions.size(),
-            target.size(),boxes.size(),true);
+        return new Result(full,"普通横排或混排：从上往下完整朗读，不选中央、不丢框",
+            "FULL_READING",0,boxes.size());
     }
 }
