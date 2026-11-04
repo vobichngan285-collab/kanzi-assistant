@@ -421,7 +421,8 @@ jobs:
           保留原有五列竖排、单列竖排、手机相机与USB预览独立性、无联网权限与TTS稳定机制。
           用户真实USB照片/诊断ZIP未提交到公开仓库。纯Java测试与公开已标注布局数据不是Android实测。
           用户需在vivo X200 Pro实际连接USB相机测试：首次诊断中USB自动方向决策、实际输入旋转角与完整TTS。
-          TXT          sha256sum "$RUNNER_TEMP/diag-output/Kanzi_X200_USBAutoFull_v53_debug.apk" > "$RUNNER_TEMP/diag-output/SHA256SUMS.txt"
+          TXT
+          sha256sum "$RUNNER_TEMP/diag-output/Kanzi_X200_USBAutoFull_v53_debug.apk" > "$RUNNER_TEMP/diag-output/SHA256SUMS.txt"
           cat "$RUNNER_TEMP/diag-output/SHA256SUMS.txt" >> "$GITHUB_STEP_SUMMARY"
           echo 'V53_APK_AUDIT=PASS; v52 isolated; offline; all OCR text preserved; real phone USB A/B pending.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload standalone debug APK and checksum artifact
@@ -457,7 +458,8 @@ jobs:
           - 独立GitHub Java实验+100张公开合成图布局策略检验已通过；真实vivo USB旋转候选的端到端准确率、发热与TTS仍需装包测试。
           - 原始私有USB诊断ZIP不公开，CI使用原创匿名模拟几何测试。
           - source commit: $GITHUB_SHA
-          EOF          if ! gh release view "$tag" -R vobichngan285-collab/kanzi-assistant >/dev/null 2>&1; then
+          EOF
+          if ! gh release view "$tag" -R vobichngan285-collab/kanzi-assistant >/dev/null 2>&1; then
             gh release create "$tag" -R vobichngan285-collab/kanzi-assistant \
               --target "$GITHUB_SHA" --title "看字助手 X200 USB自动方向与全文阅读 v53（独立测试包）" \
               --notes-file "$RUNNER_TEMP/release-notes.md" --prerelease
