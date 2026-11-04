@@ -16,9 +16,57 @@ import java.util.Map;
  */
 public final class RealtimeSpeechGuard {
     private String activeText = "";
+    private long activeScene = Long.MIN_VALUE;
+    private String pendingText = "";
+    private int pendingCount = 0;
+
+    /**
+     * Stable LIVE scheduling, not a text recognition filter. Once a result
+     * begins speaking, NOTHING from the camera can replace it. Afterward,
+     * another substantially different target must be seen in a changed
+     * camera scene in TWO coherent OCR results. Scene change alone, one
+     * different OCR reading, and tiny OCR fluctuations never re-start TTS.
+     * Manual reading bypasses this policy in MainActivity.
+     */
+    public boolean acceptStable(String text, long scene, boolean audioBusy) {
+        if (text == null || text.isEmpty() || audioBusy) return false;
+        if (activeText.isEmpty()) {
+            activeText = text;
+            activeScene = scene;
+            clearPending();
+            return true;
+        }
+        if (sameTarget(activeText, text)) {
+            clearPending();
+            return false;
+        }
+        // A static camera with noisy recognition must not speak again,
+        // even if the wording changes significantly between OCR attempts.
+        if (scene < 0 || scene == activeScene) {
+            clearPending();
+            return false;
+        }
+        if (pendingText.isEmpty() || !sameTarget(pendingText, text)) {
+            pendingText = text;
+            pendingCount = 1;
+            return false;
+        }
+        if (++pendingCount < 2) return false;
+        activeText = text;
+        activeScene = scene;
+        clearPending();
+        return true;
+    }
+
+    private void clearPending() {
+        pendingText = "";
+        pendingCount = 0;
+    }
 
     public void reset() {
         activeText = "";
+        activeScene = Long.MIN_VALUE;
+        clearPending();
     }
 
     public boolean accept(String normalizedText) {
