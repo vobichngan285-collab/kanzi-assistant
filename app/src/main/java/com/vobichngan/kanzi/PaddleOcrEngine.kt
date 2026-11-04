@@ -620,14 +620,21 @@ class PaddleOcrEngine(
                 // Keep detector preprocessing/post-processing paired with the selected model.
                 // PP-OCRv6 ONNX inference.yml: thresh=0.20, box_thresh=0.45, unclip=1.40.
                 // PP-OCRv5 Mobile ONNX inference.yml: resize_long=960, 0.30/0.60/1.50.
+                // Independent v55: original offline ChineseOCR-Lite green DET,
+                // with the exact existing PP-OCRv6 Small REC recognition branch.
+                // No new correction rules, hallucinated completion or extra TTS logic.
                 val isV5 = modelId == "ppocrv5_mobile"
+                val isCnLite = modelId == "cnlite_smallrec"
                 val ocrConfig = PaddleOCRConfig(
-                    detLimitSideLen = if (isV5) 960 else 1600,
-                    detLimitType = "max",
-                    detMaxSideLimit = if (isV5) 960 else 1600,
-                    detThresh = if (isV5) 0.30f else 0.20f,
-                    detBoxThresh = if (isV5) 0.60f else 0.45f,
-                    detUnclipRatio = if (isV5) 1.50f else 1.40f,
+                    detImgMode = if (isCnLite) "RGB" else "BGR",
+                    detLimitSideLen = if (isCnLite) 640 else if (isV5) 960 else 1600,
+                    detLimitType = if (isCnLite) "resize_short" else "max",
+                    detMaxSideLimit = if (isCnLite) 1600 else if (isV5) 960 else 1600,
+                    detThresh = if (isCnLite) 0.30f else if (isV5) 0.30f else 0.20f,
+                    detBoxThresh = if (isCnLite) 0.50f else if (isV5) 0.60f else 0.45f,
+                    detUnclipRatio = if (isCnLite) 2.00f else if (isV5) 1.50f else 1.40f,
+                    detMaxCandidates = if (isCnLite) 1000 else 3000,
+                    detScoreMode = if (isCnLite) "slow" else "fast",
                     // Do not discard recognition rows before diagnostics can inspect them.
                     recScoreThresh = 0.0f,
                     recBatchSize = performanceProfile.recBatchSize
@@ -642,7 +649,7 @@ class PaddleOcrEngine(
                     context = appContext,
                     config = ocrConfig,
                     engineConfig = engineConfig,
-                    detModelAssetPath = "$modelPrefix/det/inference.onnx",
+                    detModelAssetPath = if (isCnLite) "models/cnlite/det/inference.onnx" else "$modelPrefix/det/inference.onnx",
                     recModelAssetPath = "$modelPrefix/rec/inference.onnx",
                     recConfigAssetPath = "$modelPrefix/rec/inference.yml"
                 )
