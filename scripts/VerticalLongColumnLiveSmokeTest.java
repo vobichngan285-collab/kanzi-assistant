@@ -61,7 +61,7 @@ public final class VerticalLongColumnLiveSmokeTest {
             "unrecovered crop must never be hallucinated from neighboring lines");
         // An ambiguous extra short glyph must never be merged as a continuation.
         List<ReadingOrder.Box> ambiguous=new ArrayList<>(sample);
-        ambiguous.add(box("续",290,340,25,31,.99f));
+        ambiguous.add(box("续",345,340,25,31,.99f));
         var safe=VerticalLongColumnLive.tryArrange(true,ambiguous,1080,1920);
         yes(safe.used && safe.trailingGlyphId==-1,"ambiguous short glyph should remain separate");
         yes(safe.preservedBoxCount==ambiguous.size(),"ambiguous glyph also retained");
