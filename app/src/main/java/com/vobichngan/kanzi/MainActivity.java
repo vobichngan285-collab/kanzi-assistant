@@ -234,11 +234,11 @@ public class MainActivity extends CameraActivity {
                             + "\n摄像头："
                                 + (isPhoneCamera ? "手机" : "USB")
                                 + "；原始帧=" + width + "×" + height
-                            + "\n本次实际OCR输入旋转=" + effectiveDiagnosticAngle
-                                + "°（仅OCR；预览画面不参与）"
+                            + "\n本次OCR方向请求=" + (effectiveDiagnosticAngle == -1 ? "USB自动校准（真实角度见上方X200报告）" : effectiveDiagnosticAngle + "°")
+                                + "（仅OCR；预览画面不参与）"
                             + "\n原版A/B输入方向：以本次实际OCR输入角度为基准；不覆盖原始NV21"
                             + "\n手机实时OCR旋转设置：" + liveTextRotationDegrees
-                                + "°；USB OCR旋转设置：" + usbOcrInputRotationDegrees + "°"
+                                + "°；USB OCR方向设置：" + (usbOcrInputRotationDegrees == -1 ? "自动" : usbOcrInputRotationDegrees + "°")
                             + "\n图像解码：OpenCV NV21 方式"
                             + "\n平均置信度：" + String.format(Locale.US, "%.3f", report.getAverageConfidence())
                             + "\n文字流组织方式：" + report.getFocusDescription()
@@ -747,7 +747,9 @@ public class MainActivity extends CameraActivity {
         advancedDirectionCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         panel.addView(advancedDirectionCheck);
         TextView autoDirectionSummary = new TextView(this);
-        autoDirectionSummary.setText("方向设置：自动，手机和USB分别处理，不需逐页调整。");
+        autoDirectionSummary.setText(usbOcrInputRotationDegrees == -1
+            ? "USB OCR自动校准已开启；手机和USB分别处理，不需逐页调整。"
+            : "USB OCR目前使用手动角度（如需自动，请在高级设置中选择自动校准）。");
         autoDirectionSummary.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         panel.addView(autoDirectionSummary);
         View[] extraDirections = {liveRotationTitle,rotationGroup,liveRotationNote,
