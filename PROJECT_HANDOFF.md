@@ -510,3 +510,15 @@
 - 另一个后续缺口：即使手动270°让竖列字符回正，v45新的 VerticalLongColumnShadow 仍**仅用于手动诊断**、不进入正式TTS；当前 ReadingOrder.verticalColumns() 主要重建单字框，未保证一框一竖列能够按从右到左顺畅播报。
 - **建议先做现场实测**：保持USB相机的预览左右校正设置独立；进入“实时文字识别方向”选择“手动向左旋转90°”并点击开始识别（非手动OCR诊断），用同一刮痧宣传牌听识别是否变成大段正确中文。用户若确认文字识别改善但朗读仍乱，再优先将经校验的长列排序接入实时语音；若仍不能识别，则查真竖排SDK REC处理，不可凭上下文补字。
 - 下一版工程方案需将**USB传感器横竖方向**与**真正的竖排排版顺序**分离，并对同一NV21帧提供0°/270°真实推理A/B；恢复原文必须来自真实像素证据，避免盲目四向全帧OCR和高发热。当前不是修复已完成。
+
+#### 2026-11-04 v46 USB预览和真实OCR输入彻底独立
+
+- 用户强烈指出：不应将手机上看到的USB预览图像的旋转/镜像与实际送给OCR的像素混在一起；过去多版诊断仍固定使用0°，与实时角度及预览不一致，导致故障归因混乱。纠错原则：单帧原始NV21先复制成独立输入；预览仅负责显示镜像/旋转，OCR仅根据自己的明确方向设置旋转解码Bitmap，两路互不影响。
+- 本次新分支 `test/x200-independent-preview-ocr-v46` 基于v45分离测试版，仅修改摄像头->OCR方向一致性和诊断证据，不更换PP-OCRv6 Small/布局模型、不更改文字修复或实时竖排列序。独立包名 `com.vobich.kanzi.x200isolatedio`，versionCode46、versionName0.9.13、APP_VERSION0.9.13。
+- 新增 `OcrInputOrientation.java`：只做与预览矩阵无关的0/90/180/270输入尺寸和坐标映射；USB预览显示继续由 `UsbPreviewMirror` 和 `TextureView` 管理，输入OCR不读取/使用预览的旋转或镜像。`MainActivity`新增单独保存的“USB摄像头→OCR输入方向”，默认0°以保留原行为，允许手动90°、180°、270°。在同一个USB采集帧上，实时`recognizeNv21`和手动`diagnoseNv21`都接收该明确的USB OCR旋转值，手机摄像头控制保持独立（手机诊断仍保留0°基线）。
+- `PaddleOcrEngine`的手动诊断现在会把原始`decoded-frame.png`及真正旋转过的`actual-ocr-input.png`写入诊断ZIP，且`SingleFrameEvidence`的`ocr_bitmap_rotation`字段记录真实旋转角度（之前硬编码为0）。诊断文本打印原始1920×1080及实际旋转、模型Bitmap尺寸。正向与反向坐标映射保持原始框位置，不修改用户原始NV21。手动使用非0°时不再叠加自动旋转候选，避免两次错误纠正。
+- 边界：v46**没有**把`VerticalLongColumnShadow`接入实时TTS，尚不能宣称解决真竖排“读乱”；它只先保证所见预览与模型实际输入能够分别控制并核对。针对用户第5份USB 1920×1080横放刮痧宣传牌的原始图像，建议单独将“USB OCR输入方向”设为**向左270°**（屏幕USB预览角度不改变），随后分别进行手动诊断和正式朗读。之后若识字恢复、顺序仍乱，需验证竖排列序门控并接入实时TTS。
+- CI快速方向独立性回归：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41780298333 成功，包含镜像开关正交、角度变换逆映射与原图尺寸；旧的phone preview、book reading、speech、decoder核验脚本已更新为新的显式输入角度接口，不再错误强制0°。
+- **完整Android编译/离线模型/签名/公开APK发布已通过**：GitHub Actions https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41780769705 = SUCCESS；release tag `x200-independent-preview-ocr-20261104-v46`，资产 `Kanzi_X200_PreviewOCRIndependent_v46_debug.apk`，大小**390416263** bytes，SHA256 **0bb28603cdcd0d7f5b82293c5c6a875734931a7526c218578a809f13a8425f07**，独立APK浏览器下载链接：
+  https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/x200-independent-preview-ocr-20261104-v46/Kanzi_X200_PreviewOCRIndependent_v46_debug.apk
+- 安装及验证：本包独立包名，不覆盖v43或v45，也不要求用户卸载旧版。Debug临时签名不保证未来同包名覆盖。首先验证USB预览吉他在右侧，再把USB OCR设向左90°；运行一次手动诊断，核查“本次实际OCR输入旋转=270°”和实际OCR输入1080×1920，再点正式开始识别。任何真机测试未发生之前，不要宣称用户朗读已修复，不要上传用户的私人诊断ZIP到GitHub。
