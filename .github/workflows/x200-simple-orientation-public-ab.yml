@@ -1,0 +1,51 @@
+name: X200 true Small OCR same-image 0 vs CCW90 public A/B (no APK)
+on:
+  push:
+    branches: [test/x200-simple-orientation-ocr-public-ab]
+    paths:
+      - 'scripts/x200_simple_orientation_public_ab.py'
+      - '.github/workflows/x200-simple-orientation-public-ab.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  actual-small-ocr-public-same-frame:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: 1e0c227f33fb0fbef4c681024972d107b09bfc99
+          path: prior-ocr-sdk
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install original fixed Small inference dependencies
+        run: |
+          python3 -m pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' 'requests==2.32.3' pyclipper
+          python3 -m py_compile scripts/x200_simple_orientation_public_ab.py
+      - name: Download same previously verified Small DET and REC models
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-simple-orientation/models /tmp/kanzi-simple-orientation/output
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx' -o /tmp/kanzi-simple-orientation/models/det.onnx
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx' -o /tmp/kanzi-simple-orientation/models/small_rec.onnx
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml' -o /tmp/kanzi-simple-orientation/models/small_rec.yml
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  /tmp/kanzi-simple-orientation/models/det.onnx' | sha256sum -c -
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/kanzi-simple-orientation/models/small_rec.onnx' | sha256sum -c -
+          echo 'ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/kanzi-simple-orientation/models/small_rec.yml' | sha256sum -c -
+      - name: Same-public-image real DET and REC under two input rotations
+        run: |
+          set -euo pipefail
+          PYTHONPATH=prior-ocr-sdk/scripts python3 -u scripts/x200_simple_orientation_public_ab.py | tee /tmp/kanzi-simple-orientation/output/run.log
+          grep -q '^SIMPLE_ORIENTATION_TRUE_SMALL_OCR_COMPLETE' /tmp/kanzi-simple-orientation/output/run.log
+          cat /tmp/kanzi-simple-orientation/output/summary.json >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: x200-public-orientation-ab-numeric-only
+          path: /tmp/kanzi-simple-orientation/output/
+          retention-days: 7
+          if-no-files-found: warn
