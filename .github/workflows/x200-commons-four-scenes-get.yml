@@ -1,9 +1,10 @@
-name: Download 4 new public Chinese scene categories (no old photo reuse)
+name: Fresh hospital/supermarket/shop/menu scenes real Small OCR preflight A/B
 on:
   push:
     branches: [test/x200-commons-four-scenes-prefocus-20261105]
     paths:
       - "scripts/x200_commons_scene_download.py"
+      - "scripts/x200_commons_scene_prefocus_benchmark.py"
       - ".github/workflows/x200-commons-four-scenes-get.yml"
   workflow_dispatch:
 permissions:
@@ -11,24 +12,47 @@ permissions:
 jobs:
   assemble-new-scene-photos:
     runs-on: ubuntu-22.04
-    timeout-minutes: 35
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install publicly distributable open-source photo processing tools
-        run: python3 -m pip install --quiet requests Pillow
+      - uses: actions/checkout@v4
+        with:
+          ref: 1e0c227f33fb0fbef4c681024972d107b09bfc99
+          path: original-ocr-sdk-study
+          persist-credentials: false
+      - name: Install fixed CPU Small inference dependencies
+        run: |
+          python3 -m pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'PyYAML==6.0.2' 'requests==2.32.3' pyclipper
+          python3 -m py_compile scripts/x200_commons_scene_download.py scripts/x200_commons_scene_prefocus_benchmark.py
       - name: Download 4 genuinely different categories and save license metadata
         run: |
           set -euo pipefail
           python3 -u scripts/x200_commons_scene_download.py | tee /tmp/kanzi-scene-download.log
           grep -q '^FOUR_REAL_SCENE_DOWNLOAD_COMPLETE' /tmp/kanzi-scene-download.log
           cp /tmp/kanzi-scene-download.log /tmp/kanzi-commons-scene/out/download.log
+      - name: Download pinned official PP-OCRv6 Small DET and REC
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-commons-scene/models
+          curl -fL --retry 4 --retry-delay 3 --max-time 240             'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx'             -o /tmp/kanzi-commons-scene/models/det.onnx
+          curl -fL --retry 4 --retry-delay 3 --max-time 240             'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx'             -o /tmp/kanzi-commons-scene/models/small_rec.onnx
+          curl -fL --retry 4 --retry-delay 3 --max-time 240             'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml'             -o /tmp/kanzi-commons-scene/models/small_rec.yml
+      - name: Real Small OCR all scenes, original vs defocus variants, pre-recognition gate
+        run: |
+          set -euo pipefail
+          PYTHONPATH=original-ocr-sdk-study/scripts python3 -u scripts/x200_commons_scene_prefocus_benchmark.py              | tee /tmp/kanzi-commons-scene/out/ocr.log
+          grep -q '^FOUR_CATEGORY_ACTUAL_SMALL_OCR_PREFLIGHT_BENCHMARK_COMPLETE' /tmp/kanzi-commons-scene/out/ocr.log
+          cat /tmp/kanzi-commons-scene/out/benchmark_summary.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Do not include giant public model files in photo artifact
+        run: |
+          rm -rf /tmp/kanzi-commons-scene/models
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: x200-commons-4-new-categories-real-photo-contact-sheets
           path: /tmp/kanzi-commons-scene/
-          retention-days: 3
+          retention-days: 5
           if-no-files-found: warn
