@@ -59,7 +59,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.9.13";
+    private static final String APP_VERSION = "0.9.15";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -82,6 +82,7 @@ public class MainActivity extends CameraActivity {
     private static final String PREF_QUALITY_PROMPTS = "quality_voice_prompts";
     private static final String PREF_READING_FOCUS = "reading_page_focus";
     private static final String PREF_AI_LAYOUT = "experimental_ai_layout";
+    private static final String PREF_VERTICAL_LIVE_READING = "experimental_true_vertical_live";
     private static final String PREF_REALTIME_TEXT_ROTATION = "realtime_text_rotation";
     private static final String PREF_USB_OCR_INPUT_ROTATION = "usb_ocr_input_rotation";
     private static final int REQUEST_PHONE_CAMERA = 4051;
@@ -148,6 +149,7 @@ public class MainActivity extends CameraActivity {
     private volatile String ocrProfileId = OcrPerformanceProfile.defaultId();
     private volatile String readingFocusMode = "AUTO";
     private volatile boolean aiLayoutEnabled = false;
+    private volatile boolean verticalLiveReadingEnabled = false;
     private volatile int liveTextRotationDegrees = 0;
     // Independent USB capture->OCR input direction, never touches TextureView preview.
     private volatile int usbOcrInputRotationDegrees = 0;
@@ -534,6 +536,7 @@ public class MainActivity extends CameraActivity {
         previewVerticalFlip = prefs.getBoolean(PREF_PREVIEW_FLIP, false);
         enhancedOcr = prefs.getBoolean(PREF_ENHANCED_OCR, false);
         aiLayoutEnabled = prefs.getBoolean(PREF_AI_LAYOUT, false);
+        verticalLiveReadingEnabled = prefs.getBoolean(PREF_VERTICAL_LIVE_READING, false);
         liveTextRotationDegrees = prefs.getInt(PREF_REALTIME_TEXT_ROTATION, 0);
         usbOcrInputRotationDegrees = OcrInputOrientation.normalize(
             prefs.getInt(PREF_USB_OCR_INPUT_ROTATION, 0));
@@ -606,6 +609,7 @@ public class MainActivity extends CameraActivity {
         recognizer.setLiveTextRotationDegrees(liveTextRotationDegrees);
         recognizer.setReadingFocusMode(readingFocusMode);
         recognizer.setAiLayoutEnabled(aiLayoutEnabled);
+        recognizer.setVerticalLiveReadingEnabled(verticalLiveReadingEnabled);
         recognizer.initialize();
     }
 
@@ -664,6 +668,17 @@ public class MainActivity extends CameraActivity {
         layoutAiNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         layoutAiNote.setTextColor(0xFF667085);
         panel.addView(layoutAiNote);
+
+        CheckBox verticalLiveCheck = new CheckBox(this);
+        verticalLiveCheck.setText("真正竖排中文：按右→左逐列朗读（实验，默认关闭）");
+        verticalLiveCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        verticalLiveCheck.setChecked(verticalLiveReadingEnabled);
+        panel.addView(verticalLiveCheck);
+        TextView verticalLiveNote = new TextView(this);
+        verticalLiveNote.setText("用于刮痧宣传牌等传统从上到下、从右到左的印刷正文。仅在4列以上可信长竖列通过校验时生效；自动和手动扫描均可。普通横排书页请保持关闭。不会改变相机预览、OCR输入旋转或原始识别框。");
+        verticalLiveNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        verticalLiveNote.setTextColor(0xFF667085);
+        panel.addView(verticalLiveNote);
 
         TextView liveRotationTitle = new TextView(this);
         liveRotationTitle.setText("手机摄像头实时文字识别方向（不控制预览）");
@@ -1256,6 +1271,9 @@ public class MainActivity extends CameraActivity {
                 boolean usbOcrRotationChanged =
                     requestedUsbOcrRotation != usbOcrInputRotationDegrees;
                 usbOcrInputRotationDegrees = requestedUsbOcrRotation;
+                boolean verticalReadingChanged =
+                    verticalLiveReadingEnabled != verticalLiveCheck.isChecked();
+                verticalLiveReadingEnabled = verticalLiveCheck.isChecked();
                 boolean aiLayoutChanged = aiLayoutEnabled != layoutAiCheck.isChecked();
                 aiLayoutEnabled = layoutAiCheck.isChecked();
                 similarityThreshold = similaritySeek.getProgress();
@@ -1289,13 +1307,14 @@ public class MainActivity extends CameraActivity {
                     .putString(PREF_OCR_PROFILE, ocrProfileId)
                     .putString(PREF_READING_FOCUS, readingFocusMode)
                     .putBoolean(PREF_AI_LAYOUT, aiLayoutEnabled)
+                    .putBoolean(PREF_VERTICAL_LIVE_READING, verticalLiveReadingEnabled)
                     .putInt(PREF_REALTIME_TEXT_ROTATION, liveTextRotationDegrees)
                     .putInt(PREF_USB_OCR_INPUT_ROTATION, usbOcrInputRotationDegrees)
                     .putBoolean(PREF_NO_ENGLISH, speechNoEnglish)
                     .putBoolean(PREF_NO_NUMBERS, speechNoNumbers)
                     .putInt(PREF_MAX_SPEECH_CHARS, maxSpeechChars)
                     .apply();
-                if (focusChanged || aiLayoutChanged || textRotationChanged || usbOcrRotationChanged) {
+                if (focusChanged || aiLayoutChanged || textRotationChanged || usbOcrRotationChanged || verticalReadingChanged) {
                     readingEpoch.incrementAndGet();
                     frameChangeGate.reset();
                     realtimeScene.reset();
@@ -1307,6 +1326,7 @@ public class MainActivity extends CameraActivity {
                         if (focusChanged) recognizer.setReadingFocusMode(readingFocusMode);
                         recognizer.setAiLayoutEnabled(aiLayoutEnabled);
                         recognizer.setLiveTextRotationDegrees(liveTextRotationDegrees);
+                        recognizer.setVerticalLiveReadingEnabled(verticalLiveReadingEnabled);
                     }
                     Toast.makeText(this, "已更新独立的OCR输入方向（预览方向不变）", Toast.LENGTH_SHORT).show();
                 }
@@ -1428,6 +1448,7 @@ public class MainActivity extends CameraActivity {
         recognizer.setLiveTextRotationDegrees(liveTextRotationDegrees);
         recognizer.setReadingFocusMode(readingFocusMode);
         recognizer.setAiLayoutEnabled(aiLayoutEnabled);
+        recognizer.setVerticalLiveReadingEnabled(verticalLiveReadingEnabled);
         recognizer.initialize();
         phoneController = new InternalCameraController(this, phoneTexture, new InternalCameraController.Listener() {
             @Override public boolean shouldReceiveFrame() {
