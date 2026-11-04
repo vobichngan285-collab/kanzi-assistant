@@ -1,6 +1,7 @@
 package com.vobichngan.kanzi;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -92,6 +93,57 @@ public final class ReadingStrategyRouter {
         return speech.toString();
     }
 
+    /**
+     * Horizontal camera text: read each visible Y row from left to right.
+     * Source boxes are never split, filtered or rewritten. An x-separated
+     * price remains next to its service line, rather than being moved into a
+     * separate price-only region. Runs only on strongly horizontal pages,
+     * after the existing traditional vertical and separate sign guards.
+     */
+    private static String horizontalRows(List<ReadingOrder.Box> source) {
+        if(source.size()<6)return null;
+        int longHorizontal=0;
+        List<Float> heights=new ArrayList<>();
+        for(ReadingOrder.Box b:source) {
+            if(b==null || b.text==null)return null;
+            float w=b.right()-b.left(),h=b.bottom()-b.top();
+            if(h<=0f || w<=0f)return null;
+            if(w>=h*2.0f && b.text.codePointCount(0,b.text.length())>=2 &&
+               b.confidence>=.72f) {
+                longHorizontal++;
+                heights.add(h);
+            }
+        }
+        if(longHorizontal<6)return null;
+        heights.sort(Float::compare);
+        float typical=heights.get(heights.size()/2);
+        float tolerance=Math.max(7f,Math.min(17f,typical*.55f));
+
+        List<ReadingOrder.Box> sorted=new ArrayList<>(source);
+        sorted.sort(Comparator.comparingDouble(ReadingOrder.Box::centerY)
+            .thenComparingDouble(ReadingOrder.Box::left));
+        List<List<ReadingOrder.Box>> rows=new ArrayList<>();
+        float anchorY=Float.NaN;
+        for(ReadingOrder.Box b:sorted) {
+            float y=b.centerY();
+            if(rows.isEmpty() || Math.abs(y-anchorY)>tolerance) {
+                rows.add(new ArrayList<>());
+                anchorY=y;
+            }
+            rows.get(rows.size()-1).add(b);
+        }
+        StringBuilder speech=new StringBuilder();
+        for(List<ReadingOrder.Box> row:rows) {
+            row.sort(Comparator.comparingDouble(ReadingOrder.Box::left));
+            if(speech.length()>0)speech.append('\n');
+            for(int i=0;i<row.size();i++) {
+                if(i>0)speech.append(' ');
+                speech.append(row.get(i).text);
+            }
+        }
+        return preservesCharacters(source,speech.toString())?speech.toString():null;
+    }
+
     public static Result arrange(List<ReadingOrder.Box> boxes,int width,int height,
                                  boolean automaticVertical, boolean quickScan) {
         if(boxes==null||boxes.isEmpty())
@@ -112,6 +164,10 @@ public final class ReadingStrategyRouter {
             return new Result(signs,"独立竖排标牌：从左到右，每列从上到下（全文）",
                 "VERTICAL_SIGNS_FULL",TextRegionPartition.partition(boxes).size(),boxes.size());
 
+        String rows=horizontalRows(boxes);
+        if(rows!=null)
+            return new Result(rows,"横排：按每行上下位置从左到右完整朗读（数字与文字同行）",
+                "HORIZONTAL_ROWS_FULL",0,boxes.size());
         return new Result(full,"普通横排或混排：从上往下完整朗读，不选中央、不丢框",
             "FULL_READING",0,boxes.size());
     }
