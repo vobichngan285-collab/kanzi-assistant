@@ -685,3 +685,17 @@
 - **原始材料位置：** 上述三个GitHub Actions artifact与源码分支，已有CSV和图像；此次复核在会话本地保存文字审计报告及4张由原始检测框重画的对照图，不将大型公开图片复制进`main`，更不上传私人诊断ZIP。
 
 **保留原判断：CRAFT历史性能测试、Small REC联调以及极简整行白框独立APK均已存在，勿重复旧实验或把此只读复核称为真机模型验证。**
+
+#### 2026-11-05 — Small DET vs ChineseOCR-Lite DET 独立同帧安卓实验 APK 构建及发布完成（真机待验收）
+
+- **用户授权范围：** 在原 GitHub 仓库内沿用已验证独立 CRAFT Phone Lab 工程，隔离开发同一帧 Small DET / ChineseOCR-Lite DET 划框对照与真机性能、热状态记录。正式看字助手主程序、Small/DBNet 基线、REC、TTS、已有 CRAFT 实验全部保留，**没有重复此前 CRAFT 6×24 性能测试**。本轮成功的是 APK 构建及静态审计，不是 vivo 真机运行验收。
+- **分支及代码锚点：** test/x200-cn-lite-small-sameframe-phone-det-20261105；起自旧独立 lab 源码 commit 2fe662dd83c82b74a9021bff0d6ee9aee57fcbfa。实际 APK 对应 commit 9a9b531ae252f35771c070587fd842022624692e。只新增独立检测 Java 引擎 DetCompareEngine.java 和 DetCompareActivity.java，在 craft768-int8-probe 中改实验包名/manifest/Gradle、加入独立 workflow 和文档；不修改正式根 app/src/main。独立包名 com.vobich.kanzi.detcompare，versionCode=2，versionName=0.2.0-same-frame-det-only。
+- **模型与 SHA：** Small DET 9,880,512 bytes，SHA256 d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e；ChineseOCR-Lite DET 3,637,234 bytes，SHA256 ec31eb2b7daa39c4e0307ebb290045deecd515f4e9656d5d987eb82148aea867；上游 CN-Lite 固定 commit 54a3df53af823f3bffdde9393d0c021b4f6d94cd。两模型在 CI 下载并验证 SHA，仅打包进独立 APK；模型二进制未提交到 Git。ONNX Runtime Android 1.21.1 + OpenCV Android 4.10.0，ARM64，两 CPU 线程。
+- **真机实验操作：** ①加载两模型并校验 SHA；②系统相机拍照或③相册选取一张图片；同一张已解码及 EXIF 校正的冻结 Bitmap 同时输入两模型；④单次划框，Small 红框、CN-Lite 绿框；⑤12对交替运行、各预热1次，记录预处理/纯推理/后处理/总耗时 P50/P95、PSS、电池温度及 Android 热状态；⑥用户主动导出匿名逐框坐标与时间 JSON，不含文字、照片或本地路径，不自动上传。无 INTERNET 权限、没有识字和 TTS。
+- **重要边界：** 这是手机上的静态**单帧配对**，不是连续 Camera2/UVC 实时视频帧率，无法直接代表长时间热稳定、真实 TTS 首字延迟。Small 保留最长边1600原生输入、CN-Lite保留短边640原生输入，非等输入分辨率比较；Android 后处理把 Python PyClipper rounded unclip 以旋转矩形解析扩边近似实现，真实输出与 Linux 原版未进行逐像素等价验收；没有用户真机逐行 GT，不能凭框数或 CI 就宣称某模型更准。
+- **第一次 CI（中间提交态）失败**：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41897790545 ，因 README 尚未提交、依赖检查未满足，不是模型运行/编译真实性失败。**最终完整独立 Android CI 构建及静态审核成功**：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41897878359 ，确认 Gradle assembleDebug、双 ONNX SHA、OpenCV/ONNX ARM64、APK v2 debug 签名、无 INTERNET 权限、独立包名。
+- **短期原始 Artifact：** ID 13356392456，名 x200-same-frame-small-vs-cnlite-det-only-apk；包含 APK、使用说明、GPL-2.0 LICENSE 和校验清单。Artifact 内 SHA256SUMS 原写有 GitHub Runner 绝对路径（内容哈希正确，但外部 sha256sum -c 会找不到文件）；下面的正式预发布已将校验清单改为相对路径。
+- **不重复构建的发布 Workflow 成功：** https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41898627152 ，仅从已成功 Artifact 下载、核验同一 APK 哈希/包名/权限并发布新 GitHub 预发布，不重新 Gradle 编译。发布 workflow commit d50e0978ba507f80dd310ccf84212527b062ac46。Tag x200-cnlite-small-sameframe-20261105-det-only-experiment，tag 指向真实构建源码 commit 9a9b531ae252f35771c070587fd842022624692e。
+- **经 GitHub Release API 核验的实际 APK：** Kanzi_Small_vs_ChineseOCRLite_SameFrame_DET_only_debug.apk，53,706,403 bytes，SHA256 51f7a27dd78d74ae78f3964708a761f16eb19bb056500d2443f3df3af5df9ac5。直接下载：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/x200-cnlite-small-sameframe-20261105-det-only-experiment/Kanzi_Small_vs_ChineseOCRLite_SameFrame_DET_only_debug.apk
+- Release 页面：https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/x200-cnlite-small-sameframe-20261105-det-only-experiment ，随包发布上游 ChineseOCR-Lite GPL-2.0 许可证及源码说明。**CN-Lite 模型权重单独许可条款仍未独立确认，禁止直接并入正式或商业版**。
+- **下一阶段只等待 vivo X200 Pro 用户真实测试反馈：** 分别拍中文字门牌、含上下相邻价格的菜单、超市价签和商品包装，比较同图两路框（尤其跨行/碎框/漏框）、导出 JSON 里的分段 P50/P95 和温度。与此前 restaurant_menu_12、storefront_10、supermarket_03 的实图反例比对，先验证手机检测后处理的正确性再考虑集成正式 App。**没有任何已经完成的 vivo 手机数据，严禁编造准确率、速度和发热结论。**
