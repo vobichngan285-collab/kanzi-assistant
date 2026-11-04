@@ -103,35 +103,66 @@ public final class ReadingStrategyRouter {
     private static String horizontalRows(List<ReadingOrder.Box> source) {
         if(source.size()<6)return null;
         int longHorizontal=0;
-        List<Float> heights=new ArrayList<>();
         for(ReadingOrder.Box b:source) {
             if(b==null || b.text==null)return null;
             float w=b.right()-b.left(),h=b.bottom()-b.top();
             if(h<=0f || w<=0f)return null;
             if(w>=h*2.0f && b.text.codePointCount(0,b.text.length())>=2 &&
-               b.confidence>=.72f) {
-                longHorizontal++;
-                heights.add(h);
-            }
+               b.confidence>=.72f)longHorizontal++;
         }
         if(longHorizontal<6)return null;
-        heights.sort(Float::compare);
-        float typical=heights.get(heights.size()/2);
-        float tolerance=Math.max(7f,Math.min(17f,typical*.55f));
 
+        // Price and service names can be 15-22px apart vertically because of
+        // camera perspective: compare their actual box overlap, not a hard
+        // 17px center-distance cutoff. Anchor each row to its LEFTMOST box,
+        // preventing an isolated price from joining two adjacent rows.
         List<ReadingOrder.Box> sorted=new ArrayList<>(source);
         sorted.sort(Comparator.comparingDouble(ReadingOrder.Box::centerY)
             .thenComparingDouble(ReadingOrder.Box::left));
         List<List<ReadingOrder.Box>> rows=new ArrayList<>();
-        float anchorY=Float.NaN;
         for(ReadingOrder.Box b:sorted) {
-            float y=b.centerY();
-            if(rows.isEmpty() || Math.abs(y-anchorY)>tolerance) {
-                rows.add(new ArrayList<>());
-                anchorY=y;
+            int bestRow=-1;
+            float bestOverlap=-1f;
+            for(int ri=0;ri<rows.size();ri++) {
+                List<ReadingOrder.Box> row=rows.get(ri);
+                ReadingOrder.Box anchor=row.get(0);
+                for(ReadingOrder.Box item:row)
+                    if(item.left()<anchor.left())anchor=item;
+                float h1=anchor.bottom()-anchor.top();
+                float h2=b.bottom()-b.top();
+                float centerGap=Math.abs(anchor.centerY()-b.centerY());
+                if(centerGap>Math.max(h1,h2)*.65f)continue;
+                float anchorOverlap=Math.max(0f,
+                    Math.min(anchor.bottom(),b.bottom())-
+                    Math.max(anchor.top(),b.top()));
+                boolean aligned=anchorOverlap>=Math.min(h1,h2)*.45f;
+                float highest=anchorOverlap/Math.max(1f,Math.min(h1,h2));
+                if(!aligned) {
+                    // OCR can split one sloping service label into short
+                    // glyph boxes; permit a bridge only when the NEW box
+                    // stays close to the stable left-side row anchor.
+                    for(ReadingOrder.Box item:row) {
+                        float ih=item.bottom()-item.top();
+                        float overlap=Math.max(0f,
+                            Math.min(item.bottom(),b.bottom())-
+                            Math.max(item.top(),b.top()));
+                        highest=Math.max(highest,overlap/Math.max(1f,Math.min(ih,h2)));
+                    }
+                    aligned=highest>=.45f;
+                }
+                if(aligned && highest>bestOverlap) {
+                    bestOverlap=highest;
+                    bestRow=ri;
+                }
             }
-            rows.get(rows.size()-1).add(b);
+            if(bestRow<0) {
+                List<ReadingOrder.Box> row=new ArrayList<>();
+                row.add(b);
+                rows.add(row);
+            } else rows.get(bestRow).add(b);
         }
+        rows.sort(Comparator.comparingDouble(
+            row -> row.stream().mapToDouble(ReadingOrder.Box::top).min().orElse(Float.MAX_VALUE)));
         StringBuilder speech=new StringBuilder();
         for(List<ReadingOrder.Box> row:rows) {
             row.sort(Comparator.comparingDouble(ReadingOrder.Box::left));
