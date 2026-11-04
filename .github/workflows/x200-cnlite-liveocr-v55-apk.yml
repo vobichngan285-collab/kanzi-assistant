@@ -198,8 +198,8 @@ jobs:
           needle='"resize_long" -> limitSideLen.toDouble() / maxOf(h, w)'
           assert text.count(needle)==1, 'Unexpected SDK resize switch'
           text=text.replace(needle,needle+'\n            "resize_short" -> limitSideLen.toDouble() / minOf(h, w)',1)
-          before='''        newH = maxOf(MathUtils.roundHalfToEven(newH / 32.0) * 32, 32)
-        newW = maxOf(MathUtils.roundHalfToEven(newW / 32.0) * 32, 32)'''
+          before=('        newH = maxOf(MathUtils.roundHalfToEven(newH / 32.0) * 32, 32)' + chr(10) +
+                  '        newW = maxOf(MathUtils.roundHalfToEven(newW / 32.0) * 32, 32)')
           after='''        if (limitType.lowercase() == "resize_short") {
               // Match original CN-Lite native 640px short-side DET inputs.
               newH = maxOf((newH / 32) * 32, 32)
