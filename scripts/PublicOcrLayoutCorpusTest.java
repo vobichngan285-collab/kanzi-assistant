@@ -92,7 +92,7 @@ public final class PublicOcrLayoutCorpusTest {
         if(tested!=100||PublicOcrLayoutCorpusTest.boxes<1000||overlapErrors>0)
             throw new AssertionError("incomplete public dataset images="+tested+" boxes="+boxes+" dropped="+overlapErrors);
         System.out.println("PUBLIC_ONLINE_LAYOUT=PASS images="+tested+
-            " gt_lines="+boxes+" image_with_90deg_lines="+oracleRotated+
+            " gt_lines="+PublicOcrLayoutCorpusTest.boxes+" image_with_90deg_lines="+oracleRotated+
             " center_focused="+selected+" full_page="+full+
             " multi_vertical="+vertical+" multi_vertical_on_rotated="+detectedVertical+
             " all_original_ids_preserved=true no_char_invention=true");
