@@ -11,7 +11,8 @@ evidence = (root / "app/src/main/java/com/vobichngan/kanzi/SingleFrameEvidence.k
 assert "cameraTextureView.setRotation(previewRotation);" in ui
 assert "cameraTextureView.setTransform(usbDisplay);" in ui
 assert "private volatile int previewRotation = 0;" in ui
-assert "private volatile int usbOcrInputRotationDegrees = 0;" in ui
+assert "private volatile int usbOcrInputRotationDegrees = -1;" in ui
+assert "UsbAutoOcrOrientation.normalizePreference" in ui
 assert 'PREF_USB_OCR_INPUT_ROTATION = "usb_ocr_input_rotation"' in ui
 assert "Core.rotate(" not in ocr
 # The camera's USB OCR angle is an explicit per-capture value, NOT a view transform.
