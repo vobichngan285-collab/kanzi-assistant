@@ -14,6 +14,8 @@ for obsolete in [
 assert "final boolean legacyForDiagnostic = false;" in source
 assert "final boolean legacyDecode = false;" in source
 assert '图像解码：OpenCV NV21 方式' in source
-assert 'recognizer.diagnoseNv21(diagnosticFrame, width, height, enhancedOcr, legacyForDiagnostic,' in source
-assert 'recognizer.recognizeNv21(frame, width, height, enhance, legacyDecode,' in source
+assert 'recognizer.diagnoseNv21(diagnosticFrame, width, height,' in source
+assert 'enhancedOcr, legacyForDiagnostic, effectiveDiagnosticAngle,' in source
+assert 'recognizer.recognizeNv21(frame, width, height,' in source
+assert 'enhance, legacyDecode, effectiveOcrInputAngle,' in source
 print("RETIRED_DECODER_SETTING=PASS")
