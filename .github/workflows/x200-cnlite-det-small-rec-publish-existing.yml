@@ -1,0 +1,70 @@
+name: Publish already audited CN-Lite DET to Small REC isolated APK (no rebuild)
+on:
+  push:
+    branches: [test/x200-cnlite-det-small-rec-isolated-20261105]
+    paths: ['.github/workflows/x200-cnlite-det-small-rec-publish-existing.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish-exact-prior-artifact:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reuse exact successful APK, verify SHA and package before publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/cnlite-small-rec
+          gh run download 41902561484 -R vobichngan285-collab/kanzi-assistant \
+             -n cnlite-det-to-ppocrv6-small-rec-isolated-research-apk -D /tmp/cnlite-small-rec
+          cd /tmp/cnlite-small-rec
+          echo 'a62aa5e3c914e96726e86a0a8c7c8b341ef2a9e2dd162b00364fe8054f1ae91e  Kanzi_CnLiteDET_SmallREC_Standalone_v01_debug.apk' | sha256sum -c -
+          test -s README.md && test -s ChineseOCR-Lite_GPL-2.0_LICENSE.txt
+          test -s character_dictionary_sha256.txt
+          sha256sum -c SHA256SUMS.txt
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt -print | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print | sort -V | tail -1)"
+          "$AAPT" dump badging Kanzi_CnLiteDET_SmallREC_Standalone_v01_debug.apk | grep -q "package: name='com.vobich.kanzi.cnsmallrec'"
+          ! "$AAPT" dump permissions Kanzi_CnLiteDET_SmallREC_Standalone_v01_debug.apk | grep -qi 'android.permission.INTERNET'
+          "$SIGNER" verify --verbose Kanzi_CnLiteDET_SmallREC_Standalone_v01_debug.apk | grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true'
+          echo 'EXACT_PRIOR_BUILD_SHA_PASS; NO_REBUILD; STANDALONE_OFFLINE' >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish new research-only prerelease with transparent limitations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=x200-cnlite-det-small-rec-20261105-isolated-v01
+          cd /tmp/cnlite-small-rec
+          cat > /tmp/notes.md <<'EOF'
+          # 看字助手绿色框 ChineseOCR-Lite DET → PP-OCRv6 Small REC 独立联调 APK
+
+          - 复用原有看字助手 GitHub 仓库与已构建的独立研究工程，不覆盖正式看字助手，也不覆盖上一版 DET A/B 实验包。
+          - 固定源码 commit: 7b5abcb63fe7004b8e2cb777d24488c3e40096b1。
+          - 成功构建及静态审计: https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41902561484
+          - 原①-⑥同帧双 DET 划框、温度功能保留；新增⑦绿色框裁切→官方 Small REC 离线原文 CTC，⑧主动导出含真实识别文字的 JSON。
+          - 此程序仅对手动选择的冻结照片执行检测/识字，无网络权限、无 TTS、无 LLM、无自动补字。导出的⑧ JSON包含照片文字，必须谨慎分享。
+          - 现阶段仅经 Android 构建、字典类别数匹配、三组固定模型 SHA、APK 签名/权限审计。尚无 vivo X200 Pro 真实 Small REC 联调性能和准确率验收；不应宣称已达到实时摄像头长文本朗读。
+          - 当前 Android 检测框扩边与 Python PyClipper 原实现是近似关系；复杂菜单、超小字号与跨行粘连需要逐框验证，最多处理100个框。
+          - ChineseOCR-Lite 上游项目使用 GPL-2.0，附原许可证/来源；其 ONNX 权重独立再分发与商业整合权利仍需进一步核实。研究包并非正式产品发行。
+          - APK SHA256: a62aa5e3c914e96726e86a0a8c7c8b341ef2a9e2dd162b00364fe8054f1ae91e
+          EOF
+          if gh release view "$tag" -R vobichngan285-collab/kanzi-assistant >/dev/null 2>&1; then
+            echo 'Research tag exists; refuse to overwrite' >&2
+            exit 1
+          fi
+          gh release create "$tag" -R vobichngan285-collab/kanzi-assistant \
+            --target 7b5abcb63fe7004b8e2cb777d24488c3e40096b1 \
+            --notes-file /tmp/notes.md --prerelease
+          gh release upload "$tag" \
+            Kanzi_CnLiteDET_SmallREC_Standalone_v01_debug.apk \
+            README.md ChineseOCR-Lite_GPL-2.0_LICENSE.txt SHA256SUMS.txt character_dictionary_sha256.txt \
+            -R vobichngan285-collab/kanzi-assistant
+          gh api repos/vobichngan285-collab/kanzi-assistant/releases/tags/"$tag" \
+             --jq '.assets[] | [.name,.size,.state,.digest] | @tsv' | tee /tmp/released-assets.txt
+          grep -q 'Kanzi_CnLiteDET_SmallREC_Standalone_v01_debug.apk' /tmp/released-assets.txt
+          gh release view "$tag" -R vobichngan285-collab/kanzi-assistant --json url --jq '.url' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Published only exact already audited APK; no fresh model inference, no rebuild.' >> "$GITHUB_STEP_SUMMARY"
