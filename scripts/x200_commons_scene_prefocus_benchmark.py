@@ -128,7 +128,7 @@ for meta in manifest:
 assert len(per)==len(manifest)*3
 
 def group_metrics(rows):
- by=collections.Counter()
+ by=collections.defaultdict(collections.Counter)
  for r in rows:
   by[(r["category"],r["variant"])].update({
    "images":1,"short_candidates":r["short_nonempty_baseline"],
