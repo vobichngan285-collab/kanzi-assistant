@@ -59,7 +59,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.9.17";
+    private static final String APP_VERSION = "0.9.18";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -654,7 +654,7 @@ public class MainActivity extends CameraActivity {
         }
         panel.addView(pageFocusGroup);
         TextView pageFocusNote = new TextView(this);
-        pageFocusNote.setText("实时文字会保留所有检测到的文字，按从上到下的连续文字区域整理；左侧/右侧筛选只用于长文阅读模式。");
+        pageFocusNote.setText("现场实时扫读自动分区，先朗读摄像头中央的完整科室门牌或独立文字块；原始OCR全部框仍保留在预览与诊断。书籍长文模式保持原完整文字流，左/右筛选仍仅用于长文。");
         pageFocusNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         pageFocusNote.setTextColor(0xFF667085);
         panel.addView(pageFocusNote);
@@ -676,7 +676,7 @@ public class MainActivity extends CameraActivity {
         verticalLiveCheck.setChecked(verticalLiveReadingEnabled);
         panel.addView(verticalLiveCheck);
         TextView verticalLiveNote = new TextView(this);
-        verticalLiveNote.setText("无需每次切换：普通横排继续使用原版朗读，识别到可信的传统竖排长列则自动从右到左。证据不足自动回退；如遇误判可在此关闭。只调整OCR原文阅读顺序，不改变预览、OCR输入方向或文字内容。");
+        verticalLiveNote.setText("无需手动切换：单列竖排科室门牌从上到下，可信多列传统竖排从右到左；混排先分成独立文字区域，实时扫读中央优先。普通横排长文仍保留完整原版文字流；只调整已识别原文的区域/顺序。");
         verticalLiveNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         verticalLiveNote.setTextColor(0xFF667085);
         panel.addView(verticalLiveNote);
