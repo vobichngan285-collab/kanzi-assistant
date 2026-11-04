@@ -489,3 +489,14 @@
 - 已核实GitHub Release资产存在且上传完成： https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/x200-vertical-column-shadow-20261104-v44/Kanzi_X200_VerticalColumnShadow_v44_debug.apk
   大小390399875字节；SHA256 dba09be6147001221747209721e90c0a43219923300f0985b1826d10d254f7e1。
 - 待办：用户安装v44后在真竖排材料上手动OCR诊断并核对“长列竖排阅读顺序候选”；若人工逐框顺序可靠，再考虑有门控地接入实时朗读并用更多横排旋转反例、TTS连续性、热/内存/延迟进行A/B验证。现有v44不改变实时朗读文字或顺序。
+
+#### 2026-11-04 USB预览左右镜像与竖排影子诊断合并 v45
+
+- 用户新提供两张手机/USB预览截图：同一视角，用户实际对面吉他在右侧，手机预览在右侧，USB视频预览却在左侧，说明USB显示疑似左右镜像。用户反馈现有“水平镜像”设置无法纠正，并明确要求把上个尚未下载的v44竖排长列诊断与USB画面修正合为一次下载安装。
+- 源码隔离分支：test/x200-vertical-usb-preview-v45，基于v44 shadow诊断分支，不修改正式安装包/正式朗读逻辑。
+- v45（versionCode45，versionName0.9.12）保留上一版 VerticalLongColumnShadow 的诊断专用长列从右到左排序候选，仍不接入正式实时TTS，防止横排旋转误判。
+- USB修正：新增 USB-only display mirror calibration，设置中的“USB画面左右校正”默认开启；现有“附加水平镜像”可反向切换。实现以 UsbPreviewMirror.shouldMirror(usbCorrect, extraMirror) 控制 USB TextureView.setTransform(Matrix.setScale(-1,1,pivot...))；原 cameraTextureView.setScaleX 翻转被替代以避免GL USB渲染不响应，USB OCR检测框通过 OcrOverlayView.setUsbDisplayMirror 同步镜像可视化坐标。手机 Camera2 预览未更改，USB NV21 OCR输入、原始OCR识别和正式TTS未镜像或修改。camera view重布局/连接/切换时重复应用矫正。
+- 新增 UsbPreviewMirrorSmokeTest.java：测试默认左右反转/可取消、边界映射与中心不移、其他摄像头保留、异常坐标拒绝；原 v44 竖排诊断与现有真实横排方向回归并行。CI https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41777391529 SUCCESS。
+- 完整 Android CI https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41777499087 SUCCESS：离线模型核验、Android版本/包名、无INTERNET权限、签名验证、独立APK公开发布均成功。签名为临时Debug，不保证未来同包名可覆盖；应用包名 com.vobich.kanzi.x200verticalshadow，与v43 com.vobich.kanzi.x200combined 不同，可共存。v44用户尚未安装，因此只需下载v45，不必下载v44。
+- 真实GitHub Release https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/x200-vertical-usb-preview-20261104-v45 ，已经从GitHub API核对资产 uploaded。独立APK链接： https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/x200-vertical-usb-preview-20261104-v45/Kanzi_X200_VerticalUSBPreview_v45_debug.apk ；大小390399875 bytes；SHA256 d4fcbf15292885b359edf2c1b53eb2845eee0dd289994f07ac6f23fe74598261。
+- **未验收内容（必须讲清楚）**：上述USB左右修正基于截图和确定的TextureView内容变换，尚无用户安装后同机同视角验证；不能把编译成功当作实机已修好。下一步安装后选择USB摄像头，观察吉他位置是否在右边，若仍反则确认“USB画面左右校正”已勾选且“附加水平镜像”未勾选，重新截图反馈。之后再用真竖排宣传牌查看新章节“长列竖排阅读顺序候选”。正式TTS仍沿用旧版本，仍须另行严格真机A/B验收。
