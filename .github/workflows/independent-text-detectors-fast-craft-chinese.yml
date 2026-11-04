@@ -1,0 +1,81 @@
+name: Three truly independent text-area AI detectors FAST CRAFT ChineseOCR-Lite
+on:
+  push:
+    branches: [test/x200-independent-text-det-fast-craft-chinese-20261105]
+    paths:
+      - 'scripts/independent_text_det_craft_fast_chinese.py'
+      - '.github/workflows/independent-text-detectors-fast-craft-chinese.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  compete:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout third-party ChineseOCR-Lite actual text detector
+        uses: actions/checkout@v4
+        with:
+          repository: DayBreak-u/chineseocr_lite
+          ref: 54a3df53af823f3bffdde9393d0c021b4f6d94cd
+          path: third_party/chineseocr_lite
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install only CPU ONNX and geometry tools, no OCR recognition
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet 'onnxruntime==1.21.1' 'numpy==1.26.4' 'opencv-python-headless==4.10.0.84' 'pyclipper==1.3.0.post6' 'shapely==2.0.7' 'Pillow==11.1.0'
+          python -m py_compile scripts/independent_text_det_craft_fast_chinese.py
+      - name: Fetch exact same public 47-source-photo artifact for A/B
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-det-input
+          gh run download 41869103633 -R vobichngan285-collab/kanzi-assistant \
+            -n x200-commons-4-new-categories-real-photo-contact-sheets \
+            -D /tmp/kanzi-det-input
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('/tmp/kanzi-det-input')
+          manifest=json.loads((root/'out/manifest.json').read_text())
+          assert len(manifest)==47
+          assert all((root/x['local_file']).is_file() for x in manifest)
+          print('EXACT_SAME_PUBLIC_47_PHOTOS=PASS')
+          PY
+      - name: Prepare three unmodified independent detector ONNX weight files
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-independent-weights
+          cp third_party/chineseocr_lite/models/dbnet.onnx /tmp/kanzi-independent-weights/cnlite.onnx
+          test "$(stat -c%s /tmp/kanzi-independent-weights/cnlite.onnx)" -eq 3637234
+          curl -fL --retry 4 --retry-delay 2 --max-time 300 \
+            'https://huggingface.co/Felix92/onnxtr-fast-tiny/resolve/2a5bdd47418c80e6c729644820f06a4d009981e6/model.onnx' \
+            -o /tmp/kanzi-independent-weights/fast_tiny.onnx
+          echo '2886777913e837ea3a5ab79f7fb9fd5db5897fc6560f21d16a4f54c64fc0b357  /tmp/kanzi-independent-weights/fast_tiny.onnx' | sha256sum -c -
+          curl -fL --retry 4 --retry-delay 2 --max-time 450 \
+            'https://huggingface.co/inference4j/craft-mlt-25k/resolve/main/model.onnx' \
+            -o /tmp/kanzi-independent-weights/craft.onnx
+          test "$(stat -c%s /tmp/kanzi-independent-weights/craft.onnx)" -gt 70000000
+          sha256sum /tmp/kanzi-independent-weights/* | tee /tmp/independent-detector-model-sha256.txt
+      - name: Run exact same 47 photos through THREE real non-Paddle detectors
+        run: |
+          set -euo pipefail
+          python -u scripts/independent_text_det_craft_fast_chinese.py \
+            | tee /tmp/independent-detector-run.log
+          grep -q '^THREE_INDEPENDENT_DETECTORS_ACTUAL_COMPLETE' /tmp/independent-detector-run.log
+          cp /tmp/independent-detector-run.log /tmp/kanzi-independent-det-results/run.log
+          cp /tmp/independent-detector-model-sha256.txt /tmp/kanzi-independent-det-results/weights-sha256.txt
+          cat /tmp/kanzi-independent-det-results/文字检测_非百度三模型实际结果.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: x200-three-independent-text-detection-models-real-same47
+          path: /tmp/kanzi-independent-det-results/
+          retention-days: 10
+          if-no-files-found: warn
