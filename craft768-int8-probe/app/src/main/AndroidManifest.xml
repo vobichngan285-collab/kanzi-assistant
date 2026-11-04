@@ -2,18 +2,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <queries>
         <intent><action android:name="android.media.action.IMAGE_CAPTURE"/></intent>
-        <intent><action android:name="android.intent.action.TTS_SERVICE"/></intent>
+        
     </queries>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <!-- No INTERNET permission, no camera hardware permission (system camera intent handles capture). -->
     <application
         android:allowBackup="false"
-        android:label="CRAFT INT8 真机实验"
+        android:label="看字助手 DET 同帧对照"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="false"
         android:supportsRtl="true">
         <activity
-            android:name=".ProbeActivity"
+            android:name=".DetCompareActivity"
             android:exported="true"
             android:screenOrientation="portrait">
             <intent-filter>
