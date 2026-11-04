@@ -57,7 +57,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.9.21";
+    private static final String APP_VERSION = "0.9.22-CNLite";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -141,7 +141,7 @@ public class MainActivity extends CameraActivity {
     private volatile boolean usbPreviewCorrectMirror = true;
     private volatile boolean previewVerticalFlip = false;
     private volatile boolean enhancedOcr = false;
-    private volatile String ocrModelId = "ppocrv6_small";
+    private volatile String ocrModelId = "cnlite_smallrec";
     private volatile String ocrProfileId = OcrPerformanceProfile.defaultId();
     private volatile String readingFocusMode = "AUTO";
     private volatile boolean aiLayoutEnabled = false;
@@ -550,14 +550,15 @@ public class MainActivity extends CameraActivity {
             readingFocusMode = "AUTO";
         ocrProfileId = OcrPerformanceProfile.forId(prefs.getString(PREF_OCR_PROFILE,
             OcrPerformanceProfile.defaultId())).id;
-        ocrModelId = prefs.getString(PREF_OCR_MODEL, "ppocrv6_small");
-        if (!ocrModelId.equals("ppocrv6_small") && !ocrModelId.equals("ppocrv6_tiny") && !ocrModelId.equals("ppocrv5_mobile")) ocrModelId = "ppocrv6_small";
+        ocrModelId = prefs.getString(PREF_OCR_MODEL, "cnlite_smallrec");
+        if (!ocrModelId.equals("cnlite_smallrec") && !ocrModelId.equals("ppocrv6_small") && !ocrModelId.equals("ppocrv6_tiny") && !ocrModelId.equals("ppocrv5_mobile")) ocrModelId = "cnlite_smallrec";
         speechNoEnglish = prefs.getBoolean(PREF_NO_ENGLISH, false);
         speechNoNumbers = prefs.getBoolean(PREF_NO_NUMBERS, false);
         maxSpeechChars = Math.max(0, Math.min(5000, prefs.getInt(PREF_MAX_SPEECH_CHARS, 0)));
     }
 
     private String ocrModelDisplayName(String modelId) {
+        if ("cnlite_smallrec".equals(modelId)) return "ChineseOCR-Lite 绿色DET + Small REC";
         if ("ppocrv6_tiny".equals(modelId)) return "PP-OCRv6 Tiny";
         if ("ppocrv5_mobile".equals(modelId)) return "PP-OCRv5 Mobile";
         return "PP-OCRv6 Small";
@@ -767,7 +768,8 @@ public class MainActivity extends CameraActivity {
         RadioGroup modelGroup = new RadioGroup(this);
         modelGroup.setOrientation(RadioGroup.VERTICAL);
         String[][] modelOptions = new String[][] {
-            {"ppocrv6_small", "PP-OCRv6 Small（默认，优先推荐）"},
+            {"cnlite_smallrec", "ChineseOCR-Lite 绿色框 + Small REC（本测试版默认）"},
+            {"ppocrv6_small", "PP-OCRv6 Small（旧版基线，回退使用）"},
             {"ppocrv6_tiny", "PP-OCRv6 Tiny（轻量，速度优先）"},
             {"ppocrv5_mobile", "PP-OCRv5 Mobile（上一代移动端模型）"}
         };
@@ -782,7 +784,7 @@ public class MainActivity extends CameraActivity {
         }
         panel.addView(modelGroup);
         TextView modelManagementInfo = new TextView(this);
-        modelManagementInfo.setText("三套模型均使用 PaddleOCR 官方 Android SDK 支持的 ONNX 模型格式，随安装包一起提供，无需在手机上另行下载。切换后会重新初始化 OCR 引擎；若新模型初始化失败，会显示明确错误。");
+        modelManagementInfo.setText("本测试版默认 ChineseOCR-Lite DET + 原 PP-OCRv6 Small REC；其他三个旧模型保留作故障回退。模型随安装包提供，手机识字与朗读全程离线。切换时将重新初始化。");
         modelManagementInfo.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         modelManagementInfo.setTextColor(0xFF667085);
         panel.addView(modelManagementInfo);
