@@ -113,6 +113,9 @@ class PaddleOcrEngine(
     @Volatile private var engine: PaddleOCR? = null
     @Volatile private var released = false
     @Volatile private var fastScanMode = false
+    // Pure-Java center target manager: only quick scan uses this to avoid
+    // interfering with the already-verified full-page BOOK reading path.
+    private val centerTargetTracker = CenterTargetTracker()
     // USB OCR input AUTO -1 is resolved from actual pixels; never TextureView
     // orientation. One successful calibration is cached for the camera session.
     @Volatile private var usbAutoResolvedAngle = -1
@@ -220,7 +223,10 @@ class PaddleOcrEngine(
         if (aiLayoutEnabled != enabled) layoutReuse.reset()
         aiLayoutEnabled = enabled
     }
-    fun setFastScanMode(enabled: Boolean) { fastScanMode = enabled }
+    fun setFastScanMode(enabled: Boolean) {
+        if(fastScanMode!=enabled)centerTargetTracker.reset()
+        fastScanMode = enabled
+    }
     fun setLiveTextRotationDegrees(degrees: Int) {
         liveTextRotationDegrees = if (degrees == 90 || degrees == 180 || degrees == 270) degrees else 0
     }
@@ -228,6 +234,7 @@ class PaddleOcrEngine(
         readingFocusMode = try { ReadingFocus.Mode.valueOf(mode) }
             catch (_: IllegalArgumentException) { ReadingFocus.Mode.AUTO }
         focusTracker.reset()
+        centerTargetTracker.reset()
         layoutReuse.reset()
     }
 
@@ -337,6 +344,12 @@ class PaddleOcrEngine(
                         .describe(frameBoxes)
                     val verticalSpeechPreview = VerticalLongColumnLive.tryArrange(
                         verticalLiveReadingEnabled, frameBoxes, bitmap.width, bitmap.height)
+                    // A fresh tracker shows exactly what the FIRST live quick
+                    // scan of this frozen OCR bitmap would choose; never
+                    // overwrite the active reader's focus during diagnostics.
+                    val routingPreview = ReadingStrategyRouter.arrange(
+                        frameBoxes, bitmap.width, bitmap.height,
+                        verticalLiveReadingEnabled, true, CenterTargetTracker())
                     val performanceAfter=OcrHardwareProbe.capture(appContext)
                     val allElapsed=(System.nanoTime()-startedNanos)/1_000_000L
                     val profileDiagnostic="X200综合实验：${performanceProfile.label}" +
@@ -356,6 +369,9 @@ class PaddleOcrEngine(
                         "\n\n【长列竖排阅读顺序候选（仅诊断）】\n${verticalColumnOrder}" +
                         "\n\n【竖排实时朗读门控（按实际OCR图像）】\n" +
                         "${verticalSpeechPreview.status}" +
+                        "\n\n【分区/中央目标/阅读策略（冻结帧候选）】\n" +
+                        "${routingPreview.description}；策略=${routingPreview.strategy}" +
+                        "；本次候选朗读文本（OCR原文片段）：\n${routingPreview.text}" +
                         "\n\n${fourWayShadowComparison(result.results,horizontal,vertical)}" +
                         "\n\n所有修复仅在手动诊断中进行，绝不覆盖正式朗读或原始框。"
                     if (evidenceRequested.getAndSet(false)) {
@@ -407,9 +423,7 @@ class PaddleOcrEngine(
                         candidateDetails = candidate.second,
                         // Exactly the geometry-only order used by the new
                         // real-time scanner; no additional ONNX inference.
-                        realtimeText = if (verticalSpeechPreview.used)
-                            verticalSpeechPreview.text else RealtimeTextOrientation.arrange(
-                                frameBoxes, bitmap.width, bitmap.height),
+                        realtimeText = routingPreview.text,
                         x200ProfileReport = profileDiagnostic
                     )
                     withContext(Dispatchers.Main) { onResult.onResult(report) }
@@ -747,27 +761,30 @@ class PaddleOcrEngine(
                         result.results.size)
                     val text: String
                     val flowDescription: String
-                    // Only the user's explicit vertical reading mode may enter
-                    // the live TTS path; normal horizontal pages stay identical.
-                    // The SDK first-crop repair already used real pixel evidence.
+                    // No extra OCR or layout model: each live frame routes
+                    // its ORIGINAL box strings through independent policies.
+                    // Book reading still follows its untouched existing flow.
                     val readingBoxes = toReadingBoxes(result.results)
-                    val verticalLive = VerticalLongColumnLive.tryArrange(
-                        verticalLiveReadingEnabled,
-                        readingBoxes, bitmap.width, bitmap.height)
-                    if (verticalLive.used) {
-                        text = verticalLive.text
-                        flowDescription = verticalLive.status + "；输入旋转${liveAngle}°"
-                    } else if (realtime) {
-                        text = RealtimeTextOrientation.arrange(
-                            readingBoxes, bitmap.width, bitmap.height)
-                        flowDescription = "实时文字：按文字方向、从上至下连续朗读（输入旋转${liveAngle}°）；" +
-                            "竖排门控未采纳：${verticalLive.status}"
+                    if (realtime) {
+                        val plan = ReadingStrategyRouter.arrange(
+                            readingBoxes, bitmap.width, bitmap.height,
+                            verticalLiveReadingEnabled, true, centerTargetTracker)
+                        text = plan.text
+                        flowDescription = plan.description +
+                            "；策略=${plan.strategy}；输入旋转${liveAngle}°"
                     } else {
-                        val focus = arrangeInReadingOrder(result.results, bitmap.width,
-                            bitmap.height, layout.regions)
-                        text = focus.text
-                        flowDescription = focus.description +
-                            "；竖排门控未采纳：${verticalLive.status}"
+                        val verticalLive = VerticalLongColumnLive.tryArrange(
+                            verticalLiveReadingEnabled,
+                            readingBoxes, bitmap.width, bitmap.height)
+                        if(verticalLive.used) {
+                            text = verticalLive.text
+                            flowDescription = verticalLive.status + "；输入旋转${liveAngle}°"
+                        } else {
+                            val focus = arrangeInReadingOrder(result.results,bitmap.width,
+                                bitmap.height,layout.regions)
+                            text = focus.text
+                            flowDescription = focus.description
+                        }
                     }
                     val verification = if (!realtime && aiLayoutEnabled &&
                         readingFocusMode == ReadingFocus.Mode.AUTO)
