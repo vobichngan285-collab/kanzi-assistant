@@ -94,6 +94,17 @@ public final class OcrOverlayView extends View {
                 (int)videoW, (int)videoH, naturalWidth, naturalHeight,
                 phoneDisplayExtraRotation, phoneDisplayMirror, phoneDisplayFlip);
         }
+        // Experiment: display REAL merged OCR input quads as prominent white
+        // whole-line outlines, like the supplied screenshot. No decorative
+        // fake boxes; the output is exactly the same geometry used by Small.
+        final float density = getResources().getDisplayMetrics().density;
+        if (com.paddle.ocr.postprocess.CrossRowFirstPass.INSTANCE.getEnabled()) {
+            white.setStrokeWidth(5.0f * density);
+            background.setStrokeWidth(6.2f * density);
+        } else {
+            white.setStrokeWidth(2.5f * density);
+            background.setStrokeWidth(4.0f * density);
+        }
         for (float[] coords : polygons) {
             if (coords == null || coords.length != 8) continue;
             Path path = new Path();
