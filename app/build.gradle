@@ -22,8 +22,8 @@ android {
     }
     buildTypes {
         debug {
-            applicationIdSuffix '.x200isolatedio'
-            versionNameSuffix '-preview-ocr-isolated'
+            applicationIdSuffix '.x200verticallive'
+            versionNameSuffix '-vertical-gated'
             minifyEnabled false
         }
         release {
@@ -43,8 +43,8 @@ android {
         applicationId 'com.vobich.kanzi'
         minSdk 26
         targetSdk 35
-        versionCode 46
-        versionName '0.9.13'
+        versionCode 48
+        versionName '0.9.15'
     }
 }
 
