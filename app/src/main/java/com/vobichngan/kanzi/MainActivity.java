@@ -59,7 +59,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.9.15";
+    private static final String APP_VERSION = "0.9.16";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -149,7 +149,7 @@ public class MainActivity extends CameraActivity {
     private volatile String ocrProfileId = OcrPerformanceProfile.defaultId();
     private volatile String readingFocusMode = "AUTO";
     private volatile boolean aiLayoutEnabled = false;
-    private volatile boolean verticalLiveReadingEnabled = false;
+    private volatile boolean verticalLiveReadingEnabled = true;
     private volatile int liveTextRotationDegrees = 0;
     // Independent USB capture->OCR input direction, never touches TextureView preview.
     private volatile int usbOcrInputRotationDegrees = 0;
@@ -536,7 +536,7 @@ public class MainActivity extends CameraActivity {
         previewVerticalFlip = prefs.getBoolean(PREF_PREVIEW_FLIP, false);
         enhancedOcr = prefs.getBoolean(PREF_ENHANCED_OCR, false);
         aiLayoutEnabled = prefs.getBoolean(PREF_AI_LAYOUT, false);
-        verticalLiveReadingEnabled = prefs.getBoolean(PREF_VERTICAL_LIVE_READING, false);
+        verticalLiveReadingEnabled = prefs.getBoolean(PREF_VERTICAL_LIVE_READING, true);
         liveTextRotationDegrees = prefs.getInt(PREF_REALTIME_TEXT_ROTATION, 0);
         usbOcrInputRotationDegrees = OcrInputOrientation.normalize(
             prefs.getInt(PREF_USB_OCR_INPUT_ROTATION, 0));
@@ -670,12 +670,12 @@ public class MainActivity extends CameraActivity {
         panel.addView(layoutAiNote);
 
         CheckBox verticalLiveCheck = new CheckBox(this);
-        verticalLiveCheck.setText("真正竖排中文：按右→左逐列朗读（实验，默认关闭）");
+        verticalLiveCheck.setText("自动识别横排／竖排并朗读（默认开启）");
         verticalLiveCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         verticalLiveCheck.setChecked(verticalLiveReadingEnabled);
         panel.addView(verticalLiveCheck);
         TextView verticalLiveNote = new TextView(this);
-        verticalLiveNote.setText("用于刮痧宣传牌等传统从上到下、从右到左的印刷正文。仅在4列以上可信长竖列通过校验时生效；自动和手动扫描均可。普通横排书页请保持关闭。不会改变相机预览、OCR输入旋转或原始识别框。");
+        verticalLiveNote.setText("无需每次切换：普通横排继续使用原版朗读，识别到可信的传统竖排长列则自动从右到左。证据不足自动回退；如遇误判可在此关闭。只调整OCR原文阅读顺序，不改变预览、OCR输入方向或文字内容。");
         verticalLiveNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         verticalLiveNote.setTextColor(0xFF667085);
         panel.addView(verticalLiveNote);
