@@ -46,6 +46,17 @@ jobs:
           java -cp "$RUNNER_TEMP/policy" VerticalLongColumnLiveSmokeTest
           java -cp "$RUNNER_TEMP/policy" VerticalLongColumnShadowSmokeTest
           echo "MODULAR_READING_POLICY_SUITE=PASS" >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify original USB/phone OCR source isolation and intact BOOK path
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_preview_ocr_isolation.py
+          python3 scripts/verify_phone_camera_preview.py
+          python3 scripts/verify_book_reading_fast_path.py
+          grep -q 'ReadingStrategyRouter.arrange' app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt
+          grep -q 'if (realtime)' app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt
+          grep -q 'val focus = arrangeInReadingOrder' app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt
+          grep -q 'recognizeUsbAutomatically' app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt
+          echo 'SOURCE_INTEGRATION_GUARDS=PASS' >> "$GITHUB_STEP_SUMMARY"
       - name: Test layout router against 100 original public licensed images / oracle annotations
         run: |
           set -euo pipefail
