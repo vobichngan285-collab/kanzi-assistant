@@ -610,6 +610,7 @@ public class MainActivity extends CameraActivity {
         recognizer.setReadingFocusMode(readingFocusMode);
         recognizer.setAiLayoutEnabled(aiLayoutEnabled);
         recognizer.setVerticalLiveReadingEnabled(verticalLiveReadingEnabled);
+        recognizer.setExperimentalAutoRowsEnabled(true);
         recognizer.initialize();
     }
 
@@ -1160,6 +1161,25 @@ public class MainActivity extends CameraActivity {
             diagnosticCaptureRequested.set(true);
         });
         panel.addView(runDiagnosticButton);
+        TextView autoRowNote = new TextView(this);
+        autoRowNote.setText("本独立实验版默认启用首遍自动分行：只在检测框明显跨横行时，" +
+            "按同行文字的位置一次性重裁切。普通横排和传统竖排完全不变。" +
+            "未触发时和原版同样的Small检测、裁切、识别；不会猜字。" +
+            "可用下方按钮关闭新规则作对照。诊断报告会显示实际触发状态。");
+        autoRowNote.setTextSize(TypedValue.COMPLEX_UNIT_SP,12);
+        autoRowNote.setTextColor(0xFF667085);
+        panel.addView(autoRowNote);
+        Button rowToggleButton = createControlButton("自动分行实验：开启（点击切回原版）");
+        rowToggleButton.setOnClickListener(v -> {
+            boolean next = !com.paddle.ocr.postprocess.CrossRowFirstPass.INSTANCE.getEnabled();
+            if (recognizer != null) recognizer.setExperimentalAutoRowsEnabled(next);
+            boolean active = com.paddle.ocr.postprocess.CrossRowFirstPass.INSTANCE.getEnabled();
+            rowToggleButton.setText(active ? "自动分行实验：开启（点击切回原版）"
+                : "自动分行实验：关闭（原始框）");
+            Toast.makeText(this, active ? "首遍分行已开启" : "自动分行已关闭，使用原版框",
+                Toast.LENGTH_SHORT).show();
+        });
+        panel.addView(rowToggleButton);
         Button captureImageEvidenceButton = createControlButton("手动采集一帧：图像＋真实裁剪＋输入张量（仅本机）");
         captureImageEvidenceButton.setOnClickListener(v -> {
             if (!(usingPhoneCamera || previewCallbackAdded) ||
@@ -1471,6 +1491,7 @@ public class MainActivity extends CameraActivity {
         recognizer.setReadingFocusMode(readingFocusMode);
         recognizer.setAiLayoutEnabled(aiLayoutEnabled);
         recognizer.setVerticalLiveReadingEnabled(verticalLiveReadingEnabled);
+        recognizer.setExperimentalAutoRowsEnabled(true);
         recognizer.initialize();
         phoneController = new InternalCameraController(this, phoneTexture, new InternalCameraController.Listener() {
             @Override public boolean shouldReceiveFrame() {

@@ -17,6 +17,7 @@ import org.opencv.imgproc.Imgproc
 import com.paddle.ocr.EngineConfig
 import com.paddle.ocr.PaddleOCR
 import com.paddle.ocr.PaddleOCRConfig
+import com.paddle.ocr.postprocess.CrossRowFirstPass
 import com.paddle.ocr.model.OCRResult
 import com.paddle.ocr.model.OCRRunResult
 import com.paddle.ocr.util.OpenCVUtils
@@ -251,6 +252,11 @@ class PaddleOcrEngine(
         layoutReuse.reset()
     }
 
+    /** Experimental auto-row first-pass geometry, enabled only for Small. */
+    fun setExperimentalAutoRowsEnabled(value: Boolean) {
+        CrossRowFirstPass.enabled = value && modelId == "ppocrv6_small"
+    }
+
     fun isReady(): Boolean = engine != null && !released
 
     fun diagnoseNv21(
@@ -311,6 +317,7 @@ class PaddleOcrEngine(
                             rotatedBitmap = bitmap
                     }
                     val result = usbAuto?.result ?: current.recognize(bitmap)
+                    val cropRuleDecision = CrossRowFirstPass.lastDecision
                     val originalOcrWallMs = (System.nanoTime() - startedNanos) / 1_000_000L
                     // Independent same-frame rotation evidence: preserve original A/B output.
                     val frameBoxes = toReadingBoxes(result.results)
@@ -365,7 +372,8 @@ class PaddleOcrEngine(
                         verticalLiveReadingEnabled, true)
                     val performanceAfter=OcrHardwareProbe.capture(appContext)
                     val allElapsed=(System.nanoTime()-startedNanos)/1_000_000L
-                    val profileDiagnostic="X200综合实验：${performanceProfile.label}" +
+                    val profileDiagnostic="首遍自动分行状态：${cropRuleDecision}\n" +
+                        "X200综合实验：${performanceProfile.label}" +
                         "；真正OCR输入旋转=${manualAngle}°；原始NV21=${width}×${height}" +
                         "；模型输入Bitmap=${bitmap.width}×${bitmap.height}" +
                         "；CPU线程=${performanceProfile.cpuThreads}，REC批=${performanceProfile.recBatchSize}" +
