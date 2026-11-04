@@ -617,3 +617,12 @@
 - **Android成功：** https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41817127142 ，经过Android编译、ARM64、模型SHA、无INTERNET权限、APK Debug v2签名及GitHub Release实际上传的完整成功记录。前两次APK run 41816405390/41816558358因构建脚本README heredoc多余`TXT`导致审计后失败，已修正，不能将它们当成功发布。
 - **已核实APK：** https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/x200-quiet-speech-20261104-v54/Kanzi_X200_QuietSpeech_v54_debug.apk ，大小390432655 bytes，SHA256 `7278ee0e25e727bbe6d19fe61acee4b888d0979aa3a2d27952eb39dcc6c8f703`，Release https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/x200-quiet-speech-20261104-v54 。
 - **实际待验收：** vivo X200 Pro 手机及外置USB对同一牌静止3分钟，确认无嘟声、语音不中途重启、不重复朗读；换新牌后先读完旧目标再读新目标；USB自动方向保持默认并核对真实角度、速度、温度。新独立包默认PP-OCRv6 Small；与旧Tiny对比须切换相同模型。仍不能保证所有USB场景自动270°成功、错误OCR框被拆开或漏字得到恢复。
+
+
+#### 2026-11-04 — 极简同帧真实Small 0°/左90°实验 APK（已发布，未做vivo真机准确率验收）
+
+- 用户要求简化OCR技术路线，不继续围绕不清楚小字无限增加补救。此前公开12张自然图同组A/B（Run 41835799303）显示0°在两向都匹配的27区域/124字符上CER7.26%，左转90° CER70.97%；公开竖排8页（Run 41836447600）在两向都匹配的333区域/9310字符上0° CER15.75%，左转90° CER16.58%。这些是Linux公开素材真Small DET+REC对照，**不是用户手机最终CER**，竖排场景不能默认整页旋转。
+- 为真正落实「摄像头同一帧→保持正确比例→固定Small只识别→比较原文」实现独立分支 `test/x200-simple-same-frame-phone-ab-20261104`，构建源commit `4fa45fecdeb04023c19ae83fe699c136ee8802a6`，从v54源码fork，v54本身不变。包名 `com.vobich.kanzi.x200simpleorientationab`，v0.1.0/Code1与v54共存。
+- 实验版在设置/诊断新增用户手动按钮「实验：同一画面原向0°与左转90°真实OCR对照」。同一NV21帧解码1次，`ppocrv6_small`先0°完整DET+REC，然后同帧向左旋转90°再完整DET+REC，分别输出原始识别文字、框数量、信心分、检测/识别耗时和温控概况。彻底绕开自动定向、版面AI、二次ROI、正文补救与TTS，**不自动根据置信度决定正确角度**；正式实时播放逻辑仍沿v54。
+- GitHub Actions完整成功 https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41839423818 ，Android assembleDebug成功、模型SHA、签名v2、离线无INTERNET和独立包名审计完成；Release https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/x200-simple-ocr-angle-ab-20261104-experiment/Kanzi_X200_SameFrameOCRAB_experiment.apk ，大小390432655 bytes，SHA256 `0b5e412f963f4e66e9ee8d0310e5e1793f611cceca57c59b40161161e65a14e2`。更完整报告见隔离分支 `docs/x200-simple-sameframe-android-ab-20261104.md`。
+- **未验收**：vivo X200 Pro上识别率、0/左90方向差异、真实字级人工GT、热稳定和TTS。当前手动极简按钮不自动导出同一帧图片ZIP，不能把不同时间的普通诊断ZIP冒充精确同帧比较；若需要严格CER还须人工对照真实照片。不能将此诊断实验叫做v55正式识别提升。
