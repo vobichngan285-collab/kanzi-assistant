@@ -1,0 +1,86 @@
+name: Four offline text-area detectors, real 47-photo GT accuracy-first benchmark
+on:
+  push:
+    branches: [test/x200-det4-independent-regions-20261105]
+    paths:
+      - 'scripts/x200_text_det_fair_contest.py'
+      - 'scripts/x200_det_frozen_37_gt.json'
+      - '.github/workflows/x200-det4-regions-competition.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  compare:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: 1e0c227f33fb0fbef4c681024972d107b09bfc99
+          path: original-ocr-sdk-study
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install DET-only CPU libraries
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'numpy==1.26.4' 'onnxruntime==1.21.1' 'opencv-python-headless==4.10.0.84' 'Pillow==11.1.0' 'pyclipper==1.3.0.post6' 'PyYAML==6.0.2'
+          python3 -m py_compile scripts/x200_text_det_fair_contest.py
+      - name: Retrieve exact 47 original public scene photo bytes from previous successful job
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-det-input
+          gh run download 41869103633 -R vobichngan285-collab/kanzi-assistant \
+            -n x200-commons-4-new-categories-real-photo-contact-sheets \
+            -D /tmp/kanzi-det-input
+          test -s /tmp/kanzi-det-input/out/manifest.json
+          test "$(find /tmp/kanzi-det-input/photos -maxdepth 1 -name '*.jpg' | wc -l)" -eq 47
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('/tmp/kanzi-det-input')
+          manifest=json.loads((root/'out/manifest.json').read_text())
+          assert len(manifest)==47
+          assert all((root/x['local_file']).is_file() for x in manifest)
+          print('SAME_EXACT_PUBLIC_47_IMAGES=PASS')
+          PY
+      - name: Download pinned official model weights for detectors only
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-det-models
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 \
+            'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/5994b4f/inference.onnx' \
+            -o /tmp/kanzi-det-models/small.onnx
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 \
+            'https://huggingface.co/PaddlePaddle/PP-OCRv6_tiny_det_onnx/resolve/2ba1506/inference.onnx' \
+            -o /tmp/kanzi-det-models/tiny.onnx
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 \
+            'https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det_onnx/resolve/e6f4fa8/inference.onnx' \
+            -o /tmp/kanzi-det-models/v5mobile.onnx
+          curl -fL --retry 3 --retry-delay 3 --max-time 600 \
+            'https://huggingface.co/aglaia-models/east-text-detection/resolve/main/frozen_east_text_detection.pb' \
+            -o /tmp/kanzi-det-models/east.pb
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  /tmp/kanzi-det-models/small.onnx' | sha256sum -c -
+          echo '9b486f3c3eee77b4c8cc91a83892c37026cca7d29b79bf3b93772ccd2db58454  /tmp/kanzi-det-models/east.pb' | sha256sum -c -
+          sha256sum /tmp/kanzi-det-models/* | tee /tmp/kanzi-model-sha256.txt
+      - name: Run independent four-model text regions, score 37 frozen GT, benchmark runtime
+        run: |
+          set -euo pipefail
+          PYTHONPATH=original-ocr-sdk-study/scripts python3 -u scripts/x200_text_det_fair_contest.py \
+            | tee /tmp/kanzi-det-actual-run.log
+          grep -q 'REAL_DET_4_MODELS_EXPERIMENT_COMPLETE' /tmp/kanzi-det-actual-run.log
+          cp /tmp/kanzi-det-actual-run.log /tmp/kanzi-det-output/run.log
+          cp /tmp/kanzi-model-sha256.txt /tmp/kanzi-det-output/model-sha256.txt
+          cat /tmp/kanzi-det-output/报告_检测器文字框优先.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: four-independent-detectors-same-47-photo-37-GT
+          path: /tmp/kanzi-det-output/
+          if-no-files-found: warn
+          retention-days: 10
