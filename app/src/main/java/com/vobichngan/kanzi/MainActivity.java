@@ -59,7 +59,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.9.18";
+    private static final String APP_VERSION = "0.9.19";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -257,8 +257,7 @@ public class MainActivity extends CameraActivity {
                                 (report.getText().isEmpty() ? "（未识别到文字）" : report.getText()) +
                             "\n\n实时文字排序（正式快速扫读使用的算法；仅一次 OCR）：\n" +
                                 (report.getRealtimeText().isEmpty() ? "（未识别到文字）" : report.getRealtimeText()) +
-                            "\n\n上下文修正后的建议朗读（仅明确语境，原始框不变）：\n" +
-                                OcrContextRefiner.refine(report.getRealtimeText()) +
+                            "\n\n正式语音按OCR原文字序播报，不进行上下文猜字或自动替换。" +
                             "\n\n全部可见文字（对照）：\n" + report.getFullPageText()
                             + "\n\n实验候选阅读顺序（仅诊断，不影响当前播报）：\n"
                             + (report.getCandidateText().isEmpty() ? "（无可靠候选）" : report.getCandidateText())
