@@ -16,8 +16,10 @@ assert "UsbAutoOcrOrientation.normalizePreference" in ui
 assert 'PREF_USB_OCR_INPUT_ROTATION = "usb_ocr_input_rotation"' in ui
 assert "Core.rotate(" not in ocr
 # The camera's USB OCR angle is an explicit per-capture value, NOT a view transform.
-assert "var liveAngle = OcrInputOrientation.normalize(inputRotationDegrees)" in ocr
-assert "val manualAngle = OcrInputOrientation.normalize(inputRotationDegrees)" in ocr
+assert "var liveAngle = if (usbAutomatic) 0 else" in ocr
+assert "recognizeUsbAutomatically(current,bitmap)" in ocr
+assert "var manualAngle = if (usbAutomatic) 0 else" in ocr
+assert "val usbAutomatic = inputRotationDegrees == -1" in ocr
 assert "AutoPageRotation.candidate" in ocr
 assert "AutoPageRotation.accept" in ocr
 assert "transform.postRotate(liveAngle.toFloat())" in ocr
@@ -33,7 +35,8 @@ assert re.search(
 assert ocr.count("nv21ToBitmap(data, width, height, legacyNv21Jpeg)") == 2
 assert "Imgproc.COLOR_YUV2RGBA_NV21" in ocr
 assert "Bitmap.createBitmap(width, height" in ocr
-assert "本次实际OCR输入旋转=" in ui
+assert "本次OCR方向请求=" in ui
+assert "真正OCR输入旋转=" in ocr
 assert "原版A/B输入方向：以本次实际OCR输入角度为基准" in ui
 assert "writeBitmap(zip, \"decoded-frame.png\", rawBitmap)" in evidence
 assert "writeBitmap(zip, \"actual-ocr-input.png\", ocrBitmap)" in evidence
