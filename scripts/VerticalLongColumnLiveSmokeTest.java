@@ -18,7 +18,7 @@ public final class VerticalLongColumnLiveSmokeTest {
     static List<ReadingOrder.Box> five(){
         List<ReadingOrder.Box> list=new ArrayList<>();
         list.add(box("标题",810,270,160,120,.99f));         // #1
-        list.add(box("终",305,330,31,35,.99f));            // #2 continuation
+        list.add(box("终",350,330,31,35,.99f));            // #2 continuation
         list.add(box(txt(3),425,330,44,600,.98f));         // #3
         list.add(box(txt(4),475,326,44,604,.98f));         // #4
         list.add(box(txt(5),575,410,44,522,.98f));         // #5 first/rightmost
