@@ -1,0 +1,143 @@
+name: Isolated CN-Lite green DET to PP-OCRv6 Small REC Android lab APK
+on:
+  push:
+    branches: [test/x200-cnlite-det-small-rec-isolated-20261105]
+    paths:
+      - 'craft768-int8-probe/**'
+      - '.github/workflows/x200-cnlite-det-to-small-rec-isolated-apk.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  standalone-cn-det-small-rec:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert independent package and actual detector-recognizer source separation
+        run: |
+          set -euo pipefail
+          grep -q "applicationId 'com.vobich.kanzi.cnsmallrec'" craft768-int8-probe/app/build.gradle
+          test -s craft768-int8-probe/app/src/main/java/com/vobich/kanzi/craftprobe/SmallRecAfterChineseDet.java
+          test -s craft768-int8-probe/DET_TO_SMALL_REC_README.md
+          grep -q "runChineseAndSmallRec" craft768-int8-probe/app/src/main/java/com/vobich/kanzi/craftprobe/DetCompareActivity.java
+          grep -q "engine.loadChineseOnly()" craft768-int8-probe/app/src/main/java/com/vobich/kanzi/craftprobe/DetCompareActivity.java
+          ! grep -R 'android.permission.INTERNET' craft768-int8-probe/app/src/main
+          ! grep -R 'SmallRecAfterChineseDet' app/src/main
+          ! test -f craft768-int8-probe/app/src/main/assets/small_rec.onnx
+          ! test -f craft768-int8-probe/app/src/main/assets/cnlite_det.onnx
+          echo 'Isolated DET->REC only; original app and DET A/B packages unchanged; no INTERNET permission.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Download official pinned detector and recognizer weights, verify full SHA
+        run: |
+          set -euo pipefail
+          mkdir -p craft768-int8-probe/app/src/main/assets /tmp/cn-small-rec-package
+          MODELS=craft768-int8-probe/app/src/main/assets
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 \
+            'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/5994b4f/inference.onnx' \
+            -o "$MODELS/small_det.onnx"
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 \
+            'https://raw.githubusercontent.com/DayBreak-u/chineseocr_lite/54a3df53af823f3bffdde9393d0c021b4f6d94cd/models/dbnet.onnx' \
+            -o "$MODELS/cnlite_det.onnx"
+          curl -fL --retry 3 --retry-delay 2 --max-time 360 \
+            'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx' \
+            -o "$MODELS/small_rec.onnx"
+          curl -fL --retry 3 --retry-delay 2 --max-time 180 \
+            'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml?download=true' \
+            -o /tmp/ppocrv6-small-rec-inference.yml
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  craft768-int8-probe/app/src/main/assets/small_det.onnx' | sha256sum -c -
+          echo 'ec31eb2b7daa39c4e0307ebb290045deecd515f4e9656d5d987eb82148aea867  craft768-int8-probe/app/src/main/assets/cnlite_det.onnx' | sha256sum -c -
+          echo '5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  craft768-int8-probe/app/src/main/assets/small_rec.onnx' | sha256sum -c -
+          test "$(stat -c%s "$MODELS/small_det.onnx")" -eq 9880512
+          test "$(stat -c%s "$MODELS/cnlite_det.onnx")" -eq 3637234
+          test -s /tmp/ppocrv6-small-rec-inference.yml
+          grep -q 'img_mode: BGR' /tmp/ppocrv6-small-rec-inference.yml
+          curl -fL --retry 3 --retry-delay 2 \
+            'https://raw.githubusercontent.com/DayBreak-u/chineseocr_lite/54a3df53af823f3bffdde9393d0c021b4f6d94cd/LICENSE' \
+            -o /tmp/cn-small-rec-package/ChineseOCR-Lite_GPL-2.0_LICENSE.txt
+          cp craft768-int8-probe/DET_TO_SMALL_REC_README.md /tmp/cn-small-rec-package/README.md
+      - name: Freeze exact Small REC character dictionary and validate ONNX class dimension
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'PyYAML==6.0.2' 'onnxruntime==1.21.1' 'numpy==1.26.4'
+          python3 - <<'PY'
+          import yaml, json, pathlib, onnxruntime as ort,hashlib
+          cfg=pathlib.Path('/tmp/ppocrv6-small-rec-inference.yml').read_text(encoding='utf-8')
+          data=yaml.safe_load(cfg)
+          assert data.get('PostProcess'), "Missing PostProcess"
+          words=data['PostProcess'].get('character_dict')
+          assert isinstance(words,list) and len(words)>5000, "Unexpected Small REC dictionary"
+          assert all(isinstance(x,str) and len(x)>0 for x in words), "Nonliteral dictionary character"
+          if words[-1]!=' ': words.append(' ')
+          path=pathlib.Path('craft768-int8-probe/app/src/main/assets/small_rec_chars.json')
+          path.write_text(json.dumps(words,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
+          sess=ort.InferenceSession('craft768-int8-probe/app/src/main/assets/small_rec.onnx',providers=['CPUExecutionProvider'])
+          shape=sess.get_outputs()[0].shape
+          assert len(shape)==3,shape
+          if isinstance(shape[2],int):
+              assert shape[2]==len(words)+1,(shape,len(words))
+          print('SMALL_REC_YAML_CTC_DICTIONARY_PASS',len(words),'class_shape',shape,
+                'json_sha256',hashlib.sha256(path.read_bytes()).hexdigest())
+          PY
+          sha256sum craft768-int8-probe/app/src/main/assets/small_rec_chars.json \
+            > /tmp/cn-small-rec-package/character_dictionary_sha256.txt
+          cat /tmp/cn-small-rec-package/character_dictionary_sha256.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile independent arm64 debug APK (not official 看字助手)
+        run: |
+          set -euo pipefail
+          gradle -p craft768-int8-probe --no-daemon --no-parallel --max-workers=2 --stacktrace :app:assembleDebug
+          test -s craft768-int8-probe/app/build/outputs/apk/debug/app-debug.apk
+      - name: Validate independent package, three ONNX models, CTC dictionary, no INTERNET
+        run: |
+          set -euo pipefail
+          apk=craft768-int8-probe/app/build/outputs/apk/debug/app-debug.apk
+          python3 - "$apk" <<'PY'
+          import sys,zipfile,hashlib,json
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              paths=set(z.namelist())
+              for path,expected in [
+                ('assets/small_det.onnx','d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e'),
+                ('assets/cnlite_det.onnx','ec31eb2b7daa39c4e0307ebb290045deecd515f4e9656d5d987eb82148aea867'),
+                ('assets/small_rec.onnx','5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634')]:
+                  assert path in paths,path
+                  assert hashlib.sha256(z.read(path)).hexdigest()==expected,path
+              chars=json.loads(z.read('assets/small_rec_chars.json'))
+              assert isinstance(chars,list) and len(chars)>5000
+              assert any(p.startswith('lib/arm64-v8a/') and 'opencv' in p for p in paths)
+              assert 'lib/arm64-v8a/libonnxruntime.so' in paths
+              assert 'classes.dex' in paths
+              assert not any(p.endswith('craft768_int8.onnx') for p in paths)
+          print('CN_LITE_DET_TO_SMALL_REC_APK_STATIC_AUDIT=PASS',len(chars))
+          PY
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt -print | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print | sort -V | tail -1)"
+          "$AAPT" dump badging "$apk" | tee /tmp/cn-small-rec-badging.txt
+          grep -q "package: name='com.vobich.kanzi.cnsmallrec'" /tmp/cn-small-rec-badging.txt
+          ! "$AAPT" dump permissions "$apk" | grep -qi 'android.permission.INTERNET'
+          "$SIGNER" verify --verbose "$apk" | tee /tmp/cn-small-rec-signer.txt
+          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' /tmp/cn-small-rec-signer.txt
+          sha256sum "$apk" >> "$GITHUB_STEP_SUMMARY"
+          echo 'COMPILE_AUDIT_PASS - requires real vivo phone DET/REC test; no Android emulator/physical phone tested in CI.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Save new independent APK with reproducible checksum and license notes
+        run: |
+          set -euo pipefail
+          cp craft768-int8-probe/app/build/outputs/apk/debug/app-debug.apk \
+            /tmp/cn-small-rec-package/Kanzi_CnLiteDET_SmallREC_Standalone_v01_debug.apk
+          cd /tmp/cn-small-rec-package
+          sha256sum Kanzi_CnLiteDET_SmallREC_Standalone_v01_debug.apk > SHA256SUMS.txt
+          sha256sum -c SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cnlite-det-to-ppocrv6-small-rec-isolated-research-apk
+          path: /tmp/cn-small-rec-package/
+          if-no-files-found: error
+          retention-days: 10
