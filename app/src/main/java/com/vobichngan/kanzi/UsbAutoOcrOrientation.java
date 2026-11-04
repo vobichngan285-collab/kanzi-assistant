@@ -89,6 +89,7 @@ public final class UsbAutoOcrOrientation {
         // A sideways horizontal label may also become fully readable after
         // rotating its original pixels, without forming tall columns.
         return base.brokenWideRows>=3 &&
+            trial.sidewaysTallRows<=Math.max(1,base.sidewaysTallRows) &&
             trial.readableCharacters>=Math.max(55,base.readableCharacters*2) &&
             trial.weightedCharacters>=Math.max(24,base.weightedCharacters*2.7) &&
             trial.brokenWideRows<base.brokenWideRows;
