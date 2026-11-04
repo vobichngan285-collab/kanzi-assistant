@@ -4,6 +4,7 @@ on:
     branches: [test/x200-simple-full-reading-v52]
     paths:
       - 'app/src/main/java/com/vobichngan/kanzi/*.java'
+      - 'app/src/main/java/com/vobichngan/kanzi/*.kt'
       - 'scripts/*SmokeTest.java'
       - 'scripts/PublicOcrLayoutCorpusTest.java'
       - 'scripts/export_public_ocr_layout_cases.py'
@@ -65,6 +66,7 @@ jobs:
           javac -encoding UTF-8 -cp "$RUNNER_TEMP/policy" -d "$RUNNER_TEMP/policy" \
             app/src/main/java/com/vobichngan/kanzi/UsbAutoOcrOrientation.java \
             app/src/main/java/com/vobichngan/kanzi/OcrInputOrientation.java \
+            app/src/main/java/com/vobichngan/kanzi/UsbPreviewMirror.java \
             scripts/UsbAutoOcrOrientationSmokeTest.java \
             scripts/OcrInputOrientationSmokeTest.java
           java -cp "$RUNNER_TEMP/policy" UsbAutoOcrOrientationSmokeTest
