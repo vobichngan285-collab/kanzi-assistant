@@ -83,6 +83,7 @@ public class MainActivity extends CameraActivity {
     private static final String PREF_READING_FOCUS = "reading_page_focus";
     private static final String PREF_AI_LAYOUT = "experimental_ai_layout";
     private static final String PREF_REALTIME_TEXT_ROTATION = "realtime_text_rotation";
+    private static final String PREF_USB_OCR_INPUT_ROTATION = "usb_ocr_input_rotation";
     private static final int REQUEST_PHONE_CAMERA = 4051;
     private static final int REQUEST_SINGLE_FRAME_ZIP = 4916;
     private final AtomicBoolean saveEvidenceNextDiagnostic = new AtomicBoolean(false);
@@ -148,6 +149,8 @@ public class MainActivity extends CameraActivity {
     private volatile String readingFocusMode = "AUTO";
     private volatile boolean aiLayoutEnabled = false;
     private volatile int liveTextRotationDegrees = 0;
+    // Independent USB capture->OCR input direction, never touches TextureView preview.
+    private volatile int usbOcrInputRotationDegrees = 0;
     private volatile String lastDiagnosticText = "";
     private volatile String lastCandidateDiagnosticText = "";
     private volatile boolean speechNoEnglish = false;
@@ -212,7 +215,9 @@ public class MainActivity extends CameraActivity {
                 final boolean legacyForDiagnostic = false;
                 final boolean evidenceThisCapture = saveEvidenceNextDiagnostic.getAndSet(false);
                 if (evidenceThisCapture) recognizer.requestEvidenceForNextDiagnostic();
-                recognizer.diagnoseNv21(diagnosticFrame, width, height, enhancedOcr, legacyForDiagnostic,
+                final int effectiveDiagnosticAngle = isPhoneCamera ? 0 : usbOcrInputRotationDegrees;
+                recognizer.diagnoseNv21(diagnosticFrame, width, height,
+                    enhancedOcr, legacyForDiagnostic, effectiveDiagnosticAngle,
                     report -> {
                         busy.set(false);
                         String result = "诊断完成\n摄像头帧：已获取 " + width + "×" + height
@@ -223,9 +228,14 @@ public class MainActivity extends CameraActivity {
                             "\n提示：本页为诊断结果，诊断本身不自动朗读；可点「朗读这次诊断识别出的文字」试听。"
                             + "\n当前模型：" + report.getModelId()
                             + "\n\n" + report.getX200ProfileReport()
-                            + "\n原版A/B输入方向：原始摄像头帧固定0°；整页自动纠正见上方独立候选"
-                            + "\n实时文字输入旋转设置：" + liveTextRotationDegrees +
-                                "°（0°表示自动按需纠正；独立诊断保留0°原版）"
+                            + "\n摄像头："
+                                + (isPhoneCamera ? "手机" : "USB")
+                                + "；原始帧=" + width + "×" + height
+                            + "\n本次实际OCR输入旋转=" + effectiveDiagnosticAngle
+                                + "°（仅OCR；预览画面不参与）"
+                            + "\n原版A/B输入方向：以本次实际OCR输入角度为基准；不覆盖原始NV21"
+                            + "\n手机实时OCR旋转设置：" + liveTextRotationDegrees
+                                + "°；USB OCR旋转设置：" + usbOcrInputRotationDegrees + "°"
                             + "\n图像解码：OpenCV NV21 方式"
                             + "\n平均置信度：" + String.format(Locale.US, "%.3f", report.getAverageConfidence())
                             + "\n文字流组织方式：" + report.getFocusDescription()
@@ -319,7 +329,11 @@ public class MainActivity extends CameraActivity {
             final boolean enhance = enhancedOcr || (quality.dark && quality.possiblyBlurry);
             final boolean legacyDecode = false;
             try {
-                recognizer.recognizeNv21(frame, width, height, enhance, legacyDecode, found -> {
+                final int effectiveOcrInputAngle = isPhoneCamera
+                    ? (longReadingMode ? 0 : liveTextRotationDegrees)
+                    : usbOcrInputRotationDegrees;
+                recognizer.recognizeNv21(frame, width, height,
+                    enhance, legacyDecode, effectiveOcrInputAngle, found -> {
                     busy.set(false);
                     // Never discard a fully recognized, readable text frame
                     // merely because autofocus, exposure or hand movement
@@ -521,6 +535,8 @@ public class MainActivity extends CameraActivity {
         enhancedOcr = prefs.getBoolean(PREF_ENHANCED_OCR, false);
         aiLayoutEnabled = prefs.getBoolean(PREF_AI_LAYOUT, false);
         liveTextRotationDegrees = prefs.getInt(PREF_REALTIME_TEXT_ROTATION, 0);
+        usbOcrInputRotationDegrees = OcrInputOrientation.normalize(
+            prefs.getInt(PREF_USB_OCR_INPUT_ROTATION, 0));
         if (liveTextRotationDegrees != 90 && liveTextRotationDegrees != 180 && liveTextRotationDegrees != 270)
             liveTextRotationDegrees = 0;
         readingFocusMode = prefs.getString(PREF_READING_FOCUS, "AUTO");
@@ -650,7 +666,7 @@ public class MainActivity extends CameraActivity {
         panel.addView(layoutAiNote);
 
         TextView liveRotationTitle = new TextView(this);
-        liveRotationTitle.setText("实时文字识别方向");
+        liveRotationTitle.setText("手机摄像头实时文字识别方向（不控制预览）");
         liveRotationTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         liveRotationTitle.setPadding(0, dp(14), 0, dp(4));
         panel.addView(liveRotationTitle);
@@ -673,10 +689,38 @@ public class MainActivity extends CameraActivity {
         }
         panel.addView(rotationGroup);
         TextView liveRotationNote = new TextView(this);
-        liveRotationNote.setText("默认自动先执行一次原版OCR。只有可靠的整页旋转证据，才额外执行一次本机OCR；若候选没有显著改善，保留原文。手动可指定90°/180°/270°（仅实时扫描）。四向自动纠正不等于真正竖排排版。");
+        liveRotationNote.setText("仅控制手机摄像头的实时OCR；USB摄像头在下方单独设置OCR输入角度。手机独立诊断仍保留原始0°基线。");
         liveRotationNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         liveRotationNote.setTextColor(0xFF667085);
         panel.addView(liveRotationNote);
+
+        TextView usbOcrRotationTitle = new TextView(this);
+        usbOcrRotationTitle.setText("USB摄像头 → OCR输入方向（与预览完全独立）");
+        usbOcrRotationTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        usbOcrRotationTitle.setPadding(0, dp(14), 0, dp(4));
+        panel.addView(usbOcrRotationTitle);
+        RadioGroup usbOcrRotationGroup = new RadioGroup(this);
+        usbOcrRotationGroup.setOrientation(RadioGroup.VERTICAL);
+        String[][] usbOcrOptions = {
+            {"0", "USB OCR保持原始0°（不改变旧行为）"},
+            {"90", "USB OCR向右旋转90°"},
+            {"180", "USB OCR旋转180°"},
+            {"270", "USB OCR向左旋转90°（当前刮痧宣传牌建议）"}
+        };
+        for (String[] option : usbOcrOptions) {
+            RadioButton radio = new RadioButton(this);
+            radio.setId(View.generateViewId());
+            radio.setTag(option[0]);
+            radio.setText(option[1]);
+            radio.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            radio.setChecked(Integer.toString(usbOcrInputRotationDegrees).equals(option[0]));
+            usbOcrRotationGroup.addView(radio);
+        }
+        panel.addView(usbOcrRotationGroup);
+        TextView usbOcrNote = new TextView(this);
+        usbOcrNote.setText("只旋转USB原始NV21解码后送入OCR的Bitmap。USB预览镜像/显示旋转完全不参与；实时识别与手动诊断使用相同的USB OCR输入角度。0°不额外转换，节省耗时。");
+        usbOcrNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        panel.addView(usbOcrNote);
 
         TextView modelManagementTitle = new TextView(this);
         modelManagementTitle.setText("OCR 引擎选择");
@@ -1199,6 +1243,19 @@ public class MainActivity extends CameraActivity {
                 }
                 boolean textRotationChanged = requestedTextRotation != liveTextRotationDegrees;
                 liveTextRotationDegrees = requestedTextRotation;
+                RadioButton selectedUsbOcrRotation = usbOcrRotationGroup.findViewById(
+                    usbOcrRotationGroup.getCheckedRadioButtonId());
+                int requestedUsbOcrRotation = usbOcrInputRotationDegrees;
+                if (selectedUsbOcrRotation != null && selectedUsbOcrRotation.getTag() != null) {
+                    try {
+                        requestedUsbOcrRotation = Integer.parseInt(
+                            selectedUsbOcrRotation.getTag().toString());
+                    } catch (NumberFormatException ignored) {}
+                }
+                requestedUsbOcrRotation = OcrInputOrientation.normalize(requestedUsbOcrRotation);
+                boolean usbOcrRotationChanged =
+                    requestedUsbOcrRotation != usbOcrInputRotationDegrees;
+                usbOcrInputRotationDegrees = requestedUsbOcrRotation;
                 boolean aiLayoutChanged = aiLayoutEnabled != layoutAiCheck.isChecked();
                 aiLayoutEnabled = layoutAiCheck.isChecked();
                 similarityThreshold = similaritySeek.getProgress();
@@ -1233,11 +1290,12 @@ public class MainActivity extends CameraActivity {
                     .putString(PREF_READING_FOCUS, readingFocusMode)
                     .putBoolean(PREF_AI_LAYOUT, aiLayoutEnabled)
                     .putInt(PREF_REALTIME_TEXT_ROTATION, liveTextRotationDegrees)
+                    .putInt(PREF_USB_OCR_INPUT_ROTATION, usbOcrInputRotationDegrees)
                     .putBoolean(PREF_NO_ENGLISH, speechNoEnglish)
                     .putBoolean(PREF_NO_NUMBERS, speechNoNumbers)
                     .putInt(PREF_MAX_SPEECH_CHARS, maxSpeechChars)
                     .apply();
-                if (focusChanged || aiLayoutChanged || textRotationChanged) {
+                if (focusChanged || aiLayoutChanged || textRotationChanged || usbOcrRotationChanged) {
                     readingEpoch.incrementAndGet();
                     frameChangeGate.reset();
                     realtimeScene.reset();
@@ -1250,7 +1308,7 @@ public class MainActivity extends CameraActivity {
                         recognizer.setAiLayoutEnabled(aiLayoutEnabled);
                         recognizer.setLiveTextRotationDegrees(liveTextRotationDegrees);
                     }
-                    Toast.makeText(this, "已更新文字排序与识别方向", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "已更新独立的OCR输入方向（预览方向不变）", Toast.LENGTH_SHORT).show();
                 }
                 if (modelChanged || profileChanged) switchOcrModel(selectedModelId);
                 Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show();
