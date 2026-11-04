@@ -1,0 +1,64 @@
+name: X200 preview display and OCR input independence
+
+on:
+  push:
+    branches: [test/x200-independent-preview-ocr-v46]
+    paths:
+      - 'app/src/main/java/com/vobichngan/kanzi/OcrInputOrientation.java'
+      - 'app/src/main/java/com/vobichngan/kanzi/UsbPreviewMirror.java'
+      - 'app/src/main/java/com/vobichngan/kanzi/MainActivity.java'
+      - 'app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt'
+      - 'app/src/main/java/com/vobichngan/kanzi/SingleFrameEvidence.kt'
+      - 'scripts/OcrInputOrientationSmokeTest.java'
+      - '.github/workflows/preview-ocr-separated-regression.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  separation:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify preview and OCR orientation transforms are independent
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/classes"
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/classes" \
+            app/src/main/java/com/vobichngan/kanzi/OcrInputOrientation.java \
+            app/src/main/java/com/vobichngan/kanzi/UsbPreviewMirror.java \
+            scripts/OcrInputOrientationSmokeTest.java
+          java -cp "$RUNNER_TEMP/classes" OcrInputOrientationSmokeTest
+      - name: Check Android source uses explicit per-capture USB OCR angle in both modes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          a=Path('app/src/main/java/com/vobichngan/kanzi/MainActivity.java').read_text()
+          p=Path('app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt').read_text()
+          s=Path('app/src/main/java/com/vobichngan/kanzi/SingleFrameEvidence.kt').read_text()
+          assert 'PREF_USB_OCR_INPUT_ROTATION' in a
+          assert 'usbOcrInputRotationDegrees = OcrInputOrientation.normalize' in a
+          assert 'effectiveDiagnosticAngle = isPhoneCamera ? 0 : usbOcrInputRotationDegrees' in a
+          assert 'enhancedOcr, legacyForDiagnostic, effectiveDiagnosticAngle,' in a
+          assert 'enhance, legacyDecode, effectiveOcrInputAngle, found ->' in a
+          assert 'previewRotation = rotationSeek.getProgress() * 90;' in a
+          assert 'cameraTextureView.setTransform(usbDisplay);' in a
+          assert 'val manualAngle = OcrInputOrientation.normalize(inputRotationDegrees)' in p
+          assert 'var liveAngle = OcrInputOrientation.normalize(inputRotationDegrees)' in p
+          assert 'SingleFrameEvidence.create(appContext, data, width, height,' in p
+          assert 'profileDiagnostic, manualAngle)' in p
+          assert 'val current = engine' in p and 'nv21ToBitmap(data, width, height' in p
+          assert 'info.put("ocr_bitmap_rotation",' in s
+          assert 'OcrInputOrientation.normalize(inputRotationDegrees)' in s
+          assert 'writeBitmap(zip, "decoded-frame.png", rawBitmap)' in s
+          assert 'writeBitmap(zip, "actual-ocr-input.png", ocrBitmap)' in s
+          assert 'UsbPreviewMirror' not in p
+          assert 'previewMirror' not in p
+          print('EXPLICIT_USB_OCR_INPUT_INDEPENDENT_OF_PREVIEW=PASS')
+          PY
