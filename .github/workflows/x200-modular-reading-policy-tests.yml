@@ -5,6 +5,8 @@ on:
     paths:
       - 'app/src/main/java/com/vobichngan/kanzi/*.java'
       - 'scripts/*SmokeTest.java'
+      - 'scripts/PublicOcrLayoutCorpusTest.java'
+      - 'scripts/export_public_ocr_layout_cases.py'
       - '.github/workflows/x200-modular-reading-policy-tests.yml'
   workflow_dispatch:
 permissions:
