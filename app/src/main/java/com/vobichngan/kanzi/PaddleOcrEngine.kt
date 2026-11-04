@@ -140,6 +140,7 @@ class PaddleOcrEngine(
     fun diagnoseNv21(
         data: ByteArray, width: Int, height: Int,
         enhancedPreprocessing: Boolean, legacyNv21Jpeg: Boolean,
+        inputRotationDegrees: Int,
         onResult: OcrDiagnosticCallback, onError: OcrErrorCallback
     ) {
         val current = engine ?: run { onError.onError("OCR 引擎尚未初始化"); return }
@@ -157,7 +158,20 @@ class PaddleOcrEngine(
                 }
                 var bitmap = nv21ToBitmap(data, width, height, legacyNv21Jpeg)
                 val decodedBitmap = bitmap
+                val manualAngle = OcrInputOrientation.normalize(inputRotationDegrees)
+                var rotatedBitmap: Bitmap? = null
                 try {
+                    // The same explicit USB OCR input angle is used by manual
+                    // diagnostics and real-time OCR. Preview matrix is not read.
+                    if (manualAngle != 0) {
+                        val matrix = Matrix().apply { postRotate(manualAngle.toFloat()) }
+                        val rotated = Bitmap.createBitmap(bitmap, 0, 0,
+                            bitmap.width, bitmap.height, matrix, true)
+                        if (rotated !== bitmap) {
+                            rotatedBitmap = rotated
+                            bitmap = rotated
+                        }
+                    }
                     if (enhancedPreprocessing) {
                         val enhanced = enhanceForOcr(bitmap)
                         if (enhanced !== bitmap) { bitmap = enhanced }
@@ -168,10 +182,15 @@ class PaddleOcrEngine(
                     val originalOcrWallMs = (System.nanoTime() - startedNanos) / 1_000_000L
                     // Independent same-frame rotation evidence: preserve original A/B output.
                     val frameBoxes = toReadingBoxes(result.results)
-                    val geometryAngle = AutoPageRotation.candidate(frameBoxes)
-                    val autoAngle = if (geometryAngle != 0) geometryAngle
+                    val geometryAngle = if (manualAngle == 0)
+                        AutoPageRotation.candidate(frameBoxes) else 0
+                    val autoAngle = if (manualAngle != 0) 0
+                        else if (geometryAngle != 0) geometryAngle
                         else if (AutoPageRotation.considerUpsideDown(frameBoxes)) 180 else 0
-                    var autoDirectionReport = "未触发：无可靠的整页方向候选，保留0°原版"
+                    var autoDirectionReport = if (manualAngle == 0)
+                        "未触发：无可靠的整页方向候选，保留0°输入"
+                        else "已按USB OCR手动设置旋转${manualAngle}°并执行实际OCR；" +
+                            "不再追加自动整页候选，原始NV21帧仍保留"
                     if (autoAngle != 0 &&
                         OcrHardwareProbe.safeShadowBudget(performanceProfile, performanceBefore) > 0) {
                         val autoStarted = System.nanoTime()
@@ -205,6 +224,8 @@ class PaddleOcrEngine(
                     val performanceAfter=OcrHardwareProbe.capture(appContext)
                     val allElapsed=(System.nanoTime()-startedNanos)/1_000_000L
                     val profileDiagnostic="X200综合实验：${performanceProfile.label}" +
+                        "；真正OCR输入旋转=${manualAngle}°；原始NV21=${width}×${height}" +
+                        "；模型输入Bitmap=${bitmap.width}×${bitmap.height}" +
                         "；CPU线程=${performanceProfile.cpuThreads}，REC批=${performanceProfile.recBatchSize}" +
                         "；原始整图OCR墙钟=${originalOcrWallMs}ms" +
                         "；横排附加REC=${horizontal.attempts}次/${horizontal.elapsedMs}ms" +
@@ -274,6 +295,7 @@ class PaddleOcrEngine(
                     withContext(Dispatchers.Main) { onResult.onResult(report) }
                 } finally {
                     if (bitmap !== decodedBitmap) bitmap.recycle()
+                    if (rotatedBitmap != null && rotatedBitmap !== bitmap) rotatedBitmap.recycle()
                     decodedBitmap.recycle()
                 }
             } catch (t: Throwable) {
@@ -494,6 +516,7 @@ class PaddleOcrEngine(
         height: Int,
         enhancedPreprocessing: Boolean,
         legacyNv21Jpeg: Boolean,
+        inputRotationDegrees: Int,
         onResult: OcrResultCallback,
         onError: OcrErrorCallback
     ) {
@@ -515,7 +538,9 @@ class PaddleOcrEngine(
                     "NV21 数据长度不匹配：收到 ${data.size} 字节，预期 ${expectedBytes} 字节"
                 }
                 var bitmap = nv21ToBitmap(data, width, height, legacyNv21Jpeg)
-                var liveAngle = if (fastScanMode) liveTextRotationDegrees else 0
+                // Capture->OCR input orientation is explicit per frame.
+                // Never infer it from USB preview scale, mirror or rotation.
+                var liveAngle = OcrInputOrientation.normalize(inputRotationDegrees)
                 try {
                     if (liveAngle != 0) {
                         val transform = Matrix()
