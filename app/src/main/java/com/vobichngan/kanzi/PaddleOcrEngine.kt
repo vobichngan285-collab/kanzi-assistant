@@ -365,7 +365,7 @@ class PaddleOcrEngine(
                         "\n\n【长列竖排阅读顺序候选（仅诊断）】\n${verticalColumnOrder}" +
                         "\n\n【竖排实时朗读门控（按实际OCR图像）】\n" +
                         "${verticalSpeechPreview.status}" +
-                        "\n\n【分区/中央目标/阅读策略（冻结帧候选）】\n" +
+                        "\n\n【完整阅读顺序（冻结帧候选）】\n" +
                         "${routingPreview.description}；策略=${routingPreview.strategy}" +
                         "；本次候选朗读文本（OCR原文片段）：\n${routingPreview.text}" +
                         "\n\n${fourWayShadowComparison(result.results,horizontal,vertical)}" +
