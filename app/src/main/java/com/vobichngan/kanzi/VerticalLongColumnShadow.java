@@ -13,7 +13,8 @@ import java.util.Set;
  *
  * This does NOT infer the semantics of the text, rotate pixels, run REC, change
  * live OCR, or send text to TTS. A sideways horizontal book can also produce
- * tall OCR quadrilaterals: geometry alone is not a safe live-mode classifier.
+ * tall OCR quadrilaterals: this proposal is not proof of true vertical text.
+ * The separate live gate must verify orientation cues before adopting it.
  */
 public final class VerticalLongColumnShadow {
     private VerticalLongColumnShadow() {}
@@ -128,7 +129,15 @@ public final class VerticalLongColumnShadow {
         List<Float> widths = new ArrayList<>(), heights = new ArrayList<>();
         float commonTop = -Float.MAX_VALUE, commonBottom = Float.MAX_VALUE;
         for (Entry e : longColumns) {
-            widths.add(e.width); heights.add(e.height);
+            // Perspective tilt inflates the axis-aligned X bounding box:
+            // a 35px wide column can cover 100px in X from top to bottom.
+            // Measure actual *short edge thickness*, not its X bounding span.
+            float first = (float)Math.hypot(
+                e.box.x[1]-e.box.x[0], e.box.y[1]-e.box.y[0]);
+            float second = (float)Math.hypot(
+                e.box.x[2]-e.box.x[1], e.box.y[2]-e.box.y[1]);
+            widths.add(Math.min(first,second));
+            heights.add(e.height);
             commonTop = Math.max(commonTop, e.top);
             commonBottom = Math.min(commonBottom, e.bottom);
         }
@@ -143,7 +152,8 @@ public final class VerticalLongColumnShadow {
         for (int i = 1; i < longColumns.size(); i++) {
             float dx = longColumns.get(i - 1).cx - longColumns.get(i).cx;
             // Distinct columns, rather than overlapping duplicate detections.
-            if (dx < medianWidth * .55f || dx > medianWidth * 5.0f)
+            if (dx < Math.max(12f,medianWidth * .70f) ||
+                dx > Math.max(120f,medianWidth * 5.0f))
                 return reject("列间距不稳定或存在多个区域，不强行拼接", n);
         }
         List<Integer> columns = new ArrayList<>(), others = new ArrayList<>();
