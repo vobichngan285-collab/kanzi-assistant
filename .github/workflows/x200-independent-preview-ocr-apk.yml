@@ -324,6 +324,7 @@ jobs:
           java -cp "$RUNNER_TEMP/vertical-shadow-classes" UsbPreviewMirrorSmokeTest
           javac -encoding UTF-8 -d "$RUNNER_TEMP/vertical-shadow-classes" \
             app/src/main/java/com/vobichngan/kanzi/OcrInputOrientation.java \
+            app/src/main/java/com/vobichngan/kanzi/UsbPreviewMirror.java \
             scripts/OcrInputOrientationSmokeTest.java
           java -cp "$RUNNER_TEMP/vertical-shadow-classes" OcrInputOrientationSmokeTest
       - name: Compile independent debug APK, do not use release signing key
