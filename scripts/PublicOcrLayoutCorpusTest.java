@@ -37,7 +37,7 @@ public final class PublicOcrLayoutCorpusTest {
             if(e.getValue()>have.getOrDefault(e.getKey(),0))return false;
         return true;
     }
-    private static int tested=0,boxes=0,selected=0,full=0,vertical=0,overlapErrors=0;
+    private static int tested=0,boxes=0,full=0,vertical=0,overlapErrors=0;
     private static int oracleRotated=0,detectedVertical=0;
     private static void run(String id,int width,int height,
         List<ReadingOrder.Box> lines,List<Integer> orientations) {
@@ -51,13 +51,15 @@ public final class PublicOcrLayoutCorpusTest {
         for(var r:regions)
             for(int i:r.ids)if(!ids.add(i))throw new AssertionError(id+": duplicate source index");
         if(ids.size()!=lines.size())overlapErrors++;
-        var focus=new CenterTargetTracker();
-        var out=ReadingStrategyRouter.arrange(lines,width,height,true,true,focus);
-        if(out.centerSelected)selected++;else full++;
+        var out=ReadingStrategyRouter.arrange(lines,width,height,true,true);
+        if(out.centerSelected)throw new AssertionError(id+": center selection must be disabled");
+        full++;
         if("MULTI_VERTICAL".equals(out.strategy)){vertical++;if(rotated)detectedVertical++;}
-        if(!subset(out.text,lines))throw new AssertionError(id+": routing invented or duplicated OCR characters");
+        if(!subset(out.text,lines) || !ReadingStrategyRouter.preservesCharacters(lines,out.text))
+            throw new AssertionError(id+": incomplete, invented or duplicated OCR characters");
         if(out.text.isBlank())throw new AssertionError(id+": unexpectedly blank output");
-        if(out.selectedBoxes>out.totalBoxes)throw new AssertionError(id+": invalid origin count");
+        if(out.selectedBoxes!=lines.size() || out.totalBoxes!=lines.size())
+            throw new AssertionError(id+": an OCR source box was omitted");
     }
     public static void main(String[]args) throws Exception {
         if(args.length!=1)throw new IllegalArgumentException("annotation TSV argument missing");
@@ -93,7 +95,7 @@ public final class PublicOcrLayoutCorpusTest {
             throw new AssertionError("incomplete public dataset images="+tested+" boxes="+boxes+" dropped="+overlapErrors);
         System.out.println("PUBLIC_ONLINE_LAYOUT=PASS images="+tested+
             " gt_lines="+PublicOcrLayoutCorpusTest.boxes+" image_with_90deg_lines="+oracleRotated+
-            " center_focused="+selected+" full_page="+full+
+            " complete_pages="+full+
             " multi_vertical="+vertical+" multi_vertical_on_rotated="+detectedVertical+
             " all_original_ids_preserved=true no_char_invention=true");
     }
