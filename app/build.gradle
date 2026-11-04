@@ -22,8 +22,8 @@ android {
     }
     buildTypes {
         debug {
-            applicationIdSuffix '.x200simpleflow'
-            versionNameSuffix '-simple-full-reading'
+            applicationIdSuffix '.x200usbdirection53'
+            versionNameSuffix '-usb-auto-full-reading'
             minifyEnabled false
         }
         release {
@@ -43,8 +43,8 @@ android {
         applicationId 'com.vobich.kanzi'
         minSdk 26
         targetSdk 35
-        versionCode 52
-        versionName '0.9.19'
+        versionCode 53
+        versionName '0.9.20'
     }
 }
 
