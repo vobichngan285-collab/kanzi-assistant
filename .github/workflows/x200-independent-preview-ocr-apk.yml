@@ -4,6 +4,7 @@ on:
     branches: [test/x200-independent-preview-ocr-v46]
     paths:
       - 'app/**'
+      - 'scripts/verify_preview_ocr_isolation.py'
       - '.github/workflows/x200-independent-preview-ocr-apk.yml'
       - 'docs/phone-x200-combined-horizontal-vertical-20261103.md'
   workflow_dispatch:
