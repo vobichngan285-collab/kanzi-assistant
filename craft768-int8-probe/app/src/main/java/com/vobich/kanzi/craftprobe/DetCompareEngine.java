@@ -103,6 +103,8 @@ final class DetCompareEngine implements AutoCloseable {
         load(small);
         try {load(chinese);} catch (Exception error) {small.close();throw error;}
     }
+    /** Read-only Chinese detector path; do not load the Small DET baseline into memory. */
+    void loadChineseOnly() throws Exception { load(chinese); }
     private void load(Model m) throws Exception {
         if(m.session!=null)return;
         long start=SystemClock.elapsedRealtimeNanos();
