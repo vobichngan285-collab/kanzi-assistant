@@ -22,8 +22,8 @@ android {
     }
     buildTypes {
         debug {
-            applicationIdSuffix '.x200quietspeech54'
-            versionNameSuffix '-quiet-speech-stability'
+            applicationIdSuffix '.cnlitelive55'
+            versionNameSuffix '-cnlite-live-ocr'
             minifyEnabled false
         }
         release {
@@ -43,8 +43,8 @@ android {
         applicationId 'com.vobich.kanzi'
         minSdk 26
         targetSdk 35
-        versionCode 54
-        versionName '0.9.21'
+        versionCode 55
+        versionName '0.9.22'
     }
 }
 
