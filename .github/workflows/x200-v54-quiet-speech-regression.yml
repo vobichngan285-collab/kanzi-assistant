@@ -1,0 +1,131 @@
+name: X200 v54 quiet uninterrupted speech and USB regression (NO APK)
+on:
+  push:
+    branches: [test/x200-quiet-speech-stability-v54]
+    paths:
+      - 'app/src/main/java/com/vobichngan/kanzi/*.java'
+      - 'app/src/main/java/com/vobichngan/kanzi/*.kt'
+      - 'scripts/QuietSpeechStabilitySmokeTest.java'
+      - 'scripts/*SmokeTest.java'
+      - 'scripts/PublicOcrLayoutCorpusTest.java'
+      - 'scripts/export_public_ocr_layout_cases.py'
+      - '.github/workflows/x200-v54-quiet-speech-regression.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate-routing:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Compile independent reading modules and regression tests
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/policy"
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/policy" \
+            app/src/main/java/com/vobichngan/kanzi/LayoutRegion.java \
+            app/src/main/java/com/vobichngan/kanzi/TextFlowRebuilder.java \
+            app/src/main/java/com/vobichngan/kanzi/ReadingOrder.java \
+            app/src/main/java/com/vobichngan/kanzi/RealtimeTextOrientation.java \
+            app/src/main/java/com/vobichngan/kanzi/VerticalLongColumnShadow.java \
+            app/src/main/java/com/vobichngan/kanzi/VerticalLongColumnLive.java \
+            app/src/main/java/com/vobichngan/kanzi/TextRegionPartition.java \
+            app/src/main/java/com/vobichngan/kanzi/SingleVerticalFlow.java \
+            app/src/main/java/com/vobichngan/kanzi/ReadingStrategyRouter.java \
+            scripts/ModularReadingRoutingSmokeTest.java \
+            scripts/AutoVerticalReadingSmokeTest.java \
+            scripts/VerticalLongColumnLiveSmokeTest.java \
+            scripts/VerticalLongColumnShadowSmokeTest.java
+          java -cp "$RUNNER_TEMP/policy" ModularReadingRoutingSmokeTest
+          java -cp "$RUNNER_TEMP/policy" AutoVerticalReadingSmokeTest
+          java -cp "$RUNNER_TEMP/policy" VerticalLongColumnLiveSmokeTest
+          java -cp "$RUNNER_TEMP/policy" VerticalLongColumnShadowSmokeTest
+          echo "SIMPLE_COMPLETE_READING_SUITE=PASS" >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify original USB/phone OCR source isolation and intact BOOK path
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_preview_ocr_isolation.py
+          python3 scripts/verify_phone_camera_preview.py
+          python3 scripts/verify_book_reading_fast_path.py
+          grep -q 'ReadingStrategyRouter.arrange' app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt
+          grep -q 'if (realtime)' app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt
+          grep -q 'val focus = arrangeInReadingOrder' app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt
+          grep -q 'recognizeUsbAutomatically' app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt
+          if grep -q 'centerTargetTracker' app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt; then
+            echo 'Central-target tracker must be removed from live OCR' >&2; exit 1
+          fi
+          grep -q 'found.trim();' app/src/main/java/com/vobichngan/kanzi/MainActivity.java
+          if grep -q 'OcrContextRefiner.refine(found.trim())' app/src/main/java/com/vobichngan/kanzi/MainActivity.java; then
+            echo 'TTS must not rewrite recognized OCR characters' >&2; exit 1
+          fi
+          javac -encoding UTF-8 -cp "$RUNNER_TEMP/policy" -d "$RUNNER_TEMP/policy" \
+            app/src/main/java/com/vobichngan/kanzi/UsbAutoOcrOrientation.java \
+            app/src/main/java/com/vobichngan/kanzi/OcrInputOrientation.java \
+            app/src/main/java/com/vobichngan/kanzi/UsbPreviewMirror.java \
+            scripts/UsbAutoOcrOrientationSmokeTest.java \
+            scripts/OcrInputOrientationSmokeTest.java
+          java -cp "$RUNNER_TEMP/policy" UsbAutoOcrOrientationSmokeTest
+          python3 - <<'PY'
+          from pathlib import Path
+          src=Path('app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt').read_text()
+          block=src.split('private suspend fun recognizeUsbAutomatically(',1)[1].split('private var verticalLiveReadingEnabled',1)[0]
+          assert 'val suspicious=UsbAutoOcrOrientation.needsProbe(' in block
+          assert block.index('val suspicious=') < block.index('for(angle in intArrayOf(270,90))')
+          assert 'usbAutoResolvedAngle=0' in block
+          assert 'cached > 0' in block
+          assert 'USB自动方向：0°暂用' in block
+          assert 'val baseline = UsbAutoOcrOrientation.quality(' in block
+          print('USB_ZERO_PROVISIONAL_SOURCE_WIRING=PASS')
+          PY
+          java -cp "$RUNNER_TEMP/policy" OcrInputOrientationSmokeTest
+          echo 'SOURCE_AND_USB_ORIENTATION_REGRESSIONS=PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify no beeps, no auto TTS preemption, two consistent new target reads
+        run: |
+          set -euo pipefail
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/policy" \
+            app/src/main/java/com/vobichngan/kanzi/RealtimeSpeechGuard.java \
+            app/src/main/java/com/vobichngan/kanzi/RealtimeSceneTracker.java \
+            scripts/RealtimeSpeechGuardSmokeTest.java \
+            scripts/RealtimeSceneTrackerSmokeTest.java \
+            scripts/QuietSpeechStabilitySmokeTest.java
+          java -cp "$RUNNER_TEMP/policy" RealtimeSpeechGuardSmokeTest
+          java -cp "$RUNNER_TEMP/policy" RealtimeSceneTrackerSmokeTest
+          java -cp "$RUNNER_TEMP/policy" QuietSpeechStabilitySmokeTest
+          python3 - <<'PY'
+          from pathlib import Path
+          m=Path('app/src/main/java/com/vobichngan/kanzi/MainActivity.java').read_text()
+          assert 'ToneGenerator' not in m and 'recognitionTone' not in m, 'beep still enabled'
+          assert 'if (live && speechPageActive) return;' in m, 'OCR can run through ongoing speech'
+          assert 'liveSpeechGuard.acceptStable(spokenNormalized,' in m, 'stable target gate unused'
+          body=m.split('private void queueSpeechText(String text, String normalized, boolean force,',1)[1].split('private boolean isAlreadyQueuedOrRecentlySpoken',1)[0]
+          assert 'if (force) {' in body and 'clearSpeechQueue(true);' in body
+          assert body.count('clearSpeechQueue(true);') == 1, 'live mode may interrupt TTS'
+          assert 'speakNextQueued();' in body
+          assert 'found.getAverageConfidence() >= 0.55' in m, 'outdoor low-confidence static scans will constantly refresh'
+          assert '(!longReadingMode && automaticMode)' in m, 'live quality hints may interrupt speech'
+          print('QUIET_ANDROID_TTS_SOURCE_GUARDS=PASS')
+          PY
+          echo "QUIET_TTS_AND_SCAN_GUARDS=PASS" >> "$GITHUB_STEP_SUMMARY"
+      - name: Test layout router against 100 original public licensed images / oracle annotations
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'pyarrow==18.1.0'
+          curl --fail --location --retry 3 --retry-delay 3 \
+            'https://huggingface.co/datasets/sdcb/simdpaddleocr-dataset-v1/resolve/main/data/test-00000-of-00001.parquet?download=true' \
+            -o "$RUNNER_TEMP/public-ocr.parquet"
+          test "$(stat -c%s "$RUNNER_TEMP/public-ocr.parquet")" -gt 10000000
+          python3 scripts/export_public_ocr_layout_cases.py "$RUNNER_TEMP/public-ocr.parquet" \
+            > "$RUNNER_TEMP/public-layout.tsv"
+          javac -encoding UTF-8 -cp "$RUNNER_TEMP/policy" \
+            -d "$RUNNER_TEMP/policy" scripts/PublicOcrLayoutCorpusTest.java
+          java -cp "$RUNNER_TEMP/policy" PublicOcrLayoutCorpusTest \
+            "$RUNNER_TEMP/public-layout.tsv" | tee "$RUNNER_TEMP/public-policy-results.txt"
+          grep -q 'PUBLIC_ONLINE_LAYOUT=PASS images=100' "$RUNNER_TEMP/public-policy-results.txt"
+          cat "$RUNNER_TEMP/public-policy-results.txt" >> "$GITHUB_STEP_SUMMARY"
+
