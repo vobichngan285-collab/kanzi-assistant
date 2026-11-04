@@ -500,3 +500,13 @@
 - 完整 Android CI https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41777499087 SUCCESS：离线模型核验、Android版本/包名、无INTERNET权限、签名验证、独立APK公开发布均成功。签名为临时Debug，不保证未来同包名可覆盖；应用包名 com.vobich.kanzi.x200verticalshadow，与v43 com.vobich.kanzi.x200combined 不同，可共存。v44用户尚未安装，因此只需下载v45，不必下载v44。
 - 真实GitHub Release https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/x200-vertical-usb-preview-20261104-v45 ，已经从GitHub API核对资产 uploaded。独立APK链接： https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/x200-vertical-usb-preview-20261104-v45/Kanzi_X200_VerticalUSBPreview_v45_debug.apk ；大小390399875 bytes；SHA256 d4fcbf15292885b359edf2c1b53eb2845eee0dd289994f07ac6f23fe74598261。
 - **未验收内容（必须讲清楚）**：上述USB左右修正基于截图和确定的TextureView内容变换，尚无用户安装后同机同视角验证；不能把编译成功当作实机已修好。下一步安装后选择USB摄像头，观察吉他位置是否在右边，若仍反则确认“USB画面左右校正”已勾选且“附加水平镜像”未勾选，重新截图反馈。之后再用真竖排宣传牌查看新章节“长列竖排阅读顺序候选”。正式TTS仍沿用旧版本，仍须另行严格真机A/B验收。
+
+#### 2026-11-04 第5份单帧诊断：USB原始帧旋转90°导致真正竖排乱码
+
+- 用户在v45真机反馈：“横向的文字读的还行，竖向的文字目前还是不行，读的乱七八糟”，上传第5份原始单帧诊断ZIP（未将私人照片/ZIP上传GitHub）。
+- 已检查 ZIP metadata + decoded-frame：原始USB相机帧 **1920×1080**, OCR输入角度 **0°**, PP-OCRv6 Small，配置 baseline 2线程/REC批1，识别结果10框；det 677ms，rec 718ms，整图墙钟1405ms，热状态0级。 shadow_rescue_budget=0；竖排附加REC 0，长竖列排序提示“长竖列不足4条”。
+- 原始画面为“刮痧·中醫養生”真正竖排宣传牌，但在未转正的1920×1080 RGB帧中整张宣传牌相对画面**横着90°**。将上传照片逆时针旋转90°后，原版面才回到正常竖排（正文从右向左逐列排列）。现有0° OCR错误地将正文五列检测成五条极长的**横向**框，只识别出“有”“科进期”“。花”“中为理部”“一”；并非只需重新排序即可纠正。必须先正确旋转像素，再尝试真正竖排文字识别及列序。
+- v45现有USB左右镜像修复只针对**显示预览与显示的OCR框**，不影响NV21原始帧，因此不能解决原始帧90°方向问题。用户在设置中已经有“实时文字识别方向：手动将OCR输入向左旋转90°”，代码 `PaddleOcrEngine.recognizeNv21` 只在fastScanMode应用此旋转；**独立手动诊断仍固定0°**，不能靠诊断报告验收手动实时旋转。
+- 另一个后续缺口：即使手动270°让竖列字符回正，v45新的 VerticalLongColumnShadow 仍**仅用于手动诊断**、不进入正式TTS；当前 ReadingOrder.verticalColumns() 主要重建单字框，未保证一框一竖列能够按从右到左顺畅播报。
+- **建议先做现场实测**：保持USB相机的预览左右校正设置独立；进入“实时文字识别方向”选择“手动向左旋转90°”并点击开始识别（非手动OCR诊断），用同一刮痧宣传牌听识别是否变成大段正确中文。用户若确认文字识别改善但朗读仍乱，再优先将经校验的长列排序接入实时语音；若仍不能识别，则查真竖排SDK REC处理，不可凭上下文补字。
+- 下一版工程方案需将**USB传感器横竖方向**与**真正的竖排排版顺序**分离，并对同一NV21帧提供0°/270°真实推理A/B；恢复原文必须来自真实像素证据，避免盲目四向全帧OCR和高发热。当前不是修复已完成。
