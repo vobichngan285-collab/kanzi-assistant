@@ -1,0 +1,78 @@
+package com.vobichngan.kanzi;
+
+import java.util.List;
+
+/**
+ * OCR-evidence-only automatic USB frame orientation. Never reads the USB
+ * preview TextureView transform. Never generates or rewrites recognized text.
+ *
+ * The only optional extra inference is an occasional rotated ORIGINAL
+ * bitmap when initial horizontal text crops are implausibly short.
+ */
+public final class UsbAutoOcrOrientation {
+    private UsbAutoOcrOrientation(){}
+
+    public static int normalizePreference(int value) {
+        return value == -1 ? -1 : OcrInputOrientation.normalize(value);
+    }
+
+    public static final class Quality {
+        public final int readableCharacters, plausibleVerticalColumns, brokenWideRows;
+        public final double weightedCharacters;
+        Quality(int chars,int columns,int broken,double weight) {
+            readableCharacters=chars;
+            plausibleVerticalColumns=columns;
+            brokenWideRows=broken;
+            weightedCharacters=weight;
+        }
+    }
+
+    public static Quality quality(List<ReadingOrder.Box> boxes) {
+        if(boxes==null) return new Quality(0,0,0,0);
+        int chars=0,columns=0,broken=0;
+        double weight=0;
+        for(ReadingOrder.Box b:boxes) {
+            if(b==null||b.text==null||b.x.length!=4||b.y.length!=4)continue;
+            float left=b.left(),right=b.right(),top=b.top(),bottom=b.bottom();
+            float w=right-left,h=bottom-top;
+            if(w<=0||h<=0||!Float.isFinite(w)||!Float.isFinite(h))continue;
+            int n=b.text.codePointCount(0,b.text.length());
+            float conf=Math.max(0f,Math.min(1f,b.confidence));
+            if(n>0) {
+                chars+=n;
+                weight+=Math.min(n,120)*Math.pow(conf,1.7);
+            }
+            if(w>=Math.max(240f,h*5f) && n<=8)broken++;
+            if(h>=Math.max(170f,w*3.3f) && n>=12 && conf>=.80f)
+                columns++;
+        }
+        return new Quality(chars,columns,broken,weight);
+    }
+
+    /** An obvious baseline side-on OCR failure, not a detector-only guess. */
+    public static boolean needsProbe(Quality q,int rawWidth,int rawHeight) {
+        return q!=null && rawWidth>rawHeight*1.18f &&
+            q.brokenWideRows>=3 && q.plausibleVerticalColumns<3;
+    }
+
+    /** Requires genuinely readable OCR strings from the additional pixel inference. */
+    public static boolean accept(Quality base,Quality trial) {
+        if(base==null||trial==null)return false;
+        if(trial.plausibleVerticalColumns>=3 &&
+           trial.readableCharacters>=Math.max(45,base.readableCharacters+22) &&
+           trial.weightedCharacters>=base.weightedCharacters*1.6)
+            return true;
+        // A sideways horizontal label may also become fully readable after
+        // rotating its original pixels, without forming tall columns.
+        return base.brokenWideRows>=3 &&
+            trial.readableCharacters>=Math.max(55,base.readableCharacters*2) &&
+            trial.weightedCharacters>=Math.max(24,base.weightedCharacters*2.7) &&
+            trial.brokenWideRows<base.brokenWideRows;
+    }
+
+    /** Require multiple bad subsequent frames before revisiting calibration. */
+    public static boolean shouldRevisit(Quality q, int badFrames) {
+        return q!=null && badFrames>=3 &&
+            q.brokenWideRows>=3 && q.plausibleVerticalColumns==0;
+    }
+}
