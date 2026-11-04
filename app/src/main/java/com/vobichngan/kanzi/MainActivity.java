@@ -506,7 +506,7 @@ public class MainActivity extends CameraActivity {
         if (readingModeButton != null) {
             readingModeButton.setText(longReadingMode
                 ? "长文阅读｜完整读完（后续课题）"
-                : "实时文字｜新目标立即读");
+                : "实时文字｜本段读完再更新");
             readingModeButton.setContentDescription(longReadingMode
                 ? "当前是长文阅读模式。点击切换到实时文字识别"
                 : "当前是实时文字识别模式。点击切换到长文阅读");
@@ -2002,7 +2002,7 @@ public class MainActivity extends CameraActivity {
             .putBoolean(PREF_QUEUE_SPEECH, enableLong)
             .apply();
         updateControlLabels();
-        String announcement = enableLong ? "已切换长文阅读，读完再识别" : "已切换实时文字，新目标会打断旧内容";
+        String announcement = enableLong ? "已切换长文阅读，读完再识别" : "已切换实时文字，读完当前内容再更新";
         Toast.makeText(this, announcement, Toast.LENGTH_SHORT).show();
         if (readingModeButton != null) readingModeButton.announceForAccessibility(announcement);
     }
@@ -2055,7 +2055,7 @@ public class MainActivity extends CameraActivity {
         queueSpeechText(text,normalized,force,-1L);
     }
 
-    /** Read a complete, coherent OCR flow. New live targets preempt old speech. */
+    /** Read a complete coherent OCR flow without automatic preemption. */
     private void queueSpeechText(String text, String normalized, boolean force,
                                  long sceneGeneration) {
         if (!canSpeak() || normalized.isEmpty()) return;
