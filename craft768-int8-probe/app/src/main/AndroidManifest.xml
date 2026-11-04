@@ -8,7 +8,7 @@
     <!-- No INTERNET permission, no camera hardware permission (system camera intent handles capture). -->
     <application
         android:allowBackup="false"
-        android:label="看字助手 DET 同帧对照"
+        android:label="看字助手 绿色框识字实验"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="false"
         android:supportsRtl="true">
