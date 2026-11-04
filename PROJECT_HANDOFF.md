@@ -477,3 +477,15 @@
 
 **交接提醒**：以上用户图片和ZIP只在相关对话附件中出现，不保证新会话自动拿到；新会话应先查GitHub代码与交接文件，需重新拿原始测试证据时再请用户提供。状态是“已观察到问题和候选改善，仍待严格验证”，**不是算法已全自动解决、不是可靠率/性能已验收**。
 
+#### 2026-11-04 竖排长列诊断 v44 真机构建与后续任务
+
+- 现象：用户真机反馈中医养生刮痧宣传牌的竖排文字，部分OCR识别正确，但实际连续TTS朗读顺序混乱。不能把OCR正确等同于朗读正确。
+- 原因：现有 ReadingOrder.verticalColumns() 主要处理单汉字OCR框；这组样本的正文通常是一整个长文字框代表一列。正式快速扫描另外使用 RealtimeTextOrientation，不会自动采用诊断候选。
+- 独立实验分支 test/x200-vertical-long-column-shadow-20261104，从v43提交 40737516dd8ae451104dfe758ee5df5f9ee5b047 建立；不改正式包。
+- 新增 VerticalLongColumnShadow.java 纯几何候选，在手动 OCR 诊断中展示长竖列从右到左排序，原文字、框编号和其余背景文字完整保留。遇多区域、重叠列或不可靠坐标则拒绝。无额外OCR推理。几何不能单独证明真竖排，故绝不自动接入实时TTS。
+- 真实照片元数据校对：前述第4份单帧 ZIP 长列框候选约 #7→#5→#4→#3→#2，第2份约 #6→#5→#4→#3。只是原框几何顺序，非人工逐字GT；没有将用户私人ZIP或照片上传GitHub。
+- 静态测试 GitHub Actions https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41775446668 已成功，涵盖候选从右向左、完整框编号、普通横排不误触发、多区域不乱拼、坐标异常拒绝、现有实时方向回归。
+- v44 安卓编译及发布 GitHub Actions https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41775818985 结果 SUCCESS；新版看字助手·竖排顺序诊断，versionCode44/versionName0.9.11，包名 com.vobich.kanzi.x200verticalshadow，与v43独立共存；实测前不得宣称朗读已改善。Android静态审查无INTERNET权限、离线OCR模型/ARM64和APK签名检查通过。Debug签名不保证后续同包名覆盖。
+- 已核实GitHub Release资产存在且上传完成： https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/x200-vertical-column-shadow-20261104-v44/Kanzi_X200_VerticalColumnShadow_v44_debug.apk
+  大小390399875字节；SHA256 dba09be6147001221747209721e90c0a43219923300f0985b1826d10d254f7e1。
+- 待办：用户安装v44后在真竖排材料上手动OCR诊断并核对“长列竖排阅读顺序候选”；若人工逐框顺序可靠，再考虑有门控地接入实时朗读并用更多横排旋转反例、TTS连续性、热/内存/延迟进行A/B验证。现有v44不改变实时朗读文字或顺序。
