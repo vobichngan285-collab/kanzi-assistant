@@ -2122,17 +2122,21 @@ public class MainActivity extends CameraActivity {
             offlineVoicePlayback.speak(voice, item.text, speechRate, item.utteranceId,
                 new OfflineVoicePlayback.Callback() {
                     @Override public void completed(String utteranceId) {
-                        finishQueuedUtterance(utteranceId);
+                        mainHandler.post(() -> finishQueuedUtterance(utteranceId));
                     }
                     @Override public void failed(String utteranceId, String reason) {
-                        if (currentSpeech == null ||
-                            !currentSpeech.utteranceId.equals(utteranceId)) return;
-                        Log.e("KanziTTS", "Offline speech failed, switching to system: " + reason);
-                        voiceStore.forceSystem();
-                        if (offlineVoicePlayback != null)
-                            offlineVoicePlayback.releaseModelWhenIdle();
-                        showSpeechFailure("离线自然语音暂不可用，已自动切回系统中文语音");
-                        speakSystemItem(item);
+                        // Offline synthesis finishes on a worker. Queue state,
+                        // user notices and TTS fallback must run on UI thread.
+                        mainHandler.post(() -> {
+                            if (currentSpeech == null ||
+                                !currentSpeech.utteranceId.equals(utteranceId)) return;
+                            Log.e("KanziTTS", "Offline speech failed, switching to system: " + reason);
+                            voiceStore.forceSystem();
+                            if (offlineVoicePlayback != null)
+                                offlineVoicePlayback.releaseModelWhenIdle();
+                            showSpeechFailure("离线自然语音暂不可用，已自动切回系统中文语音");
+                            speakSystemItem(item);
+                        });
                     }
                 });
         } else {
