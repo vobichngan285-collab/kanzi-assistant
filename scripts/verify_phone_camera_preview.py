@@ -5,7 +5,7 @@ import re
 root=Path(__file__).resolve().parents[1]
 activity=(root/"app/src/main/java/com/vobichngan/kanzi/MainActivity.java").read_text()
 camera=(root/"app/src/main/java/com/vobichngan/kanzi/InternalCameraController.java").read_text()
-assert "APP_VERSION = \"0.9.10\"" in activity
+assert "APP_VERSION = \"0.9.13\"" in activity
 start_method = re.search(r"private void startPhoneCamera\(\) \{([\s\S]*?)\n    \}", activity)
 assert start_method, "missing phone camera startup method"
 assert start_method.group(1).index("phoneTexture.setVisibility(View.VISIBLE);") < start_method.group(1).index("phoneController.start(phoneFrontFacing);"), "camera surface must be made visible before Camera2 start"
@@ -19,7 +19,7 @@ assert "generation++" in camera and "token != generation" in camera
 assert 'if (usingPhoneCamera && phoneController != null)' in activity
 assert activity.count("@Override protected void onResume()")==1
 assert "cameraTextureView.setRotation(previewRotation);" in activity
-assert "recognizer.recognizeNv21(frame, width, height, enhance, legacyDecode," in activity
+assert re.search(r"recognizer\.recognizeNv21\(frame, width, height,\s*enhance, legacyDecode, effectiveOcrInputAngle,", activity)
 # The upstream AUSBC CameraActivity.initView() calls previewContainer.removeAllViews()
 # after getRootView(), before super.onCreate() completes. Never attach phone
 # TextureView from getRootView() or it is immediately discarded.
