@@ -669,3 +669,19 @@
 - 私有完整实验本地包：/mnt/data/kanzi_simple_full_line_replace_20261105.zip；报告/PNG: /mnt/data/kanzi_simple_row_experiment_20261105/实验报告.md、价目表_一眼看合并效果.png。保留A0/A1/A2三路真实裁切图片、所有数值CSV和脚本。
 - 独立实验APK构建已由分支推送触发，**最新CI** https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41879102322 （本条写入时仍排队，不能声称成功或提供假APK下载链接）。预定独立包名 com.vobich.kanzi.x200simplelinemerge、标签 x200-simple-line-merge-20261105-experimental。实际验证成功并出现GitHub release asset之前，不能声明新APK已交付。
 - 以后注意：不要把「框漂亮」等同于准确率提升，不要引入更多补救层；用户明确优先真实完整行、删旧框避免重复、原文保真、离线、朗读顺序简单、速度实际测量。
+
+#### 2026-11-05 — ChineseOCR-Lite 既有文字检测实验数据与真图专项复核（只读、无模型重跑/构建）
+
+- **用户批准范围：** 先核查 GitHub 已保存的 ChineseOCR-Lite/Small/CRAFT 实验逐框数据和可视叠图，查明漏框、粘连、碎框并判断是否值得进入 vivo X200 Pro 研究测试。本轮**没有修改 App/模型代码、没有新建分支、没有触发模型推理或 GitHub Actions 构建**；本提交只追加交接记录。
+- **既有证据与提交锚点：** ChineseOCR-Lite/CRAFT/FAST 独立检测实验分支 `test/x200-independent-text-det-fast-craft-chinese-20261105`，HEAD `f609c9f96da4e6a82cb890ed8dca0483c7ac0a39`，原有成功 Run https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41889278847 ，Artifact `13351714460`；Small/Tiny/v5/EAST 分支 `test/x200-det4-independent-regions-20261105`，HEAD `88cc2b0843c0e4a091c1a8e589160475a62f580d`，原有成功 Run https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41886566888 ，Artifact `13351856793`。使用以前已有的47张公开实拍原图 Artifact `13343397779`（Run https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41869103633），没有使用或上传用户私人照片。
+- **评分边界：** 同源47张照片，但37个手工近似矩形GT仅分布在15张图；只评测检测区域，不含Small REC和TTS。完整单框门槛=覆盖GT宽≥80%、高≥60%且IoU≥0.40；最低命中门槛较宽。原始 CSV 交叉复核结果：ChineseOCR-Lite命中37/37、完整30/37、与同GT相交≥2个检测框的目标5/37；Small分别为37/37、32/37、4/37。双方都完整29、仅CN-Lite完整1（supermarket_02 GT#8）、仅Small完整3（supermarket_03 GT#12/#13、storefront_11 GT#29）、双方都不完整4。CN-Lite未完整7处：supermarket_02 #9；supermarket_03 #12/#13/#14/#15；storefront_10 #26；storefront_11 #29。**未完整不等于没检测到**。
+- **47图总体检测框数量：** CN-Lite 751、Small 1634。不可凭此判断谁的误检率或漏检率低，因为未对47图全部文字做标注。CN-Lite在本Linux CI中的检测耗时中位109.42ms（3.64MB权重）；Small另一个Linux CI为398.92ms（9.88MB权重）；**不是同一GitHub runner/相同输入尺寸，不能直接宣称实际手机加速倍数**（CN-Lite短边640，Small长边1600）。
+- **实图反例1：跨行合框。** `restaurant_menu_12` 的 ChineseOCR-Lite 检测框 `[735,261,1007,699]`（原图1920×1394像素）把左侧相邻的多个`$50`价格行框成一个竖长框；Small对应区域逐行划框。原37个GT未覆盖此连续价格列，说明评分可能漏掉关键失败。
+- **实图反例2：整行碎框。** `storefront_10` 「宏碁專售店」招牌，Small在中文正文处画1个长横框（另有logo框），ChineseOCR-Lite将中文划成3个相互交叠的框。该GT粗标矩形延伸至明显空白，导致简单IoU完整得分也可能对两者不公平；不能把分数当作精确真实行检测率。
+- **实图反例3：价格行粘连两模型都存在。** `supermarket_03` 中CN-Lite大框把「售價/$570」「會員價/$540」上下文字连在一起，Small也出现跨行大框；不能把问题描述成CN-Lite独有，或断言Small已完全解决。
+- **实图反例4：`storefront_11`** 小字号「加盟店」等区域上CN-Lite部分框劣于Small；大招牌两者都能找到。检查了旧实验叠图，并用保存的原图、`all_detector_boxes.csv`/`all_boxes.csv` 和37个冻结GT复原独立对照图，**绘图不是重新执行模型**。
+- **新发现的门槛：** 上游 ChineseOCR-Lite 项目 https://github.com/DayBreak-u/chineseocr_lite 标示GPL-2.0；模型权重再分发条件没有单独核实。正式或公开研究APK打包第三方代码/权重之前必须先评估许可适用性，不可忽略。
+- **阶段判断：** CN-Lite可作为更轻检测器的**条件性研究候选**，但未证明优于Small完整单行框，更未通过vivo X200 Pro实测。当前不替换正式Small/DBNet、不部署影子模型、不发布APK。若用户下一步明确授权，优先做隔离同帧只检测真机A/B（含预处理/推理/后处理分段耗时、误跨行、碎框和发热），用有完整单行GT的独立中文菜单/招牌/价签材料，之后才考虑固定Small REC的裁切配对。
+- **原始材料位置：** 上述三个GitHub Actions artifact与源码分支，已有CSV和图像；此次复核在会话本地保存文字审计报告及4张由原始检测框重画的对照图，不将大型公开图片复制进`main`，更不上传私人诊断ZIP。
+
+**保留原判断：CRAFT历史性能测试、Small REC联调以及极简整行白框独立APK均已存在，勿重复旧实验或把此只读复核称为真机模型验证。**
