@@ -22,6 +22,7 @@ public final class OcrOverlayView extends View {
     private int phoneDisplayExtraRotation;
     private boolean phoneDisplayMirror;
     private boolean phoneDisplayFlip;
+    private boolean usbDisplayMirror;
 
     public OcrOverlayView(Context context) {
         super(context);
@@ -51,6 +52,12 @@ public final class OcrOverlayView extends View {
         phoneDisplayExtraRotation = extraRotation;
         phoneDisplayMirror = mirror;
         phoneDisplayFlip = flip;
+        invalidate();
+    }
+
+    /** Match the USB-only TextureView content mirror, without changing OCR boxes. */
+    public void setUsbDisplayMirror(boolean mirrored) {
+        usbDisplayMirror = mirrored;
         invalidate();
     }
 
@@ -106,7 +113,9 @@ public final class OcrOverlayView extends View {
                     px = videoView.getX() + mapped[0];
                     py = videoView.getY() + mapped[1];
                 } else {
-                    float vx = (nx / nativeWidth - .5f) * videoW * sx;
+                    float pixelX = UsbPreviewMirror.mapX(
+                        nx / nativeWidth * videoW, videoW, usbDisplayMirror, false);
+                    float vx = (pixelX / videoW - .5f) * videoW * sx;
                     float vy = (ny / nativeHeight - .5f) * videoH * sy;
                     double radians = Math.toRadians(rotation);
                     px = cx + (float)(vx * Math.cos(radians) - vy * Math.sin(radians));
