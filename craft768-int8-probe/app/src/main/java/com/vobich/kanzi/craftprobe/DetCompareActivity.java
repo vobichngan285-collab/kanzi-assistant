@@ -50,16 +50,18 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Nothing is uploaded; export is initiated only by the user.
  */
 public final class DetCompareActivity extends Activity {
-    private static final int PICK=501,SHOOT=502,SAVE=503;
+    private static final int PICK=501,SHOOT=502,SAVE=503,SAVE_REC=504;
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ExecutorService jobs=Executors.newSingleThreadExecutor();
     private final AtomicBoolean busy=new AtomicBoolean(false);
     private DetCompareEngine engine;
+    private SmallRecAfterChineseDet smallRecognizer;
     private Bitmap photo;
     private Uri cameraUri;
     private TextView status;
     private ImageView smallImage,cnImage;
-    private String photoLabel="未选择真实图片",lastJson="{}";
+    private TextView recText;
+    private String photoLabel="未选择真实图片",lastJson="{}",lastRecJson="";
     private final List<JSONObject> records=new ArrayList<>();
 
     private void status(String value) {main.post(()->{if(status!=null)status.setText(value+"\n\n"+status.getText());});}
@@ -81,11 +83,11 @@ public final class DetCompareActivity extends Activity {
         int pad=(int)(14*getResources().getDisplayMetrics().density);
         root.setPadding(pad,pad,pad,pad);scroller.addView(root);
         TextView heading=new TextView(this);
-        heading.setText("看字助手 · 同一帧双检测器 A/B");
+        heading.setText("看字助手 · 绿色框→Small 识字实验");
         heading.setTextSize(24);heading.setTextColor(Color.BLACK);root.addView(heading);
         TextView info=new TextView(this);info.setTextSize(15);
         info.setText("独立包，不覆盖看字助手。\nSmall DET vs ChineseOCR-Lite DET。"
-            +"同一张已冻结的拍照/相册图片分别找文字并绘制原始区域；没有识字、联网、TTS。"
+            +"原A/B按钮只划框；新增⑦：ChineseOCR-Lite绿色框→裁图→PP-OCRv6 Small REC原文识别；离线、不朗读。 "
             +"\n测预处理、ONNX推理、后处理、P50/P95、温度、PSS。不同模型沿用各自原始输入分辨率。"
             +"\n注意：不是实时视频流；框后处理的旋转框膨胀为几何近似，不能冒充与Linux源码逐像素一致。");
         root.addView(info);
@@ -100,10 +102,14 @@ public final class DetCompareActivity extends Activity {
         button(root,"④ 同帧单次对照并画框",()->execute("单次双模型划框",()->bench(1)));
         button(root,"⑤ 同帧12对交替运行（含预热）",()->execute("12对测温",()->bench(12)));
         button(root,"⑥ 导出匿名逐框坐标与耗时 JSON",this::exportJson);
+        button(root,"⑦ 绿色检测框→Small REC识字（离线）",()->execute("绿色框识字",this::runChineseAndSmallRec));
+        button(root,"⑧ 导出识字原文 JSON（包含拍摄文字，注意隐私）",this::exportRecognizedJson);
         TextView a=new TextView(this);a.setText("Small 检测框（红色）");a.setTextSize(19);root.addView(a);
         smallImage=new ImageView(this);smallImage.setAdjustViewBounds(true);root.addView(smallImage);
         TextView c=new TextView(this);c.setText("ChineseOCR-Lite 检测框（绿色）");c.setTextSize(19);root.addView(c);
         cnImage=new ImageView(this);cnImage.setAdjustViewBounds(true);root.addView(cnImage);
+        recText=new TextView(this);recText.setTextSize(17);recText.setTextColor(Color.BLACK);
+        recText.setTextIsSelectable(true);recText.setText("识字原文：尚未运行⑦");root.addView(recText);
         status=new TextView(this);status.setTextSize(16);status.setTextColor(Color.BLACK);
         status.setText("请先点①校验模型，拍摄同一张真实照片，点④/⑤。"
             +"\n推荐分别拍：中文门牌/菜单含相邻价格/超市价签/商品包装。"
@@ -135,15 +141,17 @@ public final class DetCompareActivity extends Activity {
     @Override protected void onActivityResult(int request,int result,Intent data) {
         super.onActivityResult(request,result,data);
         if(result!=RESULT_OK)return;
-        if(request==SAVE) {
+        if(request==SAVE||request==SAVE_REC) {
             if(data==null||data.getData()==null)return;
             Uri selected=data.getData();
-            execute("导出测量JSON",()->{
+            final boolean includesWords=request==SAVE_REC;
+            final String export=includesWords?lastRecJson:lastJson;
+            execute(includesWords?"导出原文JSON":"导出匿名测量JSON",()->{
                 try(OutputStream out=getContentResolver().openOutputStream(selected)){
                     if(out==null)throw new IllegalStateException("无法写入文件");
-                    out.write(lastJson.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    out.write(export.getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 }
-                status("已按用户操作导出本地匿名JSON；没有自动上传。");
+                status(includesWords?"已保存包含照片文字的本地JSON；请注意隐私；没有自动上传。":"已按用户操作导出本地匿名JSON；没有自动上传。");
             });return;
         }
         if(request==PICK||request==SHOOT) {
@@ -153,8 +161,9 @@ public final class DetCompareActivity extends Activity {
                 Bitmap next=readImage(uri);
                 Bitmap old=photo;photo=next;
                 photoLabel=request==SHOOT?"系统相机照片":"相册真实图片";
+                lastRecJson="";
                 if(old!=null&&old!=next)old.recycle();
-                main.post(()->{smallImage.setImageBitmap(null);cnImage.setImageBitmap(null);});
+                main.post(()->{smallImage.setImageBitmap(null);cnImage.setImageBitmap(null);recText.setText("识字原文：更换了照片，请重新点⑦");});
                 status("同帧已冻结：已解码 "+next.getWidth()+"x"+next.getHeight()
                     +"；之后两套模型共享这份Bitmap，不分别拍照。");
             });
@@ -308,6 +317,91 @@ public final class DetCompareActivity extends Activity {
         }
         return thumb;
     }
+
+    private void runChineseAndSmallRec() throws Exception {
+        Bitmap frozen=photo;
+        if(frozen==null||frozen.isRecycled())throw new IllegalStateException("请先②拍照或③选一张清晰真实图");
+        if(!OpenCVLoader.initLocal())throw new IllegalStateException("OpenCV离线库加载失败");
+        if(engine==null)engine=new DetCompareEngine(this);
+        engine.loadChineseOnly(); // The Small DET baseline is NOT needed here.
+        if(smallRecognizer==null)smallRecognizer=new SmallRecAfterChineseDet(this);
+        smallRecognizer.load();
+        final long allStarted=android.os.SystemClock.elapsedRealtimeNanos();
+        DetCompareEngine.Result detected=engine.run(frozen,engine.chinese);
+        SmallRecAfterChineseDet.Run recognized=smallRecognizer.read(frozen,detected);
+        long elapsed=Math.round((android.os.SystemClock.elapsedRealtimeNanos()-allStarted)/1000000.);
+        JSONArray rows=new JSONArray();
+        StringBuilder displayed=new StringBuilder();
+        displayed.append("ChineseOCR-Lite DET → Small REC 原文（不猜、不纠错）\n");
+        displayed.append("框数 ").append(detected.boxes.size())
+            .append("，识别 ").append(recognized.lines.size())
+            .append(" 框；空文本 ").append(recognized.empty)
+            .append("；跳过 ").append(recognized.omitted).append(" 框\n");
+        displayed.append("检测 ").append(recognized.detectionMs).append("ms，逐框REC ")
+            .append(recognized.recognitionMs).append("ms，合计 ")
+            .append(elapsed).append("ms（含模型已加载后的实际流程）\n\n");
+        for(int i=0;i<recognized.lines.size();i++) {
+            SmallRecAfterChineseDet.Line line=recognized.lines.get(i);
+            JSONObject row=new JSONObject();
+            row.put("displayOrder",i+1);row.put("detIndex",line.detIndex);
+            JSONArray q=new JSONArray();for(float c:line.quad)q.put(Math.round(c*10.0)/10.0);
+            row.put("quad",q);row.put("rawCTCText",line.rawText);
+            row.put("confidence",line.confidence);
+            row.put("cropW",line.cropWidth);row.put("cropH",line.cropHeight);
+            row.put("recInputW",line.recWidth);
+            row.put("recPreprocessMs",line.preprocessMs);
+            row.put("recInferenceMs",line.forwardMs);
+            row.put("recPostprocessMs",line.postprocessMs);
+            rows.put(row);
+            displayed.append(i+1).append(". [").append(line.detIndex).append("] ")
+                .append(line.rawText.isEmpty()?"（模型未输出文字）":line.rawText)
+                .append(" (conf=")
+                .append(String.format(Locale.US,"%.3f",line.confidence))
+                .append(")\n");
+        }
+        if(recognized.omitted>0)displayed.append("\n注意：超过100框的部分明确跳过，未做任何猜测。\n");
+        displayed.append("\n以上按几何位置粗排序，仅用于逐框核对；不是正式书页阅读顺序。");
+        JSONObject doc=new JSONObject();
+        doc.put("kind","chineseocr_lite_det_to_ppocrv6_small_rec");
+        doc.put("device",Build.MANUFACTURER+" "+Build.MODEL);
+        doc.put("createdEpochMs",System.currentTimeMillis());
+        doc.put("frameW",frozen.getWidth());doc.put("frameH",frozen.getHeight());
+        doc.put("inputOrigin",photoLabel);doc.put("offline",true);doc.put("isLiveCameraStream",false);
+        doc.put("cnLiteDetSha256",DetCompareEngine.CNLITE_SHA);
+        doc.put("smallRecSha256",SmallRecAfterChineseDet.EXPECTED_SHA);
+        doc.put("dictionary","PP-OCRv6 Small REC inference.yml character_dict (with trailing space if needed)");
+        doc.put("detInputW",detected.modelWidth);doc.put("detInputH",detected.modelHeight);
+        doc.put("detMs",detected.totalMs);
+        doc.put("recMs",recognized.recognitionMs);
+        doc.put("totalMs",elapsed);
+        doc.put("boxes",recognized.detected);
+        doc.put("processed",recognized.lines.size());
+        doc.put("omitted",recognized.omitted);
+        doc.put("emptyCTC",recognized.empty);
+        doc.put("containsImageText",true);
+        doc.put("readingOrderIsOnlyRoughGeometry",true);
+        doc.put("limitations","No TTS; fixed photo only; model-native DET input; approximate Android polygon unclip; raw CTC only; no LLM completion.");
+        doc.put("rows",rows);
+        lastRecJson=doc.toString(2);
+        final Bitmap annotated=overlay(frozen,detected,Color.rgb(0,185,50));
+        final String words=displayed.toString();
+        main.post(()->{
+            cnImage.setImageBitmap(annotated);
+            recText.setText(words);
+        });
+        status("绿色框→Small REC 已完成。\nDET "+detected.totalMs+"ms，REC "+
+            recognized.recognitionMs+"ms，合计 "+elapsed+"ms，真实输出 "+
+            recognized.lines.size()+"条。请直接在图片绿色框与下方逐条原文之间核对。");
+    }
+    private void exportRecognizedJson() {
+        if(lastRecJson.isEmpty()){status("请先点⑦，识字结果生成后才能导出");return;}
+        Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/json");
+        intent.putExtra(Intent.EXTRA_TITLE,"Kanzi_CnLite_SmallREC_RawText_"+System.currentTimeMillis()+".json");
+        startActivityForResult(intent,SAVE_REC);
+    }
+
     private void exportJson() {
         if(records.isEmpty()){status("先点④或⑤生成检测结果");return;}
         Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);
