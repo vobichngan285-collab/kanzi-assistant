@@ -626,7 +626,7 @@ class PaddleOcrEngine(
                     // The SDK first-crop repair already used real pixel evidence.
                     val readingBoxes = toReadingBoxes(result.results)
                     val verticalLive = VerticalLongColumnLive.tryArrange(
-                        verticalLiveReadingEnabled && readingFocusMode == ReadingFocus.Mode.AUTO,
+                        verticalLiveReadingEnabled,
                         readingBoxes, bitmap.width, bitmap.height)
                     if (verticalLive.used) {
                         text = verticalLive.text
