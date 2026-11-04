@@ -4,7 +4,7 @@ from pathlib import Path
 root=Path(__file__).resolve().parents[1]
 main=(root/"app/src/main/java/com/vobichngan/kanzi/MainActivity.java").read_text()
 reading=(root/"app/src/main/java/com/vobichngan/kanzi/ReadingOrder.java").read_text()
-assert "APP_VERSION = \"0.9.13\"" in main
+assert "APP_VERSION = \"0.9.15\"" in main
 assert "if (recognizer == null || !recognizer.isReady()) return;" in main
 assert "if (candidateCount < 2) return;" not in main
 assert "needsConfirmation" not in main
