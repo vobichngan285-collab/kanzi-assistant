@@ -132,9 +132,11 @@ object CrossRowFirstPass {
                 }
                 val prior = group.last()
                 val gap = rect.left - prior.right
-                // One simple relative-gap rule: text-height is the scale.
-                // Blocks/columns with a visibly wider blank remain separate.
-                val maxGap = 1.65f * min(prior.height, rect.height)
+                // One conservative relative-gap rule, scaled by nearby text height.
+                // The earlier 1.65x exploratory gap incorrectly merged
+                // independent price/menu columns; this 0.65x gate preserves
+                // all 24 originally complete phrases in the 37-target photo check.
+                val maxGap = 0.65f * min(prior.height, rect.height)
                 if (gap <= maxGap) group.add(rect)
                 else {
                     flush()
