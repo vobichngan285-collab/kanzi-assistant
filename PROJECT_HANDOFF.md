@@ -636,3 +636,14 @@
 - 对九份188个SDK已经导出的真实REC float32张量在Python ONNX Runtime 1.23.2重放，与Android保存输出完全一致176个；异常框旧结果的重放一致。Python运行库与Android 1.21.1不完全等价，不能主张手机平台相同性绝对成立。候选规则参数参考该价目表设置，另8帧不触发不能替代独立留出集，也没有验证长竖列的所有反例。
 - 用户私有完整本地报告及复现文件：/mnt/data/kanzi_crop_causality_real_phone_20261104.zip（含私有文字和示例局部裁切、Python代码，不含权重和原始整帧）；禁止发布至GitHub公共repo。会话本地路径非永久公网文件链接。
 - 研发下一步：只围绕“同一帧检测框误跨行→一次性正确横行裁切→同Small REC”的单一实验做独立真机A/B，不能以单页成功添加多套复杂补救。尚未接入 Android 正式OCR、版面排序或TTS，未发布v55；正式v54独立保持不动。
+
+
+#### 2026-11-04 — 自动分行首遍裁切：独立真实APP构建已成功，等待用户vivo X200 Pro真机验收
+
+- 用户确认在其他图片复测后直接生成可用App，不再堆叠多轮OCR补救。新隔离分支 test/x200-firstpass-autoline-ab-20261104 从v54 commit 6f32b2bd9476ea9206b52c113fb1d95ab21bfb50 派生，完全不改v54。
+- 从用户之前9份单帧ZIP共188个真实OCR框复核：第7份价目表中2个检测竖长框误跨横行，几何规则将13个跨行或碎片框替换为4条完整横行，单帧47→38框；此前同一Small REC重识别目标16个原文字符全部正确（原拼接错误编辑7→新0），其余8份未触发。样本是已知正例，不是盲测独立正例。
+- 真正运行44张**新公开图片**的固定Small DET：36张自然场景 +8张传统竖排，合计548个检测框，首遍规则0次触发。CI https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41855459247 SUCCESS；只证明该批无误触发，不证明批量识别率提升。与Android SDK并非像素级逐字节一致。此前简单扩框5%的负试验CER16.09%→16.67%，故未采用。
+- Android新增功能：在官方SDK原始检测框之后、Small首次识别之前执行 CrossRowFirstPass.repartition()，只在“两个相距足够远的短竖长误框 +3–8条可信横行锚点”唯一确定时重建横行ROI，歧义则原框不动；没有二次全页DET/REC、语义猜字或模型替换。实验App默认开，可在设置→OCR诊断点击“自动分行实验：开启/关闭”当场恢复原版框，诊断报告有“首遍自动分行状态”。
+- 独立Android Build https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41855699826 SUCCESS，包括Android Gradle编译、APK签名v2、ARM64、官方Small模型SHA、未声明INTERNET权限与独立包名审计。
+- 已发布独立实验APK：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/x200-firstpass-auto-row-20261104-experimental/Kanzi_X200_AutoRow_FirstPass_AB_experimental.apk ，390449039 bytes，SHA256 c4c692f0a5397391f257dc50fc75e7e7cc76dccaebf5655cb34d999ff9a51ffb。独立包名 com.vobich.kanzi.x200autolineab、v0.1.0/versionCode1；不覆盖v54。详尽实验报告见隔离分支 docs/x200-firstpass-autoline-actual-experiment-20261104.md。
+- **尚未完成**：用户vivo X200 Pro实机安装后真正横排错框的触发情况、完整主体文字字级CER、真实传统竖排零误伤、语音连续性、延迟/发热。未通过这些就不能声称识别率提升或当正式v55。由于实验开关手动切换后是两次不同帧，不能把它冒充严格同帧A/B。私有照片/ZIP/NV21均没有进入GitHub公开仓库。
