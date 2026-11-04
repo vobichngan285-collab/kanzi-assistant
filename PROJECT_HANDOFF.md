@@ -542,3 +542,16 @@
 - **必须优先修复USB原始帧方向**，不是继续改竖排列序/TTS。USB画面预览镜像与真实送入OCR的bitmap仍是两个独立通道，不能用改变TextureView矩阵替代真正OCR输入旋转。当前自动整页方向候选报告“未触发”，因原版OCR本身误识字，后处理自动竖排分类也不可能恢复。诊断仅有日志，没有用户此次USB原图，方向很可能需要逆时针90°(270°)，但仍需对具体相机取景验证旋向。
 - 当前v46/v48设置支持单独USB OCR输入旋转0/90/180/270，且保存于Prefs（不需要每次切换）。紧急复现建议USB OCR方向设270°并执行独立诊断，查看真正OCR输入Bitmap是否1080×1920、是否恢复正文；如果不对，试90°。手机摄像头方向和预览方向都保持不变。
 - 用户明确希望如“豆芽看见”那样无需每次手动选择横竖。长期工程必须在**USB OCR输入层**新增低频、有预算的旋转方向探测/校准（对0/90/270的真实像素证据做对照，防止仅按1920×1080推断方向），为USB设备保存旋向并在静止场景复用，失败回退原始像素；然后再用横竖列几何选择阅读顺序，保持离线、控制CPU/温度、零增补字。v49正在运行的auto-vertical reading仅尝试在已有OCR文字框上决定横/竖排序，**没有解决错误的USB 0°输入**，不可将v49宣传成此故障已修复。
+
+#### 2026-11-04 v50 USB真实OCR方向自动校准＋横竖朗读全自动（已发布）
+
+- 用户进一步明确真正目标：不要每次在繁杂设置里手动选择手机/USB横竖方向。**同一外接USB相机的竖排宣传牌，在将“USB OCR输入方向”手动选“向左旋转90°/270°”后，用户确认能达到与手机摄像头基本相同的识别/朗读效果**；原始USB1920×1080、默认0°时OCR只有零碎错字，平均conf≈0.601；同一材料手机1080×1920、0°时可清楚识别5列，平均conf≈0.943。这证明自动方向修复必须进入**USB原始帧→OCR的bitmap**，而非只改预览TextureView或竖排列序。
+- 从已成功发布的v49 `test/x200-auto-vertical-live-v49` 派生独立测试分支 `test/x200-usb-auto-calibration-v50`。v49已包含可信长竖列自动排序；v50新增真正**USB OCR方向自动校准**，并将繁杂的手机/USB手动OCR方向radio组折叠进高级设置，普通使用无需触碰。新包名 `com.vobich.kanzi.x200usbautocal`，versionCode50，versionName0.9.17，APP_VERSION0.9.17，旧v43/v48/v49不覆盖。
+- 新增 `UsbAutoOcrOrientation.java`（纯Java、无Android/模型依赖）：`-1`为默认自动设置，若1920×1080景象原始0°的OCR产生至少3个长而横的文字框、每框仅1~8个OCR字符，低置信度破碎画面才启动额外真实OCR对照；先把该帧真实Bitmap旋转270°，如未可靠改善再试90°。必须候选真实识别出3列以上高可信长正文、字符量/加权置信度显著提升，或对横排的可读真实文本有足够显著改善，才接受候选；绝不根据文本上下文补字。自动结果每引擎会话缓存，普通扫描每帧仍1次OCR；缓存方向长时间连续失效才重置并重校准。温控>=2、内存压力或最近校准冷却期都会跳过额外推理，保留原版。
+- `PaddleOcrEngine.kt`新增共享`recognizeUsbAutomatically`，单帧独立诊断和实时扫描**共享同一个USB方向缓存**，并按实际旋转后的Bitmap运行模型；报告列明“USB自动方向决策”和实际输入旋转角，ZIP证据保存原始NV21以及真正模型输入。**手机相机方向与显示预览不受此校准影响**。初次校准最多额外2次整图推理，后续仅1次，故不得宣称没有任何校准耗时；失败保留0°并冷却，不能保证所有相机自动成功。
+- `MainActivity` USB OCR方向默认-1自动，手动保留0/90/180/270用于高级排障，手机/USB手动radio全部默认折叠；自动横竖排已沿用v49默认开启与严格几何证据门控。改变具体OCR方向不触发改变TextureView预览矩阵；USB图像左右镜像设置独立。
+- 纯Java匿名测试 `scripts/UsbAutoOcrOrientationSmokeTest.java`：模拟5条长横错字，5条清晰正文列、正常横排，核验自动探测只在错向场景触发、真实OCR改善才采纳、无改善不采纳、冷却门控/角度设置正常。原有phone preview、book reading、text integrity、reading flow、离线Small/Tiny/v5模型校验均保留。未将用户照片或实际OCR文字上传公开GitHub。
+- **完整CI已完成SUCCESS**：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41789772592 ，确认安卓编译、模型SHA、无INTERNET权限、ARM64、APK v2签名、自动USB离线模拟回归、发布动作成功。
+- **公开Release经GitHub API确认**：tag `x200-usb-full-auto-20261104-v50`，APK `Kanzi_X200_USBFullAuto_v50_debug.apk`，**390416255 bytes**，SHA256 `48437a416a4966ed60416915f6df817ea6b6391bdbefc9ab91ac8d647a7b5540`，直接浏览器下载：
+  https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/x200-usb-full-auto-20261104-v50/Kanzi_X200_USBFullAuto_v50_debug.apk
+- 真实测试：用户只需安装v50独立APP，确保USB“自动校准”默认选中，连接之前同一USB摄像头对准刮痧宣传牌、**无需手动选择270°**，点击开始识别和单帧诊断，查看`USB自动方向决策`是否显示采纳270°、实际Bitmap=1080×1920、OCR长列是否恢复，试听竖排。再测试正常横排材料无误判。构建成功不代表**用户手机自动校准已验收**。如果自动未触发/无法确认，先不要强行切换；发来新诊断数据核查。README/用户交接中不要宣传成已在手机成功自动识别。
