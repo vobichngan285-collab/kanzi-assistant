@@ -39,7 +39,56 @@ public final class UsbAutoOcrOrientationSmokeTest {
                 110,200+i*47,630,34));
         return boxes;
     }
+    /** Mirror anonymous GEOMETRY of two observed 1920x1080 USB failures.
+     * Test strings are synthetic and are not copied from private photos. */
+    static List<ReadingOrder.Box> readableButSidewaysPriceList() {
+        List<ReadingOrder.Box> boxes=new ArrayList<>();
+        for(int i=0;i<15;i++)
+            boxes.add(box("测试价格120元",.98f,610+i*42,485,35,198));
+        boxes.add(box("结束",.97f,1140,740,28,42));
+        return boxes;
+    }
+    static List<ReadingOrder.Box> uprightPriceList() {
+        List<ReadingOrder.Box> boxes=new ArrayList<>();
+        for(int i=0;i<15;i++)
+            boxes.add(box("测试价格120元",.98f,170,240+i*65,610,36));
+        return boxes;
+    }
+    static List<ReadingOrder.Box> genuineVerticalArticle() {
+        List<ReadingOrder.Box> boxes=new ArrayList<>();
+        for(int i=0;i<5;i++)
+            boxes.add(box("原始竖排测试正文甲乙丙丁戊己庚辛壬癸",.97f,
+                810-i*55,320,35,500));
+        return boxes;
+    }
+    static void sidewaysCacheRegression() {
+        var price=UsbAutoOcrOrientation.quality(readableButSidewaysPriceList());
+        var upright=UsbAutoOcrOrientation.quality(uprightPriceList());
+        var genuine=UsbAutoOcrOrientation.quality(genuineVerticalArticle());
+        yes(price.brokenWideRows==0,"sideways price text can be fluent not garbled");
+        yes(price.sidewaysTallRows>=12,"sideways price columns detected from OCR geometry");
+        yes(UsbAutoOcrOrientation.needsProbe(price,1920,1080),
+            "sideways readable price MUST be offered a real rotated OCR A/B");
+        yes(UsbAutoOcrOrientation.accept(price,upright),
+            "real horizontally reoriented text wins with no missing characters");
+        yes(!UsbAutoOcrOrientation.accept(upright,price),
+            "reverse sideways candidate must be rejected");
+        yes(!UsbAutoOcrOrientation.accept(price,price),
+            "geometry-only guess never auto-adopted");
+        yes(!UsbAutoOcrOrientation.needsProbe(price,1080,1920),
+            "do not rotate portrait video just because it has vertical columns");
+        yes(!UsbAutoOcrOrientation.needsProbe(genuine,1920,1080),
+            "natural long Chinese vertical article should stay upright");
+        yes(UsbAutoOcrOrientation.shouldRevisit(price,3),
+            "cached verified angle can be reconsidered after repeated sideways geometry");
+        var garbled=UsbAutoOcrOrientation.quality(sideOnUsb());
+        yes(UsbAutoOcrOrientation.needsProbe(garbled,1920,1080),
+            "five long wide broken rows still trigger first-frame recalibration");
+        yes(!UsbAutoOcrOrientation.accept(garbled,price),
+            "candidate with insufficient OCR character improvement must fail");
+    }
     public static void main(String[] args) {
+        sidewaysCacheRegression();
         var bad=UsbAutoOcrOrientation.quality(sideOnUsb());
         var good=UsbAutoOcrOrientation.quality(correctlyOriented());
         var normal=UsbAutoOcrOrientation.quality(clearHorizontal());
