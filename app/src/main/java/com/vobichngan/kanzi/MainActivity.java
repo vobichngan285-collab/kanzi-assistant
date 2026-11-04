@@ -654,7 +654,7 @@ public class MainActivity extends CameraActivity {
         }
         panel.addView(pageFocusGroup);
         TextView pageFocusNote = new TextView(this);
-        pageFocusNote.setText("现场实时扫读自动分区，先朗读摄像头中央的完整科室门牌或独立文字块；原始OCR全部框仍保留在预览与诊断。书籍长文模式保持原完整文字流，左/右筛选仍仅用于长文。");
+        pageFocusNote.setText("快速扫读默认完整朗读已识别文字：普通横排从左到右、从上到下；独立竖排标牌从上到下；可信传统多列竖排从右往左。不会只选择中央区域。书籍长文模式保留原有流程。");
         pageFocusNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         pageFocusNote.setTextColor(0xFF667085);
         panel.addView(pageFocusNote);
@@ -676,7 +676,7 @@ public class MainActivity extends CameraActivity {
         verticalLiveCheck.setChecked(verticalLiveReadingEnabled);
         panel.addView(verticalLiveCheck);
         TextView verticalLiveNote = new TextView(this);
-        verticalLiveNote.setText("无需手动切换：单列竖排科室门牌从上到下，可信多列传统竖排从右到左；混排先分成独立文字区域，实时扫读中央优先。普通横排长文仍保留完整原版文字流；只调整已识别原文的区域/顺序。");
+        verticalLiveNote.setText("无需手动选择文字方向：横排完整朗读；单列竖排从上到下；多列传统竖排从右到左。不猜字、不补字、不按中央截断内容。USB输入方向的自动校准继续独立运行。");
         verticalLiveNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         verticalLiveNote.setTextColor(0xFF667085);
         panel.addView(verticalLiveNote);
@@ -2019,7 +2019,7 @@ public class MainActivity extends CameraActivity {
     private void onRecognized(String found, boolean manualCapture,
                               long sceneGeneration, int resultEpoch) {
         final long now = System.currentTimeMillis();
-        final String recognizedText = found == null ? "" : OcrContextRefiner.refine(found.trim());
+        final String recognizedText = found == null ? "" : found.trim();
         if (recognizedText.isEmpty()) {
             if (longReadingMode && lastNonEmptyAt > 0 &&
                 now - lastNonEmptyAt >= 2800) lastSpoken = "";
