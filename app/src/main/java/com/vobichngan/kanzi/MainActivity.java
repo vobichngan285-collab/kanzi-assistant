@@ -72,6 +72,7 @@ public class MainActivity extends CameraActivity {
     private static final String PREF_SPEECH_RATE = "speech_rate";
     private static final String PREF_PREVIEW_ROTATION = "preview_rotation";
     private static final String PREF_PREVIEW_MIRROR = "preview_mirror";
+    private static final String PREF_USB_PREVIEW_CORRECT_MIRROR = "usb_preview_correct_left_right";
     private static final String PREF_PREVIEW_FLIP = "preview_flip";
     private static final String PREF_ENHANCED_OCR = "enhanced_ocr";
     private static final String PREF_OCR_MODEL = "ocr_model_id";
@@ -138,6 +139,8 @@ public class MainActivity extends CameraActivity {
     private volatile float speechRate = 1.0f;
     private volatile int previewRotation = 0;
     private volatile boolean previewMirror = false;
+    // USB-only display correction; camera NV21 OCR input is NEVER mirrored.
+    private volatile boolean usbPreviewCorrectMirror = true;
     private volatile boolean previewVerticalFlip = false;
     private volatile boolean enhancedOcr = false;
     private volatile String ocrModelId = "ppocrv6_small";
@@ -513,6 +516,7 @@ public class MainActivity extends CameraActivity {
         previewRotation = prefs.getInt(PREF_PREVIEW_ROTATION, 0);
         if (previewRotation != 0 && previewRotation != 90 && previewRotation != 180 && previewRotation != 270) previewRotation = 0;
         previewMirror = prefs.getBoolean(PREF_PREVIEW_MIRROR, false);
+        usbPreviewCorrectMirror = prefs.getBoolean(PREF_USB_PREVIEW_CORRECT_MIRROR, true);
         previewVerticalFlip = prefs.getBoolean(PREF_PREVIEW_FLIP, false);
         enhancedOcr = prefs.getBoolean(PREF_ENHANCED_OCR, false);
         aiLayoutEnabled = prefs.getBoolean(PREF_AI_LAYOUT, false);
@@ -939,9 +943,13 @@ public class MainActivity extends CameraActivity {
 
 
         CheckBox mirrorCheck = new CheckBox(this);
-        mirrorCheck.setText("水平镜像");
+        mirrorCheck.setText("附加水平镜像（USB可反向切换校正）");
         mirrorCheck.setChecked(previewMirror);
         panel.addView(mirrorCheck);
+        CheckBox usbCorrectMirrorCheck = new CheckBox(this);
+        usbCorrectMirrorCheck.setText("USB画面左右校正（默认开启；吉他在右边应显示在右边）");
+        usbCorrectMirrorCheck.setChecked(usbPreviewCorrectMirror);
+        panel.addView(usbCorrectMirrorCheck);
         CheckBox flipCheck = new CheckBox(this);
         flipCheck.setText("垂直翻转");
         flipCheck.setChecked(previewVerticalFlip);
@@ -959,7 +967,7 @@ public class MainActivity extends CameraActivity {
         previewQualityNote.setTextColor(0xFF667085);
         panel.addView(previewQualityNote);
 
-        transformNote.setText("旋转、镜像和翻转会同时作用于当前选择的预览画面；不改变USB摄像头原始OCR输入，也不改变手机摄像头为识别而进行的传感器方向校正。");
+        transformNote.setText("USB左右校正仅改变USB预览显示和OCR框在预览上的位置；不会水平翻转原始NV21图像或OCR识别输入。手机摄像头预览保持独立。附加水平镜像可以取消USB默认校正。");
         transformNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         transformNote.setTextColor(0xFF667085);
         panel.addView(transformNote);
@@ -1202,6 +1210,7 @@ public class MainActivity extends CameraActivity {
                 catch (NumberFormatException ignored) { maxSpeechChars = 0; }
                 previewRotation = rotationSeek.getProgress() * 90;
                 previewMirror = mirrorCheck.isChecked();
+                usbPreviewCorrectMirror = usbCorrectMirrorCheck.isChecked();
                 previewVerticalFlip = flipCheck.isChecked();
                 enhancedOcr = enhancedCheck.isChecked();
                 if (tts != null) tts.setSpeechRate(speechRate);
@@ -1216,6 +1225,7 @@ public class MainActivity extends CameraActivity {
                     .putFloat(PREF_SPEECH_RATE, speechRate)
                     .putInt(PREF_PREVIEW_ROTATION, previewRotation)
                     .putBoolean(PREF_PREVIEW_MIRROR, previewMirror)
+                    .putBoolean(PREF_USB_PREVIEW_CORRECT_MIRROR, usbPreviewCorrectMirror)
                     .putBoolean(PREF_PREVIEW_FLIP, previewVerticalFlip)
                     .putBoolean(PREF_ENHANCED_OCR, enhancedOcr)
                     .putString(PREF_OCR_MODEL, ocrModelId)
@@ -1293,8 +1303,20 @@ public class MainActivity extends CameraActivity {
         cameraTextureView.setPivotX(viewWidth / 2.0f);
         cameraTextureView.setPivotY(viewHeight / 2.0f);
         // No zoom/fill scaling: this is a strict full-frame FIT transform.
-        cameraTextureView.setScaleX(previewMirror ? -1.0f : 1.0f);
+        // On the USB GL path, scaling the outer TextureView was not a
+        // reliable correction. Mirror the *video contents* through its
+        // TextureView matrix instead, never the OCR's source NV21 pixels.
+        // Apply after camera open, size changes and switching camera source.
+        boolean usbMirror = UsbPreviewMirror.shouldMirror(usbPreviewCorrectMirror, previewMirror);
+        cameraTextureView.setScaleX(1.0f);
         cameraTextureView.setScaleY(previewVerticalFlip ? -1.0f : 1.0f);
+        if (viewWidth > 0 && viewHeight > 0) {
+            Matrix usbDisplay = new Matrix();
+            if (usbMirror) usbDisplay.setScale(-1.0f, 1.0f,
+                viewWidth * 0.5f, viewHeight * 0.5f);
+            cameraTextureView.setTransform(usbDisplay);
+        }
+        if (ocrOverlay != null) ocrOverlay.setUsbDisplayMirror(usbMirror);
     }
 
     @Override protected ViewGroup getCameraViewContainer() { return previewContainer; }
