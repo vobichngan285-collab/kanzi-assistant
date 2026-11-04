@@ -50,6 +50,7 @@ object SingleFrameEvidence {
         enhanced: Boolean, modelId: String, result: OCRRunResult,
         profile: OcrPerformanceProfile,
         shadowReport: String,
+        inputRotationDegrees: Int,
     ): File {
         check(nv21.size.toLong() == width.toLong() * height.toLong() * 3L / 2L)
         val folder = File(context.filesDir, "ocr-single-frame")
@@ -75,7 +76,10 @@ object SingleFrameEvidence {
                     info.put("bitmap_height", ocrBitmap.height)
                     info.put("enhanced_preprocessing", enhanced)
                     info.put("nv21_to_bitmap", "OpenCV COLOR_YUV2RGBA_NV21")
-                    info.put("ocr_bitmap_rotation", 0)
+                    info.put("ocr_bitmap_rotation",
+                        OcrInputOrientation.normalize(inputRotationDegrees))
+                    info.put("ocr_input_orientation_independent_of_preview", true)
+                    info.put("source_nv21_unchanged", true)
                     info.put("original_box_count", result.results.size)
                     info.put("exported_box_count", minOf(LIMIT, result.results.size))
                     info.put("box_count_limited", result.results.size > LIMIT)
