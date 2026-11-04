@@ -9,8 +9,6 @@ import android.os.Looper;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.speech.tts.TextToSpeech;
-import android.media.AudioManager;
-import android.media.ToneGenerator;
 import android.speech.tts.UtteranceProgressListener;
 import android.content.SharedPreferences;
 import android.content.ClipData;
@@ -135,8 +133,6 @@ public class MainActivity extends CameraActivity {
     private volatile long lastQuickScanAt = 0L;
     private volatile boolean lastQuickScanReliable = false;
     private final RealtimeSpeechGuard liveSpeechGuard = new RealtimeSpeechGuard();
-    private long speechPromptSerial = 0L;
-    private ToneGenerator recognitionTone;
     private final java.util.concurrent.atomic.AtomicInteger readingEpoch = new java.util.concurrent.atomic.AtomicInteger(0);
     private volatile float speechRate = 1.0f;
     private volatile int previewRotation = 0;
@@ -299,6 +295,10 @@ public class MainActivity extends CameraActivity {
             } else {
                 if (!automaticMode || now - lastProcess < recognitionIntervalMs) return;
                 if (longReadingMode && speechPageActive) return;
+                // Let TTS finish ALL chunks without overlapping OCR jobs,
+                // overlay flicker, or a fresh recognition competing for audio.
+                // The scene observer above stays active to notice a new page.
+                if (live && speechPageActive) return;
                 // Static, reliably read text should NOT cause full OCR every
                 // 2.8 seconds. A scene generation change can trigger at once.
                 // The long safety refresh handles very subtle changes missed
@@ -356,7 +356,7 @@ public class MainActivity extends CameraActivity {
                             lastQuickScanGeneration = realtimeScene.generation();
                             lastQuickScanAt = System.currentTimeMillis();
                             lastQuickScanReliable = !found.getText().trim().isEmpty() &&
-                                found.getAverageConfidence() >= 0.75;
+                                found.getAverageConfidence() >= 0.55;
                         }
                         if (ocrOverlay != null) {
                             ocrOverlay.show(found.getBoxes(), found.getFrameWidth(),
@@ -526,7 +526,7 @@ public class MainActivity extends CameraActivity {
         queueSpeech = prefs.getBoolean(PREF_QUEUE_SPEECH, false);
         usingPhoneCamera = prefs.getBoolean(PREF_PHONE_CAMERA, false);
         phoneFrontFacing = prefs.getBoolean(PREF_FRONT_CAMERA, false);
-        qualityPromptsEnabled = prefs.getBoolean(PREF_QUALITY_PROMPTS, true);
+        qualityPromptsEnabled = prefs.getBoolean(PREF_QUALITY_PROMPTS, false);
         longReadingMode = prefs.getBoolean(PREF_LONG_READING, queueSpeech);
         speechRate = Math.max(0.5f, Math.min(2.0f, prefs.getFloat(PREF_SPEECH_RATE, 1.0f)));
         previewRotation = prefs.getInt(PREF_PREVIEW_ROTATION, 0);
@@ -788,7 +788,7 @@ public class MainActivity extends CameraActivity {
         panel.addView(modelManagementInfo);
 
         CheckBox qualityCheck = new CheckBox(this);
-        qualityCheck.setText("识别失败或画面模糊时给出简短语音提示");
+        qualityCheck.setText("长文模式识别困难时给出语音提示（实时扫描不提示）");
         qualityCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         qualityCheck.setChecked(qualityPromptsEnabled);
         panel.addView(qualityCheck);
@@ -1515,11 +1515,6 @@ public class MainActivity extends CameraActivity {
                 });
             }
         });
-        try {
-            recognitionTone = new ToneGenerator(AudioManager.STREAM_NOTIFICATION, 70);
-        } catch (RuntimeException toneError) {
-            Log.w("KanziTTS", "Notification tone unavailable; OCR speech still works", toneError);
-        }
         // Voice data is downloaded only after a user taps a voice list entry;
         // app initialization never fetches models or contacts the Internet.
         voiceStore = new DownloadableVoiceStore(this);
@@ -1956,7 +1951,8 @@ public class MainActivity extends CameraActivity {
 
     /** Speak a warning only after the scene remains unclear; never interrupt a page. */
     private void onReadingQuality(OcrReadResult result, FrameQuality.Assessment quality) {
-        if (!qualityPromptsEnabled || !running) return;
+        if (!qualityPromptsEnabled || !running ||
+            (!longReadingMode && automaticMode)) return;
         if (!result.getText().trim().isEmpty()) {
             noTextSince = 0L;
             if (result.getAverageConfidence() < 0.50 && quality.possiblyBlurry)
@@ -2074,16 +2070,19 @@ public class MainActivity extends CameraActivity {
                 if (isAlreadyQueuedOrRecentlySpoken(spokenNormalized,
                     similarityThreshold / 100.0f)) return;
             } else {
-                // A luma change does not establish a new object. Compare
-                // recognized content BEFORE clearing current TTS and dinging.
-                if (!liveSpeechGuard.accept(spokenNormalized)) {
-                    Log.d("KanziTTS", "Duplicate live text; preserve unfinished speech");
+                // Never preempt an in-progress utterance. New targets must
+                // also survive TWO coherent OCR reads in a changed scene.
+                boolean audioBusy = speechPageActive || speakingQueued ||
+                    currentSpeech != null || !speechQueue.isEmpty();
+                if (!liveSpeechGuard.acceptStable(spokenNormalized,
+                        sceneGeneration, audioBusy)) {
+                    Log.d("KanziTTS", "No stable new live target; TTS remains unchanged");
                     return;
                 }
             }
         }
-        if (force || !longReadingMode) {
-            // Latest-content-wins in scan mode. A manual request always takes priority.
+        if (force) {
+            // Only an EXPLICIT user action may interrupt current speech.
             clearSpeechQueue(true);
         }
         List<String> chunks = SpeechText.chunks(spokenText);
@@ -2093,25 +2092,8 @@ public class MainActivity extends CameraActivity {
         for (String chunk : chunks) {
             speechQueue.addLast(new SpeechItem(chunk, spokenNormalized, "ocr-" + (++utteranceSequence)));
         }
-        // The visual OCR boxes are already shown by the camera callback.
-        // Ding once for a NEW confirmed live target, then start TTS.
-        if (!force && !longReadingMode && recognitionTone != null) {
-            final long prompt = ++speechPromptSerial;
-            try {
-                recognitionTone.startTone(ToneGenerator.TONE_PROP_BEEP, 85);
-            } catch (RuntimeException error) {
-                // Audio feedback is optional; TTS may never be held hostage
-                // by an unavailable notification audio stream.
-                Log.w("KanziTTS", "Recognition chime unavailable", error);
-                speakNextQueued();
-                return;
-            }
-            mainHandler.postDelayed(() -> {
-                if (prompt == speechPromptSerial) speakNextQueued();
-            }, 105L);
-        } else {
-            speakNextQueued();
-        }
+        // No success beep. The only automatic audio is the text itself.
+        speakNextQueued();
     }
 
     private boolean isAlreadyQueuedOrRecentlySpoken(String normalized, float threshold) {
@@ -2204,8 +2186,6 @@ public class MainActivity extends CameraActivity {
     }
 
     private void clearSpeechQueue(boolean stopCurrent) {
-        ++speechPromptSerial;
-        if (stopCurrent && recognitionTone != null) recognitionTone.stopTone();
         speechPageActive = false;
         speechQueue.clear();
         currentSpeech = null;
@@ -2307,7 +2287,6 @@ public class MainActivity extends CameraActivity {
         if (offlineVoicePlayback != null) offlineVoicePlayback.shutdown();
         if (voiceStore != null) voiceStore.shutdown();
         if (tts != null) { tts.stop(); tts.shutdown(); }
-        if (recognitionTone != null) { recognitionTone.release(); recognitionTone = null; }
         if (recognizer != null) recognizer.release();
         diagnosticHandler.removeCallbacksAndMessages(null);
         super.onDestroy();
