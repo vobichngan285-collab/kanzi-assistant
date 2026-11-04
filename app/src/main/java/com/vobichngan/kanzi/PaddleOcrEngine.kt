@@ -113,9 +113,7 @@ class PaddleOcrEngine(
     @Volatile private var engine: PaddleOCR? = null
     @Volatile private var released = false
     @Volatile private var fastScanMode = false
-    // Pure-Java center target manager: only quick scan uses this to avoid
-    // interfering with the already-verified full-page BOOK reading path.
-    private val centerTargetTracker = CenterTargetTracker()
+    // v52: live OCR reads all recognized text; no central-target tracking.
     // USB OCR input AUTO -1 is resolved from actual pixels; never TextureView
     // orientation. One successful calibration is cached for the camera session.
     @Volatile private var usbAutoResolvedAngle = -1
@@ -224,7 +222,6 @@ class PaddleOcrEngine(
         aiLayoutEnabled = enabled
     }
     fun setFastScanMode(enabled: Boolean) {
-        if(fastScanMode!=enabled)centerTargetTracker.reset()
         fastScanMode = enabled
     }
     fun setLiveTextRotationDegrees(degrees: Int) {
@@ -349,7 +346,7 @@ class PaddleOcrEngine(
                     // overwrite the active reader's focus during diagnostics.
                     val routingPreview = ReadingStrategyRouter.arrange(
                         frameBoxes, bitmap.width, bitmap.height,
-                        verticalLiveReadingEnabled, true, CenterTargetTracker())
+                        verticalLiveReadingEnabled, true)
                     val performanceAfter=OcrHardwareProbe.capture(appContext)
                     val allElapsed=(System.nanoTime()-startedNanos)/1_000_000L
                     val profileDiagnostic="X200综合实验：${performanceProfile.label}" +
@@ -768,7 +765,7 @@ class PaddleOcrEngine(
                     if (realtime) {
                         val plan = ReadingStrategyRouter.arrange(
                             readingBoxes, bitmap.width, bitmap.height,
-                            verticalLiveReadingEnabled, true, centerTargetTracker)
+                            verticalLiveReadingEnabled, true)
                         text = plan.text
                         flowDescription = plan.description +
                             "；策略=${plan.strategy}；输入旋转${liveAngle}°"
