@@ -73,6 +73,22 @@ public final class VerticalLongColumnLive {
         if(allCodepoints<75 || allHan<allCodepoints*.65f || shortest<240f)
             return fallback("并非可信的成段中文竖排长列",boxes.size());
 
+        // A visibly tall *unrecovered* crop between neighboring OCR columns
+        // must fail the whole proposal. Otherwise four good columns can hide
+        // one missing paragraph and wrongly sound like complete real speech.
+        float firstX=boxes.get(order.columnIds.get(0)).centerX();
+        float lastColumnX=boxes.get(order.columnIds.get(order.columnIds.size()-1)).centerX();
+        for(int id:order.remainingIds) {
+            ReadingOrder.Box b=boxes.get(id);
+            if(b==null || b.text==null) return fallback("残余框无效",boxes.size());
+            float h=b.bottom()-b.top(),w=b.right()-b.left();
+            if(h>=Math.max(180f,shortest*.65f) && w>0 && h>=w*4f &&
+                b.centerX()>=lastColumnX-85f && b.centerX()<=firstX+85f &&
+                (b.text.codePointCount(0,b.text.length())<12 || b.confidence<.80f)) {
+                return fallback("存在仍未恢复的长竖列，禁止把不完整正文作为连续语音",boxes.size());
+            }
+        }
+
         // A separate one-glyph short continuation at top LEFT of the final
         // column can be the last printed character; preserve its provenance.
         // If not provable, leave it among the remaining raw OCR boxes.
