@@ -1,0 +1,39 @@
+name: Prepare pinned Small REC and offline cp313 wheel for private local crop benchmark
+on:
+  push:
+    branches: [test/x200-single-crop-geometry-ab-20261104]
+    paths: ['.github/workflows/x200-local-model-deps-bundle.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  public-model-only-no-private-images:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Download verified public model and cp313 local-only runtime
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kanzi-local-small
+          curl -fL --retry 3 --max-time 240 \
+            'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx' \
+            -o /tmp/kanzi-local-small/small_rec.onnx
+          curl -fL --retry 3 --max-time 120 \
+            'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml' \
+            -o /tmp/kanzi-local-small/small_rec.yml
+          echo "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  /tmp/kanzi-local-small/small_rec.onnx" | sha256sum -c -
+          echo "ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1  /tmp/kanzi-local-small/small_rec.yml" | sha256sum -c -
+          python3 -m pip download --only-binary=:all: --no-deps \
+             'onnxruntime==1.23.2' -d /tmp/kanzi-local-small
+          ls -lh /tmp/kanzi-local-small/
+          echo 'PUBLIC_MODEL_ONLY=PASS, NO_PRIVATE_IMAGE_OR_TRANSCRIPT_UPLOADED' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: x200-public-small-rec-pinned-cp313-local-runtime
+          path: /tmp/kanzi-local-small/
+          retention-days: 1
+          if-no-files-found: error
