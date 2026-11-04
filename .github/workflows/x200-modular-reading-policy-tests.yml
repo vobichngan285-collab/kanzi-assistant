@@ -1,0 +1,46 @@
+name: X200 modular reading policy regression (NO APK)
+on:
+  push:
+    branches: [test/x200-modular-reading-center-v51]
+    paths:
+      - 'app/src/main/java/com/vobichngan/kanzi/*.java'
+      - 'scripts/*SmokeTest.java'
+      - '.github/workflows/x200-modular-reading-policy-tests.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate-routing:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Compile independent reading modules and regression tests
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/policy"
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/policy" \
+            app/src/main/java/com/vobichngan/kanzi/LayoutRegion.java \
+            app/src/main/java/com/vobichngan/kanzi/TextFlowRebuilder.java \
+            app/src/main/java/com/vobichngan/kanzi/ReadingOrder.java \
+            app/src/main/java/com/vobichngan/kanzi/RealtimeTextOrientation.java \
+            app/src/main/java/com/vobichngan/kanzi/VerticalLongColumnShadow.java \
+            app/src/main/java/com/vobichngan/kanzi/VerticalLongColumnLive.java \
+            app/src/main/java/com/vobichngan/kanzi/TextRegionPartition.java \
+            app/src/main/java/com/vobichngan/kanzi/SingleVerticalFlow.java \
+            app/src/main/java/com/vobichngan/kanzi/CenterTargetTracker.java \
+            app/src/main/java/com/vobichngan/kanzi/ReadingStrategyRouter.java \
+            scripts/ModularReadingRoutingSmokeTest.java \
+            scripts/AutoVerticalReadingSmokeTest.java \
+            scripts/VerticalLongColumnLiveSmokeTest.java \
+            scripts/VerticalLongColumnShadowSmokeTest.java
+          java -cp "$RUNNER_TEMP/policy" ModularReadingRoutingSmokeTest
+          java -cp "$RUNNER_TEMP/policy" AutoVerticalReadingSmokeTest
+          java -cp "$RUNNER_TEMP/policy" VerticalLongColumnLiveSmokeTest
+          java -cp "$RUNNER_TEMP/policy" VerticalLongColumnShadowSmokeTest
+          echo "MODULAR_READING_POLICY_SUITE=PASS" >> "$GITHUB_STEP_SUMMARY"
