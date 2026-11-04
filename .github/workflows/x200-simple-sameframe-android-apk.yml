@@ -1,0 +1,509 @@
+name: X200 independent manual same-frame Small 0-vs-left90 OCR APK
+on:
+  push:
+    branches: [test/x200-simple-same-frame-phone-ab-20261104]
+    paths:
+      - 'app/**'
+      - 'scripts/*.py'
+      - '.github/workflows/x200-simple-sameframe-android-apk.yml'
+      - 'docs/phone-x200-combined-horizontal-vertical-20261103.md'
+  workflow_dispatch:
+concurrency:
+  group: diagnostic-phone-ocr-${{ github.run_id }}
+  cancel-in-progress: false
+permissions:
+  contents: write
+  actions: read
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 55
+    steps:
+      - name: Checkout 看字助手
+        uses: actions/checkout@v4
+      - name: Fast fail on silent, uninterrupted speech regression
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/quiet-check"
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/quiet-check" \
+            app/src/main/java/com/vobichngan/kanzi/RealtimeSpeechGuard.java \
+            scripts/QuietSpeechStabilitySmokeTest.java
+          java -cp "$RUNNER_TEMP/quiet-check" QuietSpeechStabilitySmokeTest
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('app/src/main/java/com/vobichngan/kanzi/MainActivity.java').read_text()
+          assert 'ToneGenerator' not in s and 'recognitionTone' not in s
+          assert 'liveSpeechGuard.acceptStable(spokenNormalized,' in s
+          assert 'if (live && speechPageActive) return;' in s
+          assert 'mainHandler.post(() -> finishQueuedUtterance(utteranceId));' in s
+          print('QUIET_ANDROID_SOURCE_GUARDS=PASS')
+          PY
+      - name: Assert isolated same-frame Small OCR diagnostic wiring
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt").read_text()
+          m=Path("app/src/main/java/com/vobichngan/kanzi/MainActivity.java").read_text()
+          assert "private fun diagnoseSimpleSameFrameNv21(" in p
+          assert "val zero = current.recognize(source)" in p
+          assert "val left = current.recognize(leftBitmap)" in p
+          assert "postRotate(270f)" in p
+          assert "simpleSameFrameAb: Boolean" in p
+          assert 'modelId != "ppocrv6_small"' in p
+          assert "recognizer.diagnoseNv21(diagnosticFrame" in m
+          assert "simpleSameFrameAbRequested.getAndSet(false)" in m
+          assert "实验：同一画面原向0°与左转90°真实OCR对照" in m
+          assert "if (simpleSameFrameAb) {" in p
+          assert p.index("if (simpleSameFrameAb) {") < p.index("val current = engine ?: run { onError.onError",p.index("    fun diagnoseNv21("))
+          assert "applicationIdSuffix '.x200simpleorientationab'" in Path("app/build.gradle").read_text()
+          print("SAME_FRAME_SMALL_ANDROID_SOURCE_GUARD=PASS")
+          PY
+      - name: Checkout official PaddleOCR v3.7.0 Android SDK
+        uses: actions/checkout@v4
+        with:
+          repository: PaddlePaddle/PaddleOCR
+          ref: v3.7.0
+          path: third_party/PaddleOCR
+      - name: Prepare official PP-OCRv6 Android SDK and Small models
+        run: |
+          set -euo pipefail
+          SDK="third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk"
+          test -s "$SDK/src/main/java/com/paddle/ocr/PaddleOCR.kt"
+          rm -f "$SDK/build.gradle.kts"
+          mkdir -p "$SDK/src/main/assets/models/det" "$SDK/src/main/assets/models/rec"
+          DET="$SDK/src/main/assets/models/det/inference.onnx"
+          REC="$SDK/src/main/assets/models/rec/inference.onnx"
+          CFG="$SDK/src/main/assets/models/rec/inference.yml"
+          curl -fL --retry 3 "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/5994b4f/inference.onnx" -o "$DET"
+          curl -fL --retry 3 "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx" -o "$REC"
+          curl -fL --retry 3 "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml?download=true" -o "$CFG"
+          echo "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  $DET" | sha256sum -c -
+          echo "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  $REC" | sha256sum -c -
+          test -s "$CFG"
+          grep -q "PostProcess:" "$CFG"
+          grep -q "character_dict:" "$CFG"
+
+          # Official Android SDK model matrix: PP-OCRv6 Tiny and PP-OCRv5 Mobile.
+          # Fetch model pairs and recognition dictionaries from immutable Hugging Face revisions.
+          TINY="$SDK/src/main/assets/models/ppocrv6_tiny"
+          V5="$SDK/src/main/assets/models/ppocrv5_mobile"
+          mkdir -p "$TINY/det" "$TINY/rec" "$V5/det" "$V5/rec"
+          curl -fL --retry 3 --retry-delay 2 "https://huggingface.co/PaddlePaddle/PP-OCRv6_tiny_det_onnx/resolve/2ba1506/inference.onnx" -o "$TINY/det/inference.onnx"
+          curl -fL --retry 3 --retry-delay 2 "https://huggingface.co/PaddlePaddle/PP-OCRv6_tiny_rec_onnx/resolve/2612ab3/inference.onnx" -o "$TINY/rec/inference.onnx"
+          curl -fL --retry 3 --retry-delay 2 "https://huggingface.co/PaddlePaddle/PP-OCRv6_tiny_rec_onnx/resolve/2612ab3/inference.yml?download=true" -o "$TINY/rec/inference.yml"
+          curl -fL --retry 3 --retry-delay 2 "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det_onnx/resolve/e6f4fa8/inference.onnx" -o "$V5/det/inference.onnx"
+          curl -fL --retry 3 --retry-delay 2 "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_rec_onnx/resolve/ed152b8/inference.onnx" -o "$V5/rec/inference.onnx"
+          curl -fL --retry 3 --retry-delay 2 "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_rec_onnx/resolve/ed152b8/inference.yml?download=true" -o "$V5/rec/inference.yml"
+
+          # Reject truncated downloads and missing recognition dictionaries.
+          test "$(stat -c%s "$TINY/det/inference.onnx")" -gt 1000000
+          test "$(stat -c%s "$TINY/rec/inference.onnx")" -gt 3000000
+          test "$(stat -c%s "$V5/det/inference.onnx")" -gt 3000000
+          test "$(stat -c%s "$V5/rec/inference.onnx")" -gt 10000000
+          for CFG2 in "$TINY/rec/inference.yml" "$V5/rec/inference.yml"; do
+            test -s "$CFG2"
+            grep -q "PostProcess:" "$CFG2"
+            grep -q "character_dict:" "$CFG2"
+          done
+          sha256sum "$TINY/det/inference.onnx" "$TINY/rec/inference.onnx" "$TINY/rec/inference.yml" "$V5/det/inference.onnx" "$V5/rec/inference.onnx" "$V5/rec/inference.yml" | tee "$RUNNER_TEMP/alternate-model-sha256.txt"
+          cat "$RUNNER_TEMP/alternate-model-sha256.txt" >> "$GITHUB_STEP_SUMMARY"
+          echo "PP-OCRv6 Tiny and PP-OCRv5 Mobile ONNX files and recognition dictionaries passed pinned-revision and size/config checks." >> "$GITHUB_STEP_SUMMARY"
+
+          cat > "$SDK/build.gradle" <<'GRADLE'
+          plugins {
+              id 'com.android.library'
+              id 'org.jetbrains.kotlin.android'
+          }
+          android {
+              namespace 'com.paddle.ocr'
+              compileSdk 36
+              defaultConfig { minSdk 26 }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = '17' }
+              buildTypes { release { minifyEnabled false } }
+          }
+          dependencies {
+              implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.21.1'
+              api 'com.quickbirdstudios:opencv:4.5.3.0'
+              implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
+              implementation 'androidx.core:core-ktx:1.15.0'
+          }
+          GRADLE
+          # Allow the bundled SDK to load a verified model pair from the app-private files directory.
+          python3 - <<'PY'
+          from pathlib import Path
+          ort = Path("third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/java/com/paddle/ocr/engine/ORTSessionManager.kt")
+          src = ort.read_text()
+          if "import java.io.File" not in src:
+              src = src.replace("import java.nio.FloatBuffer", "import java.nio.FloatBuffer\nimport java.io.File")
+          needle = "context.assets.open(assetPath).use { it.readBytes() }"
+          if needle not in src:
+              raise SystemExit("Could not safely patch ORTSessionManager model loader")
+          src = src.replace(needle, """val modelFile = File(assetPath)
+                      if (modelFile.isFile) modelFile.readBytes()
+                      else context.assets.open(assetPath).use { it.readBytes() }""", 1)
+          ort.write_text(src)
+
+          cfg = Path("third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/java/com/paddle/ocr/model/ModelConfig.kt")
+          src = cfg.read_text()
+          if "import java.io.File" not in src:
+              src = src.replace("import com.paddle.ocr.util.YamlUtils", "import com.paddle.ocr.util.YamlUtils\nimport java.io.File")
+          needle = "context.assets.open(assetPath).bufferedReader().use { it.readText() }"
+          if needle not in src:
+              raise SystemExit("Could not safely patch ModelConfig file loader")
+          src = src.replace(needle, """val configFile = File(assetPath)
+                      if (configFile.isFile) configFile.bufferedReader().use { it.readText() }
+                      else context.assets.open(assetPath).bufferedReader().use { it.readText() }""", 1)
+          cfg.write_text(src)
+          print("PP-OCR SDK supports app-private ONNX/YAML model files.")
+          PY
+          # All three recognition inference.yml files specify BGR input. The upstream
+          # Android SDK switches BGR crops to RGB; Python PaddleOCR keeps BGR.
+          python3 - <<'PY'
+          from pathlib import Path
+
+          assets = Path("third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/assets")
+          for model_dir in ("models", "models/ppocrv6_tiny", "models/ppocrv5_mobile"):
+              cfg_file = assets / model_dir / "rec/inference.yml"
+              cfg_text = cfg_file.read_text(encoding="utf-8")
+              lines = [line.strip().replace(chr(34), "").replace(chr(39), "") for line in cfg_text.splitlines()]
+              if "img_mode: BGR" not in lines:
+                  raise SystemExit(f"Cannot safely preserve BGR input: unexpected config in {cfg_file}")
+
+          source = Path("third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/java/com/paddle/ocr/preprocess/RecPreprocessor.kt")
+          src = source.read_text(encoding="utf-8")
+          changes = [
+              ("// Convert BGR to RGB and resize to fixed height while preserving aspect ratio",
+               "// Preserve BGR input and resize to fixed height as required by inference.yml"),
+              ("            // Convert BGR to RGB (model expects RGB input)", "            // Model inputs are BGR crops, not RGB."),
+              ("            val rgb = Mat()\n", ""),
+              ("            Imgproc.cvtColor(crop, rgb, Imgproc.COLOR_BGR2RGB)\n", ""),
+              ("val h = rgb.rows()", "val h = crop.rows()"),
+              ("val w = rgb.cols()", "val w = crop.cols()"),
+              ("Imgproc.resize(rgb, dst, Size(", "Imgproc.resize(crop, dst, Size("),
+              ("            rgb.release()\n", ""),
+          ]
+          for old, new in changes:
+              if src.count(old) != 1:
+                  raise SystemExit(f"Refusing unsafe SDK patch: expected exactly one instance of {old!r}; found {src.count(old)}")
+              src = src.replace(old, new, 1)
+          source.write_text(src, encoding="utf-8")
+          if "Imgproc.COLOR_BGR2RGB" in src:
+              raise SystemExit("An unexpected BGR-to-RGB conversion remains")
+          print("OCR FIX: BGR crops passed unchanged to all 3 ONNX recognizers")
+          PY
+          echo "OCR FIX: BGR recognition crops now match all three inference.yml files and PaddleOCR's Python recognizer." >> "$GITHUB_STEP_SUMMARY"
+          echo "PP-OCRv6 Small model assets prepared; app-private model file loading enabled." >> "$GITHUB_STEP_SUMMARY"
+          du -h "$SDK/src/main/assets/models/"*/* >> "$GITHUB_STEP_SUMMARY"
+      - name: Fetch verified offline PP-DocLayout-S ONNX model
+        run: |
+          set -euo pipefail
+          mkdir -p app/src/main/assets/layout
+          AI_MODEL="app/src/main/assets/layout/pp_doclayout_s.onnx"
+          curl -fL --retry 3 --retry-delay 2 \
+            "https://huggingface.co/stefanj0/PP-DocLayout-S-ONNX/resolve/main/pp_doclayout_s.onnx" \
+            -o "$AI_MODEL"
+          echo "33688dbee1c23e34b81777e97cb428eb40f24b242c02b5f623484959e830aec8  $AI_MODEL" | sha256sum -c -
+          echo "Offline PP-DocLayout-S ONNX: SHA256 verified, Apache-2.0." >> "$GITHUB_STEP_SUMMARY"
+      - name: Install independent OCR model inspection tools
+        run: |
+          python3 -m pip install --quiet "numpy==1.26.4" "onnxruntime==1.21.1" "PyYAML==6.0.2"
+      - name: Verify real ONNX execution for layout model
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_layout_model.py app/src/main/assets/layout/pp_doclayout_s.onnx
+          echo "PP-DocLayout-S real ONNX Runtime execution passed." >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify all OCR ONNX models against SDK CTC dictionary
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_ocr_models.py \
+            third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/assets | tee "$RUNNER_TEMP/ocr-model-verification.log"
+          grep -q "METADATA_VERIFICATION=PASS" "$RUNNER_TEMP/ocr-model-verification.log"
+          echo "All three ONNX recognizers passed independent real-inference output class vs YAML dictionary checks." >> "$GITHUB_STEP_SUMMARY"
+      - name: Run real Chinese text through all three ONNX recognizers
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet "opencv-python-headless==4.10.0.84" "Pillow==11.1.0"
+          if [ ! -f /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc ]; then
+            sudo apt-get -qq update
+            sudo apt-get -qq install -y fonts-noto-cjk
+          fi
+          python3 scripts/check_ocr_chinese_samples.py \
+            third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/assets | tee "$RUNNER_TEMP/chinese-ocr-smoke-test.log"
+          grep -q "SYNTHETIC_RECOGNITION_SMOKE_TEST=PASS" "$RUNNER_TEMP/chinese-ocr-smoke-test.log"
+          grep "^SUMMARY" "$RUNNER_TEMP/chinese-ocr-smoke-test.log" >> "$GITHUB_STEP_SUMMARY"
+      - name: Assert preview rotation is isolated from OCR frames
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_preview_ocr_isolation.py
+          echo "OCR input orientation fixed at original 0 degrees." >> "$GITHUB_STEP_SUMMARY"
+      - name: Validate phone camera preview lifecycle regression
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_phone_camera_preview.py
+          echo "Phone camera startup restores visible TextureView before requesting Camera2." >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify long-form single-pass and book column isolation
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_book_reading_fast_path.py
+          echo "Long-form reading starts after first completed OCR, without mandatory second full-page confirmation." >> "$GITHUB_STEP_SUMMARY"
+      - name: Test OCR reading order and complete speech segmentation
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/reading-flow-classes"
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/reading-flow-classes" \
+            app/src/main/java/com/vobichngan/kanzi/ReadingOrder.java \
+            app/src/main/java/com/vobichngan/kanzi/LayoutRegion.java \
+            app/src/main/java/com/vobichngan/kanzi/TextFlowRebuilder.java \
+            app/src/main/java/com/vobichngan/kanzi/ReadingFocus.java \
+            app/src/main/java/com/vobichngan/kanzi/SpeechText.java \
+            app/src/main/java/com/vobichngan/kanzi/FrameChangeGate.java \
+            app/src/main/java/com/vobichngan/kanzi/Nv21Rotation.java \
+            app/src/main/java/com/vobichngan/kanzi/FrameQuality.java \
+            app/src/main/java/com/vobichngan/kanzi/PhonePreviewGeometry.java \
+            scripts/PhonePreviewGeometrySmokeTest.java \
+            scripts/ReadingFlowSmokeTest.java \
+            scripts/ReadingFocusSmokeTest.java \
+            scripts/ContinuousReadingSmokeTest.java \
+            scripts/RealSkewedTextFlowSmokeTest.java \
+            scripts/LayoutHybridSmokeTest.java \
+            scripts/ReadingModesSmokeTest.java \
+            scripts/CameraReadingFeatureSmokeTest.java
+          java -cp "$RUNNER_TEMP/reading-flow-classes" ReadingFlowSmokeTest | tee "$RUNNER_TEMP/reading-flow-test.log"
+          java -cp "$RUNNER_TEMP/reading-flow-classes" ReadingFocusSmokeTest | tee -a "$RUNNER_TEMP/reading-flow-test.log"
+          java -cp "$RUNNER_TEMP/reading-flow-classes" ContinuousReadingSmokeTest | tee -a "$RUNNER_TEMP/reading-flow-test.log"
+          java -cp "$RUNNER_TEMP/reading-flow-classes" RealSkewedTextFlowSmokeTest | tee -a "$RUNNER_TEMP/reading-flow-test.log"
+          java -cp "$RUNNER_TEMP/reading-flow-classes" LayoutHybridSmokeTest | tee -a "$RUNNER_TEMP/reading-flow-test.log"
+          java -cp "$RUNNER_TEMP/reading-flow-classes" ReadingModesSmokeTest | tee -a "$RUNNER_TEMP/reading-flow-test.log"
+          java -cp "$RUNNER_TEMP/reading-flow-classes" CameraReadingFeatureSmokeTest | tee -a "$RUNNER_TEMP/reading-flow-test.log"
+          java -cp "$RUNNER_TEMP/reading-flow-classes" PhonePreviewGeometrySmokeTest | tee -a "$RUNNER_TEMP/reading-flow-test.log"
+          grep -q "READING_FLOW_SMOKE_TEST=PASS" "$RUNNER_TEMP/reading-flow-test.log"
+          grep -q "CONTINUOUS_FULL_TEXT_FOCUS_SMOKE_TEST=PASS" "$RUNNER_TEMP/reading-flow-test.log"
+          grep -q "CONTINUOUS_TEXT_INTEGRITY_SMOKE_TEST=PASS" "$RUNNER_TEMP/reading-flow-test.log"
+          grep -q "REAL_SKEWED_TEXT_FLOW_SMOKE_TEST=PASS" "$RUNNER_TEMP/reading-flow-test.log"
+          grep -q "AI_GEOMETRY_HYBRID_SMOKE_TEST=PASS" "$RUNNER_TEMP/reading-flow-test.log"
+          grep -q "DUAL_READING_MODES_SMOKE_TEST=PASS" "$RUNNER_TEMP/reading-flow-test.log"
+          grep -q "CAMERA_READING_FEATURES=PASS" "$RUNNER_TEMP/reading-flow-test.log"
+          grep -q "PHONE_PREVIEW_GEOMETRY=PASS" "$RUNNER_TEMP/reading-flow-test.log"
+          echo "Reading order, columns, slanted rows, punctuation and nontruncated TTS chunks passed." >> "$GITHUB_STEP_SUMMARY"
+      - name: Checkout AUSBC source
+        uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: third_party/AndroidUSBCamera
+      - name: Cap UVC camera mode at 1080p
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_uvc_resolution.py third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/MultiCameraClient.kt
+      - name: Patch Android USB permission PendingIntent
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_usbmonitor.py third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          # Avoid compiling unused x86 emulator binaries; retain both Android phone ABIs.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("third_party/AndroidUSBCamera/libnative/build.gradle")
+          s = p.read_text()
+          old = "abiFilters 'armeabi-v7a','arm64-v8a', \"x86\", \"x86_64\""
+          new = "abiFilters 'armeabi-v7a','arm64-v8a'"
+          if old not in s:
+              raise SystemExit("Expected AUSBC ABI filter declaration not found; refusing unsafe patch.")
+          p.write_text(s.replace(old, new, 1))
+          print("AUSBC native ABIs limited to armeabi-v7a and arm64-v8a.")
+          PY
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Fetch official sherpa-onnx Android TTS runtime (no voice models)
+        run: |
+          set -euo pipefail
+          mkdir -p app/libs
+          curl -fL --retry 4 --retry-delay 3 \
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-2.0.1.aar" \
+            -o "app/libs/sherpa-onnx-2.0.1.aar"
+          echo "a8d09d1d32f3eb8520482c6d3d43fae674681c5b050385967c70a3c2c9bf0ee7  app/libs/sherpa-onnx-2.0.1.aar" | sha256sum -c -
+          echo "Official native TTS runtime sha256 verified; no voice models are bundled." >> "$GITHUB_STEP_SUMMARY"
+      - name: Isolate sherpa native runtime from PaddleOCR ONNX Runtime
+        run: |
+          set -euo pipefail
+          sudo apt-get -qq update
+          sudo apt-get install -y -qq patchelf
+          python3 scripts/isolate_sherpa_onnx_runtime.py app/libs/sherpa-onnx-2.0.1.aar
+          echo "Sherpa and PaddleOCR now use separate native ONNX runtime SONAMEs." >> "$GITHUB_STEP_SUMMARY"
+      - name: Validate voice download UI and safe settings cleanup
+        run: |
+          python3 scripts/verify_voice_pack_integration.py
+          python3 scripts/verify_removed_decoder_setting.py
+      - name: Verify independent long-column shadow ordering before Android compile
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/vertical-shadow-classes"
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/vertical-shadow-classes" \
+            app/src/main/java/com/vobichngan/kanzi/LayoutRegion.java \
+            app/src/main/java/com/vobichngan/kanzi/TextFlowRebuilder.java \
+            app/src/main/java/com/vobichngan/kanzi/ReadingOrder.java \
+            app/src/main/java/com/vobichngan/kanzi/VerticalLongColumnShadow.java \
+            scripts/VerticalLongColumnShadowSmokeTest.java
+          java -cp "$RUNNER_TEMP/vertical-shadow-classes" VerticalLongColumnShadowSmokeTest
+          javac -encoding UTF-8 -cp "$RUNNER_TEMP/vertical-shadow-classes" \
+            -d "$RUNNER_TEMP/vertical-shadow-classes" \
+            app/src/main/java/com/vobichngan/kanzi/VerticalLongColumnLive.java \
+            scripts/VerticalLongColumnLiveSmokeTest.java
+          java -cp "$RUNNER_TEMP/vertical-shadow-classes" VerticalLongColumnLiveSmokeTest
+          javac -encoding UTF-8 -cp "$RUNNER_TEMP/vertical-shadow-classes" \
+            -d "$RUNNER_TEMP/vertical-shadow-classes" \
+            scripts/AutoVerticalReadingSmokeTest.java
+          java -cp "$RUNNER_TEMP/vertical-shadow-classes" AutoVerticalReadingSmokeTest
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/vertical-shadow-classes" \
+            app/src/main/java/com/vobichngan/kanzi/UsbPreviewMirror.java \
+            scripts/UsbPreviewMirrorSmokeTest.java
+          java -cp "$RUNNER_TEMP/vertical-shadow-classes" UsbPreviewMirrorSmokeTest
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/vertical-shadow-classes" \
+            app/src/main/java/com/vobichngan/kanzi/OcrInputOrientation.java \
+            app/src/main/java/com/vobichngan/kanzi/UsbPreviewMirror.java \
+            scripts/OcrInputOrientationSmokeTest.java
+          java -cp "$RUNNER_TEMP/vertical-shadow-classes" OcrInputOrientationSmokeTest
+          javac -encoding UTF-8 -cp "$RUNNER_TEMP/vertical-shadow-classes" \
+            -d "$RUNNER_TEMP/vertical-shadow-classes" \
+            app/src/main/java/com/vobichngan/kanzi/UsbAutoOcrOrientation.java \
+            scripts/UsbAutoOcrOrientationSmokeTest.java
+          java -cp "$RUNNER_TEMP/vertical-shadow-classes" UsbAutoOcrOrientationSmokeTest
+          # Modular reading was independently verified on 100 public labeled
+          # images BEFORE introducing this Android build workflow.
+          javac -encoding UTF-8 -cp "$RUNNER_TEMP/vertical-shadow-classes" \
+            -d "$RUNNER_TEMP/vertical-shadow-classes" \
+            app/src/main/java/com/vobichngan/kanzi/RealtimeTextOrientation.java \
+            app/src/main/java/com/vobichngan/kanzi/TextRegionPartition.java \
+            app/src/main/java/com/vobichngan/kanzi/SingleVerticalFlow.java \
+            app/src/main/java/com/vobichngan/kanzi/CenterTargetTracker.java \
+            app/src/main/java/com/vobichngan/kanzi/ReadingStrategyRouter.java \
+            scripts/ModularReadingRoutingSmokeTest.java
+          java -cp "$RUNNER_TEMP/vertical-shadow-classes" ModularReadingRoutingSmokeTest
+      - name: Compile independent debug APK, do not use release signing key
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_x200_shadow_sdk.py
+          # First-pass crop correction MUST be geometrically gated.
+          grep -q 'val provenAxisRisk =' third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/java/com/paddle/ocr/postprocess/QuadTextCrop.kt
+          grep -q 'if (repair || provenAxisRisk)' third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/java/com/paddle/ocr/postprocess/QuadTextCrop.kt
+          mkdir -p "$RUNNER_TEMP/combined-classes"
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/combined-classes" \
+            app/src/main/java/com/vobichngan/kanzi/CrossRowOrientationAudit.java \
+            app/src/main/java/com/vobichngan/kanzi/HorizontalCrossRowProposal.java \
+            scripts/CombinedHorizontalVerticalSmokeTest.java
+          java -cp "$RUNNER_TEMP/combined-classes" CombinedHorizontalVerticalSmokeTest
+          javac -encoding UTF-8 -cp "$RUNNER_TEMP/reading-flow-classes" -d "$RUNNER_TEMP/combined-classes" \
+            app/src/main/java/com/vobichngan/kanzi/AutoPageRotation.java \
+            scripts/AutoPageRotationSmokeTest.java
+          java -cp "$RUNNER_TEMP/combined-classes:$RUNNER_TEMP/reading-flow-classes" AutoPageRotationSmokeTest
+          gradle --no-daemon --no-parallel --max-workers=2 --stacktrace :app:assembleDebug
+          test -s app/build/outputs/apk/debug/app-debug.apk
+      - name: Audit independent signed APK, offline OCR models, version and package
+        run: |
+          set -euo pipefail
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt -print | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print | sort -V | tail -1)"
+          test -x "$AAPT" && test -x "$SIGNER" && test -s "$apk"
+          "$AAPT" dump badging "$apk" | tee "$RUNNER_TEMP/ocr-apk-info.txt"
+          grep -q "package: name='com.vobich.kanzi.x200simpleorientationab'" "$RUNNER_TEMP/ocr-apk-info.txt"
+          grep -q "versionCode='1'" "$RUNNER_TEMP/ocr-apk-info.txt"
+          "$AAPT" dump permissions "$apk" > "$RUNNER_TEMP/ocr-apk-permissions.txt"
+          if grep -qi 'android.permission.INTERNET' "$RUNNER_TEMP/ocr-apk-permissions.txt"; then
+            echo 'Offline APK MUST NOT have INTERNET permission' >&2; exit 1
+          fi
+          "$SIGNER" verify --verbose --print-certs "$apk" | tee "$RUNNER_TEMP/sameframeab-cert.txt"
+          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' "$RUNNER_TEMP/sameframeab-cert.txt"
+          python3 - "$apk" <<'PY'
+          from pathlib import Path
+          import hashlib,zipfile,sys
+          apk=Path(sys.argv[1])
+          with zipfile.ZipFile(apk) as z:
+              names=set(z.namelist())
+              assert 'classes.dex' in names
+              dex=b''.join(z.read(n) for n in names if n.startswith('classes') and n.endswith('.dex'))
+              for required in (b'UsbAutoOcrOrientation',b'ReadingStrategyRouter',b'SingleVerticalFlow',
+                               b'TextRegionPartition',b'VerticalLongColumnLive',
+                               b'OcrInputOrientation',b'UsbPreviewMirror'):
+                  assert required in dex,required
+              assert 'assets/models/det/inference.onnx' in names
+              assert 'assets/models/rec/inference.onnx' in names
+              assert any(x.startswith('lib/arm64-v8a/') and 'onnxruntime' in x for x in names)
+              det=hashlib.sha256(z.read('assets/models/det/inference.onnx')).hexdigest()
+              rec=hashlib.sha256(z.read('assets/models/rec/inference.onnx')).hexdigest()
+              assert det=='d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e',det
+              assert rec=='5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634',rec
+              print('SIMPLE_READING_OFFLINE_APK_AUDIT=PASS',apk.stat().st_size,det,rec)
+          PY
+          mkdir -p "$RUNNER_TEMP/diag-output"
+          cp "$apk" "$RUNNER_TEMP/diag-output/Kanzi_X200_SameFrameOCRAB_experiment.apk"
+          cat > "$RUNNER_TEMP/diag-output/README.txt" <<'TXT'
+          看字助手 · 同帧极简OCR实验（独立安装，不覆盖v54）。
+          设置 -> OCR诊断 -> 实验：同一画面原向0°与左转90°真实OCR对照。
+          在同一摄像头NV21帧上使用PP-OCRv6 Small分别做两次完整检测+识别。
+          不使用自动定向或二次局部识别、AI版面、额外裁剪补救、置信度删字。
+          两组输出均是实际模型原文，严禁用置信度推断准确率。
+          需要人工结合真实照片逐字判断哪个输入更准确。
+          本实验不会改变v54实时自动OCR、TTS朗读或USB方向缓存。
+          两次全图推理仅在用户点实验按钮时进行，不是常开实时流程。
+          模型和预览离线运行；私有照片与诊断ZIP不上传GitHub。
+          Android编译+签名/无INTERNET/模型SHA检查不等于手机实拍成功。
+          TXT
+          sha256sum "$RUNNER_TEMP/diag-output/Kanzi_X200_SameFrameOCRAB_experiment.apk" > "$RUNNER_TEMP/diag-output/SHA256SUMS.txt"
+          cat "$RUNNER_TEMP/diag-output/SHA256SUMS.txt" >> "$GITHUB_STEP_SUMMARY"
+          echo 'SAME_FRAME_AB_APK_AUDIT=PASS; v53 isolated; offline; quiet auto TTS; real phone 3-min A/B pending.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload standalone debug APK and checksum artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vivo-x200-sameframe-ocr-angle-ab-experiment-apk
+          path: ${{ runner.temp }}/diag-output/
+          retention-days: 10
+          if-no-files-found: error
+
+      - name: Publish independent signed sameframeab APK release (new tag only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          branch_head="$(gh api repos/vobichngan285-collab/kanzi-assistant/branches/test/x200-simple-same-frame-phone-ab-20261104 --jq '.commit.sha')"
+          if [ "$GITHUB_SHA" != "$branch_head" ]; then
+            echo "Stale run: only latest sameframeab source may publish." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          tag=x200-simple-ocr-angle-ab-20261104-experiment
+          name=Kanzi_X200_SameFrameOCRAB_experiment.apk
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          cp "$apk" "$RUNNER_TEMP/$name"
+          cat > "$RUNNER_TEMP/release-notes.md" <<EOF
+          看字助手 · 0° vs 左转90°同帧真实Small OCR 独立离线实验APK。
+          - 此独立debug包不覆盖v54；不是v55正式准确率升级。
+          - 新按钮位于设置→OCR诊断：同一原始NV21帧按0°和向左旋转90°各运行一次同一Small DET+REC。
+          - 严格避免实时自动校准、版面AI、二次局部裁剪/补救和按置信度挑选；文字原文逐组列明。
+          - 用户应与原照片人工逐字核对，不把置信度或输出字符数称为准确率。
+          - 真实手机端的准确率、耗时、温度仍须真机测试；两次推理仅限手动实验。
+          - 正式实时朗读不改动；打包无INTERNET权限，私有图片不会上传GitHub。
+          - source commit: $GITHUB_SHA
+          EOF
+          if ! gh release view "$tag" -R vobichngan285-collab/kanzi-assistant >/dev/null 2>&1; then
+            gh release create "$tag" -R vobichngan285-collab/kanzi-assistant \
+              --target "$GITHUB_SHA" --title "看字助手 X200 同帧0与左转90度真实Small OCR诊断（独立实验）" \
+              --notes-file "$RUNNER_TEMP/release-notes.md" --prerelease
+          fi
+          gh release upload "$tag" "$RUNNER_TEMP/$name" -R vobichngan285-collab/kanzi-assistant --clobber
+          gh api repos/vobichngan285-collab/kanzi-assistant/releases/tags/"$tag" \
+            --jq '.assets[] | select(.name=="Kanzi_X200_SameFrameOCRAB_experiment.apk") | [.browser_download_url,.size,.state,.digest] | @tsv' \
+            | tee "$RUNNER_TEMP/sameframeab-url.txt"
+          grep -q '^https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/' "$RUNNER_TEMP/sameframeab-url.txt"
+          sha256sum "$RUNNER_TEMP/$name" >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/sameframeab-url.txt" >> "$GITHUB_STEP_SUMMARY"
