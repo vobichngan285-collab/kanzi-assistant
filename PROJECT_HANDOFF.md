@@ -522,3 +522,16 @@
 - **完整Android编译/离线模型/签名/公开APK发布已通过**：GitHub Actions https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41780769705 = SUCCESS；release tag `x200-independent-preview-ocr-20261104-v46`，资产 `Kanzi_X200_PreviewOCRIndependent_v46_debug.apk`，大小**390416263** bytes，SHA256 **0bb28603cdcd0d7f5b82293c5c6a875734931a7526c218578a809f13a8425f07**，独立APK浏览器下载链接：
   https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/x200-independent-preview-ocr-20261104-v46/Kanzi_X200_PreviewOCRIndependent_v46_debug.apk
 - 安装及验证：本包独立包名，不覆盖v43或v45，也不要求用户卸载旧版。Debug临时签名不保证未来同包名覆盖。首先验证USB预览吉他在右侧，再把USB OCR设向左90°；运行一次手动诊断，核查“本次实际OCR输入旋转=270°”和实际OCR输入1080×1920，再点正式开始识别。任何真机测试未发生之前，不要宣称用户朗读已修复，不要上传用户的私人诊断ZIP到GitHub。
+
+#### 2026-11-04 v48 真竖排长列裁剪修复＋显式开启的实时朗读（已发布）
+
+- 用户上传了第6份单帧诊断ZIP与一张清楚的“刮痧·中醫養生”真竖排宣传牌照片。**原始私有图像/逐字内容/ZIP、裁剪张量不得上传GitHub**。本地分析事实：原始帧1080×1920、OCR输入0°，13个框、DET约546ms、REC约848ms，质量档4线程/批2；5个正文长列中的3列已能正常识别，而另外2个极细长歪斜框原始REC仅得1字或短乱码。对这2个框求OpenCV minAreaRect，发现其上/下端X区间完全分离，gap约9px/4px，普通竖列X区间重叠（gap<=0）。其SDK上游QuadGeometry按X排序会把长轴错判成宽，造成裁剪倒向；这两框的校正应在**首次裁剪**完成，不需要再次整图OCR。
+- 新实验分支 `test/x200-vertical-live-gated-v48`，基于v46预览/OCR真正独立版本，不覆盖正式包或之前测试版。保留全部摄像头预览镜像与USB、手机OCR方向设置，**不**通过旋转预览或全页来修复局部竖列。
+- 对 `scripts/patch_x200_shadow_sdk.py` 增加严格首裁剪自动轴风险判断：SDK `QuadTextCrop` 仅在竖向跨度>=160、宽>=8、长宽比>=4、minAreaRect上下两点组X区间完全不重合且间隔>2px时改用Y分组顶点顺序，其余全部保留官方裁剪。DBNet和OCR模型权重不变。该项为零额外REC/DET设计，但**尚未真实手机逐字验收**，不能断言所有竖排错字都修好。
+- 新增 `VerticalLongColumnLive.java`：只有用户主动勾选“真正竖排中文：按右→左逐列朗读（实验，默认关闭）”，至少4个邻接长列、足够长的中文正文、每列conf>=0.8、横纵覆盖/字符和编号完整性检查通过，且邻区不存在仍乱码的长竖列时才将OCR原文按右→左列序拼入**正式TTS**（非仅诊断）；不能凭上下文补字。小续字必须有严格坐标证据，若歧义则不并入，所有其他原框按原SDK顺序保留为单独片段。不满足任何条件即按原实时排序回退，正常横排模式默认不变。
+- `MainActivity`保存独立竖排模式开关，变更后重置语音缓存；`PaddleOcrEngine`的diagnose与live都调用同一竖排门控，以便在诊断里看真实会被采纳的朗读文本/拒绝理由。`scripts/VerticalLongColumnLiveSmokeTest.java`只用匿名合成几何验证5列顺序、字符逐字完整、不重不漏、正常横排拒绝、未恢复残余竖列拒绝、歧义续字回退。私有图片未用于公开CI。
+- **完整GitHub Actions Android工作流SUCCESS**：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41784901771 。模型SHA、手机预览与音频/书页回归、竖排合成几何回归、无INTERNET权限、ARM64、APK v2签名、发行资产检查通过。
+- **已核实GitHub Release真实上传资产**：tag `x200-vertical-live-gated-20261104-v48`，包名 `com.vobich.kanzi.x200verticallive`，versionCode48、versionName0.9.15，安装包 `Kanzi_X200_VerticalLiveGated_v48_debug.apk`，大小 **390416247 bytes**，sha256 `36eb691d838b7097d4ca80ccfa7cb6cb9232514d924beb5e8fec065b34191fb4`。可复制到浏览器直接下载：
+  https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/x200-vertical-live-gated-20261104-v48/Kanzi_X200_VerticalLiveGated_v48_debug.apk
+- **关键安装及手机测试**：是独立测试App，用户不必卸载v43/v46。打开“看字助手·竖排朗读实验”，保持正确实际OCR输入角度（第6份手机诊断原始0°已经识字，**不能按用户之前手动270°的UI设置擅自假定手机实时角度也正确**）。到设置中主动开启“真正竖排中文”实验开关；对准同一竖排宣传牌，先手动OCR诊断看列数/实际输入方向和“竖排实时朗读门控”，然后点“开始识别”听真实TTS是否按右→左。若仍拒绝请导出同帧诊断ZIP对照；横排建议关闭实验竖排模式。此阶段**没有完成用户手机实际朗读验收**，不要宣称已完全修好。
+- Debug签名为CI临时签名：不承诺相同包名后续可直接覆盖；每次测试新包名和直接HTTPS链接必须验证后提供。
