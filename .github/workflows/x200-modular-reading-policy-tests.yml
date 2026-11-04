@@ -44,3 +44,20 @@ jobs:
           java -cp "$RUNNER_TEMP/policy" VerticalLongColumnLiveSmokeTest
           java -cp "$RUNNER_TEMP/policy" VerticalLongColumnShadowSmokeTest
           echo "MODULAR_READING_POLICY_SUITE=PASS" >> "$GITHUB_STEP_SUMMARY"
+      - name: Test layout router against 100 original public licensed images / oracle annotations
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'pyarrow==18.1.0'
+          curl --fail --location --retry 3 --retry-delay 3 \
+            'https://huggingface.co/datasets/sdcb/simdpaddleocr-dataset-v1/resolve/main/data/test-00000-of-00001.parquet?download=true' \
+            -o "$RUNNER_TEMP/public-ocr.parquet"
+          test "$(stat -c%s "$RUNNER_TEMP/public-ocr.parquet")" -gt 10000000
+          python3 scripts/export_public_ocr_layout_cases.py "$RUNNER_TEMP/public-ocr.parquet" \
+            > "$RUNNER_TEMP/public-layout.tsv"
+          javac -encoding UTF-8 -cp "$RUNNER_TEMP/policy" \
+            -d "$RUNNER_TEMP/policy" scripts/PublicOcrLayoutCorpusTest.java
+          java -cp "$RUNNER_TEMP/policy" PublicOcrLayoutCorpusTest \
+            "$RUNNER_TEMP/public-layout.tsv" | tee "$RUNNER_TEMP/public-policy-results.txt"
+          grep -q 'PUBLIC_ONLINE_LAYOUT=PASS images=100' "$RUNNER_TEMP/public-policy-results.txt"
+          cat "$RUNNER_TEMP/public-policy-results.txt" >> "$GITHUB_STEP_SUMMARY"
+
