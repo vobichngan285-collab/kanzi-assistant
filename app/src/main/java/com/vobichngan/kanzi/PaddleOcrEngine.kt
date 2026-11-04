@@ -18,6 +18,7 @@ import com.paddle.ocr.EngineConfig
 import com.paddle.ocr.PaddleOCR
 import com.paddle.ocr.PaddleOCRConfig
 import com.paddle.ocr.model.OCRResult
+import com.paddle.ocr.model.OCRRunResult
 import com.paddle.ocr.util.OpenCVUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -112,6 +113,99 @@ class PaddleOcrEngine(
     @Volatile private var engine: PaddleOCR? = null
     @Volatile private var released = false
     @Volatile private var fastScanMode = false
+    // USB OCR input AUTO -1 is resolved from actual pixels; never TextureView
+    // orientation. One successful calibration is cached for the camera session.
+    @Volatile private var usbAutoResolvedAngle = -1
+    private var usbAutoConsecutiveBadFrames = 0
+    private var usbAutoLastProbeNanos = 0L
+
+    private data class UsbAutoFrame(
+        val bitmap: Bitmap,
+        val result: OCRRunResult,
+        val angle: Int,
+        val report: String
+    )
+
+    private fun rotateForAuto(source: Bitmap, clockwise: Int): Bitmap {
+        if (clockwise == 0) return source
+        val matrix = Matrix().apply { postRotate(clockwise.toFloat()) }
+        return Bitmap.createBitmap(source,0,0,source.width,source.height,matrix,true)
+    }
+
+    /**
+     * USB only. First perform ONE original-pixel OCR. When actual OCR returns
+     * several 600px-wide rows containing just 1-5 characters, try 270° then
+     * (if needed) 90° on that SAME frame. Persist the winning direction for
+     * the current engine; no repeated per-frame three-direction inference.
+     * All decisions compare output of real offline PP-OCR, never language
+     * guesses or the on-screen mirrored preview.
+     */
+    private suspend fun recognizeUsbAutomatically(
+        current:PaddleOCR, source:Bitmap
+    ): UsbAutoFrame {
+        val cached = usbAutoResolvedAngle
+        if(cached>=0) {
+            val oriented = rotateForAuto(source,cached)
+            try {
+                val result=current.recognize(oriented)
+                val q=UsbAutoOcrOrientation.quality(toReadingBoxes(result.results))
+                if(UsbAutoOcrOrientation.shouldRevisit(q,++usbAutoConsecutiveBadFrames) &&
+                   System.nanoTime()-usbAutoLastProbeNanos>90_000_000_000L) {
+                    usbAutoResolvedAngle = -1
+                    usbAutoConsecutiveBadFrames = 0
+                } else if(q.brokenWideRows<3) usbAutoConsecutiveBadFrames=0
+                return UsbAutoFrame(oriented,result,cached,
+                    "USB自动方向：复用已校准${cached}°（本帧仅1次OCR）")
+            } catch(t:Throwable) {
+                if(oriented!==source) oriented.recycle()
+                throw t
+            }
+        }
+        val first=current.recognize(source)
+        val baseline=UsbAutoOcrOrientation.quality(toReadingBoxes(first.results))
+        if(!UsbAutoOcrOrientation.needsProbe(baseline,source.width,source.height)) {
+            // Keep this sensor's raw direction when its normal text is readable.
+            usbAutoResolvedAngle=0
+            usbAutoConsecutiveBadFrames=0
+            return UsbAutoFrame(source,first,0,
+                "USB自动方向：原始0°内容可读，未增加推理")
+        }
+        val state=OcrHardwareProbe.capture(appContext)
+        val now=System.nanoTime()
+        if(state.memoryPressure ||
+           (state.thermalStatus>=2) ||
+           now-usbAutoLastProbeNanos<20_000_000_000L) {
+            return UsbAutoFrame(source,first,0,
+                "USB自动方向：温控/内存/冷却限制，本帧保留原版0°")
+        }
+        usbAutoLastProbeNanos=now
+        // Probe at most two alternative directions on this problematic frame.
+        // Early-exit on the first strongly corroborated success.
+        var trials=0
+        for(angle in intArrayOf(270,90)) {
+            val rotated=rotateForAuto(source,angle)
+            try {
+                val candidate=current.recognize(rotated)
+                trials++
+                val score=UsbAutoOcrOrientation.quality(toReadingBoxes(candidate.results))
+                if(UsbAutoOcrOrientation.accept(baseline,score)) {
+                    usbAutoResolvedAngle=angle
+                    usbAutoConsecutiveBadFrames=0
+                    return UsbAutoFrame(rotated,candidate,angle,
+                        "USB自动方向：实际OCR证据通过，自动采用${angle}°；校准额外推理${trials}次，后续复用")
+                }
+            } catch(t:Throwable) {
+                Log.w(TAG,"USB automatic OCR orientation candidate rejected",t)
+            } finally {
+                // If selected, the bitmap is returned to the caller and must
+                // not be recycled until result processing has completed.
+                if(rotated!==source && usbAutoResolvedAngle!=angle)rotated.recycle()
+            }
+        }
+        // No confident winner: avoid inventing a direction or transcript.
+        return UsbAutoFrame(source,first,0,
+            "USB自动方向：追加OCR${trials}次，均未取得可信改善，保留原始0°并冷却")
+    }
     @Volatile private var verticalLiveReadingEnabled = false
     fun setVerticalLiveReadingEnabled(enabled: Boolean) { verticalLiveReadingEnabled = enabled }
     // Optional 90/270 degree correction in the live text scanner.
