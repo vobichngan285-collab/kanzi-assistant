@@ -76,7 +76,7 @@ public final class ModularReadingRoutingSmokeTest {
             b.add(box("横排正文第"+i+"行有价格120元和数字302",
                 60,100+i*58,800,40,.96f));
         var r=read(b,1000,900);
-        ok("FULL_READING".equals(r.strategy),"horizontal full text, no focus selection");
+        ok("HORIZONTAL_ROWS_FULL".equals(r.strategy),"horizontal full text, line-first reading without focus selection");
         for(int i=0;i<6;i++)ok(r.text.indexOf("第"+i+"行")<r.text.indexOf("第"+(i+1)+"行"),
             "horizontal rows follow top-to-bottom");
     }
@@ -109,7 +109,11 @@ public final class ModularReadingRoutingSmokeTest {
             b.add(box("项目"+i,125+(i%2)*560,1110+(i/2)*65,105,31,.90f));
         ok(b.size()==35,"price-list fixture must contain 35 source boxes");
         var r=read(b,1080,1920);
-        ok("FULL_READING".equals(r.strategy),"35-box price list must not enter sign focus");
+        ok("HORIZONTAL_ROWS_FULL".equals(r.strategy),"35-box price list uses full row ordering");
+        ok(r.text.indexOf("中医推拿一小时")<r.text.indexOf("90元") &&
+           r.text.indexOf("90元")<r.text.indexOf("半小时") &&
+           r.text.indexOf("半小时")<r.text.indexOf("50元"),
+           "same-row service must be spoken before its price");
         ok(r.text.contains("120元")&&r.text.contains("充2000送600")&&
            r.text.contains("刺经滑拔"),"prices, digits and flawed source boxes all preserved");
     }
