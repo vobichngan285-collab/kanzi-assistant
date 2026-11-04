@@ -1,0 +1,72 @@
+name: X200 vertical column and USB mirror regression
+
+on:
+  push:
+    branches: [test/x200-vertical-usb-preview-v45]
+    paths:
+      - 'app/src/main/java/com/vobichngan/kanzi/VerticalLongColumnShadow.java'
+      - 'app/src/main/java/com/vobichngan/kanzi/UsbPreviewMirror.java'
+      - 'app/src/main/java/com/vobichngan/kanzi/OcrOverlayView.java'
+      - 'app/src/main/java/com/vobichngan/kanzi/MainActivity.java'
+      - 'scripts/VerticalLongColumnShadowSmokeTest.java'
+      - 'scripts/UsbPreviewMirrorSmokeTest.java'
+      - '.github/workflows/vertical-usb-preview-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile pure Java geometry with no camera/Android changes
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/classes"
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/classes" \
+            app/src/main/java/com/vobichngan/kanzi/LayoutRegion.java \
+            app/src/main/java/com/vobichngan/kanzi/TextFlowRebuilder.java \
+            app/src/main/java/com/vobichngan/kanzi/ReadingOrder.java \
+            app/src/main/java/com/vobichngan/kanzi/RealtimeTextOrientation.java \
+            app/src/main/java/com/vobichngan/kanzi/VerticalLongColumnShadow.java \
+            app/src/main/java/com/vobichngan/kanzi/UsbPreviewMirror.java \
+            scripts/RealtimeTextOrientationSmokeTest.java \
+            scripts/VerticalLongColumnShadowSmokeTest.java \
+            scripts/UsbPreviewMirrorSmokeTest.java
+      - name: Regress vertical long-column OCR diagnosis without text changes
+        run: java -cp "$RUNNER_TEMP/classes" VerticalLongColumnShadowSmokeTest
+      - name: Verify USB mirror defaults and overlay map coordinates
+        run: java -cp "$RUNNER_TEMP/classes" UsbPreviewMirrorSmokeTest
+      - name: Regress sideways and upright ordinary books
+        run: java -cp "$RUNNER_TEMP/classes" RealtimeTextOrientationSmokeTest
+      - name: Confirm preview transform is USB-only, original NV21 OCR pixels unchanged
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          a=Path('app/src/main/java/com/vobichngan/kanzi/MainActivity.java').read_text()
+          o=Path('app/src/main/java/com/vobichngan/kanzi/OcrOverlayView.java').read_text()
+          p=Path('app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt').read_text()
+          assert 'usb_preview_correct_left_right' in a
+          assert 'usbPreviewCorrectMirror = prefs.getBoolean(PREF_USB_PREVIEW_CORRECT_MIRROR, true)' in a
+          assert 'usbDisplay.setScale(-1.0f, 1.0f' in a
+          assert 'cameraTextureView.setTransform(usbDisplay)' in a
+          assert 'ocrOverlay.setUsbDisplayMirror(usbMirror)' in a
+          assert 'usbDisplayMirror' in o and 'UsbPreviewMirror.mapX' in o
+          assert 'phoneTexture.setTransform(transform)' in a
+          assert 'val verticalColumnOrder = VerticalLongColumnShadow.inspect(frameBoxes)' in p
+          assert '【长列竖排阅读顺序候选（仅诊断）】' in p
+          begin=p.index('fun diagnoseNv21(')
+          point=p.index('val verticalColumnOrder = VerticalLongColumnShadow.inspect(frameBoxes)')
+          last=p.index('fun processNv21(') if 'fun processNv21(' in p else len(p)
+          assert begin < point < last, "vertical is diagnostic-only"
+          assert 'val verticalColumnOrder' not in p[last:]
+          assert 'UsbPreviewMirror' not in p, "no USB preview mirror in OCR engine"
+          print('USB_PREVIEW_ONLY_AND_VERTICAL_SHADOW_ONLY=PASS')
+          PY
