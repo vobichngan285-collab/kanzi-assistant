@@ -89,7 +89,7 @@ public final class PublicOcrLayoutCorpusTest {
                 } else throw new AssertionError("unknown export record");
             }
         }
-        if(tested!=100||boxes<1000||overlapErrors>0)
+        if(tested!=100||PublicOcrLayoutCorpusTest.boxes<1000||overlapErrors>0)
             throw new AssertionError("incomplete public dataset images="+tested+" boxes="+boxes+" dropped="+overlapErrors);
         System.out.println("PUBLIC_ONLINE_LAYOUT=PASS images="+tested+
             " gt_lines="+boxes+" image_with_90deg_lines="+oracleRotated+
