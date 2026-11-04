@@ -1,0 +1,100 @@
+name: X200 isolated same-frame Small vs ChineseOCR-Lite DET-only phone APK
+on:
+  push:
+    branches: [test/x200-cn-lite-small-sameframe-phone-det-20261105]
+    paths:
+      - 'craft768-int8-probe/**'
+      - '.github/workflows/x200-cnlite-small-sameframe-det-apk.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  independent-det-apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check original app isolation and model-free committed source
+        run: |
+          set -euo pipefail
+          test -f craft768-int8-probe/app/src/main/java/com/vobich/kanzi/craftprobe/DetCompareEngine.java
+          test -f craft768-int8-probe/app/src/main/java/com/vobich/kanzi/craftprobe/DetCompareActivity.java
+          grep -q "applicationId 'com.vobich.kanzi.detcompare'" craft768-int8-probe/app/build.gradle
+          grep -q 'DetCompareActivity' craft768-int8-probe/app/src/main/AndroidManifest.xml
+          ! grep -R 'android.permission.INTERNET' craft768-int8-probe/app/src/main
+          ! grep -R 'DetCompareEngine' app/src/main
+          test ! -e craft768-int8-probe/app/src/main/assets/cnlite_det.onnx
+          test ! -e craft768-int8-probe/app/src/main/assets/small_det.onnx
+          echo 'Research-only separate APK, no main app source changed and no internet permission' >> "$GITHUB_STEP_SUMMARY"
+      - name: Fetch pinned DET-only model weights and GPL attribution
+        run: |
+          set -euo pipefail
+          mkdir -p craft768-int8-probe/app/src/main/assets /tmp/det-ab-package
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 \
+            'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/5994b4f/inference.onnx' \
+            -o craft768-int8-probe/app/src/main/assets/small_det.onnx
+          curl -fL --retry 3 --retry-delay 2 --max-time 240 \
+            'https://raw.githubusercontent.com/DayBreak-u/chineseocr_lite/54a3df53af823f3bffdde9393d0c021b4f6d94cd/models/dbnet.onnx' \
+            -o craft768-int8-probe/app/src/main/assets/cnlite_det.onnx
+          echo 'd73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  craft768-int8-probe/app/src/main/assets/small_det.onnx' | sha256sum -c -
+          echo 'ec31eb2b7daa39c4e0307ebb290045deecd515f4e9656d5d987eb82148aea867  craft768-int8-probe/app/src/main/assets/cnlite_det.onnx' | sha256sum -c -
+          test "$(stat -c%s craft768-int8-probe/app/src/main/assets/small_det.onnx)" -eq 9880512
+          test "$(stat -c%s craft768-int8-probe/app/src/main/assets/cnlite_det.onnx)" -eq 3637234
+          curl -fL --retry 3 --retry-delay 2 \
+            'https://raw.githubusercontent.com/DayBreak-u/chineseocr_lite/54a3df53af823f3bffdde9393d0c021b4f6d94cd/LICENSE' \
+            -o /tmp/det-ab-package/ChineseOCR-Lite_GPL-2.0_LICENSE.txt
+          cp craft768-int8-probe/DET_AB_README.md /tmp/det-ab-package/README.md
+          echo 'Downloaded original weights by exact pinned URI/SHA; model bytes not committed.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile standalone Android arm64 APK
+        run: |
+          set -euo pipefail
+          gradle -p craft768-int8-probe --no-daemon --no-parallel --max-workers=2 --stacktrace :app:assembleDebug
+          test -s craft768-int8-probe/app/build/outputs/apk/debug/app-debug.apk
+      - name: Audit package, checksum, ABI, signature, permission and detectors
+        run: |
+          set -euo pipefail
+          apk=craft768-int8-probe/app/build/outputs/apk/debug/app-debug.apk
+          python3 - "$apk" <<'PY'
+          import sys,zipfile,hashlib
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              names=set(z.namelist())
+              for asset,sha in [
+                ('assets/small_det.onnx','d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e'),
+                ('assets/cnlite_det.onnx','ec31eb2b7daa39c4e0307ebb290045deecd515f4e9656d5d987eb82148aea867')]:
+                  assert asset in names,asset
+                  assert hashlib.sha256(z.read(asset)).hexdigest()==sha,asset
+              assert any(x.startswith('lib/arm64-v8a/') and 'opencv' in x for x in names),'Missing OpenCV arm64'
+              assert 'lib/arm64-v8a/libonnxruntime.so' in names,'Missing ONNX ARM64'
+              assert 'classes.dex' in names
+              assert not any(x.endswith('craft768_int8.onnx') for x in names),'Old model accidentally bundled'
+          print('DET_ONLY_EXPERIMENT_APK_CONTENT_AUDIT=PASS')
+          PY
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt -print | sort -V | tail -1)"
+          APK_SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print | sort -V | tail -1)"
+          "$AAPT" dump badging "$apk" | tee /tmp/det-ab-badging.txt
+          grep -q "package: name='com.vobich.kanzi.detcompare'" /tmp/det-ab-badging.txt
+          ! "$AAPT" dump permissions "$apk" | grep -q android.permission.INTERNET
+          "$APK_SIGNER" verify --verbose "$apk" | tee /tmp/det-ab-sign.txt
+          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' /tmp/det-ab-sign.txt
+          echo 'DET_ONLY_EXPERIMENT_APK_AUDIT=PASS' >> "$GITHUB_STEP_SUMMARY"
+          sha256sum "$apk" >> "$GITHUB_STEP_SUMMARY"
+          echo 'APK compile+static audit ONLY; vivo phone behavior/timing/heat unverified.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve standalone APK and reproducibility notes as workflow artifact
+        run: |
+          set -euo pipefail
+          cp craft768-int8-probe/app/build/outputs/apk/debug/app-debug.apk \
+            /tmp/det-ab-package/Kanzi_Small_vs_ChineseOCRLite_SameFrame_DET_only_debug.apk
+          sha256sum /tmp/det-ab-package/*.apk > /tmp/det-ab-package/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: x200-same-frame-small-vs-cnlite-det-only-apk
+          path: /tmp/det-ab-package/
+          if-no-files-found: error
+          retention-days: 10
