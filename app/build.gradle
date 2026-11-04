@@ -22,8 +22,8 @@ android {
     }
     buildTypes {
         debug {
-            applicationIdSuffix '.x200modularcenter'
-            versionNameSuffix '-modular-center-reading'
+            applicationIdSuffix '.x200simpleflow'
+            versionNameSuffix '-simple-full-reading'
             minifyEnabled false
         }
         release {
@@ -43,8 +43,8 @@ android {
         applicationId 'com.vobich.kanzi'
         minSdk 26
         targetSdk 35
-        versionCode 51
-        versionName '0.9.18'
+        versionCode 52
+        versionName '0.9.19'
     }
 }
 
