@@ -1,0 +1,55 @@
+name: X200 vertical long-column shadow order regression
+
+on:
+  push:
+    branches:
+      - test/x200-vertical-long-column-shadow-20261104
+    paths:
+      - 'app/src/main/java/com/vobichngan/kanzi/VerticalLongColumnShadow.java'
+      - 'app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt'
+      - 'scripts/VerticalLongColumnShadowSmokeTest.java'
+      - '.github/workflows/vertical-long-column-shadow.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shadow-only:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile pure JVM geometry and legacy real-time reading logic
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/classes"
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/classes" \
+            app/src/main/java/com/vobichngan/kanzi/LayoutRegion.java \
+            app/src/main/java/com/vobichngan/kanzi/TextFlowRebuilder.java \
+            app/src/main/java/com/vobichngan/kanzi/ReadingOrder.java \
+            app/src/main/java/com/vobichngan/kanzi/RealtimeTextOrientation.java \
+            app/src/main/java/com/vobichngan/kanzi/VerticalLongColumnShadow.java \
+            scripts/RealtimeTextOrientationSmokeTest.java \
+            scripts/VerticalLongColumnShadowSmokeTest.java
+      - name: Verify OCR text preserved and five long columns in right-to-left order
+        run: java -cp "$RUNNER_TEMP/classes" VerticalLongColumnShadowSmokeTest
+      - name: Regress normal and sideways book reading
+        run: java -cp "$RUNNER_TEMP/classes" RealtimeTextOrientationSmokeTest
+      - name: Check integration is strictly diagnostic-only, not TTS
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          src=Path("app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt").read_text()
+          point=src.index("val verticalColumnOrder = VerticalLongColumnShadow.inspect(frameBoxes)")
+          diagnostic=src.index("fun diagnoseNv21(")
+          live=src.index("fun processNv21(") if "fun processNv21(" in src else len(src)
+          assert diagnostic < point < live, "long-column candidate must run only in manual diagnosis"
+          assert "【长列竖排阅读顺序候选（仅诊断）】" in src
+          assert "val verticalColumnOrder" not in src[live:], "no live OCR or speech integration"
+          print("VERTICAL_COLUMN_DIAGNOSTIC_ONLY=PASS")
+          PY
