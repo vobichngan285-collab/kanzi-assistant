@@ -626,3 +626,13 @@
 - 实验版在设置/诊断新增用户手动按钮「实验：同一画面原向0°与左转90°真实OCR对照」。同一NV21帧解码1次，`ppocrv6_small`先0°完整DET+REC，然后同帧向左旋转90°再完整DET+REC，分别输出原始识别文字、框数量、信心分、检测/识别耗时和温控概况。彻底绕开自动定向、版面AI、二次ROI、正文补救与TTS，**不自动根据置信度决定正确角度**；正式实时播放逻辑仍沿v54。
 - GitHub Actions完整成功 https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41839423818 ，Android assembleDebug成功、模型SHA、签名v2、离线无INTERNET和独立包名审计完成；Release https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/x200-simple-ocr-angle-ab-20261104-experiment/Kanzi_X200_SameFrameOCRAB_experiment.apk ，大小390432655 bytes，SHA256 `0b5e412f963f4e66e9ee8d0310e5e1793f611cceca57c59b40161161e65a14e2`。更完整报告见隔离分支 `docs/x200-simple-sameframe-android-ab-20261104.md`。
 - **未验收**：vivo X200 Pro上识别率、0/左90方向差异、真实字级人工GT、热稳定和TTS。当前手动极简按钮不自动导出同一帧图片ZIP，不能把不同时间的普通诊断ZIP冒充精确同帧比较；若需要严格CER还须人工对照真实照片。不能将此诊断实验叫做v55正式识别提升。
+
+
+#### 2026-11-04 — 裁切及检测框专项：真机原始像素Small重识别+公开A/B（正式版未动）
+
+- 用户重新确定技术优先级：不再围绕不清楚小字无限添加补救，优先区分“检测框把多横行合成一竖框”与“框已正确但实际ROI裁切错轴”的原因。不能把裁切叫做已证实的唯一瓶颈。
+- 公开数据单纯扩框验证：隔离分支 test/x200-single-crop-geometry-ab-20261104，固定36张真实公开图片、122个匹配GT区域（690字）、同Small DET/REC，原裁切111编辑错误／CER16.087%，四周各扩大5%后115错误／CER16.667%；6好、7坏、109不变，简单扩框失败。真正推理CI https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41850767307 SUCCESS。公开证据见 docs/x200_crop_margin_paired_real_public_20261104.md，原图与用户私人文字完全未上传。
+- 私人原始手机证据只在本地运行：九份单帧ZIP共188个真实SDK文字框，检测出1帧的2个跨横行误合并竖长框；其余8帧探索规则未触发。第7份价目表这2个误合并导致4行、16字的阅读顺序混乱，原始大部分字形已认对。对原始SDK的12个选定相关框按SDK框顺序串接，人工GT16字的编辑距离7；基于该页短框邻近行对齐自动生成4条正确横行ROI，同一官方Small REC重新推理，4行全部正确／16字编辑距离0。这是很重要的局部因果证据，但不是整页CER，不等于正式APP修复。
+- 对九份188个SDK已经导出的真实REC float32张量在Python ONNX Runtime 1.23.2重放，与Android保存输出完全一致176个；异常框旧结果的重放一致。Python运行库与Android 1.21.1不完全等价，不能主张手机平台相同性绝对成立。候选规则参数参考该价目表设置，另8帧不触发不能替代独立留出集，也没有验证长竖列的所有反例。
+- 用户私有完整本地报告及复现文件：/mnt/data/kanzi_crop_causality_real_phone_20261104.zip（含私有文字和示例局部裁切、Python代码，不含权重和原始整帧）；禁止发布至GitHub公共repo。会话本地路径非永久公网文件链接。
+- 研发下一步：只围绕“同一帧检测框误跨行→一次性正确横行裁切→同Small REC”的单一实验做独立真机A/B，不能以单页成功添加多套复杂补救。尚未接入 Android 正式OCR、版面排序或TTS，未发布v55；正式v54独立保持不动。
