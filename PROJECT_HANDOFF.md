@@ -699,3 +699,16 @@
 - **经 GitHub Release API 核验的实际 APK：** Kanzi_Small_vs_ChineseOCRLite_SameFrame_DET_only_debug.apk，53,706,403 bytes，SHA256 51f7a27dd78d74ae78f3964708a761f16eb19bb056500d2443f3df3af5df9ac5。直接下载：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/x200-cnlite-small-sameframe-20261105-det-only-experiment/Kanzi_Small_vs_ChineseOCRLite_SameFrame_DET_only_debug.apk
 - Release 页面：https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/x200-cnlite-small-sameframe-20261105-det-only-experiment ，随包发布上游 ChineseOCR-Lite GPL-2.0 许可证及源码说明。**CN-Lite 模型权重单独许可条款仍未独立确认，禁止直接并入正式或商业版**。
 - **下一阶段只等待 vivo X200 Pro 用户真实测试反馈：** 分别拍中文字门牌、含上下相邻价格的菜单、超市价签和商品包装，比较同图两路框（尤其跨行/碎框/漏框）、导出 JSON 里的分段 P50/P95 和温度。与此前 restaurant_menu_12、storefront_10、supermarket_03 的实图反例比对，先验证手机检测后处理的正确性再考虑集成正式 App。**没有任何已经完成的 vivo 手机数据，严禁编造准确率、速度和发热结论。**
+
+#### 2026-11-05 — vivo V2405A 首次真实同帧 DET A/B JSON：Small 979ms / CN-Lite 240ms（单次，非稳态）
+
+- **用户原始证据：** 2026-11-05 03:37:12（UTC+8）手机本地 JSON，设备 vivo V2405A，Android API 36，图片来源“相册真实图片”，同一张解码后的 Bitmap，分辨率1536×2048。JSON 标记 sameDecodedBitmapForBoth=true、isLiveCameraStream=false、recognitionOrTtsIncluded=false。只有一组配对（pairs=1），两模型各执行1次，无预热（warmupPerModel=0）。不将用户原始 JSON 或原图上传 GitHub；只记录聚合指标及代表性少量检测区域坐标。
+- **模型固定哈希符合实验 APK：** Small SHA256 d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e；ChineseOCR-Lite SHA256 ec31eb2b7daa39c4e0307ebb290045deecd515f4e9656d5d987eb82148aea867。Small 模型输入1216×1600，CN-Lite输入640×832，输入规模显著不同，非同分辨率公平架构对比。
+- **首次真机单次耗时/检测数量：** Small 前处理75ms、ONNX推理888ms、后处理16ms、总计979ms、54个检测框；CN-Lite前处理10ms、推理223ms、后处理7ms、总计240ms、30框。本次总耗时比值约979/240=4.08、推理比值约888/223=3.98；仅一次非预热样本，不可宣称稳定快4倍或准确率提升。
+- **温度和内存：** 电池温度29.5℃→29.5℃；Android thermal status 0→0（正常）。最终整个实验 App PSS=666831 KB（约651MiB）；Small内部样本PSS=585103KB，CN-Lite样本PSS=688311KB；两模型同一进程同时加载，PSS动态变化，不能从这三值估算某模型独立内存占用。短时温度不变不能支持长期发热结论。
+- **统计局限：** 导出 JSON 的 P50/P95 因 pairs=1 全是单次耗时的同值，分位数无统计意义。必须使用带预热的12对交替同帧测试再讨论 P50/P95、热漂移；固定照片测试仍不等同实时 Camera2/UVC 帧率。
+- **真实划框几何风险1（尚缺实拍底图确认）：** CN-Lite输出大框 x=882..954、y=1084..1188，约72×104像素，覆盖 Small 在相近x范围的多个分离行级横框（如 y=1105..1134、y=1144..1175，并触及 y=1067..1094）。这是上下行被粘连的强烈坐标线索，但不能在未看到照片时直接判定文字内容。
+- **真实划框几何风险2：** CN-Lite x=667..860、y=729..817的大框（约193×88）同时覆盖Small x=677..850、y=737..796与x=682..845、y=787..816两块区域；可能多行合框。另有CN-Lite x=569..754、y=1137..1192及x=567..753、y=1096..1157两个框纵向重叠约20像素，应检查碎框/跨行。Small 54框、CN-Lite 30框不能直接说明谁漏检或谁精确率更高，因为没有完整人工文字GT及照片。
+- **当前结论与障碍：** 双模型已实际在 vivo 手机上成功推理并导出框坐标和性能记录；CN-Lite本次快但划框正确率未知。实验安卓后处理使用旋转矩形扩边近似替代原Python PyClipper，对跨行合框结论必须区分模型本身和后处理。Small暂不替换；不进入正式TTS/REC链路。
+- **下一步最小有效验证：** 用户保留当前实验APK，无需重复构建；在已选同一照片上点击⑤“12对交替运行（含预热）”，导出新JSON，并提供同一图像Small红框、CN-Lite绿框两张真实截图；也可另拍清晰多行价格/价签/包装进行同帧对照。复核逐行完整度、真实漏字、跨行与后处理，再做下一步决定。
+- **历史保留：** 前文“当时尚无真机数据”是上一轮构建完成时的状态，不覆盖。此次只追加日志，没有修改App、权重或触发新构建。
