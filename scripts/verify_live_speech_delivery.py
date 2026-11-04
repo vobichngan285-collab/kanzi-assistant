@@ -3,7 +3,7 @@
 from pathlib import Path
 
 source = Path("app/src/main/java/com/vobichngan/kanzi/MainActivity.java").read_text(encoding="utf-8")
-ocr_callback = source.split("recognizer.recognizeNv21(frame, width, height, enhance, legacyDecode, found -> {",1)[1].split("}, error ->",1)[0]
+ocr_callback = source.split("enhance, legacyDecode, effectiveOcrInputAngle, found -> {",1)[1].split("}, error ->",1)[0]
 assert "found != null && recognizedEpoch == readingEpoch.get()" in ocr_callback
 assert "onRecognized(found.getText(), oneShot," in ocr_callback
 assert "recognizedScene == realtimeScene.generation()" not in ocr_callback, "scene changed during slow OCR; recognized text was discarded"
