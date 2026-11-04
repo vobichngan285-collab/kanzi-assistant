@@ -231,7 +231,6 @@ class PaddleOcrEngine(
         readingFocusMode = try { ReadingFocus.Mode.valueOf(mode) }
             catch (_: IllegalArgumentException) { ReadingFocus.Mode.AUTO }
         focusTracker.reset()
-        centerTargetTracker.reset()
         layoutReuse.reset()
     }
 
