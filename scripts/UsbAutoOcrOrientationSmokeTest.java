@@ -51,7 +51,7 @@ public final class UsbAutoOcrOrientationSmokeTest {
     static List<ReadingOrder.Box> uprightPriceList() {
         List<ReadingOrder.Box> boxes=new ArrayList<>();
         for(int i=0;i<15;i++)
-            boxes.add(box("测试价格120元",.98f,170,240+i*65,610,36));
+            boxes.add(box("测试价格120元",.98f,170,240+i*65,210,36));
         return boxes;
     }
     static List<ReadingOrder.Box> genuineVerticalArticle() {
