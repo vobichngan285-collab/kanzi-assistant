@@ -197,6 +197,11 @@ class PaddleOcrEngine(
                         performanceProfile,performanceBefore)
                     val horizontal=inspectHorizontalRescues(current,bitmap,result.results,budget)
                     val vertical=inspectVerticalRescues(current,bitmap,result.results,budget)
+                    // A zero-inference, strictly shadow-mode column-order proposal.
+                    // Traditional one-box-per-column OCR is not covered by
+                    // ReadingOrder.verticalColumns(), which groups single glyphs.
+                    val verticalColumnOrder = VerticalLongColumnShadow.inspect(frameBoxes)
+                        .describe(frameBoxes)
                     val performanceAfter=OcrHardwareProbe.capture(appContext)
                     val allElapsed=(System.nanoTime()-startedNanos)/1_000_000L
                     val profileDiagnostic="X200综合实验：${performanceProfile.label}" +
@@ -210,6 +215,7 @@ class PaddleOcrEngine(
                         "\n\n【自动整页方向纠正 A/B（同帧）】\n${autoDirectionReport}" +
                         "\n\n【横排跨行修复候选】\n${horizontal.summary}" +
                         "\n\n【真正竖排方向修复候选】\n${vertical.summary}" +
+                        "\n\n【长列竖排阅读顺序候选（仅诊断）】\n${verticalColumnOrder}" +
                         "\n\n${fourWayShadowComparison(result.results,horizontal,vertical)}" +
                         "\n\n所有修复仅在手动诊断中进行，绝不覆盖正式朗读或原始框。"
                     if (evidenceRequested.getAndSet(false)) {
