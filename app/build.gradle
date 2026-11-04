@@ -22,8 +22,8 @@ android {
     }
     buildTypes {
         debug {
-            applicationIdSuffix '.x200verticalauto'
-            versionNameSuffix '-vertical-auto'
+            applicationIdSuffix '.x200usbautocal'
+            versionNameSuffix '-usb-auto-calibrated'
             minifyEnabled false
         }
         release {
@@ -43,8 +43,8 @@ android {
         applicationId 'com.vobich.kanzi'
         minSdk 26
         targetSdk 35
-        versionCode 49
-        versionName '0.9.16'
+        versionCode 50
+        versionName '0.9.17'
     }
 }
 
