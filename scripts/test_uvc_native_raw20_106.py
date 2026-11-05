@@ -23,7 +23,7 @@ assert "mLastOcrRawCallbackNs = now_ns;" in callback
 assert "mUvcCamera?.setFrameCallback(frameCallBack, UVCCamera.PIXEL_FORMAT_YUV420SP)" in camera
 assert "private const val MAX_FPS = 61" in camera
 assert 'setRawPreviewData(true)' in app
-assert 'OCR独立≤20FPS' in app
+assert 'OCR取帧目标≤10FPS' in app
 assert "recognizer.recognizeNv21(" in app
 assert "mCameraSurfaceTexture?.updateTexImage()" in Path(
     "third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/render/RenderManager.kt"
