@@ -30,9 +30,9 @@ assert "frameWidth, frameHeight, previewFormat" in uvc
 assert "UVC_FPS_NEGOTIATION_107" in uvc
 assert "UVC_NATIVE_OCR_RAW20_GATE_ENABLED" in uvc
 assert "1920" in activity and "1080" in activity
-assert "Blue Star Guide · 实验版 1.0.8" in activity
-assert "versionCode 108" in gradle and "versionName '1.0.8'" in gradle
-assert "applicationIdSuffix '.experiment.dev108'" in gradle
+assert "Blue Star Guide · 实验版 1.0.9" in activity
+assert "versionCode 109" in gradle and "versionName '1.0.9'" in gradle
+assert "applicationIdSuffix '.experiment.dev109'" in gradle
 
 def producer_bytes(w,h,px=4): return w*h*px
 # App screenshot indicated 1920x1080 camera while TextureView resized to 2240x1260.
