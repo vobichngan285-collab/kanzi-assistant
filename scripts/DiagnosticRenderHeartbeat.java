@@ -33,6 +33,17 @@ public final class DiagnosticRenderHeartbeat {
         if (events.size() >= MAX_EVENTS) events.removeFirst();
         events.addLast((System.nanoTime()/1_000_000L) + " " + event);
     }
+    /** Rare events only: record exactly which component requested a UVC close. */
+    public static void noteCallSite(String event) {
+        StringBuilder trace = new StringBuilder(event);
+        StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+        for (int i=2; i<stack.length && i<10; i++) {
+            trace.append(" <- ").append(stack[i].getClassName())
+                .append(".").append(stack[i].getMethodName())
+                .append(":").append(stack[i].getLineNumber());
+        }
+        noteEvent(trace.toString());
+    }
     public static synchronized String recentEvents() {
         StringBuilder out = new StringBuilder();
         for (String line: events) out.append(line).append('\n');
