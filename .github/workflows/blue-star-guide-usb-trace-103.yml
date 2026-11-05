@@ -506,8 +506,8 @@ jobs:
               assert 'assets/models/rec/inference.onnx' in names
               assert any(x.startswith('lib/arm64-v8a/') and 'onnxruntime' in x for x in names)
               assert b'UsbCameraHealthMonitor' in dex
-          assert b'lastNativeFrameMs' in dex
-          assert b'noteCallSite' in dex
+              assert b'lastNativeFrameMs' in dex
+              assert b'noteCallSite' in dex
               assert b'DiagnosticRenderHeartbeat' in dex
               print('USB_GL_AND_UVC_HEARTBEAT_IN_APK=PASS')
               det=hashlib.sha256(z.read('assets/models/det/inference.onnx')).hexdigest()
@@ -521,7 +521,7 @@ jobs:
           cp docs/x200-cnlite-v56-immediate-recfast.md "$RUNNER_TEMP/diag-output/BlueStarGuide_Dev10_技术说明.md"
           cp "$apk" "$RUNNER_TEMP/diag-output/BlueStarGuide_Dev_1.0.3_USB_Trace_arm64.apk"
           cat > "$RUNNER_TEMP/diag-output/README.txt" <<'TXT'
-          Blue Star Guide（蓝星向导） Development 1.0.2 USB Health 测试包。
+          Blue Star Guide（蓝星向导） Development 1.0.3 USB Trace 测试包。
           独立Android arm64安装包，不覆盖先前看字助手v55/v56。
           桌面软件名：Blue Star Guide。软件图标：用户确认的蓝色发光地球。
           保留ChineseOCR-Lite DET和PP-OCRv6 Small REC，以及Small DET回退与手机/USB摄像头支持。
@@ -535,7 +535,7 @@ jobs:
           TXT
           sha256sum "$RUNNER_TEMP/diag-output/BlueStarGuide_Dev_1.0.3_USB_Trace_arm64.apk" > "$RUNNER_TEMP/diag-output/SHA256SUMS.txt"
           cat "$RUNNER_TEMP/diag-output/SHA256SUMS.txt" >> "$GITHUB_STEP_SUMMARY"
-          echo 'BLUE_STAR_DEV103_USB_HEALTH_AUDIT=PASS; offline arm64 image monitoring; real phone freeze reproduction pending.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'BLUE_STAR_DEV103_USB_TRACE_AUDIT=PASS; offline arm64 image monitoring; real phone freeze reproduction pending.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload standalone debug APK and checksum artifact
         uses: actions/upload-artifact@v4
         with:
@@ -544,14 +544,14 @@ jobs:
           retention-days: 10
           if-no-files-found: error
 
-      - name: Publish independent USB camera-health experiment release
+      - name: Publish independent USB camera pipeline trace experiment release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           branch_head="$(gh api repos/vobichngan285-collab/kanzi-assistant/branches/exp/blue-star-usb-trace-103-20261105 --jq '.commit.sha')"
           if [ "$GITHUB_SHA" != "$branch_head" ]; then
-            echo "Stale run: only latest Dev 1.0.2 USB Health source may publish." >> "$GITHUB_STEP_SUMMARY"
+            echo "Stale run: only latest Dev 1.0.3 USB Trace source may publish." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           tag=blue-star-guide-usb-trace-dev1.0.3-20261105
@@ -560,7 +560,7 @@ jobs:
           cp "$apk" "$RUNNER_TEMP/$name"
           cat > "$RUNNER_TEMP/release-notes.md" <<EOF
           Blue Star Guide / 蓝星向导 — Development 1.0.3 USB Trace (arm64)
-          - USB-only experiment: native UVC-to-Java callback, app NV21, GL onFrameAvailable and swap attempts, plus bounded event traces with lifecycle and exact UVC close requester.
+          - USB-only experiment: passive native UVC-to-Java callback, app NV21, GL onFrameAvailable and swap attempts, plus bounded event traces with lifecycle and exact UVC close requester.
           - Tap USB health overlay to copy current and last two sessions; no camera images, OCR text or audio logged. Four-second background counter snapshots continue during onPause, and record USB attach/detach, SurfaceTexture transitions and close request call sites.
           - No automatic camera reconnect and no OCR model, text ordering, TTS or preview-transform changes.
           - GL submission != proof of a visible screen update.
