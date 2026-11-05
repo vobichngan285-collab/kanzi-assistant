@@ -370,6 +370,9 @@ class PaddleOcrEngine(
                         "；模型输入Bitmap=${bitmap.width}×${bitmap.height}" +
                         "；CPU线程=${performanceProfile.cpuThreads}，REC批=${performanceProfile.recBatchSize}" +
                         "；本次OCR及自动定向校准墙钟=${originalOcrWallMs}ms" +
+                        "\nREC阶段：预处理=${result.recPreprocessMs}ms、ONNX推理=${result.recInferenceMs}ms、CTC解码=${result.recPostprocessMs}ms" +
+                        "；REC总=${result.recognitionTimeMs}ms；推理批次数=${result.recInputShapes.size}" +
+                        "；输入形状=${result.recInputShapes.joinToString(";") { it.joinToString("x") }}" +
                         "\nUSB自动方向决策：${usbAutoReport}" +
                         "；横排附加REC=${horizontal.attempts}次/${horizontal.elapsedMs}ms" +
                         "；竖排附加REC=${vertical.attempts}次/${vertical.elapsedMs}ms" +
@@ -816,7 +819,8 @@ class PaddleOcrEngine(
                     val message = "frame=${width}x${height}, ocrInputRotation=${liveAngle}, " +
                         "bitmap=${bitmap.width}x${bitmap.height}, boxes=${result.results.size}, " +
                         "avgConfidence=${"%.3f".format(java.util.Locale.US, averageConfidence)}, " +
-                        "det=${result.detectionTimeMs}ms, rec=${result.recognitionTimeMs}ms, " +
+                        "det=${result.detectionTimeMs}ms, rec=${result.recognitionTimeMs}ms" +
+                        " (pre=${result.recPreprocessMs}, infer=${result.recInferenceMs}, ctc=${result.recPostprocessMs}, batches=${result.recInputShapes.size}), " +
                         "total=${result.totalTimeMs}ms"
                     if (averageConfidence < 0.55 || result.results.isEmpty()) {
                         Log.w(TAG, message)
