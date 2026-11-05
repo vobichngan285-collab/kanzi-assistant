@@ -7,7 +7,7 @@ g=Path('app/build.gradle').read_text(encoding='utf-8')
 manifest=Path('app/src/main/AndroidManifest.xml').read_text(encoding='utf-8')
 sdk=Path('third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/java/com/paddle/ocr/PaddleOCR.kt').read_text(encoding='utf-8')
 eng=Path('third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/java/com/paddle/ocr/engine/OCREngine.kt').read_text(encoding='utf-8')
-assert 'Blue Star Guide · Dev 1.0' in a and '蓝星向导 实验版' in manifest
+assert 'Blue Star Guide · 实验版 1.0.4' in a and '蓝星向导 实验版' in manifest
 assert 'android:icon="@mipmap/ic_launcher"' in manifest
 assert 'getEngines()' in a and 'initializeSelectedTextToSpeech()' in a
 assert 'new TextToSpeech(this,onInit,requested)' in a
