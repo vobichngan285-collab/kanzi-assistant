@@ -35,7 +35,7 @@ jobs:
           assert 'ToneGenerator' not in s and 'recognitionTone' not in s
           assert 'liveSpeechGuard.accept(spokenNormalized)' in s
           assert 'if (live && speechPageActive) return;' not in s
-          assert 'mainHandler.post(() -> finishQueuedUtterance(utteranceId));' in s
+          assert 'finishQueuedUtterance(id)' in s and 'tts.setOnUtteranceProgressListener' in s
           print('QUIET_ANDROID_SOURCE_GUARDS=PASS')
           PY
       - name: Verify first-new-OCR immediately accepted without a second pass
