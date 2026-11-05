@@ -1050,13 +1050,7 @@ public class MainActivity extends CameraActivity {
         heading.setTextColor(white);heading.setTypeface(null,android.graphics.Typeface.BOLD);
         heading.setGravity(android.view.Gravity.CENTER);
         panel.addView(heading);
-        TextView subtitle=new TextView(this);
-        subtitle.setText("常用选项  ·  不修改手机的系统语音设置");
-        subtitle.setTextColor(muted);subtitle.setTextSize(TypedValue.COMPLEX_UNIT_SP,13);
-        subtitle.setGravity(android.view.Gravity.CENTER);
-        subtitle.setPadding(0,dp(8),0,dp(22));panel.addView(subtitle);
-
-        String engineLabel="跟随手机默认语音";
+"跟随手机默认语音";
         if (!appTtsEngine.isEmpty()) {
             engineLabel=appTtsEngine;
             if (tts!=null) for(TextToSpeech.EngineInfo e:tts.getEngines())
@@ -1071,18 +1065,10 @@ public class MainActivity extends CameraActivity {
             "跟随语音包自己的设置":"自定义 "+String.format(Locale.US,"%.2f",speechRate)+" 倍",
             ()->showSimpleSpeechSpeedDialog());
         addSimpleSettingsRow(panel,"朗读方式",longReadingMode?
-            "长文阅读 · 当前内容读完再更新":"实时文字 · 新文字立即打断",
+            "长文阅读 · 轻触换页":"实时文字 · 新文字立即打断",
             ()->showSimpleReadingRuleDialog());
 
-        TextView explanation=new TextView(this);
-        explanation.setText("文字检测：ChineseOCR-Lite  ·  识别：Small REC\n"+
-            "默认自动识别横排和竖排，手机与USB摄像头在主界面切换。");
-        explanation.setTextColor(muted);
-        explanation.setTextSize(TypedValue.COMPLEX_UNIT_SP,13);
-        explanation.setPadding(dp(4),dp(16),dp(4),dp(14));
-        panel.addView(explanation);
 
-        TextView test=new TextView(this);
         test.setText("▶ 试听当前语音");
         test.setGravity(android.view.Gravity.CENTER);
         test.setTextColor(0xFF151515);test.setTextSize(TypedValue.COMPLEX_UNIT_SP,18);
@@ -1232,7 +1218,7 @@ public class MainActivity extends CameraActivity {
             .setTitle("朗读方式")
             .setSingleChoiceItems(new String[]{
                     "实时文字：识别到新内容立即打断旧语音",
-                    "长文阅读：读完当前文字再更新"},
+                    "长文阅读：读完当前文字，轻触画面换页"},
                 longReadingMode?1:0,(dialog,selected)->{
                     dialog.dismiss();
                     setLongReadingMode(selected==1);
@@ -1521,7 +1507,7 @@ public class MainActivity extends CameraActivity {
         panel.addView(maxCharsInput);
 
         TextView profileTitle = new TextView(this);
-        profileTitle.setText("X200 Pro / 12GB 横竖排综合A/B实验");
+        profileTitle.setText("OCR 性能")
         profileTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         profileTitle.setPadding(0, dp(16), 0, dp(4));
         panel.addView(profileTitle);
@@ -1536,8 +1522,7 @@ public class MainActivity extends CameraActivity {
             RadioButton radio = new RadioButton(this);
             radio.setId(View.generateViewId());
             radio.setTag(profile.id);
-            radio.setText(profile.label + "（每类异常候选预算=" +
-                profile.maxShadowRescuesPerDiagnostic + "）");
+            radio.setText(profile.label);
             radio.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
             radio.setChecked(profile.id.equals(ocrProfileId));
             profileGroup.addView(radio);
@@ -1566,7 +1551,8 @@ public class MainActivity extends CameraActivity {
         diagnosticReportView.setTextIsSelectable(true);
         diagnosticReportView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         diagnosticReportView.setPadding(dp(8), dp(8), dp(8), dp(8));
-        diagnosticReportView.setBackgroundColor(0xFFF1F3F5);
+        diagnosticReportView.setTextColor(Color.WHITE);
+        diagnosticReportView.setBackgroundColor(0xFF171E29);
         // Controls stay above the potentially very long diagnostic output, so
         // users do not need to scroll past hundreds of OCR boxes to compare A/B.
         Button retryOcrButton = createControlButton("重新初始化 OCR");
@@ -1684,7 +1670,7 @@ public class MainActivity extends CameraActivity {
         settingsScroll.addView(panel);
 
         new androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("识别与朗读设置")
+            .setTitle("开发者设置")
             .setView(settingsScroll)
             .setNegativeButton("取消", (dialog, which) -> {
                 if (tts != null && ttsReady && !followEngineSpeechRate) tts.setSpeechRate(speechRate);
@@ -1695,11 +1681,7 @@ public class MainActivity extends CameraActivity {
                     interval = Long.parseLong(intervalInput.getText().toString().trim());
                 } catch (NumberFormatException ignored) {}
                 recognitionIntervalMs = Math.max(1L, Math.min(10000L, interval));
-                RadioButton selectedModel = modelGroup.findViewById(modelGroup.getCheckedRadioButtonId());
-                String selectedModelId = selectedModel != null && selectedModel.getTag() != null ? selectedModel.getTag().toString() : ocrModelId;
-                boolean modelChanged = !selectedModelId.equals(ocrModelId);
-                ocrModelId = selectedModelId;
-                RadioButton selectedProfile = profileGroup.findViewById(
+
                     profileGroup.getCheckedRadioButtonId());
                 String requestedProfile = selectedProfile != null &&
                     selectedProfile.getTag() != null ?
@@ -1707,12 +1689,7 @@ public class MainActivity extends CameraActivity {
                 String safeProfile = OcrPerformanceProfile.forId(requestedProfile).id;
                 boolean profileChanged = !ocrProfileId.equals(safeProfile);
                 ocrProfileId = safeProfile;
-                RadioButton selectedFocus = pageFocusGroup.findViewById(pageFocusGroup.getCheckedRadioButtonId());
-                String requestedFocus = selectedFocus != null && selectedFocus.getTag() != null
-                    ? selectedFocus.getTag().toString() : readingFocusMode;
-                boolean focusChanged = !readingFocusMode.equals(requestedFocus);
-                readingFocusMode = requestedFocus;
-                RadioButton selectedRotation = rotationGroup.findViewById(rotationGroup.getCheckedRadioButtonId());
+rotationGroup.getCheckedRadioButtonId());
                 int requestedTextRotation = liveTextRotationDegrees;
                 if (selectedRotation != null && selectedRotation.getTag() != null) {
                     try {
@@ -1741,7 +1718,7 @@ public class MainActivity extends CameraActivity {
                 aiLayoutEnabled = layoutAiCheck.isChecked();
                 similarityThreshold = similaritySeek.getProgress();
                 speechRate = 0.5f + speechRateSeek.getProgress() / 100f;
-                qualityPromptsEnabled = qualityCheck.isChecked();
+                qualityPromptsEnabled = false;
                 speechNoEnglish = noEnglishCheck.isChecked();
                 speechNoNumbers = noNumbersCheck.isChecked();
                 try { maxSpeechChars = Math.max(0, Math.min(5000, Integer.parseInt(maxCharsInput.getText().toString().trim()))); }
@@ -1761,7 +1738,6 @@ public class MainActivity extends CameraActivity {
                     .putBoolean(PREF_AUTO_MODE, automaticMode)
                     .putLong(PREF_INTERVAL, recognitionIntervalMs)
                     .putInt(PREF_SIMILARITY, similarityThreshold)
-                    .putBoolean(PREF_QUALITY_PROMPTS, qualityPromptsEnabled)
                     .putFloat(PREF_SPEECH_RATE, speechRate)
                     .putInt(PREF_PREVIEW_ROTATION, previewRotation)
                     .putBoolean(PREF_PREVIEW_MIRROR, previewMirror)
@@ -1771,7 +1747,6 @@ public class MainActivity extends CameraActivity {
                     .putBoolean(PREF_ENHANCED_OCR, enhancedOcr)
                     .putString(PREF_OCR_MODEL, ocrModelId)
                     .putString(PREF_OCR_PROFILE, ocrProfileId)
-                    .putString(PREF_READING_FOCUS, readingFocusMode)
                     .putBoolean(PREF_AI_LAYOUT, aiLayoutEnabled)
                     .putBoolean(PREF_VERTICAL_LIVE_READING, verticalLiveReadingEnabled)
                     .putInt(PREF_REALTIME_TEXT_ROTATION, liveTextRotationDegrees)
@@ -1780,7 +1755,7 @@ public class MainActivity extends CameraActivity {
                     .putBoolean(PREF_NO_NUMBERS, speechNoNumbers)
                     .putInt(PREF_MAX_SPEECH_CHARS, maxSpeechChars)
                     .apply();
-                if (focusChanged || aiLayoutChanged || textRotationChanged || usbOcrRotationChanged || verticalReadingChanged) {
+                if (aiLayoutChanged || textRotationChanged || usbOcrRotationChanged || verticalReadingChanged) {
                     readingEpoch.incrementAndGet();
                     frameChangeGate.reset();
                     realtimeScene.reset();
@@ -1789,14 +1764,14 @@ public class MainActivity extends CameraActivity {
                     lastSpoken = "";
                     clearSpeechQueue(true);
                     if (recognizer != null) {
-                        if (focusChanged) recognizer.setReadingFocusMode(readingFocusMode);
+                        recognizer.setReadingFocusMode(readingFocusMode);
                         recognizer.setAiLayoutEnabled(aiLayoutEnabled);
                         recognizer.setLiveTextRotationDegrees(liveTextRotationDegrees);
                         recognizer.setVerticalLiveReadingEnabled(verticalLiveReadingEnabled);
                     }
                     Toast.makeText(this, "已更新独立的OCR输入方向（预览方向不变）", Toast.LENGTH_SHORT).show();
                 }
-                if (modelChanged || profileChanged) switchOcrModel(selectedModelId);
+                if (profileChanged) switchOcrModel(ocrModelId);
                 Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show();
             })
             .show();
