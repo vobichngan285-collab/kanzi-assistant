@@ -2507,42 +2507,71 @@ rotationGroup.getCheckedRadioButtonId());
      * original lines from the exact same OCR frame. No synthesized words.
      * A page turn later cancels this queue through the existing epoch.
      */
-    private void appendRestOfRealOcr(String early, String full, int resultEpoch) {
+    /** First batch and final result share source-polygon IDs, not string replacement. */
+    private void appendRestOfRealOcr(java.util.Set<String> earlyIds, OcrReadResult full,
+                                     int resultEpoch) {
         if (!running || longReadingMode || !automaticMode ||
             resultEpoch != readingEpoch.get() || !canSpeak() || full == null) return;
-        String rest=full;
-        int removed=0;
-        for (String row:early.split("\n")) {
-            String original=row.trim();
-            if (original.isEmpty()) continue;
-            int at=rest.indexOf(original);
-            if (at>=0) {
-                rest=rest.substring(0,at)+rest.substring(at+original.length());
-                removed++;
-            }
+        List<ReadingOrder.Box> boxes = full.getSpeechBoxes();
+        List<String> ids = full.getSpeechBoxIds();
+        if (boxes.size() != ids.size()) return;
+        java.util.ArrayList<ReadingOrder.Box> pending = new java.util.ArrayList<>();
+        int matched = 0;
+        for (int i = 0; i < boxes.size(); i++) {
+            ReadingOrder.Box box = boxes.get(i);
+            if (earlyIds.contains(ids.get(i))) { matched++; continue; }
+            if (speechNoSingleHan && isIndependentHan(box.text)) continue;
+            pending.add(box);
         }
-        if (removed==0) {
-            // The final reading router can combine adjacent boxes with a
-            // different joiner. Safer to leave rest unchanged than invent
-            // an approximate replacement or silently discard real words.
-            Log.w("BlueStarOCR","First batch not found verbatim in complete OCR text");
+        if (matched == 0) {
+            // Final OCR was replaced by a rotated/retried frame: never guess.
+            Log.w("BlueStarOCR", "Early box IDs not in final frame; skip unsafe append");
+            return;
         }
-        if (speechNoEnglish)rest=rest.replaceAll("[A-Za-z]+"," ");
-        if (speechNoNumbers)rest=rest.replaceAll("[0-9]+"," ");
-        rest=rest.replaceAll("[\t ]+"," ").replaceAll(" *\n *","\n").trim();
-        if (rest.isEmpty())return;
-        // Same frame, same target. DO NOT call queueSpeechText again: its
-        // first-result preemption rule would restart the first spoken lines.
-        List<String> chunks=SpeechText.chunks(rest);
-        if (chunks.isEmpty())return;
-        speechPageActive=true;
-        String norm=normalizeOcrText(full);
-        for(String chunk:chunks)
-            speechQueue.addLast(new SpeechItem(chunk,norm,
-                "ocr-"+(++utteranceSequence)));
+        String rest = ReadingStrategyRouter.arrange(pending, full.getFrameWidth(),
+            full.getFrameHeight(), verticalLiveReadingEnabled, true).text;
+        if (speechNoEnglish) rest = rest.replaceAll("[A-Za-z]+", " ");
+        if (speechNoNumbers) rest = rest.replaceAll("[0-9]+", " ");
+        rest = rest.replaceAll("[\\t ]+", " ").replaceAll(" *\\n *", "\n").trim();
+        if (rest.isEmpty()) return;
+        List<String> chunks = SpeechText.chunks(rest);
+        if (chunks.isEmpty()) return;
+        speechPageActive = true;
+        String norm = normalizeOcrText(full.getText());
+        for (String chunk : chunks)
+            speechQueue.addLast(new SpeechItem(chunk, norm, "ocr-" + (++utteranceSequence)));
         speakNextQueued();
-        Log.i("BlueStarOCR","REST_OCR_QUEUED: "+chunks.size()+
-            " chunks after first real batch; matched="+removed);
+        Log.i("BlueStarOCR", "REST_REAL_BOX_IDS_QUEUED=" + chunks.size() +
+            " matched=" + matched + " pending=" + pending.size());
+    }
+
+    private boolean isIndependentHan(String value) {
+        if (value == null) return false;
+        String text = value.trim();
+        return text.codePointCount(0, text.length()) == 1 &&
+            Character.UnicodeScript.of(text.codePointAt(0)) == Character.UnicodeScript.HAN;
+    }
+
+    private String filterSpokenRow(String source) {
+        if (source == null) return "";
+        String text = source.trim();
+        if (speechNoSingleHan && isIndependentHan(text)) return "";
+        if (speechNoEnglish) text = text.replaceAll("[A-Za-z]+", " ");
+        if (speechNoNumbers) text = text.replaceAll("[0-9]+", " ");
+        return text.trim();
+    }
+
+    private String speechSourceText(OcrReadResult result) {
+        if (!speechNoSingleHan) return result.getText();
+        java.util.ArrayList<ReadingOrder.Box> kept = new java.util.ArrayList<>();
+        boolean removed = false;
+        for (ReadingOrder.Box box : result.getSpeechBoxes()) {
+            if (isIndependentHan(box.text)) removed = true;
+            else kept.add(box);
+        }
+        if (!removed) return result.getText();  // preserve existing reading flow
+        return ReadingStrategyRouter.arrange(kept, result.getFrameWidth(),
+            result.getFrameHeight(), verticalLiveReadingEnabled, !longReadingMode).text;
     }
 
     /** Diagnostic/manual listening keeps the same explicit one-shot path. */
