@@ -648,7 +648,7 @@ public class MainActivity extends CameraActivity {
                 final int effectiveOcrInputAngle = isPhoneCamera
                     ? (longReadingMode ? 0 : liveTextRotationDegrees)
                     : usbOcrInputRotationDegrees;
-                final java.util.concurrent.atomic.AtomicReference<String> earlySpoken =
+                final java.util.concurrent.atomic.AtomicReference<java.util.Set<String>> earlySpoken =
                     new java.util.concurrent.atomic.AtomicReference<>();
                 recognizer.recognizeNv21(frame, width, height,
                     enhance, legacyDecode, effectiveOcrInputAngle, found -> {
@@ -686,15 +686,15 @@ public class MainActivity extends CameraActivity {
                             // thread before this full result. Only successful
                             // first-batch speech adds remaining original text.
                             runOnUiThread(() -> {
-                                String first = earlySpoken.get();
-                                if (first != null && !first.isEmpty())
-                                    appendRestOfRealOcr(first, found.getText(), recognizedEpoch);
+                                java.util.Set<String> spokenIds = earlySpoken.get();
+                                if (spokenIds != null && !spokenIds.isEmpty())
+                                    appendRestOfRealOcr(spokenIds, found, recognizedEpoch);
                                 else
-                                    onRecognized(found.getText(), false,
+                                    onRecognized(found, false,
                                         realtimeScene.generation(), recognizedEpoch);
                             });
                         } else {
-                            onRecognized(found.getText(), oneShot,
+                            onRecognized(found, oneShot,
                                 recognizedScene, recognizedEpoch);
                         }
                         if (!isPhoneCamera)
@@ -703,21 +703,26 @@ public class MainActivity extends CameraActivity {
                                 quality, recognizedScene);
                         onReadingQuality(found, quality);
                     }
-                }, firstText -> {
-                    if (!live || oneShot || firstText == null || firstText.trim().isEmpty()) return;
-                    // Already recognized actual text from the first REC batch.
-                    // Only accept if this live run still belongs to the active
-                    // camera/mode and it would be a NEW text target.
+                }, firstBoxes -> {
+                    if (!live || oneShot || firstBoxes == null || firstBoxes.isEmpty()) return;
                     runOnUiThread(() -> {
                         if (!running || longReadingMode || !automaticMode ||
                             !canSpeak() || recognizedEpoch != readingEpoch.get()) return;
-                        String first = firstText.trim();
+                        java.util.ArrayList<String> rows = new java.util.ArrayList<>();
+                        java.util.Set<String> ids = new java.util.HashSet<>();
+                        for (OcrEarlyItem box : firstBoxes) {
+                            String row = filterSpokenRow(box.getText());
+                            if (row.isEmpty()) continue;
+                            rows.add(row);
+                            ids.add(box.getId());
+                        }
+                        if (rows.isEmpty()) return;
+                        String first = String.join("\n", rows);
                         long before = utteranceSequence;
                         queueSpeechText(first, normalizeOcrText(first), false, recognizedScene);
                         if (utteranceSequence > before) {
-                            earlySpoken.set(first);
-                            Log.i("BlueStarOCR", "FIRST_REAL_TEXT_TTS_EARLY: " +
-                                first.length() + " chars");
+                            earlySpoken.set(ids);
+                            Log.i("BlueStarOCR", "FIRST_REAL_BOX_IDS_SPOKEN=" + ids.size());
                         }
                     });
                 }, error -> {
@@ -2458,10 +2463,10 @@ rotationGroup.getCheckedRadioButtonId());
      * Both modes read one CURRENT OCR result; only speech scheduling differs.
      * Long-form mode keeps the complete text until all TTS chunks finish.
      */
-    private void onRecognized(String found, boolean manualCapture,
+    private void onRecognized(OcrReadResult found, boolean manualCapture,
                               long sceneGeneration, int resultEpoch) {
         final long now = System.currentTimeMillis();
-        final String recognizedText = found == null ? "" : found.trim();
+        final String recognizedText = found == null ? "" : speechSourceText(found).trim();
         if (recognizedText.isEmpty()) {
             if (longReadingMode && lastNonEmptyAt > 0 &&
                 now - lastNonEmptyAt >= 2800) lastSpoken = "";
