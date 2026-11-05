@@ -6,7 +6,8 @@ profile=Path("app/src/main/java/com/vobichngan/kanzi/OcrPerformanceProfile.java"
 engine=Path("app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt").read_text(encoding="utf-8")
 sdk=Path("third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/java/com/paddle/ocr/engine/OCREngine.kt").read_text(encoding="utf-8")
 assert "APP_VERSION = \"Blue Star Guide · 2.0\"" in main
-assert "新文字立即打断" in main
+assert 'new String[]{"自动识别", "手动识别", "长文本阅读"}' in main
+assert 'modeButton.setOnClickListener(v -> showRecognitionModeSelector())' in main
 assert "if (live && speechPageActive) return;" not in main
 assert "liveSpeechGuard.accept(spokenNormalized)" in main
 assert "clearSpeechQueue(true);" in main
