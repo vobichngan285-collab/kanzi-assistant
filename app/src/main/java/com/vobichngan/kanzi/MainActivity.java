@@ -60,7 +60,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "Blue Star Guide · 实验版 1.0.9";
+    private static final String APP_VERSION = "Blue Star Guide · 实验版 1.0.10";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -152,7 +152,7 @@ public class MainActivity extends CameraActivity {
                     boolean surfaceReady = cameraTextureView != null && cameraTextureView.isAvailable();
                     String message = usbHealth.sample(now, glCount, glTime,
                         eglErrors, busy.get(), surfaceReady, true);
-                    usbHealthView.setText(message + "\nUSB原生直显（无中间GL）｜OCR独立≤20FPS\nUSB控制：" + usbHardwareControls + "\n点击查看 / 复制近一分钟记录");
+                    usbHealthView.setText(message + "\nUSB原生直显（无中间GL）｜OCR取帧目标≤10FPS\nUSB控制：" + usbHardwareControls + "\n点击查看 / 复制近一分钟记录");
                     usbHealthView.setContentDescription("USB摄像头运行状态：" + message +
                         "。双击查看完整记录");
                     usbHealthView.setVisibility(View.VISIBLE);
@@ -621,7 +621,11 @@ public class MainActivity extends CameraActivity {
             lastProcess = now;
             final int recognizedEpoch = readingEpoch.get();
             final long recognizedScene = scene;
-            byte[] frame = data.clone();
+            // AUSBC CameraUVC.frameCallBack creates a NEW ByteArray(capacity()) on every
+            // USB NV21 callback; it is never reused or overwritten by the next frame.
+            // The OCR executor holds this immutable-by-convention snapshot until done.
+            // Phone Camera2 buffers may be recycled, so retain its defensive clone.
+            byte[] frame = isPhoneCamera ? data.clone() : data;
             // For very dark AND low-detail frames, one enhanced OCR pass is
             // preferable to reading unreadable pixels. Never add an extra
             // inference to the fast path just because the page moves.
