@@ -785,6 +785,8 @@ public class MainActivity extends CameraActivity {
             ViewGroup.LayoutParams.MATCH_PARENT, dp(104), Gravity.CENTER);
         root.addView(phonePreviewStatus, phoneStatusParams);
 
+        LinearLayout controlDock = new LinearLayout(this);
+        controlDock.setOrientation(LinearLayout.VERTICAL);
         modeButton = createControlButton("模式：自动");
         controls.addView(modeButton, new LinearLayout.LayoutParams(0, dp(54), 1f));
         startButton = createControlButton("开始识别");
@@ -1260,19 +1262,6 @@ public class MainActivity extends CameraActivity {
         modeButton.announceForAccessibility(announcement);
     }
 
-    private void showSimpleReadingRuleDialog() {
-        new androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("朗读方式")
-            .setSingleChoiceItems(new String[]{
-                    "实时文字：识别到新内容立即打断旧语音",
-                    "长文阅读：读完当前文字，轻触画面换页"},
-                longReadingMode?1:0,(dialog,selected)->{
-                    dialog.dismiss();
-                    setLongReadingMode(selected==1);
-                })
-            .setNegativeButton("取消",null).show();
-    }
-
     private void showReadyCueSettingsDialog() {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
@@ -1689,7 +1678,6 @@ public class MainActivity extends CameraActivity {
                 } catch (NumberFormatException ignored) {}
                 recognitionIntervalMs = Math.max(1L, Math.min(10000L, interval));
 
-                    profileGroup.getCheckedRadioButtonId());
                 RadioButton selectedProfile = profileGroup.findViewById(profileGroup.getCheckedRadioButtonId());
                 String requestedProfile = selectedProfile != null &&
                     selectedProfile.getTag() != null ?
@@ -1697,7 +1685,8 @@ public class MainActivity extends CameraActivity {
                 String safeProfile = OcrPerformanceProfile.forId(requestedProfile).id;
                 boolean profileChanged = !ocrProfileId.equals(safeProfile);
                 ocrProfileId = safeProfile;
-rotationGroup.getCheckedRadioButtonId());
+                RadioButton selectedRotation = rotationGroup.findViewById(
+                    rotationGroup.getCheckedRadioButtonId());
                 int requestedTextRotation = liveTextRotationDegrees;
                 if (selectedRotation != null && selectedRotation.getTag() != null) {
                     try {
@@ -2426,34 +2415,6 @@ rotationGroup.getCheckedRadioButtonId());
             now - lastQualityPromptAt < 6000L) return;
         lastQualityPromptAt = now;
         tts.speak(message, TextToSpeech.QUEUE_FLUSH, null, "quality-" + (++utteranceSequence));
-    }
-
-    private void setLongReadingMode(boolean enableLong) {
-        if (longReadingMode == enableLong) return;
-        readingEpoch.incrementAndGet();
-        longReadingMode = enableLong;
-        queueSpeech = enableLong; // keep legacy preference consistent
-        realtimeScene.reset();
-        lastQuickScanGeneration = -1L;
-        lastQuickScanReliable = false;
-        liveSpeechGuard.reset();
-        if (recognizer != null) recognizer.setFastScanMode(!enableLong);
-        manualCaptureRequested.set(false);
-        frameChangeGate.reset();
-        candidateText = "";
-        candidateNormalized = "";
-        candidateCount = 0;
-        lastSpoken = "";
-        clearSpeechQueue(true);
-        noTextSince = 0L;
-        if (ocrOverlay != null) ocrOverlay.clear();
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-            .putBoolean(PREF_LONG_READING, enableLong)
-            .putBoolean(PREF_QUEUE_SPEECH, enableLong)
-            .apply();
-        updateControlLabels();
-        String announcement = enableLong ? "已切换长文本阅读" : "已切换自动识别";
-        Toast.makeText(this, announcement, Toast.LENGTH_SHORT).show();
     }
 
     /**
