@@ -5,7 +5,7 @@ import re
 root=Path(__file__).resolve().parents[1]
 activity=(root/"app/src/main/java/com/vobichngan/kanzi/MainActivity.java").read_text()
 camera=(root/"app/src/main/java/com/vobichngan/kanzi/InternalCameraController.java").read_text()
-assert "APP_VERSION = \"Blue Star Guide · 实验版 1.0.9\"" in activity
+assert "APP_VERSION = \"Blue Star Guide · 实验版 1.0.10\"" in activity
 start_method = re.search(r"private void startPhoneCamera\(\) \{([\s\S]*?)\n    \}", activity)
 assert start_method, "missing phone camera startup method"
 assert start_method.group(1).index("phoneTexture.setVisibility(View.VISIBLE);") < start_method.group(1).index("phoneController.start(phoneFrontFacing);"), "camera surface must be made visible before Camera2 start"
