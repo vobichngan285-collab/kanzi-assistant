@@ -10,6 +10,7 @@ app = Path("app/src/main/java/com/vobichngan/kanzi/MainActivity.java").read_text
 
 assert "int64_t mLastOcrRawCallbackNs;" in header
 assert "mLastOcrRawCallbackNs(0)" in source
+assert 'LOGI("UVC_NATIVE_OCR_RAW20_GATE_ENABLED")' in source
 assert "clock_gettime(CLOCK_MONOTONIC, &callback_clock)" in source
 assert "50000000LL" in source
 callback = source[source.index("void UVCPreview::do_capture_callback("):]
