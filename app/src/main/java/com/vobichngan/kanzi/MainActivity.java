@@ -4,6 +4,11 @@ import android.app.Activity;
 import android.Manifest;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
+import android.os.Build;
+import android.os.Vibrator;
+import android.os.VibrationEffect;
+import android.media.AudioAttributes;
+import android.media.SoundPool;
 import android.os.Handler;
 import android.os.Looper;
 import android.hardware.usb.UsbDevice;
@@ -181,7 +186,14 @@ public class MainActivity extends CameraActivity {
     private volatile int phoneOcrRotation = 0;
     private volatile int phoneSensorNaturalRotation = 90;
     private volatile int phoneRawWidth = 1280, phoneRawHeight = 720;
-    private volatile boolean qualityPromptsEnabled = true;
+    private volatile boolean qualityPromptsEnabled = false;
+    private boolean readyChimeEnabled = true;
+    private boolean readyVibrateEnabled = true;
+    private SoundPool readyChimePool;
+    private boolean readyChimeLoaded = false;
+    private int readyChimeSoundId = 0;
+    private long readyCueToken = 0;
+    private boolean readyCuePending = false;
     private long noTextSince = 0L, lastQualityPromptAt = 0L;
     private TextToSpeech tts;
     // Only this app connection; does not modify Android/global TTS preferences.
@@ -1909,6 +1921,7 @@ rotationGroup.getCheckedRadioButtonId());
                 });
             }
         });
+        initializeReadyChime();
         // Voice data is downloaded only after a user taps a voice list entry;
         // app initialization never fetches models or contacts the Internet.
         initializeSelectedTextToSpeech();
@@ -2573,8 +2586,8 @@ rotationGroup.getCheckedRadioButtonId());
         for (String chunk : chunks) {
             speechQueue.addLast(new SpeechItem(chunk, spokenNormalized, "ocr-" + (++utteranceSequence)));
         }
-        // No success beep. The only automatic audio is the text itself.
-        speakNextQueued();
+        // Play once per accepted OCR speech task, never per box or per refresh.
+        playReadyCueThenSpeak();
     }
 
     private boolean isAlreadyQueuedOrRecentlySpoken(String normalized, float threshold) {
@@ -2588,8 +2601,46 @@ rotationGroup.getCheckedRadioButtonId());
         return false;
     }
 
+    private void initializeReadyChime() {
+        AudioAttributes attrs = new AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build();
+        readyChimePool = new SoundPool.Builder().setMaxStreams(1)
+            .setAudioAttributes(attrs).build();
+        readyChimePool.setOnLoadCompleteListener((pool, sample, status) -> {
+            if (sample == readyChimeSoundId && status == 0) readyChimeLoaded = true;
+        });
+        readyChimeSoundId = readyChimePool.load(this, R.raw.bsg_metal_ping, 1);
+    }
+
+    private void playReadyCueThenSpeak() {
+        boolean played = false;
+        if (readyChimeEnabled && readyChimePool != null && readyChimeLoaded) {
+            int stream = readyChimePool.play(readyChimeSoundId, 0.76f, 0.76f, 1, 0, 1.0f);
+            played = stream != 0;
+        }
+        if (readyVibrateEnabled) {
+            try {
+                Vibrator vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+                if (vibrator != null && vibrator.hasVibrator()) {
+                    if (Build.VERSION.SDK_INT >= 26)
+                        vibrator.vibrate(VibrationEffect.createOneShot(35, 65));
+                    else vibrator.vibrate(35);
+                }
+            } catch (RuntimeException ignored) { }
+        }
+        if (!played) { speakNextQueued(); return; }
+        readyCuePending = true;
+        final long token = ++readyCueToken;
+        mainHandler.postDelayed(() -> {
+            if (token != readyCueToken) return;
+            readyCuePending = false;
+            speakNextQueued();
+        }, 200L);
+    }
+
     private void speakNextQueued() {
-        if (!canSpeak() || speakingQueued || speechQueue.isEmpty()) return;
+        if (!canSpeak() || speakingQueued || readyCuePending || speechQueue.isEmpty()) return;
         currentSpeech = speechQueue.pollFirst();
         speakingQueued = true;
         lastSpoken = currentSpeech.normalized;
@@ -2629,6 +2680,8 @@ rotationGroup.getCheckedRadioButtonId());
 
     private void clearSpeechQueue(boolean stopCurrent) {
         speechPageActive = false;
+        readyCueToken++;
+        readyCuePending = false;
         speechQueue.clear();
         currentSpeech = null;
         speakingQueued = false;
@@ -2737,6 +2790,7 @@ rotationGroup.getCheckedRadioButtonId());
         currentSpeech = null;
         speechPageActive = false;
         if (tts != null) { tts.stop(); tts.shutdown(); }
+        if (readyChimePool != null) { readyChimePool.release(); readyChimePool = null; }
         if (recognizer != null) recognizer.release();
         diagnosticHandler.removeCallbacksAndMessages(null);
         super.onDestroy();
