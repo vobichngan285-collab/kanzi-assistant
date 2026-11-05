@@ -911,3 +911,9 @@
 - **源码复核：** `exp/blue-star-usb-health-102-20261105` `MainActivity.onPause`清除监测ticker、停止手机Camera2、清空语音并`super.onPause()`；`onResume`重启监测ticker，**只对手机内置相机显式`startPhoneCamera()`，对USB没有显式确认/补救**。上游AUSBC `ernestp/AndroidUSBCamera@3.6.0` 的`CameraActivity`/`BaseActivity`没有`onPause`/`onResume`的USB重连逻辑；相机注册通常依赖`TextureView.SurfaceTextureListener.onSurfaceTextureAvailable`，注销依赖`onSurfaceTextureDestroyed`；所以**SurfaceTexture对象仍显示available并不能保证UVC视频流仍活跃**。onCameraState只记录OPENED/CLOSED/ERROR；这次停流无新状态事件。`GL提交`监测仅记尝试而非物理屏幕呈现。
 - **鉴别诊断尚需用户一个关键信息：** 本次`T+77272`附近是否主动按Home、切换到其他APP、息屏/锁屏、收到电话或弹窗？如果确实切换前后台，则最先单独验证和修复**前后台切换后的UVC恢复与生命周期**；如果当时没有主动切出，需查系统意外进入onPause、窗口焦点/权限变化。另一独立实验是在屏幕常亮、只前台正常使用、不进后台时，是否仍会卡死；不可把所有冻帧都归因于`onPause`，因为尚无未切后台的完整崩溃日志。
 - **下一步建议（尚未写任何修复代码）：** 用有明确enter/exit的`onPause/onResume`事件监测并配套原始帧心跳及`isPreviewed`/USB Camera状态，确认前后台转换；查清SurfaceTexture销毁/重建或未销毁时流停止。若真是生命周期原因，设计**恢复前台后、仅当USB连接且监测确认连续缺帧**的受控重建USB采集/Render session，带超时/限次/退避，确保不会在OCR忙或尚在初始化期间循环重启；不要先引入无差别定时重启。留存1.0.2原APK并从独立分支做专项测试。OCR模型/左右阅读顺序/TTS和下一版冻结需求均不改。
+
+#### 2026-11-05 — 用户澄清：USB卡死时没有主动切后台/锁屏，撤回自愿后台切换的因果推断
+
+- **用户明确更正：** 对上一份真实Dev1.0.2 USB冻帧日志，用户回答“没有切换”，即故障过程没有主动切换其他APP/切到后台。不得将`T+77272 EVENT Activity onPause`解释为用户主动离开软件，更不能据此直接断定“后台恢复失败”就是根因；系统层窗口/权限/外部覆盖等也可能触发`onPause`，仍需证据。
+- **这份日志的确认事实：** 先前约30fps的NV21及GL提交停止并持续超过55秒；OCR空闲、EGL错误计数0，但0次EGL错误不意味着GL绝对正常，因为没有新帧时可能根本没有交换调用。单一上游UVC停止可导致同源GL提交也变0，两个计数并非严格独立故障。日志先看到`T+77272 onPause`，随后监测ticker自身停止，`T+77313`恢复采样但未收到新帧；缺少`onResume`记录、Activity`onStop`/`onStart`、`onWindowFocusChanged`、`TextureView.SurfaceTextureListener`及USB设备attach/detach等事件。故**现存监测数据不能确定哪一个事件最先导致采集停摆**。
+- **下一步分析/诊断修正建议，非已实施：** 在隔离USB专项分支先补全生命周期和Surface/USB控制器事件时间线，重点添加`onResume`和`onStop`事件及USB帧最近时间的连续、低负担取样，避免监测停止导致的约41秒盲区；加入UVC设备attach/detach/权限/控制块事件及USB状态检测，分辨app暂停、USB传输、native callback、GL渲染。必要时单独对屏幕常亮连续前台运行做一次复现验证。只有在证据证明USB会无错误停流时，再考虑受控、限次且有退避的重建UVC会话，绝不一律靠循环重启。尚未改功能APK、OCR模型、下一版已冻结功能清单。 
