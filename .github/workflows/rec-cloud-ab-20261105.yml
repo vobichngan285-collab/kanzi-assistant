@@ -1,0 +1,75 @@
+name: Isolated REC speed A-B cloud measurement ONLY (no APK)
+on:
+  push:
+    branches: [exp/rec-cloud-ab-20261105]
+    paths:
+      - "scripts/bench_rec_cloud_profiles.py"
+      - ".github/workflows/rec-cloud-ab-20261105.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  rec-onnx-ab:
+    name: REC CPU on ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - name: Checkout isolated benchmarking source
+        uses: actions/checkout@v4
+      - name: Prepare Python for ONNX Runtime 1.21.1
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install CPU ONNX Runtime and NumPy
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check "numpy<3" "onnxruntime==1.21.1"
+          python -c 'import onnxruntime; print("ORT_CPU_VERSION=",onnxruntime.__version__)'
+      - name: Download only the exact unchanged PP-OCRv6 Small REC model
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --max-time 180 \
+            "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx" \
+            -o inference.onnx
+          echo "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  inference.onnx" | sha256sum -c -
+      - name: Same ONNX model, compare 2t1/2t2/3t2/4t2/4t4 and width bucketing
+        run: |
+          set -euo pipefail
+          python -u scripts/bench_rec_cloud_profiles.py \
+             --model inference.onnx --output "rec-cloud-${{ matrix.runner }}.json" --reps 3 \
+             | tee "rec-cloud-${{ matrix.runner }}.log"
+          grep -q 'REC_CLOUD_BENCHMARK=PASS' "rec-cloud-${{ matrix.runner }}.log"
+      - name: Summarize measured speeds without claiming mobile wins
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json,glob
+          j=json.load(open(glob.glob('rec-cloud-*.json')[0],encoding='utf-8'))
+          print("## Isolated same-model PP-OCRv6 Small REC inference A/B")
+          print("**Cloud CPU only** — not measured on vivo X200 Pro, not accuracy test, no APK changes.")
+          print("Host: "+str(j['meta']['host_arch'])+" · ORT "+j['meta']['ort_version'])
+          print()
+          print("| Input shape set | User 4T/B2 bucket (ms) | Best cloud config | Cloud median (ms) | Cloud ratio |")
+          print("|---|---:|---|---:|---:|")
+          results=j['results']
+          for case in ('usb6_real_shapes','menu19_real_shapes','dense33_synthetic_shapes'):
+              rows=[x for x in results if x['scenario']==case]
+              ref=next(x for x in rows if x['threads']==4 and x['batch']==2 and x['width_bucket'])
+              best=min(rows,key=lambda x:x['inference_ms'])
+              print(f"| {case} | {ref['inference_ms']:.1f} | {best['threads']}T/B{best['batch']}, bucket={best['width_bucket']} | {best['inference_ms']:.1f} | {ref['inference_ms']/best['inference_ms']:.2f}x |")
+          print()
+          print("Synthetic pixels with widths matching prior real single-frame diagnostic metadata; never uploaded photos, recognized text or actual crops.")
+          print("Excludes detection, OpenCV preprocessing, CTC decode, Android/USB/TTS scheduling and thermal throttling.")
+          PY
+      - name: Save raw benchmark measurements
+        uses: actions/upload-artifact@v4
+        with:
+          name: rec-cloud-${{ matrix.runner }}-raw-results
+          path: |
+            rec-cloud-${{ matrix.runner }}.json
+            rec-cloud-${{ matrix.runner }}.log
+          if-no-files-found: error
+          retention-days: 30
