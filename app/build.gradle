@@ -22,7 +22,7 @@ android {
     }
     buildTypes {
         debug {
-            applicationIdSuffix '.bluestarguide.dev10'
+            applicationIdSuffix '.usbhealth.dev102'
             versionNameSuffix '-development'
             minifyEnabled false
         }
@@ -45,8 +45,8 @@ android {
         targetSdk 35
         // The supported production phone is arm64 (vivo X200 Pro).
         ndk { abiFilters 'arm64-v8a' }
-        versionCode 101
-        versionName '1.0.1'
+        versionCode 102
+        versionName '1.0.2'
     }
 }
 
