@@ -486,7 +486,7 @@ jobs:
           test -x "$AAPT" && test -x "$SIGNER" && test -s "$apk"
           "$AAPT" dump badging "$apk" | tee "$RUNNER_TEMP/ocr-apk-info.txt"
           grep -q "package: name='com.vobich.kanzi.experiment.dev105'" "$RUNNER_TEMP/ocr-apk-info.txt"
-          grep -q "versionCode='104'" "$RUNNER_TEMP/ocr-apk-info.txt"
+          grep -q "versionCode='105'" "$RUNNER_TEMP/ocr-apk-info.txt"
           "$AAPT" dump permissions "$apk" > "$RUNNER_TEMP/ocr-apk-permissions.txt"
           if grep -qi 'android.permission.INTERNET' "$RUNNER_TEMP/ocr-apk-permissions.txt"; then
             echo 'Offline APK MUST NOT have INTERNET permission' >&2; exit 1
