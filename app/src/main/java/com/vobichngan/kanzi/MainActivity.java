@@ -2219,7 +2219,7 @@ public class MainActivity extends CameraActivity {
             speechQueue.addLast(new SpeechItem(chunk,norm,
                 "ocr-"+(++utteranceSequence)));
         speakNextQueued();
-        Log.i("BlueStarOCR","REST_OCR_QUEUED: "+chunks.size+
+        Log.i("BlueStarOCR","REST_OCR_QUEUED: "+chunks.size()+
             " chunks after first real batch; matched="+removed);
     }
 
