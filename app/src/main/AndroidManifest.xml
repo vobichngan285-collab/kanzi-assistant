@@ -1,7 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     <uses-permission android:name="android.permission.CAMERA" />
-        <application android:theme="@style/AppTheme" android:label="看字助手 · 绿色框立即抢读v56" android:allowBackup="false" android:supportsRtl="true">
+    <!-- Android 11+ app-visible installed system TTS engines; no global settings mutation. -->
+    <queries><intent><action android:name="android.intent.action.TTS_SERVICE" /></intent></queries>
+        <application android:theme="@style/AppTheme" android:label="看字助手 · 简洁设置v57" android:allowBackup="false" android:supportsRtl="true">
         <activity android:name="com.vobichngan.kanzi.MainActivity" android:screenOrientation="portrait" android:exported="true">
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
         </activity>
