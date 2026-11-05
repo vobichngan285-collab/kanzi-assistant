@@ -135,7 +135,7 @@ public final class UsbCameraHealthMonitor {
 
     public synchronized String dump() {
         StringBuilder out = new StringBuilder(
-            "Blue Star Guide 1.0.7 USB PIPELINE TRACE\n"
+            "Blue Star Guide 1.0.8 USB PIPELINE TRACE\n"
             +"Only frame counters, EGL and camera state. No photos, OCR text or audio.\n"
             +"GL submitted != screen visibly refreshed.\n\n");
         out.append("Last: ").append(lastSummary).append("\n\n");
