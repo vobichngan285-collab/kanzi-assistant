@@ -57,7 +57,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.9.22-CNLite";
+    private static final String APP_VERSION = "0.9.23-CNLite-Immediate";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -295,10 +295,9 @@ public class MainActivity extends CameraActivity {
             } else {
                 if (!automaticMode || now - lastProcess < recognitionIntervalMs) return;
                 if (longReadingMode && speechPageActive) return;
-                // Let TTS finish ALL chunks without overlapping OCR jobs,
-                // overlay flicker, or a fresh recognition competing for audio.
-                // The scene observer above stays active to notice a new page.
-                if (live && speechPageActive) return;
+                // v56: LIVE continues sampling/OCR while TTS is speaking.
+                // A newly recognized text target preempts the old utterance.
+                // Long-reading mode is still an explicit finish-page option.
                 // Static, reliably read text should NOT cause full OCR every
                 // 2.8 seconds. A scene generation change can trigger at once.
                 // The long safety refresh handles very subtle changes missed
@@ -349,11 +348,11 @@ public class MainActivity extends CameraActivity {
                     // will supersede older TTS as soon as it becomes ready.
                     if (found != null && recognizedEpoch == readingEpoch.get()) {
                         if (live && !oneShot) {
-                            // Associate a completed OCR with the CURRENT
-                            // camera state so a harmless scene fingerprint
-                            // change during inference doesn't immediately
-                            // start a second full OCR and cancel the speech.
-                            lastQuickScanGeneration = realtimeScene.generation();
+                            // Use the scene token from when this OCR started.
+                            // A NEW page shown during a slow recognition must
+                            // be eligible for the next scan, not hidden behind
+                            // the old result's 12s same-scene cooldown.
+                            lastQuickScanGeneration = recognizedScene;
                             lastQuickScanAt = System.currentTimeMillis();
                             lastQuickScanReliable = !found.getText().trim().isEmpty() &&
                                 found.getAverageConfidence() >= 0.55;
@@ -506,7 +505,7 @@ public class MainActivity extends CameraActivity {
         if (readingModeButton != null) {
             readingModeButton.setText(longReadingMode
                 ? "长文阅读｜完整读完（后续课题）"
-                : "实时文字｜本段读完再更新");
+                : "实时文字｜新文字立即打断");
             readingModeButton.setContentDescription(longReadingMode
                 ? "当前是长文阅读模式。点击切换到实时文字识别"
                 : "当前是实时文字识别模式。点击切换到长文阅读");
@@ -1090,8 +1089,9 @@ public class MainActivity extends CameraActivity {
         RadioGroup profileGroup = new RadioGroup(this);
         profileGroup.setOrientation(RadioGroup.VERTICAL);
         OcrPerformanceProfile[] profiles = {
-            OcrPerformanceProfile.BASELINE, OcrPerformanceProfile.BALANCED,
-            OcrPerformanceProfile.QUALITY, OcrPerformanceProfile.THROUGHPUT
+            OcrPerformanceProfile.REC_FAST2, OcrPerformanceProfile.BASELINE,
+            OcrPerformanceProfile.BALANCED, OcrPerformanceProfile.QUALITY,
+            OcrPerformanceProfile.THROUGHPUT
         };
         for (OcrPerformanceProfile profile : profiles) {
             RadioButton radio = new RadioButton(this);
@@ -1105,9 +1105,9 @@ public class MainActivity extends CameraActivity {
         }
         panel.addView(profileGroup);
         TextView profileInfo = new TextView(this);
-        profileInfo.setText("独立实验包，不覆盖正式版。切换档位会重新加载Small模型；请在同一固定画面上手动诊断，比较DET/REC耗时、内存和系统热状态。"+
-            " 高质量档对横排跨行和真实竖排方向分别最多4次局部Small REC，只在同一帧手动诊断运行；四组候选不改变原OCR与实时朗读。"+
-            " 中等热状态会降低预算，严重热限制时停止额外识别；批量4不一定更快，需X200 Pro实测。");
+        profileInfo.setText("v56默认REC批量2、2线程；只是减少每帧逐行ONNX调用次数，不改绿色检测框或识字字典。" +
+            " 如识字变差、速度反而慢或发热，可选『对照：2线程/批1』回退。诊断里比较REC预处理/推理/解码耗时。" +
+            " 批量处理有填充开销，仍须vivo实机核验，不能提前宣称速度提升。");
         profileInfo.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         profileInfo.setTextColor(0xFF667085);
         panel.addView(profileInfo);
@@ -2057,7 +2057,7 @@ public class MainActivity extends CameraActivity {
         queueSpeechText(text,normalized,force,-1L);
     }
 
-    /** Read a complete coherent OCR flow without automatic preemption. */
+    /** Real-time speech preempts on truly new OCR text; long mode remains continuous. */
     private void queueSpeechText(String text, String normalized, boolean force,
                                  long sceneGeneration) {
         if (!canSpeak() || normalized.isEmpty()) return;
@@ -2072,14 +2072,23 @@ public class MainActivity extends CameraActivity {
                 if (isAlreadyQueuedOrRecentlySpoken(spokenNormalized,
                     similarityThreshold / 100.0f)) return;
             } else {
-                // Never preempt an in-progress utterance. New targets must
-                // also survive TWO coherent OCR reads in a changed scene.
-                boolean audioBusy = speechPageActive || speakingQueued ||
-                    currentSpeech != null || !speechQueue.isEmpty();
-                if (!liveSpeechGuard.acceptStable(spokenNormalized,
-                        sceneGeneration, audioBusy)) {
-                    Log.d("KanziTTS", "No stable new live target; TTS remains unchanged");
+                // v56 requested rule: ONE successful OCR reading of a
+                // genuinely NEW text target is enough. Do not wait for the
+                // currently speaking paragraph or a second full OCR pass.
+                // The text-based guard suppresses repeated/partial OCR of
+                // the SAME page; changing raw camera brightness alone never
+                // causes interruption.
+                if (!liveSpeechGuard.accept(spokenNormalized)) {
+                    Log.d("KanziTTS", "Same live text; keep current utterance");
                     return;
+                }
+                if (speechPageActive || speakingQueued ||
+                    currentSpeech != null || !speechQueue.isEmpty()) {
+                    // Stops system and downloaded offline voice, clears all
+                    // queued chunks; late onDone callbacks are ignored by
+                    // the utteranceId equality check in finishQueuedUtterance.
+                    clearSpeechQueue(true);
+                    Log.i("KanziTTS", "New recognized text preempts old speech");
                 }
             }
         }
