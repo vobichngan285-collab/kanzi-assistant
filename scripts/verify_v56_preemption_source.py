@@ -5,7 +5,7 @@ main=Path("app/src/main/java/com/vobichngan/kanzi/MainActivity.java").read_text(
 profile=Path("app/src/main/java/com/vobichngan/kanzi/OcrPerformanceProfile.java").read_text(encoding="utf-8")
 engine=Path("app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt").read_text(encoding="utf-8")
 sdk=Path("third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/java/com/paddle/ocr/engine/OCREngine.kt").read_text(encoding="utf-8")
-assert "APP_VERSION = \"Blue Star Guide · 实验版 1.0.6\"" in main
+assert "APP_VERSION = \"Blue Star Guide · 实验版 1.0.7\"" in main
 assert "新文字立即打断" in main
 assert "if (live && speechPageActive) return;" not in main
 assert "liveSpeechGuard.accept(spokenNormalized)" in main
