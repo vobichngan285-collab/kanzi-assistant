@@ -113,7 +113,6 @@ public class MainActivity extends CameraActivity {
     private Button cameraSourceButton, lensButton;
     private TextureView phoneTexture;
     private TextView phonePreviewStatus;
-    private TextView usbHealthView;
     private final UsbCameraHealthMonitor usbHealth = new UsbCameraHealthMonitor();
     private final UsbTextFocusPolicy usbTextFocusPolicy = new UsbTextFocusPolicy();
     private final AtomicBoolean usbFocusCommandPending = new AtomicBoolean(false);
@@ -146,32 +145,24 @@ public class MainActivity extends CameraActivity {
     private java.io.File usbSessionLogFile;
     private long lastUsbLogAt = 0L;
     private String lastUsbDiagnosis = "";
+    // Passive monitoring and recovery continue without covering the live camera image.
     private final Runnable usbHealthTicker = new Runnable() {
         @Override public void run() {
-            if (usbHealthView != null) {
-                if (usingPhoneCamera) {
-                    usbHealthView.setVisibility(View.GONE);
-                } else {
-                    long now = UsbCameraHealthMonitor.nowMs();
-                    // Direct UVC camera producer, NOT extra GLES or eglSwapBuffers.
-                    long glCount = com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalDirectSurfaceUpdates();
-                    long glTime = com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.lastDirectSurfaceUpdateMs();
-                    long eglErrors = com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalEglErrors();
-                    boolean surfaceReady = cameraTextureView != null && cameraTextureView.isAvailable();
-                    String message = usbHealth.sample(now, glCount, glTime,
-                        eglErrors, busy.get(), surfaceReady, true);
-                    usbHealthView.setText(message + "\nUSB原生直显（无中间GL）｜OCR独立≤20FPS\nUSB控制：" + usbHardwareControls + "\n点击查看 / 复制近一分钟记录");
-                    usbHealthView.setContentDescription("USB摄像头运行状态：" + message +
-                        "。双击查看完整记录");
-                    usbHealthView.setVisibility(View.VISIBLE);
-                    String diagnosis = usbHealth.lastClassification();
-                    checkUsbDirectStall(now);
-                    if (now-lastUsbLogAt >= 8000L ||
-                        (!diagnosis.isEmpty() && !diagnosis.equals(lastUsbDiagnosis))) {
-                        lastUsbLogAt = now;
-                        lastUsbDiagnosis = diagnosis;
-                        persistUsbHealthLog();
-                    }
+            if (!usingPhoneCamera) {
+                long now = UsbCameraHealthMonitor.nowMs();
+                long directCount = com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalDirectSurfaceUpdates();
+                long directTime = com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.lastDirectSurfaceUpdateMs();
+                long eglErrors = com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalEglErrors();
+                boolean surfaceReady = cameraTextureView != null && cameraTextureView.isAvailable();
+                usbHealth.sample(now, directCount, directTime,
+                    eglErrors, busy.get(), surfaceReady, true);
+                String diagnosis = usbHealth.lastClassification();
+                checkUsbDirectStall(now);
+                if (now-lastUsbLogAt >= 8000L ||
+                    (!diagnosis.isEmpty() && !diagnosis.equals(lastUsbDiagnosis))) {
+                    lastUsbLogAt = now;
+                    lastUsbDiagnosis = diagnosis;
+                    persistUsbHealthLog();
                 }
             }
             mainHandler.postDelayed(this, 1000L);
@@ -781,22 +772,6 @@ public class MainActivity extends CameraActivity {
         ocrOverlay = new OcrOverlayView(this);
         root.addView(ocrOverlay, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        // Passive USB-only overlay; remains visible while OCR is paused.
-        usbHealthView = new TextView(this);
-        usbHealthView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        usbHealthView.setTextColor(Color.WHITE);
-        usbHealthView.setBackgroundColor(0xDD102033);
-        usbHealthView.setPadding(dp(10),dp(7),dp(10),dp(7));
-        usbHealthView.setVisibility(View.GONE);
-        usbHealthView.setClickable(true);
-        usbHealthView.setFocusable(true);
-        usbHealthView.setOnClickListener(v -> showUsbHealthHistory());
-        FrameLayout.LayoutParams healthParams=new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT,Gravity.TOP);
-        healthParams.topMargin=dp(6);
-        healthParams.leftMargin=dp(6);
-        healthParams.rightMargin=dp(6);
-        root.addView(usbHealthView,healthParams);
         phonePreviewStatus = new TextView(this);
         phonePreviewStatus.setTextColor(Color.WHITE);
         phonePreviewStatus.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
@@ -1476,7 +1451,7 @@ public class MainActivity extends CameraActivity {
         flipCheck.setChecked(previewVerticalFlip);
         panel.addView(flipCheck);
         CheckBox usbVividCheck = new CheckBox(this);
-        usbVividCheck.setText("USB预览轻度鲜明色彩（实验；仅显示，不修改OCR图像）");
+        usbVividCheck.setText("USB画面鲜明色彩");
         usbVividCheck.setChecked(usbPreviewVivid);
         panel.addView(usbVividCheck);
 
@@ -1512,7 +1487,7 @@ public class MainActivity extends CameraActivity {
         panel.addView(maxCharsInput);
 
         TextView profileTitle = new TextView(this);
-        profileTitle.setText("OCR 性能")
+        profileTitle.setText("OCR 性能");
         profileTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         profileTitle.setPadding(0, dp(16), 0, dp(4));
         panel.addView(profileTitle);
@@ -1554,6 +1529,9 @@ public class MainActivity extends CameraActivity {
             switchOcrModel(ocrModelId);
         });
         panel.addView(retryOcrButton);
+        Button usbHistoryButton = createControlButton("USB 运行记录");
+        usbHistoryButton.setOnClickListener(v -> showUsbHealthHistory());
+        panel.addView(usbHistoryButton);
         Button runDiagnosticButton = createControlButton("开始 OCR 诊断");
         runDiagnosticButton.setOnClickListener(v -> {
             if (!(usingPhoneCamera || previewCallbackAdded)) {
@@ -1616,7 +1594,7 @@ public class MainActivity extends CameraActivity {
             }
         });
         panel.addView(speakDiagnosticButton);
-        Button speakCandidateButton = createControlButton("试听实验候选阅读顺序");
+        Button speakCandidateButton = createControlButton("试听候选阅读顺序");
         speakCandidateButton.setOnClickListener(v -> {
             // A/B listening is explicitly user-triggered. Live automatic TTS
             // continues to use the established reading-order implementation.
