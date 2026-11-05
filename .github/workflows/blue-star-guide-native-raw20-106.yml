@@ -540,6 +540,11 @@ jobs:
               assert b'USB_CTRL_CAPS' in dex
               assert b'getHardwareControlsReport' in dex
               assert b'applyUsbPreviewTone' in dex
+              native_uvc = [n for n in names if n == 'lib/arm64-v8a/libUVCCamera.so']
+              assert len(native_uvc) == 1, native_uvc
+              assert b'UVC_NATIVE_OCR_RAW20_GATE_ENABLED' in z.read(native_uvc[0]), (
+                  'The native gate was patched in source but is MISSING from the actual APK!')
+              print('NATIVE_UVC_RAW20_GATE_BINARY_EMBEDDED=PASS')
               print('USB_GL_AND_UVC_HEARTBEAT_IN_APK=PASS')
               det=hashlib.sha256(z.read('assets/models/det/inference.onnx')).hexdigest()
               rec=hashlib.sha256(z.read('assets/models/rec/inference.onnx')).hexdigest()
