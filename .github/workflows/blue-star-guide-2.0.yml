@@ -13,7 +13,7 @@ concurrency:
   group: diagnostic-phone-ocr-${{ github.run_id }}
   cancel-in-progress: false
 permissions:
-  contents: write
+  contents: read
   actions: read
 jobs:
   build:
@@ -614,19 +614,3 @@ jobs:
           path: ${{ runner.temp }}/diag-output/
           retention-days: 10
           if-no-files-found: error
-
-      - name: Publish signed debug validation package as prerelease
-        if: success()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          gh release create blue-star-guide-v2.0-validation-20261106 \
-            "$RUNNER_TEMP/diag-output/BlueStarGuide_2.0_arm64.apk" \
-            "$RUNNER_TEMP/diag-output/SHA256SUMS.txt" \
-            "$RUNNER_TEMP/diag-output/README.txt" \
-            "$RUNNER_TEMP/diag-output/ChineseOCR-Lite_GPL-2.0_LICENSE.txt" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "蓝星向导 2.0 · 真机验收版" \
-            --notes "以1.0.9原生USB直显为基线，整合预览轻触识别、长文翻页、逐OCR框去重、深色设置和原创金属叮声。Android ARM64独立APK；离线识别。此为构建验证版，尚待vivo X200 Pro真机验收。" \
-            --target "$GITHUB_SHA" --prerelease
