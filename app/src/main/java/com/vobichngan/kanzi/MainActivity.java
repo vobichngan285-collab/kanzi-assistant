@@ -109,8 +109,8 @@ public class MainActivity extends CameraActivity {
     private TextureView cameraTextureView;
     // Kept as non-visible diagnostic targets so existing USB diagnostics remain available.
     private TextView status, diagnostic;
-    private Button modeButton, startButton, settingsButton, readingModeButton;
-    private Button cameraSourceButton, lensButton;
+    private Button modeButton, startButton, settingsButton;
+    private androidx.appcompat.app.AlertDialog settingsDialog;
     private TextureView phoneTexture;
     private TextView phonePreviewStatus;
     private final UsbCameraHealthMonitor usbHealth = new UsbCameraHealthMonitor();
@@ -785,27 +785,6 @@ public class MainActivity extends CameraActivity {
             ViewGroup.LayoutParams.MATCH_PARENT, dp(104), Gravity.CENTER);
         root.addView(phonePreviewStatus, phoneStatusParams);
 
-        cameraSourceButton = createControlButton("摄像头：USB 外接");
-        lensButton = createControlButton("切换前后");
-        lensButton.setContentDescription("切换手机前置和后置摄像头");
-        LinearLayout cameraRow = new LinearLayout(this);
-        cameraRow.setOrientation(LinearLayout.HORIZONTAL);
-        cameraRow.addView(cameraSourceButton, new LinearLayout.LayoutParams(0, dp(48), 2f));
-        cameraRow.addView(lensButton, new LinearLayout.LayoutParams(0, dp(48), 1f));
-
-        readingModeButton = createControlButton("阅读：长文（完整读）");
-        readingModeButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
-        readingModeButton.setMinHeight(dp(50));
-        readingModeButton.setContentDescription("切换长文阅读和快速扫读模式");
-        LinearLayout controlDock = new LinearLayout(this);
-        controlDock.setOrientation(LinearLayout.VERTICAL);
-        readingModeButton.setBackgroundTintList(ColorStateList.valueOf(0xFF154A5B));
-        controlDock.addView(cameraRow, new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(48)
-        ));
-        controlDock.addView(readingModeButton, new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(52)
-        ));
         modeButton = createControlButton("模式：自动");
         controls.addView(modeButton, new LinearLayout.LayoutParams(0, dp(54), 1f));
         startButton = createControlButton("开始识别");
@@ -817,7 +796,7 @@ public class MainActivity extends CameraActivity {
             ViewGroup.LayoutParams.MATCH_PARENT, dp(62)
         ));
         FrameLayout.LayoutParams controlsParams = new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(162), Gravity.BOTTOM
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(62), Gravity.BOTTOM
         );
         root.addView(controlDock, controlsParams);
         View.OnClickListener tapToRead = v -> requestManualCaptureFromPreview();
@@ -842,25 +821,11 @@ public class MainActivity extends CameraActivity {
     }
 
     private void updateControlLabels() {
-        if (cameraSourceButton != null) {
-            cameraSourceButton.setText(usingPhoneCamera ? "摄像头：手机" : "摄像头：USB 外接");
-            cameraSourceButton.setContentDescription(usingPhoneCamera
-                ? "当前手机摄像头，点击切换到USB外接摄像头"
-                : "当前USB摄像头，点击切换到手机摄像头");
+        if (modeButton != null) {
+            String label = longReadingMode ? "模式：长文本" : (automaticMode ? "模式：自动" : "模式：手动");
+            modeButton.setText(label);
+            modeButton.setContentDescription(label + "，点击选择自动识别、手动识别或长文本阅读");
         }
-        if (lensButton != null) {
-            lensButton.setVisibility(usingPhoneCamera ? View.VISIBLE : View.GONE);
-            lensButton.setText(phoneFrontFacing ? "前置→后置" : "后置→前置");
-        }
-        if (readingModeButton != null) {
-            readingModeButton.setText(longReadingMode
-                ? "长文阅读｜轻触换页"
-                : "实时文字｜新文字立即打断");
-            readingModeButton.setContentDescription(longReadingMode
-                ? "当前是长文阅读模式。点击切换到实时文字识别"
-                : "当前是实时文字识别模式。点击切换到长文阅读");
-        }
-        if (modeButton != null) modeButton.setText(automaticMode ? "模式：自动" : "模式：手动");
         if (startButton != null) startButton.setText(running ? "暂停识别" : "开始识别");
     }
 
@@ -1053,7 +1018,7 @@ public class MainActivity extends CameraActivity {
         heading.setTextColor(white);heading.setTypeface(null,android.graphics.Typeface.BOLD);
         heading.setGravity(android.view.Gravity.CENTER);
         panel.addView(heading);
-"跟随手机默认语音";
+        String engineLabel = "跟随手机默认语音";
         if (!appTtsEngine.isEmpty()) {
             engineLabel=appTtsEngine;
             if (tts!=null) for(TextToSpeech.EngineInfo e:tts.getEngines())
@@ -1064,17 +1029,18 @@ public class MainActivity extends CameraActivity {
                 if(e.name.equals(actual)){engineLabel="跟随系统 · "+e.label;break;}
         }
         addSimpleSettingsRow(panel,"语音",engineLabel,()->showInstalledTtsSelector());
+        addSimpleSettingsRow(panel,"摄像头",usingPhoneCamera
+            ? (phoneFrontFacing ? "手机前置摄像头" : "手机后置摄像头") : "USB 外接摄像头",
+            ()->showCameraSourceSelector());
         addSimpleSettingsRow(panel,"语速",followEngineSpeechRate?
             "跟随语音包自己的设置":"自定义 "+String.format(Locale.US,"%.2f",speechRate)+" 倍",
             ()->showSimpleSpeechSpeedDialog());
-        addSimpleSettingsRow(panel,"朗读方式",longReadingMode?
-            "长文阅读 · 轻触换页":"实时文字 · 新文字立即打断",
-            ()->showSimpleReadingRuleDialog());
         addSimpleSettingsRow(panel,"识别提示",
             (readyChimeEnabled ? "金属提示音" : "静音") + " · " + (readyVibrateEnabled ? "轻振动" : "不振动"),
             ()->showReadyCueSettingsDialog());
 
 
+        TextView test = new TextView(this);
         test.setText("▶ 试听当前语音");
         test.setGravity(android.view.Gravity.CENTER);
         test.setTextColor(0xFF151515);test.setTextSize(TypedValue.COMPLEX_UNIT_SP,18);
@@ -1119,6 +1085,8 @@ public class MainActivity extends CameraActivity {
             }
         });
         dialog.show();
+        settingsDialog = dialog;
+        dialog.setOnDismissListener(d -> { if (settingsDialog == dialog) settingsDialog = null; });
     }
 
     private void addSimpleSettingsRow(LinearLayout panel,String label,String detail,
@@ -1146,6 +1114,29 @@ public class MainActivity extends CameraActivity {
         row.setContentDescription(label+"："+detail+"；双击选择");
         row.setClickable(true);row.setFocusable(true);
         row.setOnClickListener(v->clicked.run());
+    }
+
+    /** Camera source is selected from the main settings page, not the live preview. */
+    private void showCameraSourceSelector() {
+        final String[] choices = {"USB 外接摄像头", "手机后置摄像头", "手机前置摄像头"};
+        final int selected = usingPhoneCamera ? (phoneFrontFacing ? 2 : 1) : 0;
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("摄像头")
+            .setSingleChoiceItems(choices, selected, (dialog, which) -> {
+                dialog.dismiss();
+                boolean phone = which != 0;
+                boolean front = which == 2;
+                if (phone == usingPhoneCamera && (!phone || front == phoneFrontFacing)) return;
+                if (settingsDialog != null) settingsDialog.dismiss();
+                if (phone) {
+                    phoneFrontFacing = front;
+                    getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                        .putBoolean(PREF_FRONT_CAMERA, front).apply();
+                }
+                switchCameraSource(phone);
+            })
+            .setNegativeButton("取消", null)
+            .show();
     }
 
     private void showInstalledTtsSelector() {
@@ -1217,6 +1208,56 @@ public class MainActivity extends CameraActivity {
                 else if(tts!=null)tts.setSpeechRate(speechRate);
                 Toast.makeText(this,"已更新本应用语速设置",Toast.LENGTH_SHORT).show();
             }).show();
+    }
+
+    /** Single mutually-exclusive recognition mode picker for the bottom-left button. */
+    private void showRecognitionModeSelector() {
+        int selected = longReadingMode ? 2 : (automaticMode ? 0 : 1);
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("识别模式")
+            .setSingleChoiceItems(new String[]{"自动识别", "手动识别", "长文本阅读"},
+                selected, (dialog, which) -> {
+                    dialog.dismiss();
+                    applyRecognitionMode(which);
+                })
+            .setNegativeButton("取消", null)
+            .show();
+    }
+
+    private void applyRecognitionMode(int selected) {
+        if (selected < 0 || selected > 2) return;
+        boolean nextLong = selected == 2;
+        boolean nextAuto = selected != 1;
+        if (automaticMode == nextAuto && longReadingMode == nextLong) return;
+        readingEpoch.incrementAndGet();
+        longReadingMode = nextLong;
+        automaticMode = nextAuto;
+        queueSpeech = nextLong;
+        realtimeScene.reset();
+        frameChangeGate.reset();
+        lastQuickScanGeneration = -1L;
+        lastQuickScanReliable = false;
+        liveSpeechGuard.reset();
+        manualCaptureRequested.set(false);
+        candidateText = "";
+        candidateNormalized = "";
+        candidateCount = 0;
+        lastSpoken = "";
+        lastProcess = 0L;
+        noTextSince = 0L;
+        clearSpeechQueue(true);
+        if (recognizer != null) recognizer.setFastScanMode(!nextLong);
+        if (ocrOverlay != null) ocrOverlay.clear();
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putBoolean(PREF_AUTO_MODE, nextAuto)
+            .putBoolean(PREF_LONG_READING, nextLong)
+            .putBoolean(PREF_QUEUE_SPEECH, nextLong)
+            .apply();
+        updateControlLabels();
+        String announcement = selected == 2 ? "长文本阅读，轻触画面可以换页" :
+            (selected == 1 ? "手动识别，轻触画面开始识别" : "自动识别");
+        Toast.makeText(this, announcement, Toast.LENGTH_SHORT).show();
+        modeButton.announceForAccessibility(announcement);
     }
 
     private void showSimpleReadingRuleDialog() {
@@ -1487,7 +1528,7 @@ public class MainActivity extends CameraActivity {
         panel.addView(maxCharsInput);
 
         TextView profileTitle = new TextView(this);
-        profileTitle.setText("OCR 性能");
+        profileTitle.setText("OCR 性能");;
         profileTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         profileTitle.setPadding(0, dp(16), 0, dp(4));
         panel.addView(profileTitle);
@@ -1649,6 +1690,7 @@ public class MainActivity extends CameraActivity {
                 recognitionIntervalMs = Math.max(1L, Math.min(10000L, interval));
 
                     profileGroup.getCheckedRadioButtonId());
+                RadioButton selectedProfile = profileGroup.findViewById(profileGroup.getCheckedRadioButtonId());
                 String requestedProfile = selectedProfile != null &&
                     selectedProfile.getTag() != null ?
                     selectedProfile.getTag().toString() : ocrProfileId;
@@ -1914,32 +1956,9 @@ rotationGroup.getCheckedRadioButtonId());
         // app initialization never fetches models or contacts the Internet.
         initializeSelectedTextToSpeech();
 
-        cameraSourceButton.setOnClickListener(v -> switchCameraSource(!usingPhoneCamera));
-        lensButton.setOnClickListener(v -> {
-            phoneFrontFacing = !phoneFrontFacing;
-            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                .putBoolean(PREF_FRONT_CAMERA, phoneFrontFacing).apply();
-            switchCameraSource(true);
-        });
-        readingModeButton.setOnClickListener(v -> setLongReadingMode(!longReadingMode));
-
-        modeButton.setOnClickListener(v -> {
-            automaticMode = !automaticMode;
-            readingEpoch.incrementAndGet();
-            realtimeScene.reset();
-            frameChangeGate.reset();
-            lastQuickScanGeneration = -1L;
-            liveSpeechGuard.reset();
-            manualCaptureRequested.set(false);
-            clearSpeechQueue(true);
-            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                .putBoolean(PREF_AUTO_MODE, automaticMode).apply();
-            updateControlLabels();
-            Toast.makeText(this, automaticMode ? "已切换为自动识别" : "已切换为手动识别",
-                Toast.LENGTH_SHORT).show();
-        });
 
 
+        startButton.setOnClickListener(v -> {
             if (!(usingPhoneCamera || previewCallbackAdded)) {
                 Toast.makeText(this, "请先连接并打开摄像头", Toast.LENGTH_SHORT).show();
                 return;
@@ -1975,6 +1994,7 @@ rotationGroup.getCheckedRadioButtonId());
             updateControlLabels();
         });
 
+        modeButton.setOnClickListener(v -> showRecognitionModeSelector());
         settingsButton.setOnClickListener(v -> showSettingsDialog());
     }
 
@@ -2248,7 +2268,7 @@ rotationGroup.getCheckedRadioButtonId());
         updateControlLabels();
         String message = phone ? (phoneFrontFacing ? "已切换手机前置摄像头" : "已切换手机后置摄像头")
                                : "已切换USB外接摄像头";
-        if (cameraSourceButton != null) cameraSourceButton.announceForAccessibility(message);
+        if (settingsButton != null) settingsButton.announceForAccessibility(message);
     }
 
     /**
@@ -2432,9 +2452,8 @@ rotationGroup.getCheckedRadioButtonId());
             .putBoolean(PREF_QUEUE_SPEECH, enableLong)
             .apply();
         updateControlLabels();
-        String announcement = enableLong ? "已切换长文阅读，轻触画面可换页" : "已切换实时文字，识别到新文字立即打断";
+        String announcement = enableLong ? "已切换长文本阅读" : "已切换自动识别";
         Toast.makeText(this, announcement, Toast.LENGTH_SHORT).show();
-        if (readingModeButton != null) readingModeButton.announceForAccessibility(announcement);
     }
 
     /**
