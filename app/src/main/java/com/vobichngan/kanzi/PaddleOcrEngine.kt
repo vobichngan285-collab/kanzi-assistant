@@ -43,6 +43,8 @@ data class OcrReadResult(
     val totalTimeMs: Long
 )
 fun interface OcrResultCallback { fun onResult(result: OcrReadResult?) }
+/** Only model-read text from the first genuine REC batch, no guesses or LLM. */
+fun interface OcrEarlyReadCallback { fun onEarlyText(text: String) }
 fun interface OcrErrorCallback { fun onError(message: String) }
 data class OcrDiagnosticResult(
     val text: String,
@@ -670,6 +672,7 @@ class PaddleOcrEngine(
         legacyNv21Jpeg: Boolean,
         inputRotationDegrees: Int,
         onResult: OcrResultCallback,
+        onEarly: OcrEarlyReadCallback?,
         onError: OcrErrorCallback
     ) {
         val current = engine ?: run {
@@ -723,7 +726,20 @@ class PaddleOcrEngine(
                         liveAngle = usbAuto.angle
                         Log.i(TAG,usbAuto.report)
                     }
-                    var result = usbAuto?.result ?: current.recognize(bitmap)
+                    // The first two BoxSorter-ordered real REC rows become
+                    // speakable while the rest of the 40+ rows are still
+                    // processing. Never do this in manual/long mode or USB
+                    // direction calibration where whole-page comparison is
+                    // required.
+                    val earlyListener: ((List<OCRResult>) -> Unit)? =
+                        if (fastScanMode && !usbAutomatic && modelId == "cnlite_smallrec" && onEarly != null)
+                            { first ->
+                                val text = first.map { it.text.trim() }
+                                    .filter { it.isNotEmpty() }.joinToString("\n")
+                                if (text.isNotBlank()) onEarly.onEarlyText(text)
+                            }
+                        else null
+                    var result = usbAuto?.result ?: current.recognize(bitmap, earlyListener)
                     // Normal pages stay one-pass. Sideways pages may earn one extra
                     // OCR inference, and replace text only with real pixel evidence.
                     if (liveAngle == 0 && !usbAutomatic) {
