@@ -401,7 +401,7 @@ jobs:
           assert 'lastNativeFrameMs()' in activity
           assert 'lastGlFrameArrivedMs()' in activity
           assert 'AUSBC_EVENT_TIMELINE' in activity
-          assert 'usbHealth.sample(now, glCount, glTime,' in activity
+          assert 'usbHealth.sample(now, directCount, directTime,' in activity
           assert 'persistUsbHealthLog()' in activity
           assert 'usbLogWriter.shutdown()' in activity
           assert 'new UsbCameraHealthMonitor()' in activity
@@ -411,7 +411,6 @@ jobs:
           assert 'getUsbHardwareControlsReport()' in activity
           assert 'supportsUsbHardwareAutoFocus()' in activity
           assert 'getAutoFocus()' in activity and 'setAutoFocus(false)' in activity
-          assert 'usbHealth.sample(now, directCount, directTime,' in activity
           assert 'usbHealthView' not in activity
           assert 'usbTextFocusPolicy.shouldRelease(' in activity
           assert 'applyUsbPreviewTone()' in activity
