@@ -23,7 +23,9 @@ assert "mLastOcrRawCallbackNs = now_ns;" in callback
 assert "mUvcCamera?.setFrameCallback(frameCallBack, UVCCamera.PIXEL_FORMAT_YUV420SP)" in camera
 assert "private const val MAX_FPS = 61" in camera
 assert 'setRawPreviewData(true)' in app
-assert 'OCR独立≤20FPS' in app
+assert 'processCameraFrame(' in app and 'usbHealth.onRawNv21(width,height)' in app
+# The old visible FPS banner is intentionally gone; enforce the native callback gate instead.
+assert 'usbHealthView' not in app
 assert "recognizer.recognizeNv21(" in app
 assert "mCameraSurfaceTexture?.updateTexImage()" in Path(
     "third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/render/RenderManager.kt"
