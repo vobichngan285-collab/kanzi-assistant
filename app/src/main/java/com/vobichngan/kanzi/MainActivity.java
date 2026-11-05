@@ -1239,33 +1239,18 @@ public class MainActivity extends CameraActivity {
         enhancedCheck.setChecked(enhancedOcr);
         panel.addView(enhancedCheck);
 
-        TextView enhancedNote = new TextView(this);
-        enhancedNote.setText("适合背景杂乱、文字与背景颜色接近的画面。处理会增加耗时；如果画面本身清晰，可关闭以保持速度。");
-        enhancedNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        enhancedNote.setTextColor(0xFF667085);
-        panel.addView(enhancedNote);
 
 
         layoutAiCheck.setText("实验功能：AI 版面理解 + 连续文字流规则");
         layoutAiCheck.setChecked(aiLayoutEnabled);
         layoutAiCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         panel.addView(layoutAiCheck);
-        TextView layoutAiNote = new TextView(this);
-        layoutAiNote.setText("实时文字不运行额外的版面 AI，优先保证速度。此实验选项仅用于长文阅读；不修改原始 OCR 文字。");
-        layoutAiNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        layoutAiNote.setTextColor(0xFF667085);
-        panel.addView(layoutAiNote);
 
         CheckBox verticalLiveCheck = new CheckBox(this);
         verticalLiveCheck.setText("自动识别横排／竖排并朗读（默认开启）");
         verticalLiveCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         verticalLiveCheck.setChecked(verticalLiveReadingEnabled);
         panel.addView(verticalLiveCheck);
-        TextView verticalLiveNote = new TextView(this);
-        verticalLiveNote.setText("无需手动选择文字方向：横排完整朗读；单列竖排从上到下；多列传统竖排从右到左。不猜字、不补字、不按中央截断内容。USB输入方向的自动校准继续独立运行。");
-        verticalLiveNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        verticalLiveNote.setTextColor(0xFF667085);
-        panel.addView(verticalLiveNote);
 
         TextView liveRotationTitle = new TextView(this);
         liveRotationTitle.setText("手机摄像头实时文字识别方向（不控制预览）");
@@ -1290,11 +1275,6 @@ public class MainActivity extends CameraActivity {
             rotationGroup.addView(radio);
         }
         panel.addView(rotationGroup);
-        TextView liveRotationNote = new TextView(this);
-        liveRotationNote.setText("仅控制手机摄像头的实时OCR；USB摄像头在下方单独设置OCR输入角度。手机独立诊断仍保留原始0°基线。");
-        liveRotationNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        liveRotationNote.setTextColor(0xFF667085);
-        panel.addView(liveRotationNote);
 
         TextView usbOcrRotationTitle = new TextView(this);
         usbOcrRotationTitle.setText("USB摄像头的OCR方向（通常无需操作）");
@@ -1320,10 +1300,6 @@ public class MainActivity extends CameraActivity {
             usbOcrRotationGroup.addView(radio);
         }
         panel.addView(usbOcrRotationGroup);
-        TextView usbOcrNote = new TextView(this);
-        usbOcrNote.setText("首次遇到原始方向明显错误的文字时，才追加本地OCR对照并缓存方向；后续直接复用。无法确认则保留原文。手动角度仅供排障；预览旋转/镜像仍完全独立。");
-        usbOcrNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        panel.addView(usbOcrNote);
 
         // Users normally need one Start button, not eight orientation radios.
         // Keep manual overrides accessible when needed, but collapse by default.
@@ -1338,8 +1314,8 @@ public class MainActivity extends CameraActivity {
             : "USB OCR目前使用手动角度（如需自动，请在高级设置中选择自动校准）。");
         autoDirectionSummary.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         panel.addView(autoDirectionSummary);
-        View[] extraDirections = {liveRotationTitle,rotationGroup,liveRotationNote,
-            usbOcrRotationTitle,usbOcrRotationGroup,usbOcrNote};
+        View[] extraDirections = {liveRotationTitle,rotationGroup,
+            usbOcrRotationTitle,usbOcrRotationGroup};
         for(View extra:extraDirections)extra.setVisibility(View.GONE);
         advancedDirectionCheck.setOnCheckedChangeListener((button,checked)-> {
             for(View extra:extraDirections)
@@ -1359,11 +1335,6 @@ public class MainActivity extends CameraActivity {
         intervalInput.setHint("输入 1 到 10000 毫秒");
         panel.addView(intervalInput);
 
-        TextView intervalNote = new TextView(this);
-        intervalNote.setText("例如 1000 毫秒约为每秒一次；设为 1 毫秒也不会强制每秒识别 1000 次，实际速度受单次 OCR 耗时限制，程序不会堆积识别任务。");
-        intervalNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        intervalNote.setTextColor(0xFF667085);
-        panel.addView(intervalNote);
 
         TextView similarityTitle = new TextView(this);
         similarityTitle.setText("两次识别文字相似度阈值：" + similarityThreshold + "%");
@@ -1434,10 +1405,6 @@ public class MainActivity extends CameraActivity {
         });
         panel.addView(rotationSeek);
 
-        TextView rotationNote = new TextView(this);
-        rotationNote.setText("手机预览默认自动保持正向和16:9等比；0°表示不额外旋转。预览旋转不影响OCR输入图像。");
-        rotationNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        panel.addView(rotationNote);
 
 
         CheckBox mirrorCheck = new CheckBox(this);
@@ -1456,28 +1423,6 @@ public class MainActivity extends CameraActivity {
         usbVividCheck.setText("USB预览轻度鲜明色彩（实验；仅显示，不修改OCR图像）");
         usbVividCheck.setChecked(usbPreviewVivid);
         panel.addView(usbVividCheck);
-        TextView afNote = new TextView(this);
-        afNote.setText("实验：USB最高帧率参数61，屏幕预览不降帧；仅原生OCR取帧支路限制最多20FPS，避免每个视频帧都转换和复制NV21。识别出清晰真实文字后尝试锁定自动对焦，持续换页时恢复自动对焦。光学变焦和曝光不改。");
-        afNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        afNote.setTextColor(0xFF667085);
-        panel.addView(afNote);
-
-        TextView transformNote = new TextView(this);
-        PreviewSize currentSize = previewCallbackAdded ? getCurrentPreviewSize() : null;
-        String actualSizeText = currentSize == null
-            ? "当前未连接摄像头"
-            : currentSize.getWidth() + "×" + currentSize.getHeight();
-        TextView previewQualityNote = new TextView(this);
-        previewQualityNote.setText("当前实际预览分辨率：" + actualSizeText
-            + "。固定请求 1920×1080；若摄像头不支持，会选择 1080p 以下最合适的模式；如果没有符合上限的模式则明确报错，不会偷偷切换到 4K。");
-        previewQualityNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        previewQualityNote.setTextColor(0xFF667085);
-        panel.addView(previewQualityNote);
-
-        transformNote.setText("USB左右校正仅改变USB预览显示和OCR框在预览上的位置；不会水平翻转原始NV21图像或OCR识别输入。手机摄像头预览保持独立。附加水平镜像可以取消USB默认校正。");
-        transformNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        transformNote.setTextColor(0xFF667085);
-        panel.addView(transformNote);
 
         TextView speechFilterTitle = new TextView(this);
         speechFilterTitle.setText("朗读内容筛选（只影响语音，不改变 OCR 识别结果）");
@@ -1528,24 +1473,12 @@ public class MainActivity extends CameraActivity {
             profileGroup.addView(radio);
         }
         panel.addView(profileGroup);
-        TextView profileInfo = new TextView(this);
-        profileInfo.setText("v56默认REC批量2、2线程；只是减少每帧逐行ONNX调用次数，不改绿色检测框或识字字典。" +
-            " 如识字变差、速度反而慢或发热，可选『对照：2线程/批1』回退。诊断里比较REC预处理/推理/解码耗时。" +
-            " 批量处理有填充开销，仍须vivo实机核验，不能提前宣称速度提升。");
-        profileInfo.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        profileInfo.setTextColor(0xFF667085);
-        panel.addView(profileInfo);
 
         TextView diagnosticTitle = new TextView(this);
         diagnosticTitle.setText("OCR 诊断");
         diagnosticTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         diagnosticTitle.setPadding(0, dp(18), 0, dp(4));
         panel.addView(diagnosticTitle);
-        TextView diagnosticNote = new TextView(this);
-        diagnosticNote.setText("原版四路同帧A/B保持不变；新增按需整页方向识别0°/90°/180°/270°独立诊断。只有可靠几何或极低质量信号才追加一次整页OCR，输出候选和耗时，原版A/B不会被覆盖。真实竖排候选仍仅诊断。分享前检查隐私文字。");
-        diagnosticNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        diagnosticNote.setTextColor(0xFF667085);
-        panel.addView(diagnosticNote);
         diagnosticReportView = new TextView(this);
         diagnosticReportView.setText("尚未运行诊断");
         diagnosticReportView.setTextIsSelectable(true);
@@ -1659,11 +1592,6 @@ public class MainActivity extends CameraActivity {
         panel.addView(copyDiagnosticButton);
         panel.addView(diagnosticReportView);
 
-        TextView similarityNote = new TextView(this);
-        similarityNote.setText("主界面可切换长文阅读与快速扫读：长文模式优先读完当前内容，快速扫读只在确认为新目标时切换，避免反复从头朗读。相似度阈值仅用于长文去重。");
-        similarityNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        similarityNote.setTextColor(0xFF667085);
-        panel.addView(similarityNote);
 
         ScrollView settingsScroll = new ScrollView(this);
         settingsScroll.setFillViewport(true);
