@@ -1,11 +1,11 @@
-name: Blue Star Guide Development 1.0 arm64 slim app with globe icon and installed TTS
+name: Blue Star Guide Development 1.0.1 arm64 slim app with globe icon and installed TTS
 on:
   push:
     branches: [dev/blue-star-guide-1.0-20261105]
     paths:
       - 'app/**'
       - 'scripts/*.py'
-      - '.github/workflows/blue-star-guide-dev10-arm64-apk.yml'
+      - '.github/workflows/blue-star-guide-dev101-globe-fixed-apk.yml'
       - 'docs/phone-x200-combined-horizontal-vertical-20261103.md'
   workflow_dispatch:
 concurrency:
@@ -163,17 +163,12 @@ jobs:
           echo "OCR FIX: BGR recognition crops match the original PP-OCRv6 Small recognition config." >> "$GITHUB_STEP_SUMMARY"
           echo "PP-OCRv6 Small model assets prepared; app-private model file loading enabled." >> "$GITHUB_STEP_SUMMARY"
           du -h "$SDK/src/main/assets/models/"*/* >> "$GITHUB_STEP_SUMMARY"
-      - name: Validate selected glowing Earth launch icon
+      - name: Repair corrupted globe image and verify actual decode
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('app/src/main/res/drawable-nodpi/bluestar_icon.webp')
-          data=p.read_bytes()
-          assert len(data)>4000 and data[:4]==b'RIFF' and data[8:12]==b'WEBP'
-          assert b'VP8 ' in data[:32] or b'VP8L' in data[:32]
-          print('BLUE_STAR_GLOBE_ICON=PASS',len(data))
-          PY
+          python3 -m pip install --quiet 'Pillow>=11,<13'
+          python3 scripts/verify_repair_globe_icon.py
+          echo 'Selected Earth icon decoded and pinned SHA256 verified, not just RIFF header.' >> "$GITHUB_STEP_SUMMARY"
       - name: Pin ChineseOCR-Lite RGB DET and add faithful native 640 short-side resize
         run: |
           set -euo pipefail
@@ -431,7 +426,7 @@ jobs:
           test -x "$AAPT" && test -x "$SIGNER" && test -s "$apk"
           "$AAPT" dump badging "$apk" | tee "$RUNNER_TEMP/ocr-apk-info.txt"
           grep -q "package: name='com.vobich.kanzi.bluestarguide.dev10'" "$RUNNER_TEMP/ocr-apk-info.txt"
-          grep -q "versionCode='100'" "$RUNNER_TEMP/ocr-apk-info.txt"
+          grep -q "versionCode='101'" "$RUNNER_TEMP/ocr-apk-info.txt"
           "$AAPT" dump permissions "$apk" > "$RUNNER_TEMP/ocr-apk-permissions.txt"
           if grep -qi 'android.permission.INTERNET' "$RUNNER_TEMP/ocr-apk-permissions.txt"; then
             echo 'Offline APK MUST NOT have INTERNET permission' >&2; exit 1
@@ -455,7 +450,18 @@ jobs:
               assert not any('ppocrv5_mobile' in n or 'ppocrv6_tiny' in n for n in names)
               assert not any('sherpa' in n.lower() for n in names)
               assert not any(n.startswith(('lib/armeabi-v7a/','lib/x86/','lib/x86_64/')) for n in names)
-              assert any(n.endswith('bluestar_icon.webp') for n in names)
+              from io import BytesIO
+              from PIL import Image
+              icon_files=[n for n in names if n.endswith('bluestar_icon.webp')]
+              assert len(icon_files)==1,icon_files
+              icon=z.read(icon_files[0])
+              iconsha=hashlib.sha256(icon).hexdigest()
+              assert iconsha=='331e312e838a922292d099809e608c511046b84034b3630b11e0827414b41e96',iconsha
+              with Image.open(BytesIO(icon)) as im:
+                  im.load()
+                  assert im.format=='WEBP' and im.size==(144,144),im.size
+              assert any('mipmap-anydpi' in n and 'ic_launcher.xml' in n for n in names)
+              print('PACKAGED_LAUNCHER_IMAGE_DECODE_AND_ADAPTIVE_ICON=PASS')
               print('NO_OLD_MODELS_NO_SHERPA_NO_32BIT=PASS')
               cnlite=hashlib.sha256(z.read('assets/models/cnlite/det/inference.onnx')).hexdigest()
               assert cnlite=='ec31eb2b7daa39c4e0307ebb290045deecd515f4e9656d5d987eb82148aea867',cnlite
@@ -470,9 +476,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/diag-output"
           cp "$RUNNER_TEMP/diag-licenses/ChineseOCR-Lite_GPL-2.0_LICENSE.txt" "$RUNNER_TEMP/diag-output/ChineseOCR-Lite_GPL-2.0_LICENSE.txt"
           cp docs/x200-cnlite-v56-immediate-recfast.md "$RUNNER_TEMP/diag-output/BlueStarGuide_Dev10_技术说明.md"
-          cp "$apk" "$RUNNER_TEMP/diag-output/BlueStarGuide_Dev_1.0_arm64_debug.apk"
+          cp "$apk" "$RUNNER_TEMP/diag-output/BlueStarGuide_Dev_1.0.1_GlobeFixed_arm64.apk"
           cat > "$RUNNER_TEMP/diag-output/README.txt" <<'TXT'
-          Blue Star Guide（蓝星向导） Development 1.0 测试包。
+          Blue Star Guide（蓝星向导） Development 1.0.1 测试包。
           独立Android arm64安装包，不覆盖先前看字助手v55/v56。
           桌面软件名：Blue Star Guide。软件图标：用户确认的蓝色发光地球。
           保留ChineseOCR-Lite DET和PP-OCRv6 Small REC，以及Small DET回退与手机/USB摄像头支持。
@@ -484,13 +490,13 @@ jobs:
           此版本仅用于vivo X200 Pro实验：持续听读、翻页延迟、语速音色与CPU发热均需真机验证。
           ChineseOCR-Lite上游GPL-2.0及权重独立许可仍需审核，仅研究用途。
           TXT
-          sha256sum "$RUNNER_TEMP/diag-output/BlueStarGuide_Dev_1.0_arm64_debug.apk" > "$RUNNER_TEMP/diag-output/SHA256SUMS.txt"
+          sha256sum "$RUNNER_TEMP/diag-output/BlueStarGuide_Dev_1.0.1_GlobeFixed_arm64.apk" > "$RUNNER_TEMP/diag-output/SHA256SUMS.txt"
           cat "$RUNNER_TEMP/diag-output/SHA256SUMS.txt" >> "$GITHUB_STEP_SUMMARY"
           echo 'BLUE_STAR_DEV10_AUDIT=PASS; arm64 lean installed-TTS experimental build; real phone validation pending.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload standalone debug APK and checksum artifact
         uses: actions/upload-artifact@v4
         with:
-          name: blue-star-guide-dev10-arm64-apk
+          name: blue-star-guide-dev101-globe-fixed-apk
           path: ${{ runner.temp }}/diag-output/
           retention-days: 10
           if-no-files-found: error
@@ -502,15 +508,16 @@ jobs:
           set -euo pipefail
           branch_head="$(gh api repos/vobichngan285-collab/kanzi-assistant/branches/dev/blue-star-guide-1.0-20261105 --jq '.commit.sha')"
           if [ "$GITHUB_SHA" != "$branch_head" ]; then
-            echo "Stale run: only latest v56 source may publish." >> "$GITHUB_STEP_SUMMARY"
+            echo "Stale run: only latest Dev 1.0.1 source may publish." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          tag=blue-star-guide-dev1.0-20261105
-          name=BlueStarGuide_Dev_1.0_arm64_debug.apk
+          tag=blue-star-guide-dev1.0.1-globefix-20261105
+          name=BlueStarGuide_Dev_1.0.1_GlobeFixed_arm64.apk
           apk=app/build/outputs/apk/debug/app-debug.apk
           cp "$apk" "$RUNNER_TEMP/$name"
           cat > "$RUNNER_TEMP/release-notes.md" <<EOF
-          Blue Star Guide / 蓝星向导 — Development 1.0 (arm64)
+          Blue Star Guide / 蓝星向导 — Development 1.0.1 (arm64)
+          - Fix: Dev 1.0 icon file was undecodable; now Pillow decoding and checksum verified before and inside APK; adaptive launcher is included.
           - Blue glowing Earth icon; English desktop label Blue Star Guide.
           - Independent com.vobich.kanzi.bluestarguide.dev10 package; no v55/v56 overwrite.
           - Removes PP-OCRv5 Mobile/Tiny models, Sherpa ONNX standalone TTS engine and unused voice download dependencies.
@@ -524,14 +531,14 @@ jobs:
           EOF
           if ! gh release view "$tag" -R vobichngan285-collab/kanzi-assistant >/dev/null 2>&1; then
             gh release create "$tag" -R vobichngan285-collab/kanzi-assistant \
-              --target "$GITHUB_SHA" --title "Blue Star Guide Development 1.0 · Arm64" \
+              --target "$GITHUB_SHA" --title "Blue Star Guide Development 1.0.1 · Arm64" \
               --notes-file "$RUNNER_TEMP/release-notes.md" --prerelease
           fi
           gh release upload "$tag" "$RUNNER_TEMP/$name" -R vobichngan285-collab/kanzi-assistant --clobber
           gh release upload "$tag" "$RUNNER_TEMP/diag-output/ChineseOCR-Lite_GPL-2.0_LICENSE.txt" -R vobichngan285-collab/kanzi-assistant --clobber
           gh release upload "$tag" "$RUNNER_TEMP/diag-output/BlueStarGuide_Dev10_技术说明.md" -R vobichngan285-collab/kanzi-assistant --clobber
           gh api repos/vobichngan285-collab/kanzi-assistant/releases/tags/"$tag" \
-            --jq '.assets[] | select(.name=="BlueStarGuide_Dev_1.0_arm64_debug.apk") | [.browser_download_url,.size,.state,.digest] | @tsv' \
+            --jq '.assets[] | select(.name=="BlueStarGuide_Dev_1.0.1_GlobeFixed_arm64.apk") | [.browser_download_url,.size,.state,.digest] | @tsv' \
             | tee "$RUNNER_TEMP/blue-star-dev10-url.txt"
           grep -q '^https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/' "$RUNNER_TEMP/blue-star-dev10-url.txt"
           sha256sum "$RUNNER_TEMP/$name" >> "$GITHUB_STEP_SUMMARY"
