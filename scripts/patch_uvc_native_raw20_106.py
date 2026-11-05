@@ -46,6 +46,11 @@ patch(
     "\tmFrameCallbackFunc(NULL),\n\tcallbackPixelBytes(2),\n"
     "\tmLastOcrRawCallbackNs(0) {",
 )
+patch(
+    SOURCE,
+    "\tmLastOcrRawCallbackNs(0) {\n\n\tENTER();",
+    "\tmLastOcrRawCallbackNs(0) {\n\n\tENTER();\n\tLOGI(\"UVC_NATIVE_OCR_RAW20_GATE_ENABLED\");",
+)
 
 # This location is within do_capture_callback(): preview has already been
 # decoded and displayed by its own independent thread, but this capture thread
