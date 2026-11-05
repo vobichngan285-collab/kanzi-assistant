@@ -127,9 +127,13 @@ patch(
 patch(
     RENDER,
     """                mScreenRender?.swapBuffers(mCameraSurfaceTexture?.timestamp ?: 0)
+                // Passive health counter: only GL submission attempt, not display.
+                DiagnosticRenderHeartbeat.noteSwapAttempt()
             }
             MSG_GL_ADD_EFFECT -> {""",
     """                mScreenRender?.swapBuffers(mCameraSurfaceTexture?.timestamp ?: 0)
+                // Passive health counter: only GL submission attempt, not display.
+                DiagnosticRenderHeartbeat.noteSwapAttempt()
                 } finally {
                     mGlDrawQueued.set(false)
                     if (mGlDrawDirty.get()) requestGlDraw()
