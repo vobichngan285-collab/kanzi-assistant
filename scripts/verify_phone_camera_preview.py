@@ -47,7 +47,7 @@ assert "PhonePreviewGeometry.camera2Preview(" in activity
 assert "PhonePreviewGeometry.fit(" in overlay
 assert "phoneFit.mapNative(nx, ny)" in overlay
 assert "previewMirror, previewVerticalFlip);" in activity
-assert "applyPreviewTransform();\n                applyPhonePreviewTransform();" in activity
+assert "applyPreviewTransform();\n                applyUsbPreviewTone();\n                applyPhonePreviewTransform();" in activity
 assert "phoneTexture.setOpaque(false);" in activity
 assert "phoneTexture.setRotation(0f);" in activity
 phone_method=activity.split("private void applyPhonePreviewTransform()",1)[1].split(
