@@ -858,3 +858,11 @@
 - **CI/实际release验证：** 构建源码SHA `f96d1a8cfe8a1a49f49e5dfd2eb08f5758be3737`，Actions `https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/41982844999`全部成功。CI确认最终APK包含`UsbCameraHealthMonitor`、`DiagnosticRenderHeartbeat`，并验证原模型哈希、签名、版本与无旧模型；另从GitHub Actions产物重新下载APK，独立解压验证两种监控类均包含在DEX中，全部模型、图标与1.0.1相同。
 - **发布与下载：** `https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/blue-star-guide-usb-health-dev1.0.2-20261105`；APK `https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/blue-star-guide-usb-health-dev1.0.2-20261105/BlueStarGuide_Dev_1.0.2_USB_Health_arm64.apk`，GitHub证实bytes=79,366,140, SHA256 `c46a33116f5fe44e9dcbc1cd3202c2d0670f9737d2c6861709b7aca6b8adba29`，Action artifact ID `13394896448`。
 - **待用户验收和后续实验：** 安装1.0.2（不要删除1.0.1），选择USB外接摄像头正常使用；卡死时不用触发单帧诊断，直接截取包括顶部监控条的画面。若主界面仍响应，点顶部诊断条复制日志；如整App无响应，重新打开1.0.2后点击顶部状态条复制此前会话日志。对照GL提交和NV21帧心跳判断UVC回调、GL渲染或两侧同步停；如两路均正常但画面冻结需进一步监测TextureView呈现/预览像素的真实更新情况（当前**未**测成功显示FPS），避免基于假指标直接重启或重写相机。**尚无真机卡死现场日志，不宣称已修复卡死。**
+
+#### 2026-11-05 — 后续版本语音过滤新增“不读单字”（仅需求登记，尚未编码）
+
+- **用户新需求：** 现有高级朗读过滤“不读英文”“不读数字”之外，再加一项 **“不读单字”**，目的减少背景杂字、书页边缘、杂散识别框的独立单字播报，减少听觉干扰。当前Dev1.0.2是USB摄像头诊断版本，不得为了该需求修改已发布APK。
+- **建议语义：** 过滤仅针对**独立OCR文字框**中去除空格、单纯附属标点后恰好只剩一个汉字/有意义文本字符的片段，默认优先仅单独汉字，不能在完整TTS字符串上全局删除长度1的单字、不能把正常句子里的“我”“你”“一”删掉。已有“不读英文”“不读数字”与该选项独立，避免不清楚的叠加作用；例如独立`中`不读，`请注意安全`继续读，独立`8`由“不读数字”规则处理。必要时可由实测决定是否扩大到其它字符类别。
+- **重要取舍：** 有些单字本来就是有效且关键的路牌/药品/货品/页码信息，不能根据单字“无意义”作事实判定。开关建议**默认关闭、用户按需开启**；无论开关状态，OCR原文、逐框diagnostics、叠加框与证据都不删除，仅在**送入TTS队列时**作播报选择，且不得编造/自动补全。
+- **统一调用路径：** 后续实现必须涵盖首次真实REC批次提前朗读（目前MainActivity直接queueSpeechText，绕过过滤）、整页onRecognized、appendRestOfRealOcr、长文/手动触发；处理顺序与已讨论的frameId/boxId逐框续播相匹配。不可先把整个页面合并为普通字符串后删除“单字”，否则无法正确区分原始文字框的独立性；可以在未来框级OCR结果与朗读层之间构造派生SpeechSelection。
+- **待开发/本次限制：** 本轮只是继续确认方案并追加交接记录，没有修改源码、构建、发包或影响USB稳定性测试。新页面替换旧朗读、单触抓帧、长文一触即切换、成功反馈叮声/轻振均为此前已讨论的下一版交互需求，不将其误宣称为Dev1.0.2现成功能。
