@@ -95,6 +95,12 @@ patch(
 # One pending draw, plus a dirty flag for frames arriving during rendering.
 patch(
     RENDER,
+    "Logger.i(TAG, \"create RenderManager, Open ES version is ${Utils.getGLESVersion(context)}\")",
+    "Logger.i(TAG, \"create RenderManager, Open ES version is ${Utils.getGLESVersion(context)}\")\n        Logger.i(TAG, \"BSG_GL_DRAW_COALESCE_107\")",
+)
+
+patch(
+    RENDER,
     "    private var mFrameRate = 0\n",
     """    private var mFrameRate = 0
     private val mGlDrawQueued = AtomicBoolean(false)
