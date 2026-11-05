@@ -52,11 +52,19 @@ patch("base/CameraActivity.kt",
     "            ) {\n                "+call+'.noteEvent("SURFACE AVAILABLE " + width + "x" + height)\n                registerMultiCamera()',
     "TextureView available")
 patch("base/CameraActivity.kt",
-    "            ) {\n                surfaceSizeChanged(width, height)",
-    "            ) {\n                "+call+'.noteEvent("SURFACE SIZE " + width + "x" + height)\n                surfaceSizeChanged(width, height)',
+    "override fun onSurfaceTextureSizeChanged(\n                surface: SurfaceTexture,\n                width: Int,\n                height: Int\n            ) {\n                surfaceSizeChanged(width, height)",
+    "override fun onSurfaceTextureSizeChanged(\n                surface: SurfaceTexture,\n                width: Int,\n                height: Int\n            ) {\n                "+call+'.noteEvent("SURFACE SIZE " + width + "x" + height)\n                surfaceSizeChanged(width, height)',
     "TextureView size changed")
 patch("base/CameraActivity.kt",
     "override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {\n                unRegisterMultiCamera()",
     "override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {\n                "+call+'.noteEvent("SURFACE DESTROYED")\n                unRegisterMultiCamera()',
     "TextureView destroyed")
-print("PASS: native UVC, GL frame input, USB and SurfaceTexture passive traces")
+patch("MultiCameraClient.kt",
+    "        fun closeCamera() {\n            mCameraHandler?.obtainMessage(MSG_STOP_PREVIEW)?.sendToTarget()",
+    "        fun closeCamera() {\n            "+call+'.noteCallSite("UVC closeCamera REQUEST")\n            mCameraHandler?.obtainMessage(MSG_STOP_PREVIEW)?.sendToTarget()',
+    "camera close requester")
+patch("MultiCameraClient.kt",
+    "                    closeCameraInternal()\n                    mRenderManager?.getCacheEffectList()",
+    "                    "+call+'.noteEvent("UVC MSG_STOP_PREVIEW handling")\n                    closeCameraInternal()\n                    mRenderManager?.getCacheEffectList()',
+    "camera close handling")
+print("PASS: native UVC, GL input, USB/Surface events and close request callers")
