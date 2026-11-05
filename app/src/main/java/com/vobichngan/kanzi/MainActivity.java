@@ -57,7 +57,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "Blue Star Guide · Dev 1.0.2 USB Health";
+    private static final String APP_VERSION = "Blue Star Guide · Dev 1.0.3 USB Trace";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -106,6 +106,12 @@ public class MainActivity extends CameraActivity {
     private final java.util.concurrent.ExecutorService usbLogWriter =
         java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
             Thread worker = new Thread(r, "bsg-usb-health-log");
+            worker.setDaemon(true);
+            return worker;
+        });
+    private final java.util.concurrent.ScheduledExecutorService usbTraceExecutor =
+        java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread worker = new Thread(r, "bsg-usb-trace");
             worker.setDaemon(true);
             return worker;
         });
@@ -229,11 +235,56 @@ public class MainActivity extends CameraActivity {
         }
     }
 
+    /** Independent of main/UI ticker, running also while Activity is paused. */
+    private void traceUsbPipeline() {
+        if (usingPhoneCamera) return;
+        try {
+            final long now = UsbCameraHealthMonitor.nowMs();
+            final long rawAt = usbHealth.lastRawFrameMs();
+            final long nativeAt = com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.lastNativeFrameMs();
+            final long glInputAt = com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.lastGlFrameArrivedMs();
+            final long glSwapAt = com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.lastSwapAttemptMs();
+            usbHealth.onEvent(now, "PIPE appRaw=" + usbHealth.totalRawFrames()
+                + " appRawAge=" + (rawAt == 0 ? -1 : now - rawAt)
+                + " uvcJava=" + com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalNativeFrames()
+                + " uvcJavaAge=" + (nativeAt == 0 ? -1 : now - nativeAt)
+                + " glInput=" + com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalGlFrameArrivals()
+                + " glInputAge=" + (glInputAt == 0 ? -1 : now - glInputAt)
+                + " glSwap=" + com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalSwapAttempts()
+                + " glSwapAge=" + (glSwapAt == 0 ? -1 : now - glSwapAt)
+                + " eglErrors=" + com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalEglErrors());
+            persistUsbHealthLog();
+        } catch (RuntimeException error) {
+            Log.w("UsbTrace", "Passive USB sampling failed", error);
+        }
+    }
+
+    /** Rare Activity callbacks only; querying device list never occurs on UVC frame path. */
+    private void traceUsbLifecycle(String event) {
+        final long now = UsbCameraHealthMonitor.nowMs();
+        final boolean surface = cameraTextureView != null && cameraTextureView.isAvailable();
+        int usbCount = -1;
+        try {
+            UsbManager manager = (UsbManager) getSystemService(USB_SERVICE);
+            if (manager != null) usbCount = manager.getDeviceList().size();
+        } catch (RuntimeException error) {
+            Log.w("UsbTrace", "USB device-list snapshot unavailable", error);
+        }
+        usbHealth.onEvent(now, event + " focus=" + hasWindowFocus()
+            + " surface=" + surface + " usbDeviceCount=" + usbCount
+            + " finishing=" + isFinishing()
+            + " changingConfig=" + isChangingConfigurations());
+        com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.noteEvent(event);
+        persistUsbHealthLog();
+    }
+
     /** Persist only health counters; no photos, OCR text, audio or USB frames. */
     private void persistUsbHealthLog() {
         if (usbSessionLogFile == null) return;
         final java.io.File destination=usbSessionLogFile;
-        final byte[] bytes=usbHealth.dump().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        final byte[] bytes=(usbHealth.dump() + "\nAUSBC_EVENT_TIMELINE\n"
+            + com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.recentEvents())
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8);
         try {
             usbLogWriter.execute(() -> {
                 try(java.io.FileOutputStream out=new java.io.FileOutputStream(destination,false)) {
@@ -258,6 +309,8 @@ public class MainActivity extends CameraActivity {
 
     private void showUsbHealthHistory() {
         StringBuilder report=new StringBuilder(usbHealth.dump());
+        report.append("\nAUSBC_EVENT_TIMELINE\n").append(
+            com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.recentEvents());
         java.io.File[] logs=getFilesDir().listFiles(
             (d,n)->n.startsWith("usb-health-")&&n.endsWith(".txt"));
         if(logs!=null) {
@@ -1741,6 +1794,10 @@ public class MainActivity extends CameraActivity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         prepareUsbHealthSession();
+        // Preserve evidence even when the main-thread ticker stops at onPause.
+        // A four-second atomic-only heartbeat does not touch camera/GL/OCR.
+        usbTraceExecutor.scheduleWithFixedDelay(this::traceUsbPipeline, 2L, 4L,
+            java.util.concurrent.TimeUnit.SECONDS);
         // Upstream CameraActivity.initView() has now completed its removeAllViews()
         // and added the USB preview. The phone view must be attached afterward.
         attachPhonePreviewAfterUsbInit();
@@ -1941,8 +1998,29 @@ public class MainActivity extends CameraActivity {
         }
     }
 
+    @Override protected void onStart() {
+        super.onStart();
+        traceUsbLifecycle("Activity onStart");
+    }
+
+    @Override protected void onStop() {
+        traceUsbLifecycle("Activity onStop");
+        super.onStop();
+    }
+
+    @Override public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        traceUsbLifecycle("WindowFocusChanged " + hasFocus);
+    }
+
+    @Override protected void onUserLeaveHint() {
+        traceUsbLifecycle("Activity onUserLeaveHint");
+        super.onUserLeaveHint();
+    }
+
     @Override protected void onResume() {
         super.onResume();
+        traceUsbLifecycle("Activity onResume");
         mainHandler.removeCallbacks(usbHealthTicker);
         mainHandler.postDelayed(usbHealthTicker,1000L);
         diagnosticAttempts = 0;
@@ -2536,8 +2614,7 @@ public class MainActivity extends CameraActivity {
 
     @Override protected void onPause() {
         mainHandler.removeCallbacks(usbHealthTicker);
-        usbHealth.onEvent(UsbCameraHealthMonitor.nowMs(),"Activity onPause");
-        persistUsbHealthLog();
+        traceUsbLifecycle("Activity onPause");
         // Accessibility safety: a camera that is no longer foreground must
         // neither scan nor continue speaking private surrounding text.
         running = false;
@@ -2556,8 +2633,8 @@ public class MainActivity extends CameraActivity {
 
     @Override protected void onDestroy() {
         mainHandler.removeCallbacks(usbHealthTicker);
-        usbHealth.onEvent(UsbCameraHealthMonitor.nowMs(),"Activity onDestroy");
-        persistUsbHealthLog();
+        traceUsbLifecycle("Activity onDestroy");
+        usbTraceExecutor.shutdownNow();
         usbLogWriter.shutdown();
         phoneStartSequence++;
         if (phoneController != null) phoneController.stop();
