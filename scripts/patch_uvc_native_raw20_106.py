@@ -25,6 +25,11 @@ def patch(path: Path, before: str, after: str):
 
 patch(
     HEADER,
+    "#include <pthread.h>\n",
+    "#include <pthread.h>\n#include <stdint.h>\n",
+)
+patch(
+    HEADER,
     "\tsize_t callbackPixelBytes;\n",
     "\tsize_t callbackPixelBytes;\n"
     "\t// Accessed solely by the native capture callback thread; reset per UVCPreview.\n"
