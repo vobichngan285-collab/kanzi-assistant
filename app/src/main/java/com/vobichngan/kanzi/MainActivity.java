@@ -1302,7 +1302,8 @@ public class MainActivity extends CameraActivity {
 
 
 
-        layoutAiCheck.setText("实验功能：AI 版面理解 + 连续文字流规则");
+        CheckBox layoutAiCheck = new CheckBox(this);
+        layoutAiCheck.setText("AI 版面辅助");
         layoutAiCheck.setChecked(aiLayoutEnabled);
         layoutAiCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         panel.addView(layoutAiCheck);
@@ -1384,6 +1385,7 @@ public class MainActivity extends CameraActivity {
         });
 
 
+        TextView intervalTitle = new TextView(this);
         intervalTitle.setText("自动 OCR 识别间隔（毫秒）");
         intervalTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         intervalTitle.setPadding(0, dp(14), 0, dp(4));
@@ -2651,7 +2653,7 @@ public class MainActivity extends CameraActivity {
             if (token != readyCueToken) return;
             readyCuePending = false;
             speakNextQueued();
-        }, 200L);
+        }, 320L);
     }
 
     private void speakNextQueued() {
