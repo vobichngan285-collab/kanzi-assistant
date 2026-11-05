@@ -23,11 +23,11 @@ patch("camera/CameraUVC.kt",
     fun getHardwareControlsReport(): String {
         val camera = mUvcCamera ?: return "usbCamera=null"
         return try {
-            val autoFocus = camera.checkSupportFlag(UVCCamera.CTRL_FOCUS_AUTO)
-            val manualFocus = camera.checkSupportFlag(UVCCamera.CTRL_FOCUS_ABS)
-            val zoom = camera.checkSupportFlag(UVCCamera.CTRL_ZOOM_ABS)
-            val autoExposure = camera.checkSupportFlag(UVCCamera.CTRL_AE)
-            val manualExposure = camera.checkSupportFlag(UVCCamera.CTRL_AE_ABS)
+            val autoFocus = camera.checkSupportFlag(UVCCamera.CTRL_FOCUS_AUTO.toLong())
+            val manualFocus = camera.checkSupportFlag(UVCCamera.CTRL_FOCUS_ABS.toLong())
+            val zoom = camera.checkSupportFlag(UVCCamera.CTRL_ZOOM_ABS.toLong())
+            val autoExposure = camera.checkSupportFlag(UVCCamera.CTRL_AE.toLong())
+            val manualExposure = camera.checkSupportFlag(UVCCamera.CTRL_AE_ABS.toLong())
             val brightness = camera.checkSupportFlag(UVCCamera.PU_BRIGHTNESS.toLong())
             val saturation = camera.checkSupportFlag(UVCCamera.PU_SATURATION.toLong())
             "afAuto=$autoFocus focusAbs=$manualFocus zoomAbs=$zoom aeAuto=$autoExposure " +
