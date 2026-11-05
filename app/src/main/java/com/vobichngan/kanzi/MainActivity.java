@@ -68,6 +68,8 @@ public class MainActivity extends CameraActivity {
     private static final String PREF_QUEUE_SPEECH = "queue_speech";
     private static final String PREF_LONG_READING = "reading_mode_long";
     private static final String PREF_SPEECH_RATE = "speech_rate";
+    private static final String PREF_TTS_ENGINE = "app_tts_engine_package";
+    private static final String PREF_TTS_FOLLOW_RATE = "app_tts_follow_engine_speed";
     private static final String PREF_PREVIEW_ROTATION = "preview_rotation";
     private static final String PREF_PREVIEW_MIRROR = "preview_mirror";
     private static final String PREF_USB_PREVIEW_CORRECT_MIRROR = "usb_preview_correct_left_right";
@@ -111,6 +113,9 @@ public class MainActivity extends CameraActivity {
     private volatile boolean qualityPromptsEnabled = true;
     private long noTextSince = 0L, lastQualityPromptAt = 0L;
     private TextToSpeech tts;
+    // Only this app connection; does not modify Android/global TTS preferences.
+    private String appTtsEngine = "";
+    private boolean followEngineSpeechRate = true;
     private DownloadableVoiceStore voiceStore;
     private OfflineVoicePlayback offlineVoicePlayback;
     private PaddleOcrEngine recognizer;
@@ -528,6 +533,9 @@ public class MainActivity extends CameraActivity {
         qualityPromptsEnabled = prefs.getBoolean(PREF_QUALITY_PROMPTS, false);
         longReadingMode = prefs.getBoolean(PREF_LONG_READING, queueSpeech);
         speechRate = Math.max(0.5f, Math.min(2.0f, prefs.getFloat(PREF_SPEECH_RATE, 1.0f)));
+        appTtsEngine = prefs.getString(PREF_TTS_ENGINE, "");
+        if (appTtsEngine == null) appTtsEngine = "";
+        followEngineSpeechRate = prefs.getBoolean(PREF_TTS_FOLLOW_RATE, true);
         previewRotation = prefs.getInt(PREF_PREVIEW_ROTATION, 0);
         if (previewRotation != 0 && previewRotation != 90 && previewRotation != 180 && previewRotation != 270) previewRotation = 0;
         previewMirror = prefs.getBoolean(PREF_PREVIEW_MIRROR, false);
@@ -613,7 +621,222 @@ public class MainActivity extends CameraActivity {
         recognizer.initialize();
     }
 
+
+    /**
+     * v57: the default settings surface has exactly three everyday choices:
+     * voice engine, speed and reading behaviour. Technical OCR tuning,
+     * arbitrary angles and A/B test buttons are no longer mixed into it.
+     *
+     * The high-contrast layout is intentionally simple for low-vision users.
+     * Advanced diagnosis stays available behind one explicit action, so
+     * existing rollback/diagnostic ability cannot be accidentally lost.
+     */
     private void showSettingsDialog() {
+        final int white=0xFFFFFFFF, muted=0xFFB8BEC8, accent=0xFFFFD34C;
+        LinearLayout panel=new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(22),dp(23),dp(22),dp(12));
+        panel.setBackgroundColor(0xFF0B0B0D);
+
+        TextView heading=new TextView(this);
+        heading.setText("设置");heading.setTextSize(TypedValue.COMPLEX_UNIT_SP,26);
+        heading.setTextColor(white);heading.setTypeface(null,android.graphics.Typeface.BOLD);
+        heading.setGravity(android.view.Gravity.CENTER);
+        panel.addView(heading);
+        TextView subtitle=new TextView(this);
+        subtitle.setText("常用选项  ·  不修改手机的系统语音设置");
+        subtitle.setTextColor(muted);subtitle.setTextSize(TypedValue.COMPLEX_UNIT_SP,13);
+        subtitle.setGravity(android.view.Gravity.CENTER);
+        subtitle.setPadding(0,dp(8),0,dp(22));panel.addView(subtitle);
+
+        String engineLabel="跟随手机默认语音";
+        if (!appTtsEngine.isEmpty()) {
+            engineLabel=appTtsEngine;
+            if (tts!=null) for(TextToSpeech.EngineInfo e:tts.getEngines())
+                if (e.name.equals(appTtsEngine)) {engineLabel=e.label;break;}
+        } else if (tts!=null) {
+            String actual=tts.getDefaultEngine();
+            if(actual!=null)for(TextToSpeech.EngineInfo e:tts.getEngines())
+                if(e.name.equals(actual)){engineLabel="跟随系统 · "+e.label;break;}
+        }
+        addSimpleSettingsRow(panel,"语音",engineLabel,()->showInstalledTtsSelector());
+        addSimpleSettingsRow(panel,"语速",followEngineSpeechRate?
+            "跟随语音包自己的设置":"自定义 "+String.format(Locale.US,"%.2f",speechRate)+" 倍",
+            ()->showSimpleSpeechSpeedDialog());
+        addSimpleSettingsRow(panel,"朗读方式",longReadingMode?
+            "长文阅读 · 当前内容读完再更新":"实时文字 · 新文字立即打断",
+            ()->showSimpleReadingRuleDialog());
+
+        TextView explanation=new TextView(this);
+        explanation.setText("文字检测：ChineseOCR-Lite  ·  识别：Small REC\n"+
+            "默认自动识别横排和竖排，手机与USB摄像头在主界面切换。");
+        explanation.setTextColor(muted);
+        explanation.setTextSize(TypedValue.COMPLEX_UNIT_SP,13);
+        explanation.setPadding(dp(4),dp(16),dp(4),dp(14));
+        panel.addView(explanation);
+
+        TextView test=new TextView(this);
+        test.setText("▶ 试听当前语音");
+        test.setGravity(android.view.Gravity.CENTER);
+        test.setTextColor(0xFF151515);test.setTextSize(TypedValue.COMPLEX_UNIT_SP,18);
+        test.setTypeface(null,android.graphics.Typeface.BOLD);
+        test.setPadding(dp(12),dp(15),dp(12),dp(15));
+        android.graphics.drawable.GradientDrawable bg=new android.graphics.drawable.GradientDrawable();
+        bg.setColor(accent);bg.setCornerRadius(dp(12));test.setBackground(bg);
+        test.setOnClickListener(v->{
+            if(tts!=null&&ttsReady) {
+                clearSpeechQueue(true); // only this app's audio session.
+                tts.speak("看字助手语音试听。",TextToSpeech.QUEUE_FLUSH,
+                    null,"v57-preview-"+System.nanoTime());
+            } else Toast.makeText(this,"语音引擎未就绪，请检查语音设置",Toast.LENGTH_LONG).show();
+        });
+        panel.addView(test);
+
+        TextView advanced=new TextView(this);
+        advanced.setText("故障排查与开发诊断  ›");
+        advanced.setTextSize(TypedValue.COMPLEX_UNIT_SP,14);
+        advanced.setTextColor(muted);
+        advanced.setGravity(android.view.Gravity.CENTER);
+        advanced.setPadding(0,dp(22),0,dp(9));
+        advanced.setOnClickListener(v->showAdvancedSettingsDialog());
+        panel.addView(advanced);
+        ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);
+        scroll.addView(panel);
+        androidx.appcompat.app.AlertDialog dialog=
+            new androidx.appcompat.app.AlertDialog.Builder(this).setView(scroll)
+            .setPositiveButton("完成",(d,w)->{}).create();
+        dialog.setOnShowListener(d->{
+            if(dialog.getWindow()!=null) {
+                android.graphics.drawable.GradientDrawable windowBg=
+                    new android.graphics.drawable.GradientDrawable();
+                windowBg.setColor(0xFF0B0B0D);
+                windowBg.setCornerRadius(dp(18));
+                dialog.getWindow().setBackgroundDrawable(windowBg);
+                dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)
+                    .setTextColor(accent);
+                dialog.getWindow().setLayout(
+                    getResources().getDisplayMetrics().widthPixels-dp(24),
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            }
+        });
+        dialog.show();
+    }
+
+    private void addSimpleSettingsRow(LinearLayout panel,String label,String detail,
+                                      Runnable clicked) {
+        LinearLayout row=new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setPadding(dp(15),dp(14),dp(15),dp(14));
+        TextView title=new TextView(this);
+        title.setText(label+"   ›");title.setTextColor(0xFFFFFFFF);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP,19);
+        title.setTypeface(null,android.graphics.Typeface.BOLD);
+        row.addView(title);
+        TextView description=new TextView(this);
+        description.setText(detail);description.setTextColor(0xFFD2D3D7);
+        description.setTextSize(TypedValue.COMPLEX_UNIT_SP,15);
+        description.setPadding(0,dp(4),0,0);
+        row.addView(description);
+        android.graphics.drawable.GradientDrawable background=
+            new android.graphics.drawable.GradientDrawable();
+        background.setColor(0xFF202124);background.setCornerRadius(dp(11));
+        row.setBackground(background);
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.bottomMargin=dp(10);panel.addView(row,lp);
+        row.setContentDescription(label+"："+detail+"；双击选择");
+        row.setClickable(true);row.setFocusable(true);
+        row.setOnClickListener(v->clicked.run());
+    }
+
+    private void showInstalledTtsSelector() {
+        if(tts==null){Toast.makeText(this,"语音引擎正在初始化",Toast.LENGTH_SHORT).show();return;}
+        java.util.List<TextToSpeech.EngineInfo> engines=tts.getEngines();
+        java.util.ArrayList<String> labels=new java.util.ArrayList<>();
+        java.util.ArrayList<String> packages=new java.util.ArrayList<>();
+        labels.add("跟随手机系统默认");packages.add("");
+        for(TextToSpeech.EngineInfo e:engines) {
+            if(e==null||e.name==null||e.name.isEmpty())continue;
+            labels.add(e.label==null?e.name:e.label);
+            packages.add(e.name);
+        }
+        int checked=packages.indexOf(appTtsEngine);
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("选择本机已安装的语音引擎")
+            .setSingleChoiceItems(labels.toArray(new String[0]),Math.max(0,checked),
+                (dialog,which)->{
+                    String selected=packages.get(which);
+                    dialog.dismiss();
+                    if(selected.equals(appTtsEngine))return;
+                    appTtsEngine=selected;
+                    getSharedPreferences(PREFS_NAME,MODE_PRIVATE).edit()
+                        .putString(PREF_TTS_ENGINE,appTtsEngine).apply();
+                    // App-local voice source only, never system-wide setting.
+                    if(voiceStore!=null)voiceStore.forceSystem();
+                    if(offlineVoicePlayback!=null)offlineVoicePlayback.releaseModelWhenIdle();
+                    clearSpeechQueue(true);
+                    initializeSelectedTextToSpeech();
+                    Toast.makeText(this,"看字助手语音已更新，手机默认设置不变",Toast.LENGTH_LONG).show();
+                })
+            .setNegativeButton("取消",null).show();
+    }
+
+    private void showSimpleSpeechSpeedDialog() {
+        LinearLayout panel=new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);panel.setPadding(dp(18),dp(8),dp(18),dp(6));
+        CheckBox follow=new CheckBox(this);
+        follow.setText("跟随语音包速度（推荐）");
+        follow.setChecked(followEngineSpeechRate);panel.addView(follow);
+        TextView title=new TextView(this);title.setTextSize(TypedValue.COMPLEX_UNIT_SP,16);
+        panel.addView(title);
+        SeekBar seek=new SeekBar(this);seek.setMax(150);
+        seek.setProgress(Math.round((speechRate-0.5f)*100f));
+        seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            @Override public void onProgressChanged(SeekBar b,int p,boolean u){
+                title.setText("自定义速度："+String.format(Locale.US,"%.2f",0.5f+p/100f)+" 倍");
+            }
+            @Override public void onStartTrackingTouch(SeekBar b){}
+            @Override public void onStopTrackingTouch(SeekBar b){}
+        });
+        panel.addView(seek);
+        title.setText("自定义速度："+String.format(Locale.US,"%.2f",speechRate)+" 倍");
+        title.setVisibility(followEngineSpeechRate?View.GONE:View.VISIBLE);
+        seek.setVisibility(followEngineSpeechRate?View.GONE:View.VISIBLE);
+        follow.setOnCheckedChangeListener((button,checked)->{
+            title.setVisibility(checked?View.GONE:View.VISIBLE);
+            seek.setVisibility(checked?View.GONE:View.VISIBLE);
+        });
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("语速")
+            .setView(panel)
+            .setNegativeButton("取消",null)
+            .setPositiveButton("保存",(dialog,which)->{
+                followEngineSpeechRate=follow.isChecked();
+                speechRate=0.5f+seek.getProgress()/100f;
+                getSharedPreferences(PREFS_NAME,MODE_PRIVATE).edit()
+                    .putBoolean(PREF_TTS_FOLLOW_RATE,followEngineSpeechRate)
+                    .putFloat(PREF_SPEECH_RATE,speechRate).apply();
+                if(followEngineSpeechRate)initializeSelectedTextToSpeech();
+                else if(tts!=null)tts.setSpeechRate(speechRate);
+                Toast.makeText(this,"已更新本应用语速设置",Toast.LENGTH_SHORT).show();
+            }).show();
+    }
+
+    private void showSimpleReadingRuleDialog() {
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("朗读方式")
+            .setSingleChoiceItems(new String[]{
+                    "实时文字：识别到新内容立即打断旧语音",
+                    "长文阅读：读完当前文字再更新"},
+                longReadingMode?1:0,(dialog,selected)->{
+                    dialog.dismiss();
+                    setLongReadingMode(selected==1);
+                })
+            .setNegativeButton("取消",null).show();
+    }
+
+    /** Original technical controls remain available ONLY via fault diagnosis. */
+    private void showAdvancedSettingsDialog() {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(20), dp(8), dp(20), dp(4));
@@ -2004,7 +2227,7 @@ public class MainActivity extends CameraActivity {
             .putBoolean(PREF_QUEUE_SPEECH, enableLong)
             .apply();
         updateControlLabels();
-        String announcement = enableLong ? "已切换长文阅读，读完再识别" : "已切换实时文字，读完当前内容再更新";
+        String announcement = enableLong ? "已切换长文阅读，读完再识别" : "已切换实时文字，识别到新文字立即打断";
         Toast.makeText(this, announcement, Toast.LENGTH_SHORT).show();
         if (readingModeButton != null) readingModeButton.announceForAccessibility(announcement);
     }
