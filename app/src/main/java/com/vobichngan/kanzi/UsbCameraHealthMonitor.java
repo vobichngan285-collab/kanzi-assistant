@@ -27,6 +27,8 @@ public final class UsbCameraHealthMonitor {
     private String lastConnection = "尚未打开";
 
     public static long nowMs() { return System.nanoTime() / 1_000_000L; }
+    public long lastRawFrameMs() { return lastRawAtMs; }
+    public long totalRawFrames() { return rawFrames.get(); }
 
     /** Called directly on native UVC callback. Constant time and no allocation. */
     public void onRawNv21(int width, int height) {
@@ -133,7 +135,7 @@ public final class UsbCameraHealthMonitor {
 
     public synchronized String dump() {
         StringBuilder out = new StringBuilder(
-            "Blue Star Guide 1.0.2 USB CAMERA HEALTH\n"
+            "Blue Star Guide 1.0.3 USB PIPELINE TRACE\n"
             +"Only frame counters, EGL and camera state. No photos, OCR text or audio.\n"
             +"GL submitted != screen visibly refreshed.\n\n");
         out.append("Last: ").append(lastSummary).append("\n\n");
