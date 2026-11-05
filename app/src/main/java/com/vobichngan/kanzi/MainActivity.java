@@ -840,6 +840,10 @@ public class MainActivity extends CameraActivity {
             ViewGroup.LayoutParams.MATCH_PARENT, dp(162), Gravity.BOTTOM
         );
         root.addView(controlDock, controlsParams);
+        View.OnClickListener tapToRead = v -> requestManualCaptureFromPreview();
+        previewContainer.setOnClickListener(tapToRead);
+        phoneTexture.setOnClickListener(tapToRead);
+        ocrOverlay.setOnClickListener(tapToRead);
         controlDock.bringToFront();
         return root;
     }
@@ -1760,6 +1764,7 @@ rotationGroup.getCheckedRadioButtonId());
 
     @Override protected IAspectRatio getCameraView() {
         cameraTextureView = new AspectRatioTextureView(this);
+        cameraTextureView.setOnClickListener(v -> requestManualCaptureFromPreview());
         cameraTextureView.addOnLayoutChangeListener((view, left, top, right, bottom,
                 oldLeft, oldTop, oldRight, oldBottom) -> applyPreviewTransform());
         applyPreviewTransform();
@@ -2599,6 +2604,24 @@ rotationGroup.getCheckedRadioButtonId());
             if (textSimilarity(item.normalized, normalized) >= threshold) return true;
         }
         return false;
+    }
+
+    private void requestManualCaptureFromPreview() {
+        if (automaticMode && !longReadingMode) return;
+        if (!(usingPhoneCamera || previewCallbackAdded)) {
+            Toast.makeText(this, "请先打开摄像头", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        running = true;
+        readingEpoch.incrementAndGet(); // discard old page even if OCR is still busy
+        clearSpeechQueue(true);
+        manualCaptureRequested.set(true); // next real NV21 frame; never stale screenshot
+        lastSpoken = "";
+        lastQuickScanGeneration = -1L;
+        frameChangeGate.reset();
+        liveSpeechGuard.reset();
+        updateControlLabels();
+        Toast.makeText(this, "正在识别当前画面", Toast.LENGTH_SHORT).show();
     }
 
     private void initializeReadyChime() {
