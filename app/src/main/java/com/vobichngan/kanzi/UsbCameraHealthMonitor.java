@@ -30,9 +30,14 @@ public final class UsbCameraHealthMonitor {
 
     /** Called directly on native UVC callback. Constant time and no allocation. */
     public void onRawNv21(int width, int height) {
+        onRawNv21At(width,height,nowMs());
+    }
+
+    // Package-private deterministic clock hook for regression tests only.
+    void onRawNv21At(int width, int height, long timeMs) {
         lastWidth = width;
         lastHeight = height;
-        lastRawAtMs = nowMs();
+        lastRawAtMs = timeMs;
         rawFrames.incrementAndGet();
     }
 
