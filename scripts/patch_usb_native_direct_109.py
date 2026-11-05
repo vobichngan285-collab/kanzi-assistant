@@ -23,11 +23,13 @@ def patch(path, a, b):
 patch(
     base,
     """            ) {
+                com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.noteEvent("SURFACE AVAILABLE " + width + "x" + height)
                 registerMultiCamera()
             }
 
             override fun onSurfaceTextureSizeChanged(""",
     """            ) {
+                com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.noteEvent("SURFACE AVAILABLE " + width + "x" + height)
                 Logger.i(TAG, "BSG_USB_DIRECT_109 native TextureView mode available")
                 registerMultiCamera()
             }
