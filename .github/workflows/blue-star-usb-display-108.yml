@@ -496,7 +496,7 @@ jobs:
           SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print | sort -V | tail -1)"
           test -x "$AAPT" && test -x "$SIGNER" && test -s "$apk"
           "$AAPT" dump badging "$apk" | tee "$RUNNER_TEMP/ocr-apk-info.txt"
-          grep -q "package: name='com.vobich.kanzi.experiment.dev107'" "$RUNNER_TEMP/ocr-apk-info.txt"
+          grep -q "package: name='com.vobich.kanzi.experiment.dev108'" "$RUNNER_TEMP/ocr-apk-info.txt"
           grep -q "versionCode='108'" "$RUNNER_TEMP/ocr-apk-info.txt"
           "$AAPT" dump permissions "$apk" > "$RUNNER_TEMP/ocr-apk-permissions.txt"
           if grep -qi 'android.permission.INTERNET' "$RUNNER_TEMP/ocr-apk-permissions.txt"; then
