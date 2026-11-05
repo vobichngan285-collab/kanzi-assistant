@@ -33,8 +33,8 @@ jobs:
           from pathlib import Path
           s=Path('app/src/main/java/com/vobichngan/kanzi/MainActivity.java').read_text()
           assert 'ToneGenerator' not in s and 'recognitionTone' not in s
-          assert 'liveSpeechGuard.acceptStable(spokenNormalized,' in s
-          assert 'if (live && speechPageActive) return;' in s
+          assert 'liveSpeechGuard.accept(spokenNormalized)' in s
+          assert 'if (live && speechPageActive) return;' not in s
           assert 'mainHandler.post(() -> finishQueuedUtterance(utteranceId));' in s
           print('QUIET_ANDROID_SOURCE_GUARDS=PASS')
           PY
