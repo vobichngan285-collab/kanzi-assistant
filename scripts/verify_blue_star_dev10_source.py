@@ -7,7 +7,7 @@ g=Path('app/build.gradle').read_text(encoding='utf-8')
 manifest=Path('app/src/main/AndroidManifest.xml').read_text(encoding='utf-8')
 sdk=Path('third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/java/com/paddle/ocr/PaddleOCR.kt').read_text(encoding='utf-8')
 eng=Path('third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/java/com/paddle/ocr/engine/OCREngine.kt').read_text(encoding='utf-8')
-assert 'Blue Star Guide · 实验版 1.0.9' in a and '蓝星向导 实验版' in manifest
+assert 'Blue Star Guide · 实验版 1.0.10' in a and '蓝星向导 实验版1.0.10' in manifest
 assert 'android:icon="@mipmap/ic_launcher"' in manifest
 assert 'getEngines()' in a and 'initializeSelectedTextToSpeech()' in a
 assert 'new TextToSpeech(this,onInit,requested)' in a
@@ -21,7 +21,7 @@ assert 'val allResults = resultsInReadingOrder.filterNotNull()' in eng
 assert 'models/cnlite/det/inference.onnx' in o
 assert 'models/rec/inference.onnx' in o or '"$modelPrefix/rec/inference.onnx"' in o
 assert 'abiFilters \'arm64-v8a\'' in g
-assert 'versionCode 109' in g and "versionName '1.0.9'" in g
+assert 'versionCode 110' in g and "versionName '1.0.10'" in g
 assert 'sherpa-onnx' not in g and 'commons-compress' not in g
 for bad in ['DownloadableVoiceStore','OfflineVoicePlayback','ppocrv5_mobile','ppocrv6_tiny']:
     assert bad not in a and bad not in o,(bad,'obsolete source ref')
