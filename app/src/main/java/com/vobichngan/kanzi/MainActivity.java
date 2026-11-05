@@ -57,7 +57,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.9.24-CNLite-CleanUI";
+    private static final String APP_VERSION = "Blue Star Guide · Dev 1.0";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -116,8 +116,6 @@ public class MainActivity extends CameraActivity {
     // Only this app connection; does not modify Android/global TTS preferences.
     private String appTtsEngine = "";
     private boolean followEngineSpeechRate = true;
-    private DownloadableVoiceStore voiceStore;
-    private OfflineVoicePlayback offlineVoicePlayback;
     private PaddleOcrEngine recognizer;
     // Make engine errors visible in the diagnostics instead of only showing
     // the confusing generic "waiting for OCR initialization" string.
@@ -558,7 +556,7 @@ public class MainActivity extends CameraActivity {
         ocrProfileId = OcrPerformanceProfile.forId(prefs.getString(PREF_OCR_PROFILE,
             OcrPerformanceProfile.defaultId())).id;
         ocrModelId = prefs.getString(PREF_OCR_MODEL, "cnlite_smallrec");
-        if (!ocrModelId.equals("cnlite_smallrec") && !ocrModelId.equals("ppocrv6_small") && !ocrModelId.equals("ppocrv6_tiny") && !ocrModelId.equals("ppocrv5_mobile")) ocrModelId = "cnlite_smallrec";
+        if (!ocrModelId.equals("cnlite_smallrec") && !ocrModelId.equals("ppocrv6_small")) ocrModelId = "cnlite_smallrec";
         speechNoEnglish = prefs.getBoolean(PREF_NO_ENGLISH, false);
         speechNoNumbers = prefs.getBoolean(PREF_NO_NUMBERS, false);
         maxSpeechChars = Math.max(0, Math.min(5000, prefs.getInt(PREF_MAX_SPEECH_CHARS, 0)));
@@ -566,8 +564,6 @@ public class MainActivity extends CameraActivity {
 
     private String ocrModelDisplayName(String modelId) {
         if ("cnlite_smallrec".equals(modelId)) return "ChineseOCR-Lite 绿色DET + Small REC";
-        if ("ppocrv6_tiny".equals(modelId)) return "PP-OCRv6 Tiny";
-        if ("ppocrv5_mobile".equals(modelId)) return "PP-OCRv5 Mobile";
         return "PP-OCRv6 Small";
     }
 
@@ -842,8 +838,6 @@ public class MainActivity extends CameraActivity {
                     getSharedPreferences(PREFS_NAME,MODE_PRIVATE).edit()
                         .putString(PREF_TTS_ENGINE,appTtsEngine).apply();
                     // App-local voice source only, never system-wide setting.
-                    if(voiceStore!=null)voiceStore.forceSystem();
-                    if(offlineVoicePlayback!=null)offlineVoicePlayback.releaseModelWhenIdle();
                     clearSpeechQueue(true);
                     initializeSelectedTextToSpeech();
                     Toast.makeText(this,"看字助手语音已更新，手机默认设置不变",Toast.LENGTH_LONG).show();
@@ -1062,8 +1056,7 @@ public class MainActivity extends CameraActivity {
         String[][] modelOptions = new String[][] {
             {"cnlite_smallrec", "ChineseOCR-Lite 绿色框 + Small REC（本测试版默认）"},
             {"ppocrv6_small", "PP-OCRv6 Small（旧版基线，回退使用）"},
-            {"ppocrv6_tiny", "PP-OCRv6 Tiny（轻量，速度优先）"},
-            {"ppocrv5_mobile", "PP-OCRv5 Mobile（上一代移动端模型）"}
+            // No Tiny / Mobile fallback models are packaged in Dev 1.0.
         };
         for (String[] option : modelOptions) {
             RadioButton radio = new RadioButton(this);
@@ -1076,7 +1069,7 @@ public class MainActivity extends CameraActivity {
         }
         panel.addView(modelGroup);
         TextView modelManagementInfo = new TextView(this);
-        modelManagementInfo.setText("本测试版默认 ChineseOCR-Lite DET + 原 PP-OCRv6 Small REC；其他三个旧模型保留作故障回退。模型随安装包提供，手机识字与朗读全程离线。切换时将重新初始化。");
+        modelManagementInfo.setText("Blue Star Guide 仅保留 ChineseOCR-Lite + Small REC 主线和原 Small 备用检测模型。使用本机已安装的语音引擎，不附带下载语音包。");
         modelManagementInfo.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         modelManagementInfo.setTextColor(0xFF667085);
         panel.addView(modelManagementInfo);
@@ -1149,149 +1142,13 @@ public class MainActivity extends CameraActivity {
                 float previewRate = 0.5f + speechRateSeek.getProgress() / 100f;
                 if (tts != null && !followEngineSpeechRate) tts.setSpeechRate(previewRate);
                 clearSpeechQueue(true);
-                DownloadableVoiceStore.Voice previewVoice = voiceStore.selectedVoice();
-                String sample = "看字助手语音试听，现在是当前设置的朗读速度。";
-                if (!previewVoice.isSystem() && voiceStore.isInstalled(previewVoice) &&
-                    offlineVoicePlayback != null) {
-                    offlineVoicePlayback.speak(previewVoice, sample, previewRate,
-                        "settings-preview", new OfflineVoicePlayback.Callback() {
-                            @Override public void completed(String id) {}
-                            @Override public void failed(String id, String reason) {
-                                showSpeechFailure("自然语音试听失败，已使用系统语音");
-                                tts.speak(sample, TextToSpeech.QUEUE_FLUSH, null, "settings-preview-system");
-                            }
-                        });
-                } else {
-                    tts.speak(sample, TextToSpeech.QUEUE_FLUSH, null, "settings-preview");
-                }
+                String sample = "Blue Star Guide 朗读测试。";
+                if (tts != null) tts.speak(sample, TextToSpeech.QUEUE_FLUSH, null, "settings-preview");
             } else {
                 Toast.makeText(this, "中文语音尚未准备好", Toast.LENGTH_SHORT).show();
             }
         });
         panel.addView(speechPreviewButton);
-
-        TextView voiceTitle = new TextView(this);
-        voiceTitle.setText("离线自然语音 · 点选即可下载安装");
-        voiceTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        voiceTitle.setPadding(0, dp(18), 0, dp(4));
-        panel.addView(voiceTitle);
-        TextView voiceDescription = new TextView(this);
-        voiceDescription.setText("首次安装语音包需要网络。下载完成后在手机本地朗读；点击已安装声音即可切换，失败时保留系统语音。");
-        voiceDescription.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        voiceDescription.setTextColor(0xFF667085);
-        panel.addView(voiceDescription);
-        TextView voiceStatus = new TextView(this);
-        voiceStatus.setText("当前语音：" + voiceStore.selectedVoice().title);
-        voiceStatus.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-        panel.addView(voiceStatus);
-        LinearLayout voiceOptions = new LinearLayout(this);
-        voiceOptions.setOrientation(LinearLayout.VERTICAL);
-        panel.addView(voiceOptions);
-        final java.util.Map<String, TextView> voiceRows = new java.util.LinkedHashMap<>();
-        for (DownloadableVoiceStore.Voice voice : DownloadableVoiceStore.VOICES) {
-            TextView entry = new TextView(this);
-            entry.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-            entry.setPadding(dp(10), dp(13), dp(10), dp(13));
-            entry.setBackgroundColor(0xFFF1F4F8);
-            entry.setClickable(true);
-            entry.setFocusable(true);
-            entry.setContentDescription("选择语音：" + voice.title + "；未安装时自动下载安装");
-            voiceRows.put(voice.id, entry);
-            voiceOptions.addView(entry, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            entry.setOnLongClickListener(v -> {
-                if (voice.isSystem() || !voiceStore.isInstalled(voice)) return false;
-                new androidx.appcompat.app.AlertDialog.Builder(this)
-                    .setTitle("移除离线语音包")
-                    .setMessage("确定移除 " + voice.title + " 的模型文件以释放空间？" +
-                        ("kokoro".equals(voice.pack) ? "Kokoro 男声与女声共用同一语音包。" : ""))
-                    .setNegativeButton("取消", null)
-                    .setPositiveButton("移除", (dialog, which) -> {
-                        clearSpeechQueue(true);
-                        voiceStore.remove(voice, () -> {
-                            voiceStatus.setText("当前语音：" + voiceStore.selectedVoice().title);
-                            for (DownloadableVoiceStore.Voice item : DownloadableVoiceStore.VOICES) {
-                                TextView row=voiceRows.get(item.id);
-                                if(row!=null) row.setText(voiceRowLabel(item));
-                            }
-                            Toast.makeText(this,"已移除离线语音包",Toast.LENGTH_SHORT).show();
-                        });
-                    }).show();
-                return true;
-            });
-            entry.setOnClickListener(v -> {
-                entry.setText(voice.title + " · 正在准备…");
-                voiceStore.choose(voice, new DownloadableVoiceStore.Listener() {
-                    @Override public void onStatus(DownloadableVoiceStore.Voice target, String message) {
-                        TextView row = voiceRows.get(target.id);
-                        if (row != null) row.setText(target.title + " · " + message);
-                        voiceStatus.setText("准备切换到：" + target.title);
-                    }
-                    @Override public void onSelected(DownloadableVoiceStore.Voice selected) {
-                        // A complete download does NOT establish that the
-                        // native model can generate and play audio on this
-                        // phone. Validate real output before persisting it.
-                        clearSpeechQueue(true);
-                        if (selected.isSystem()) {
-                            voiceStore.activate(selected);
-                            if (offlineVoicePlayback != null)
-                                offlineVoicePlayback.releaseModelWhenIdle();
-                            voiceStatus.setText("当前语音：系统中文语音");
-                            for (DownloadableVoiceStore.Voice item : DownloadableVoiceStore.VOICES) {
-                                TextView row = voiceRows.get(item.id);
-                                if (row != null) row.setText(voiceRowLabel(item));
-                            }
-                            return;
-                        }
-                        voiceStatus.setText("正在生成并试听：" + selected.title);
-                        TextView selectedRow = voiceRows.get(selected.id);
-                        if (selectedRow != null) selectedRow.setText(
-                            selected.title + " · 正在验证声音，请留意手机是否发声…");
-                        if (offlineVoicePlayback == null) {
-                            onFailure(selected, "本地语音播放引擎尚未初始化");
-                            return;
-                        }
-                        offlineVoicePlayback.speak(selected, "你好，欢迎使用看字助手。",
-                            speechRate, "voice-verify-" + System.nanoTime(),
-                            new OfflineVoicePlayback.Callback() {
-                                @Override public void completed(String id) {
-                                    // Do not undo a newer voice choice.
-                                    if (!voiceStore.isInstalled(selected)) return;
-                                    voiceStore.activate(selected);
-                                    voiceStatus.setText("已试听并选用：" + selected.title);
-                                    for (DownloadableVoiceStore.Voice item : DownloadableVoiceStore.VOICES) {
-                                        TextView row = voiceRows.get(item.id);
-                                        if (row != null) row.setText(voiceRowLabel(item));
-                                    }
-                                    Toast.makeText(MainActivity.this,
-                                        "已启用自然语音：" + selected.title,
-                                        Toast.LENGTH_SHORT).show();
-                                }
-                                @Override public void failed(String id, String reason) {
-                                    voiceStatus.setText("语音验证失败，保留：" +
-                                        voiceStore.selectedVoice().title);
-                                    TextView row = voiceRows.get(selected.id);
-                                    if (row != null) row.setText(selected.title +
-                                        " · 语音播放失败，点击重试");
-                                    Toast.makeText(MainActivity.this,
-                                        "模型不能正常发声：" + reason,
-                                        Toast.LENGTH_LONG).show();
-                                }
-                            });
-                    }
-                    @Override public void onFailure(DownloadableVoiceStore.Voice failed, String reason) {
-                        voiceStatus.setText("安装未完成，仍使用：" + voiceStore.selectedVoice().title);
-                        TextView row = voiceRows.get(failed.id);
-                        if (row != null) row.setText(failed.title + " · 下载失败，点击重试");
-                        Toast.makeText(MainActivity.this,
-                            "语音包安装失败：" + reason, Toast.LENGTH_LONG).show();
-                    }
-                });
-            });
-        }
-        for (DownloadableVoiceStore.Voice voice : DownloadableVoiceStore.VOICES) {
-            voiceRows.get(voice.id).setText(voiceRowLabel(voice));
-        }
 
         TextView rotationTitle = new TextView(this);
         rotationTitle.setText("摄像头画面旋转：" + previewRotation + "°");
@@ -1812,9 +1669,6 @@ public class MainActivity extends CameraActivity {
         });
         // Voice data is downloaded only after a user taps a voice list entry;
         // app initialization never fetches models or contacts the Internet.
-        voiceStore = new DownloadableVoiceStore(this);
-        offlineVoicePlayback = new OfflineVoicePlayback(voiceStore);
-        if (!appTtsEngine.isEmpty()) voiceStore.forceSystem();
         initializeSelectedTextToSpeech();
 
         cameraSourceButton.setOnClickListener(v -> switchCameraSource(!usingPhoneCamera));
@@ -2364,36 +2218,7 @@ public class MainActivity extends CameraActivity {
         currentSpeech = speechQueue.pollFirst();
         speakingQueued = true;
         lastSpoken = currentSpeech.normalized;
-        // Always flush the system's previous utterance for the FIRST chunk
-        // of a newly confirmed scan target. Subsequent chunks only start after
-        // onDone; flushing here cannot remove the rest of our own Java queue.
-        DownloadableVoiceStore.Voice voice =
-            voiceStore == null ? DownloadableVoiceStore.SYSTEM : voiceStore.selectedVoice();
-        if (!voice.isSystem() && voiceStore.isInstalled(voice) && offlineVoicePlayback != null) {
-            final SpeechItem item = currentSpeech;
-            offlineVoicePlayback.speak(voice, item.text, speechRate, item.utteranceId,
-                new OfflineVoicePlayback.Callback() {
-                    @Override public void completed(String utteranceId) {
-                        mainHandler.post(() -> finishQueuedUtterance(utteranceId));
-                    }
-                    @Override public void failed(String utteranceId, String reason) {
-                        // Offline synthesis finishes on a worker. Queue state,
-                        // user notices and TTS fallback must run on UI thread.
-                        mainHandler.post(() -> {
-                            if (currentSpeech == null ||
-                                !currentSpeech.utteranceId.equals(utteranceId)) return;
-                            Log.e("KanziTTS", "Offline speech failed, switching to system: " + reason);
-                            voiceStore.forceSystem();
-                            if (offlineVoicePlayback != null)
-                                offlineVoicePlayback.releaseModelWhenIdle();
-                            showSpeechFailure("离线自然语音暂不可用，已自动切回系统中文语音");
-                            speakSystemItem(item);
-                        });
-                    }
-                });
-        } else {
-            speakSystemItem(currentSpeech);
-        }
+        speakSystemItem(currentSpeech);
     }
 
     private void speakSystemItem(SpeechItem item) {
@@ -2409,22 +2234,8 @@ public class MainActivity extends CameraActivity {
         }
     }
 
-    /** A downloaded offline model does not need a system TTS voice. */
-    private boolean canSpeak() {
-        if (ttsReady && tts != null) return true;
-        if (voiceStore == null || offlineVoicePlayback == null) return false;
-        DownloadableVoiceStore.Voice voice = voiceStore.selectedVoice();
-        return !voice.isSystem() && voiceStore.isInstalled(voice);
-    }
-
-    private String voiceRowLabel(DownloadableVoiceStore.Voice voice) {
-        boolean chosen = voice.id.equals(voiceStore.selectedId());
-        String suffix = voice.isSystem() ? "已就绪" :
-            (voiceStore.isInstalled(voice) ? "已安装 · 点击切换" :
-                "未安装 · 点击自动下载安装");
-        String size = voice.isSystem() ? "" : ("（约 " + voice.approxMb + " MB）");
-        return (chosen ? "✓ " : "○ ") + voice.title + size + "　" + suffix;
-    }
+    /** Uses only the local Android TTS service, never bundles a voice model. */
+    private boolean canSpeak() { return ttsReady && tts != null; }
 
     private void showSpeechFailure(String message) {
         long now = System.currentTimeMillis();
@@ -2446,7 +2257,6 @@ public class MainActivity extends CameraActivity {
         speechQueue.clear();
         currentSpeech = null;
         speakingQueued = false;
-        if (stopCurrent && offlineVoicePlayback != null) offlineVoicePlayback.stop();
         if (stopCurrent && tts != null) tts.stop();
     }
 
@@ -2540,8 +2350,6 @@ public class MainActivity extends CameraActivity {
         speechQueue.clear();
         currentSpeech = null;
         speechPageActive = false;
-        if (offlineVoicePlayback != null) offlineVoicePlayback.shutdown();
-        if (voiceStore != null) voiceStore.shutdown();
         if (tts != null) { tts.stop(); tts.shutdown(); }
         if (recognizer != null) recognizer.release();
         diagnosticHandler.removeCallbacksAndMessages(null);
