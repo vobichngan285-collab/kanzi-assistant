@@ -66,11 +66,7 @@ camera_path = path.parent / "camera" / "CameraUVC.kt"
 if not camera_path.is_file():
     raise SystemExit(f"ERROR: expected AUSBC CameraUVC source not found: {camera_path}")
 camera_source = camera_path.read_text(encoding="utf-8")
-old_fps = "private const val MAX_FPS = 61"
-new_fps = "private const val MAX_FPS = 30"
-if old_fps in camera_source:
-    camera_source = camera_source.replace(old_fps, new_fps, 1)
-elif new_fps not in camera_source:
-    raise SystemExit("ERROR: expected AUSBC MAX_FPS setting not found; refusing unsafe patch.")
+if "private const val MAX_FPS = 61" not in camera_source:
+    raise SystemExit("ERROR: pinned AUSBC 3.6.0 maximum FPS is not 61; refusing unsafe patch.")
 camera_path.write_text(camera_source, encoding="utf-8")
-print("Patched AUSBC: prefer 16:9, cap resolution at 1920x1080 and maximum frame rate at 30 FPS.")
+print("Patched AUSBC: prefer 16:9, cap resolution at 1920x1080; leave upstream maximum FPS 61 for experiment.")
