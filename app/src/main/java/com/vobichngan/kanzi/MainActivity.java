@@ -101,7 +101,7 @@ public class MainActivity extends CameraActivity {
     private TextureView cameraTextureView;
     // Kept as non-visible diagnostic targets so existing USB diagnostics remain available.
     private TextView status, diagnostic;
-    private Button modeButton, captureButton, startButton, settingsButton, readingModeButton;
+    private Button modeButton, startButton, settingsButton, readingModeButton;
     private Button cameraSourceButton, lensButton;
     private TextureView phoneTexture;
     private TextView phonePreviewStatus;
@@ -812,8 +812,6 @@ public class MainActivity extends CameraActivity {
         ));
         modeButton = createControlButton("模式：自动");
         controls.addView(modeButton, new LinearLayout.LayoutParams(0, dp(54), 1f));
-        captureButton = createControlButton("识别一次");
-        controls.addView(captureButton, new LinearLayout.LayoutParams(0, dp(54), 1f));
         startButton = createControlButton("开始识别");
         controls.addView(startButton, new LinearLayout.LayoutParams(0, dp(54), 1f));
         settingsButton = createControlButton("设置");
@@ -856,7 +854,7 @@ public class MainActivity extends CameraActivity {
         }
         if (readingModeButton != null) {
             readingModeButton.setText(longReadingMode
-                ? "长文阅读｜完整读完（后续课题）"
+                ? "长文阅读｜轻触换页"
                 : "实时文字｜新文字立即打断");
             readingModeButton.setContentDescription(longReadingMode
                 ? "当前是长文阅读模式。点击切换到实时文字识别"
@@ -864,7 +862,6 @@ public class MainActivity extends CameraActivity {
         }
         if (modeButton != null) modeButton.setText(automaticMode ? "模式：自动" : "模式：手动");
         if (startButton != null) startButton.setText(running ? "暂停识别" : "开始识别");
-        if (captureButton != null) captureButton.setEnabled((usingPhoneCamera || previewCallbackAdded) && !automaticMode);
     }
 
     private void loadSettings() {
@@ -877,7 +874,7 @@ public class MainActivity extends CameraActivity {
         queueSpeech = prefs.getBoolean(PREF_QUEUE_SPEECH, false);
         usingPhoneCamera = prefs.getBoolean(PREF_PHONE_CAMERA, false);
         phoneFrontFacing = prefs.getBoolean(PREF_FRONT_CAMERA, false);
-        qualityPromptsEnabled = prefs.getBoolean(PREF_QUALITY_PROMPTS, false);
+        qualityPromptsEnabled = false;
         longReadingMode = prefs.getBoolean(PREF_LONG_READING, queueSpeech);
         speechRate = Math.max(0.5f, Math.min(2.0f, prefs.getFloat(PREF_SPEECH_RATE, 1.0f)));
         appTtsEngine = prefs.getString(PREF_TTS_ENGINE, "");
@@ -897,16 +894,10 @@ public class MainActivity extends CameraActivity {
             prefs.getInt(PREF_USB_OCR_INPUT_ROTATION, -1));
         if (liveTextRotationDegrees != 90 && liveTextRotationDegrees != 180 && liveTextRotationDegrees != 270)
             liveTextRotationDegrees = 0;
-        readingFocusMode = prefs.getString(PREF_READING_FOCUS, "AUTO");
-        // Retired page-centric ALL setting is equivalent to continuous AUTO.
-        if ("ALL".equals(readingFocusMode)) readingFocusMode = "AUTO";
-        if (!"AUTO".equals(readingFocusMode) &&
-            !"LEFT".equals(readingFocusMode) && !"RIGHT".equals(readingFocusMode))
-            readingFocusMode = "AUTO";
+        readingFocusMode = "AUTO";
         ocrProfileId = OcrPerformanceProfile.forId(prefs.getString(PREF_OCR_PROFILE,
             OcrPerformanceProfile.defaultId())).id;
-        ocrModelId = prefs.getString(PREF_OCR_MODEL, "cnlite_smallrec");
-        if (!ocrModelId.equals("cnlite_smallrec") && !ocrModelId.equals("ppocrv6_small")) ocrModelId = "cnlite_smallrec";
+        ocrModelId = "cnlite_smallrec"; // Small DET stays as internal fallback
         speechNoEnglish = prefs.getBoolean(PREF_NO_ENGLISH, false);
         speechNoNumbers = prefs.getBoolean(PREF_NO_NUMBERS, false);
         maxSpeechChars = Math.max(0, Math.min(5000, prefs.getInt(PREF_MAX_SPEECH_CHARS, 0)));
@@ -1254,6 +1245,7 @@ public class MainActivity extends CameraActivity {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(20), dp(8), dp(20), dp(4));
+        panel.setBackgroundColor(0xFF0B0B0D);
 
         CheckBox enhancedCheck = new CheckBox(this);
         enhancedCheck.setText("增强图像处理（降噪、对比度增强、锐化）");
@@ -1267,35 +1259,7 @@ public class MainActivity extends CameraActivity {
         enhancedNote.setTextColor(0xFF667085);
         panel.addView(enhancedNote);
 
-        TextView pageFocusTitle = new TextView(this);
-        pageFocusTitle.setText("文字连续朗读范围");
-        pageFocusTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        pageFocusTitle.setPadding(0, dp(12), 0, dp(4));
-        panel.addView(pageFocusTitle);
-        RadioGroup pageFocusGroup = new RadioGroup(this);
-        pageFocusGroup.setOrientation(RadioGroup.VERTICAL);
-        String[][] pageFocusOptions = new String[][] {
-            {"AUTO", "连续文字流（推荐，保留所有检测文字）"},
-            {"LEFT", "只读左侧文字区域（手动筛选）"},
-            {"RIGHT", "只读右侧文字区域（手动筛选）"}
-        };
-        for (String[] option : pageFocusOptions) {
-            RadioButton radio = new RadioButton(this);
-            radio.setId(View.generateViewId());
-            radio.setTag(option[0]);
-            radio.setText(option[1]);
-            radio.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-            radio.setChecked(readingFocusMode.equals(option[0]));
-            pageFocusGroup.addView(radio);
-        }
-        panel.addView(pageFocusGroup);
-        TextView pageFocusNote = new TextView(this);
-        pageFocusNote.setText("快速扫读默认完整朗读已识别文字：普通横排从左到右、从上到下；独立竖排标牌从上到下；可信传统多列竖排从右往左。不会只选择中央区域。书籍长文模式保留原有流程。");
-        pageFocusNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        pageFocusNote.setTextColor(0xFF667085);
-        panel.addView(pageFocusNote);
 
-        CheckBox layoutAiCheck = new CheckBox(this);
         layoutAiCheck.setText("实验功能：AI 版面理解 + 连续文字流规则");
         layoutAiCheck.setChecked(aiLayoutEnabled);
         layoutAiCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
@@ -1396,41 +1360,7 @@ public class MainActivity extends CameraActivity {
                 extra.setVisibility(checked?View.VISIBLE:View.GONE);
         });
 
-        TextView modelManagementTitle = new TextView(this);
-        modelManagementTitle.setText("OCR 引擎选择");
-        modelManagementTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        modelManagementTitle.setPadding(0, dp(14), 0, dp(4));
-        panel.addView(modelManagementTitle);
-        RadioGroup modelGroup = new RadioGroup(this);
-        modelGroup.setOrientation(RadioGroup.VERTICAL);
-        String[][] modelOptions = new String[][] {
-            {"cnlite_smallrec", "ChineseOCR-Lite 绿色框 + Small REC（本测试版默认）"},
-            {"ppocrv6_small", "PP-OCRv6 Small（旧版基线，回退使用）"},
-            // No Tiny / Mobile fallback models are packaged in Dev 1.0.
-        };
-        for (String[] option : modelOptions) {
-            RadioButton radio = new RadioButton(this);
-            radio.setId(View.generateViewId());
-            radio.setTag(option[0]);
-            radio.setText(option[1]);
-            radio.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-            radio.setChecked(ocrModelId.equals(option[0]));
-            modelGroup.addView(radio);
-        }
-        panel.addView(modelGroup);
-        TextView modelManagementInfo = new TextView(this);
-        modelManagementInfo.setText("Blue Star Guide 仅保留 ChineseOCR-Lite + Small REC 主线和原 Small 备用检测模型。使用本机已安装的语音引擎，不附带下载语音包。");
-        modelManagementInfo.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        modelManagementInfo.setTextColor(0xFF667085);
-        panel.addView(modelManagementInfo);
 
-        CheckBox qualityCheck = new CheckBox(this);
-        qualityCheck.setText("长文模式识别困难时给出语音提示（实时扫描不提示）");
-        qualityCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-        qualityCheck.setChecked(qualityPromptsEnabled);
-        panel.addView(qualityCheck);
-
-        TextView intervalTitle = new TextView(this);
         intervalTitle.setText("自动 OCR 识别间隔（毫秒）");
         intervalTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         intervalTitle.setPadding(0, dp(14), 0, dp(4));
@@ -2064,22 +1994,7 @@ public class MainActivity extends CameraActivity {
                 Toast.LENGTH_SHORT).show();
         });
 
-        captureButton.setOnClickListener(v -> {
-            if (!(usingPhoneCamera || previewCallbackAdded)) {
-                Toast.makeText(this, "请先连接并打开摄像头", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            running = true;
-            manualCaptureRequested.set(true);
-            readingEpoch.incrementAndGet();
-            // Explicit capture replaces old speech even during a long reading session.
-            clearSpeechQueue(true);
-            frameChangeGate.reset();
-            updateControlLabels();
-            Toast.makeText(this, "正在抓取当前画面识别", Toast.LENGTH_SHORT).show();
-        });
 
-        startButton.setOnClickListener(v -> {
             if (!(usingPhoneCamera || previewCallbackAdded)) {
                 Toast.makeText(this, "请先连接并打开摄像头", Toast.LENGTH_SHORT).show();
                 return;
@@ -2092,7 +2007,7 @@ public class MainActivity extends CameraActivity {
             }
             if (running && !automaticMode) {
                 Toast.makeText(this,
-                    "当前是手动模式，需要点击「识别一次」才会朗读。",
+                    "当前是手动模式，请轻触画面识别。",
                     Toast.LENGTH_LONG).show();
             }
             readingEpoch.incrementAndGet();
@@ -2572,7 +2487,7 @@ public class MainActivity extends CameraActivity {
             .putBoolean(PREF_QUEUE_SPEECH, enableLong)
             .apply();
         updateControlLabels();
-        String announcement = enableLong ? "已切换长文阅读，读完再识别" : "已切换实时文字，识别到新文字立即打断";
+        String announcement = enableLong ? "已切换长文阅读，轻触画面可换页" : "已切换实时文字，识别到新文字立即打断";
         Toast.makeText(this, announcement, Toast.LENGTH_SHORT).show();
         if (readingModeButton != null) readingModeButton.announceForAccessibility(announcement);
     }
