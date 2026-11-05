@@ -43,6 +43,7 @@ def do_pass(sess, name, crops, batch, bucket):
     inf_total = pack_total = 0.0
     padded = 0
     calls = 0
+    first_batch_inference_ms = None
     for pos in range(0, len(order), batch):
         indices = order[pos:pos+batch]
         maxw = max(widths[i] for i in indices)
@@ -53,13 +54,17 @@ def do_pass(sess, name, crops, batch, bucket):
         pack_total += time.perf_counter() - start
         t0 = time.perf_counter()
         _ = sess.run(None, {name:x})
-        inf_total += time.perf_counter() - t0
+        inference_elapsed = time.perf_counter() - t0
+        inf_total += inference_elapsed
+        if first_batch_inference_ms is None:
+            first_batch_inference_ms = round(inference_elapsed * 1000, 3)
         padded += sum(maxw-widths[i] for i in indices) * 3*48
         calls += 1
     return {"inference_ms":round(inf_total*1000,3),
             "pack_ms":round(pack_total*1000,3),
             "padded_input_floats":padded,
-            "ort_calls":calls}
+            "ort_calls":calls,
+            "first_batch_inference_ms":first_batch_inference_ms}
 
 
 def run_profile(model, threads, batch, reps):
@@ -79,7 +84,7 @@ def run_profile(model, threads, batch, reps):
             do_pass(sess,name,crops,batch,bucket)
             vals=[do_pass(sess,name,crops,batch,bucket) for _ in range(reps)]
             v={key:round(statistics.median(row[key] for row in vals),3)
-                 for key in ("inference_ms","pack_ms")}
+                 for key in ("inference_ms","pack_ms","first_batch_inference_ms")}
             v.update({"scenario":scenario,
                       "threads":threads,"batch":batch,
                       "width_bucket":bucket,
@@ -120,6 +125,7 @@ def main():
                          "Widths from prior phone diagnostic for 6 and 19 boxes",
                          "Dense 33-case is synthetic",
                          "REC ONNX inference only; excludes DET, cropping, CTC decode and Android thermal scheduling",
+                         "First batch inference is not first audible speech: excludes preproc and TTS",
                          "No claim of equal recognized text or improved phone performance"]}
     # Compare per workload against user's selected 4-thread batch2 width-bucket.
     comparisons=[]
