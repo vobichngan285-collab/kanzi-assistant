@@ -94,26 +94,26 @@ public final class UsbCameraHealthMonitor {
         } else if(now-openedAtMs < 3500L) {
             diagnosis = "USB预览启动观察中";
         } else if(rawAge > STALL_MS && glAge > STALL_MS) {
-            diagnosis = "USB原始帧与GL提交均停滞";
+            diagnosis = "USB原始帧与直显更新均停滞";
         } else if(rawAge > STALL_MS) {
-            diagnosis = "原始NV21回调停滞，GL仍有提交";
+            diagnosis = "原始NV21回调停滞，直显仍在更新";
         } else if(glAge > STALL_MS) {
-            diagnosis = "原始NV21仍到达，但GL提交停滞";
+            diagnosis = "原始NV21仍到达，但直显更新停滞";
         } else if(eglDelta > 0) {
-            diagnosis = "EGL交换缓冲出现错误";
+            diagnosis = "EGL错误计数变化（本版原生直显不使用应用GL）";
         } else if(!surfaceReady) {
             diagnosis = "USB TextureView表面未就绪";
         } else {
-            diagnosis = "帧与GL提交有活动（不保证屏幕真的更新）";
+            diagnosis = "原始取帧与直显更新有活动（直显更新不等于屏幕面板刷新）";
         }
         String summary = String.format(Locale.US,
-            "USB原始 %.1f帧/秒｜GL提交 %.1f次/秒｜OCR %s\n原始距今 %dms｜GL距今 %dms｜EGL错误 %d｜%dx%d\n%s",
+            "USB原始 %.1f帧/秒｜直显更新 %.1f次/秒｜OCR %s\n原始距今 %dms｜画面更新距今 %dms｜EGL错误 %d｜%dx%d\n%s",
             Math.max(0,rawFps),Math.max(0,glFps),ocrBusy?"忙":"空闲",
             rawAge,glAge,eglDelta,lastWidth,lastHeight,diagnosis);
         lastSummary = summary;
         // Event history is bounded to ~one minute; no images, text or model output.
         append(now,String.format(Locale.US,
-            "RAW=%.1f GL=%.1f raw_age=%dms gl_age=%dms egl_errors=%d surface=%s OCR=%s %s",
+            "RAW=%.1f DIRECT=%.1f raw_age=%dms direct_age=%dms egl_errors=%d surface=%s OCR=%s %s",
             rawFps,glFps,rawAge,glAge,eglDelta,surfaceReady,ocrBusy,diagnosis));
         if(!diagnosis.equals(lastClassification)) {
             append(now,"CHANGE "+diagnosis);
@@ -135,9 +135,9 @@ public final class UsbCameraHealthMonitor {
 
     public synchronized String dump() {
         StringBuilder out = new StringBuilder(
-            "Blue Star Guide 1.0.8 USB PIPELINE TRACE\n"
+            "Blue Star Guide 1.0.9 USB NATIVE DIRECT TRACE\n"
             +"Only frame counters, EGL and camera state. No photos, OCR text or audio.\n"
-            +"GL submitted != screen visibly refreshed.\n\n");
+            +"Direct TextureView update count != physical display refresh.\n\n");
         out.append("Last: ").append(lastSummary).append("\n\n");
         for(String line:lines) out.append(line).append('\n');
         return out.toString();
