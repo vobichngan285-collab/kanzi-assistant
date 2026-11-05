@@ -838,3 +838,12 @@
 - **P2（TTS）：** 通过应用内`new TextToSpeech(...,requestedPackage)`选择已安装的广荣微软tts且没有系统global TTS配置写入；不调用setLanguage；`followEngineSpeechRate=true`时不主动覆盖setSpeechRate。正确但仅检查初始化与getVoice日志，**未硬核验证实际引擎是Microsoft Xiaoxiao Natural**；语音引擎是否联网取决于其自身，宿主无INTERNET并不能证明外部Natural TTS离线。
 - **P2（发行/界面维护）：** debug applicationId有独立后缀但`app/build.gradle` release的applicationId仍是旧 `com.vobich.kanzi`，未来不经检查直接编Release存在覆盖原稳定包的风险；当前只发debug，不影响现有APK。简洁设置对话框的3个详情行在弹出二级选择器后没有刷新，旧“看字助手”试听文案和历史实验备注仍残存；不是识别瓶颈。PP-DocLayout-S/Small DET仍占据可用空间，但在无真机覆盖测试前不应为追求更小体积直接删除。
 - **修复建议优先级与动作界限：** (1) 为首批朗读增可追溯的frameId/boxId，严格续播并独立验证重复/漏读；(2) 为翻页加经过确认的任务版本/旧OCR过期机制，避免旧页文字溢出；(3) 稳定同页/跨页重复判断；(4) 真机检测首声时间、ONNX大宽度与系统TTS；(5) TTS与发行UI琐事。**这次静态源码体检不能替代实机回归，任何更改必须隔离新分支并得到用户明确开发授权。**
+
+#### 2026-11-05 — Blue Star Guide 1.0.1 USB 外接摄像头半屏灰/疑似卡死现场审查
+
+- 用户在真机提供屏幕截图 `/mnt/data/1000036095.jpg`（本会话附件），USB外接模式预览的右半屏灰色固定RGB(128,128,128)，左侧有倾斜的建筑和识字叠框；截图无法单凭静帧判断视频到底有无更新。重要：应用`previewContainer`在源码中背景为黑色，因此右侧完全均匀的灰色**不能简单归因于代码的黑色letterbox留边**，应调查USB GL绘制/表面填充/纹理大小与旋转变换，不可直接宣称OCR或设备断流。
+- 用户同时提供单帧证据ZIP `/mnt/data/kanzi-ocr-single-frame (19).zip`（不能上传私密帧到GitHub）。检查metadata.json与decoded-frame.png：USB原始 NV21=1920×1080，bitmap=1920×1080，成功检测6框，DET202ms、REC172ms、OCR实际约381～384ms，Android热状态0，NativeHeap298→303MB，使用4线程/批2，USB方向自动决策暂定0°。该帧画面内容是其他室外楼宇，并非同一个时刻的截图，**只能证明采集和OCR曾正常完成，不能证明截图瞬间USB没有冻结**。
+- 仓库独立测试分支`dev/blue-star-guide-1.0-20261105`（Dev1.0.1源码SHA`51d4061b9f42434bd797781e408aa6ee87dd8bfa`），MainActivity.getCameraRequest固定请求1920×1080 MJPEG + OPENGL + rawPreviewData + `setAspectRatioShow(true)`，`applyPreviewTransform`额外直接调整TextureView尺寸、视图旋转、matrix镜像，`getCameraView()`注册LayoutChangeListener，每次预览尺寸改变可能重新布局；这条路径可能造成GL画面只填半屏或不更新，但静态代码尚不足以证明根因。
+- MainActivity.onCameraState(ERROR)只写入**不可见**的`status`，没有立即显示USB断流提示；CLOSED只将`previewCallbackAdded=false`，USB链路没有Camera2分支那样独立的帧到达超时watchdog/自动重新连接。`onPreviewData(NV21)`直接进入`processCameraFrame`，主要OCR推理是异步，但帧克隆和轻量评估在回调链路发生，尚无逐阶段UVC帧/GL绘制耗时或掉帧证据。手机预览与USB必须分别验证。
+- 本轮结论/验收：**第一优先USB相机预览稳定性**。临时区分测试：USB视频出现停顿时点击「暂停识别」，移动摄像头，若画面仍不更新指向UVC/GL/USB电源或生命周期；若立即恢复则调度/线程干扰。代码修复需隔离新分支验证两类事件（UVC原始帧不更新 vs 原始帧仍更新但GL灰屏/冻结），明确预览真正停止的时间戳、帧计数、USB OPENED/CLOSED/ERROR事件、TextureView尺寸和旋转变换；只针对证据根因修复，不更改ChineseOCR-Lite DET/Small REC、双页排序或TTS；必要时加入有退避限制的手动USB重连。
+- **当前仅审查图片、诊断ZIP、源码与写交接文档，尚未修改APP代码或构建新的APK**。
