@@ -22,8 +22,8 @@ android {
     }
     buildTypes {
         debug {
-            applicationIdSuffix '.cnlitelive56'
-            versionNameSuffix '-cnlite-immediate-recfast'
+            applicationIdSuffix '.cnliteclean57'
+            versionNameSuffix '-clean-settings-platform-tts'
             minifyEnabled false
         }
         release {
@@ -43,8 +43,8 @@ android {
         applicationId 'com.vobich.kanzi'
         minSdk 26
         targetSdk 35
-        versionCode 56
-        versionName '0.9.23'
+        versionCode 57
+        versionName '0.9.24'
     }
 }
 
