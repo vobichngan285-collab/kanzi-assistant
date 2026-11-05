@@ -11,6 +11,8 @@ public final class DiagnosticRenderHeartbeat {
     private static final ArrayDeque<String> events = new ArrayDeque<>();
     private static final int MAX_EVENTS = 48;
     private static final AtomicLong swaps = new AtomicLong();
+    private static final AtomicLong directSurfaceUpdates = new AtomicLong();
+    private static volatile long lastDirectSurfaceUpdateMs;
     private static final AtomicLong errors = new AtomicLong();
     private static volatile long lastSwapMs;
 
@@ -53,6 +55,13 @@ public final class DiagnosticRenderHeartbeat {
         lastSwapMs = System.nanoTime()/1_000_000L;
         swaps.incrementAndGet();
     }
+    /** Native UVC -> TextureView onSurfaceTextureUpdated: independent of EGL. */
+    public static void noteDirectSurfaceUpdate() {
+        lastDirectSurfaceUpdateMs = System.nanoTime()/1_000_000L;
+        directSurfaceUpdates.incrementAndGet();
+    }
+    public static long totalDirectSurfaceUpdates() { return directSurfaceUpdates.get(); }
+    public static long lastDirectSurfaceUpdateMs() { return lastDirectSurfaceUpdateMs; }
     public static void noteEglError() { errors.incrementAndGet(); }
     public static long totalSwapAttempts() { return swaps.get(); }
     public static long lastSwapAttemptMs() { return lastSwapMs; }
