@@ -8,6 +8,9 @@ package com.vobichngan.kanzi;
 public final class OcrPerformanceProfile {
     public static final OcrPerformanceProfile BASELINE =
         new OcrPerformanceProfile("baseline", "对照：2线程/批1", 2, 1, 0);
+    /** Experiment: fewer independent ONNX REC calls without changing any text box. */
+    public static final OcrPerformanceProfile REC_FAST2 =
+        new OcrPerformanceProfile("rec_fast2", "REC加速：2线程/批2（新默认，可退回批1）", 2, 2, 0);
     public static final OcrPerformanceProfile BALANCED =
         new OcrPerformanceProfile("balanced", "均衡：3线程/批2", 3, 2, 2);
     public static final OcrPerformanceProfile QUALITY =
@@ -33,12 +36,13 @@ public final class OcrPerformanceProfile {
     }
 
     public static OcrPerformanceProfile forId(String id) {
+        if (REC_FAST2.id.equals(id)) return REC_FAST2;
         if (BALANCED.id.equals(id)) return BALANCED;
         if (QUALITY.id.equals(id)) return QUALITY;
         if (THROUGHPUT.id.equals(id)) return THROUGHPUT;
         return BASELINE;
     }
 
-    /** Default preserves prior phone behavior until the tester selects a profile. */
-    public static String defaultId() { return BASELINE.id; }
+    /** Fresh isolated v56 installs try batch2; baseline remains selectable. */
+    public static String defaultId() { return REC_FAST2.id; }
 }
