@@ -411,7 +411,8 @@ jobs:
           assert 'getUsbHardwareControlsReport()' in activity
           assert 'supportsUsbHardwareAutoFocus()' in activity
           assert 'getAutoFocus()' in activity and 'setAutoFocus(false)' in activity
-          assert 'USB原生直显（无中间GL）｜OCR独立≤20FPS' in activity
+          assert 'usbHealth.sample(now, directCount, directTime,' in activity
+          assert 'usbHealthView' not in activity
           assert 'usbTextFocusPolicy.shouldRelease(' in activity
           assert 'applyUsbPreviewTone()' in activity
           assert 'cameraTextureView.setRenderEffect(' in activity
