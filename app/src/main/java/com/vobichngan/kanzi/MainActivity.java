@@ -115,6 +115,13 @@ public class MainActivity extends CameraActivity {
     private volatile boolean usbVerifiedAutoFocus = false;
     private volatile String usbHardwareControls = "未检测：等待USB相机就绪";
     private volatile boolean usbControlsChecked = false;
+    // Direct UVC->TextureView path: one clean close/reopen across Android lifecycle.
+    // No camera Service and no intermediate OpenGL render queue in this experiment.
+    private volatile boolean usbDirectForeground;
+    private boolean usbDirectStopPending;
+    private boolean usbDirectReopenWanted;
+    private long usbDirectOpenedAtMs;
+    private long usbDirectLastRecoveryAtMs;
     private Boolean usbAppliedPreviewVivid = null;
     private final java.util.concurrent.ExecutorService usbLogWriter =
         java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
@@ -138,17 +145,19 @@ public class MainActivity extends CameraActivity {
                     usbHealthView.setVisibility(View.GONE);
                 } else {
                     long now = UsbCameraHealthMonitor.nowMs();
-                    long glCount = com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalSwapAttempts();
-                    long glTime = com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.lastSwapAttemptMs();
+                    // Direct UVC camera producer, NOT extra GLES or eglSwapBuffers.
+                    long glCount = com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalDirectSurfaceUpdates();
+                    long glTime = com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.lastDirectSurfaceUpdateMs();
                     long eglErrors = com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalEglErrors();
                     boolean surfaceReady = cameraTextureView != null && cameraTextureView.isAvailable();
                     String message = usbHealth.sample(now, glCount, glTime,
                         eglErrors, busy.get(), surfaceReady, true);
-                    usbHealthView.setText(message + "\n原生OCR取帧≤20FPS（预览仍可到约60FPS）\nUSB控制：" + usbHardwareControls + "\n点击查看 / 复制近一分钟记录");
+                    usbHealthView.setText(message + "\nUSB原生直显（无中间GL）｜OCR独立≤20FPS\nUSB控制：" + usbHardwareControls + "\n点击查看 / 复制近一分钟记录");
                     usbHealthView.setContentDescription("USB摄像头运行状态：" + message +
                         "。双击查看完整记录");
                     usbHealthView.setVisibility(View.VISIBLE);
                     String diagnosis = usbHealth.lastClassification();
+                    checkUsbDirectStall(now);
                     if (now-lastUsbLogAt >= 8000L ||
                         (!diagnosis.isEmpty() && !diagnosis.equals(lastUsbDiagnosis))) {
                         lastUsbLogAt = now;
@@ -265,6 +274,9 @@ public class MainActivity extends CameraActivity {
                 + " glInputAge=" + (glInputAt == 0 ? -1 : now - glInputAt)
                 + " glSwap=" + com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalSwapAttempts()
                 + " glSwapAge=" + (glSwapAt == 0 ? -1 : now - glSwapAt)
+                + " directSurface=" + com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalDirectSurfaceUpdates()
+                + " directAge=" + (com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.lastDirectSurfaceUpdateMs() == 0 ? -1 :
+                    now - com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.lastDirectSurfaceUpdateMs())
                 + " eglErrors=" + com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalEglErrors());
             persistUsbHealthLog();
         } catch (RuntimeException error) {
@@ -369,11 +381,14 @@ public class MainActivity extends CameraActivity {
             try {
                 String controls = getUsbHardwareControlsReport();
                 boolean supported = supportsUsbHardwareAutoFocus();
-                usbVerifiedAutoFocus = supported;
+                // Disable experimental UVC AF lock/unlock commands during this
+                // direct-preview stability test. Native camera AF remains enabled.
+                usbVerifiedAutoFocus = false;
                 usbControlsChecked = true;
                 usbHardwareControls = controls;
                 usbHealth.onEvent(UsbCameraHealthMonitor.nowMs(),
-                    "USB_CTRL_CAPS " + controls + " checkedAutoFocus=" + supported);
+                    "USB_CTRL_CAPS " + controls + " checkedAutoFocus=" + supported +
+                    " directNativeAfCommandsDisabled=true");
                 persistUsbHealthLog();
                 Log.i("UsbControlCapabilities", controls);
             } catch (RuntimeException failure) {
@@ -1926,7 +1941,7 @@ public class MainActivity extends CameraActivity {
         return new CameraRequest.Builder()
             .setPreviewWidth(1920)
             .setPreviewHeight(1080)
-            .setRenderMode(CameraRequest.RenderMode.OPENGL)
+            .setRenderMode(CameraRequest.RenderMode.NORMAL)
             .setPreviewFormat(CameraRequest.PreviewFormat.FORMAT_MJPEG)
             .setRawPreviewData(true)
             .setAspectRatioShow(true)
@@ -2116,6 +2131,9 @@ public class MainActivity extends CameraActivity {
 
     @Override public void onCameraState(MultiCameraClient.ICamera self, ICameraStateCallBack.State code, String msg) {
         if (code == ICameraStateCallBack.State.OPENED) {
+            usbDirectOpenedAtMs = UsbCameraHealthMonitor.nowMs();
+            usbDirectStopPending = false;
+            usbDirectReopenWanted = false;
             final int focusSession = usbFocusSession.incrementAndGet();
             usbVerifiedAutoFocus = false;
             usbControlsChecked = false;
@@ -2134,6 +2152,12 @@ public class MainActivity extends CameraActivity {
                 updateControlLabels();
             });
         } else if (code == ICameraStateCallBack.State.CLOSED) {
+            // Patched pinned UVC now reports CLOSED after the native stream is destroyed.
+            if (usbDirectStopPending) {
+                usbDirectStopPending = false;
+                if (usbDirectForeground && usbDirectReopenWanted)
+                    mainHandler.post(this::resumeUsbDirectCamera);
+            }
             usbFocusSession.incrementAndGet();
             usbVerifiedAutoFocus = false;
             usbControlsChecked = false;
@@ -2149,6 +2173,52 @@ public class MainActivity extends CameraActivity {
             persistUsbHealthLog();
             runOnUiThread(() -> status.setText("USB 摄像头启动失败：" + (msg == null ? "请重新插拔摄像头" : msg)));
         }
+    }
+
+    /**
+     * Direct mode lifecycle: close on background and reopen only after pinned
+     * CameraUVC reports that the old native decoder has actually been destroyed.
+     * Both foreground stalls and background returns take this same simple path.
+     */
+    private void stopUsbDirectCamera(String reason) {
+        if (usbDirectStopPending || !isCameraOpened()) return;
+        MultiCameraClient.ICamera camera = getCurrentCamera();
+        if (camera == null) return;
+        usbDirectStopPending = true;
+        usbDirectReopenWanted = true;
+        usbHealth.onEvent(UsbCameraHealthMonitor.nowMs(), "DIRECT_CLOSE " + reason);
+        camera.closeCamera();
+    }
+
+    private void resumeUsbDirectCamera() {
+        if (!usbDirectForeground || !usbDirectReopenWanted || usbDirectStopPending ||
+            usingPhoneCamera || cameraTextureView == null ||
+            !cameraTextureView.isAvailable() || isCameraOpened()) return;
+        MultiCameraClient.ICamera camera = getCurrentCamera();
+        if (camera == null || camera.getUsbDevice() == null) return;
+        UsbManager manager = (UsbManager) getSystemService(USB_SERVICE);
+        if (manager == null || !manager.hasPermission(camera.getUsbDevice())) return;
+        usbDirectReopenWanted = false;
+        usbDirectOpenedAtMs = UsbCameraHealthMonitor.nowMs();
+        usbHealth.onEvent(usbDirectOpenedAtMs, "DIRECT_REOPEN after native CLOSED");
+        camera.openCamera(cameraTextureView, getCameraRequest());
+    }
+
+    /**
+     * Single bounded protection for genuine foreground stalls, not a frame
+     * "smoothing" patch: after 3.5s without a visible TextureView update,
+     * perform one clean native teardown and reopen, at most once per 20 seconds.
+     * When the USB source or device itself stops, it cannot invent new frames.
+     */
+    private void checkUsbDirectStall(long now) {
+        if (!usbDirectForeground || usingPhoneCamera || usbDirectStopPending ||
+            !isCameraOpened() || now - usbDirectOpenedAtMs < 6500L ||
+            now - usbDirectLastRecoveryAtMs < 20000L) return;
+        long last = com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.lastDirectSurfaceUpdateMs();
+        long age = last > usbDirectOpenedAtMs ? now - last : now - usbDirectOpenedAtMs;
+        if (age < 3500L) return;
+        usbDirectLastRecoveryAtMs = now;
+        stopUsbDirectCamera("FOREGROUND_STALL directSurfaceAge=" + age + "ms");
     }
 
     @Override protected void onStart() {
@@ -2173,20 +2243,11 @@ public class MainActivity extends CameraActivity {
 
     @Override protected void onResume() {
         super.onResume();
+        usbDirectForeground = true;
         traceUsbLifecycle("Activity onResume");
-        // Camera was left alive through Android onPause; old AF lock may now
-        // point to an entirely different page/distance. Restore default AF.
-        if (!usingPhoneCamera && usbVerifiedAutoFocus &&
-            usbTextFocusPolicy.isLocked() && isCameraOpened()) {
-            try {
-                setAutoFocus(true);
-                usbTextFocusPolicy.markReleased(android.os.SystemClock.uptimeMillis());
-                usbHealth.onEvent(UsbCameraHealthMonitor.nowMs(),
-                    "EXPERIMENT AF REFOCUS after Activity onResume");
-            } catch (RuntimeException error) {
-                Log.w("UsbFocusExperiment", "Restore AF after resume unsupported", error);
-            }
-        }
+        // No UVC autofocus command during lifecycle resume; no old stream kept
+        // alive while the TextureView is backgrounded.
+        mainHandler.post(this::resumeUsbDirectCamera);
         if (!usingPhoneCamera && !usbControlsChecked && isCameraOpened())
             readUsbHardwareControlsLater(usbFocusSession.get());
         mainHandler.removeCallbacks(usbHealthTicker);
@@ -2783,6 +2844,10 @@ public class MainActivity extends CameraActivity {
     @Override protected void onPause() {
         mainHandler.removeCallbacks(usbHealthTicker);
         traceUsbLifecycle("Activity onPause");
+        usbDirectForeground = false;
+        // Explicitly close native UVC + direct view together: returning from
+        // background must not reuse a stale stream or stale TextureView producer.
+        stopUsbDirectCamera("Activity onPause");
         usbFocusSession.incrementAndGet(); // invalidate delayed AF commands
         // Accessibility safety: a camera that is no longer foreground must
         // neither scan nor continue speaking private surrounding text.
