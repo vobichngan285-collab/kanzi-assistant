@@ -61,6 +61,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
     private static final String APP_VERSION = "Blue Star Guide · 2.0";
+    private static final String PREF_NO_SINGLE_HAN = "speech_no_single_han";
+    private static final String PREF_READY_CHIME = "ready_chime_enabled";
+    private static final String PREF_READY_VIBRATE = "ready_vibrate_enabled";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -223,6 +226,7 @@ public class MainActivity extends CameraActivity {
     private volatile int usbOcrInputRotationDegrees = -1;
     private volatile String lastDiagnosticText = "";
     private volatile String lastCandidateDiagnosticText = "";
+    private volatile boolean speechNoSingleHan = false;
     private volatile boolean speechNoEnglish = false;
     private volatile boolean speechNoNumbers = false;
     private volatile int maxSpeechChars = 0;
@@ -875,6 +879,9 @@ public class MainActivity extends CameraActivity {
         usingPhoneCamera = prefs.getBoolean(PREF_PHONE_CAMERA, false);
         phoneFrontFacing = prefs.getBoolean(PREF_FRONT_CAMERA, false);
         qualityPromptsEnabled = false;
+        speechNoSingleHan = prefs.getBoolean(PREF_NO_SINGLE_HAN, false);
+        readyChimeEnabled = prefs.getBoolean(PREF_READY_CHIME, true);
+        readyVibrateEnabled = prefs.getBoolean(PREF_READY_VIBRATE, true);
         longReadingMode = prefs.getBoolean(PREF_LONG_READING, queueSpeech);
         speechRate = Math.max(0.5f, Math.min(2.0f, prefs.getFloat(PREF_SPEECH_RATE, 1.0f)));
         appTtsEngine = prefs.getString(PREF_TTS_ENGINE, "");
@@ -1067,6 +1074,9 @@ public class MainActivity extends CameraActivity {
         addSimpleSettingsRow(panel,"朗读方式",longReadingMode?
             "长文阅读 · 轻触换页":"实时文字 · 新文字立即打断",
             ()->showSimpleReadingRuleDialog());
+        addSimpleSettingsRow(panel,"识别提示",
+            (readyChimeEnabled ? "金属提示音" : "静音") + " · " + (readyVibrateEnabled ? "轻振动" : "不振动"),
+            ()->showReadyCueSettingsDialog());
 
 
         test.setText("▶ 试听当前语音");
@@ -1224,6 +1234,31 @@ public class MainActivity extends CameraActivity {
                     setLongReadingMode(selected==1);
                 })
             .setNegativeButton("取消",null).show();
+    }
+
+    private void showReadyCueSettingsDialog() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(20), dp(12), dp(20), dp(12));
+        CheckBox sound = new CheckBox(this);
+        sound.setText("清脆金属提示音");
+        sound.setChecked(readyChimeEnabled);
+        panel.addView(sound);
+        CheckBox vibration = new CheckBox(this);
+        vibration.setText("短暂振动");
+        vibration.setChecked(readyVibrateEnabled);
+        panel.addView(vibration);
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("识别提示")
+            .setView(panel)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("保存", (d,w) -> {
+                readyChimeEnabled = sound.isChecked();
+                readyVibrateEnabled = vibration.isChecked();
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                    .putBoolean(PREF_READY_CHIME, readyChimeEnabled)
+                    .putBoolean(PREF_READY_VIBRATE, readyVibrateEnabled).apply();
+            }).show();
     }
 
     /** Original technical controls remain available ONLY via fault diagnosis. */
@@ -1434,6 +1469,10 @@ public class MainActivity extends CameraActivity {
         noEnglishCheck.setText("不读英文（移除英文字母及英文单词）");
         noEnglishCheck.setChecked(speechNoEnglish);
         panel.addView(noEnglishCheck);
+        CheckBox noSingleHanCheck = new CheckBox(this);
+        noSingleHanCheck.setText("不读独立单字");
+        noSingleHanCheck.setChecked(speechNoSingleHan);
+        panel.addView(noSingleHanCheck);
         CheckBox noNumbersCheck = new CheckBox(this);
         noNumbersCheck.setText("不读数字（移除阿拉伯数字）");
         noNumbersCheck.setChecked(speechNoNumbers);
@@ -1647,6 +1686,7 @@ rotationGroup.getCheckedRadioButtonId());
                 similarityThreshold = similaritySeek.getProgress();
                 speechRate = 0.5f + speechRateSeek.getProgress() / 100f;
                 qualityPromptsEnabled = false;
+                speechNoSingleHan = noSingleHanCheck.isChecked();
                 speechNoEnglish = noEnglishCheck.isChecked();
                 speechNoNumbers = noNumbersCheck.isChecked();
                 try { maxSpeechChars = Math.max(0, Math.min(5000, Integer.parseInt(maxCharsInput.getText().toString().trim()))); }
@@ -1679,6 +1719,7 @@ rotationGroup.getCheckedRadioButtonId());
                     .putBoolean(PREF_VERTICAL_LIVE_READING, verticalLiveReadingEnabled)
                     .putInt(PREF_REALTIME_TEXT_ROTATION, liveTextRotationDegrees)
                     .putInt(PREF_USB_OCR_INPUT_ROTATION, usbOcrInputRotationDegrees)
+                    .putBoolean(PREF_NO_SINGLE_HAN, speechNoSingleHan)
                     .putBoolean(PREF_NO_ENGLISH, speechNoEnglish)
                     .putBoolean(PREF_NO_NUMBERS, speechNoNumbers)
                     .putInt(PREF_MAX_SPEECH_CHARS, maxSpeechChars)
