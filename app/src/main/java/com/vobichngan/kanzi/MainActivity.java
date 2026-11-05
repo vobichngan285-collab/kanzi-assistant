@@ -34,6 +34,9 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.graphics.Color;
 import android.graphics.Matrix;
+import android.graphics.ColorMatrix;
+import android.graphics.ColorMatrixColorFilter;
+import android.graphics.RenderEffect;
 import android.util.TypedValue;
 import android.util.Log;
 
@@ -57,7 +60,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "Blue Star Guide · Dev 1.0.3 USB Trace";
+    private static final String APP_VERSION = "Blue Star Guide · 实验版 1.0.4";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -74,6 +77,7 @@ public class MainActivity extends CameraActivity {
     private static final String PREF_PREVIEW_MIRROR = "preview_mirror";
     private static final String PREF_USB_PREVIEW_CORRECT_MIRROR = "usb_preview_correct_left_right";
     private static final String PREF_PREVIEW_FLIP = "preview_flip";
+    private static final String PREF_USB_PREVIEW_VIVID = "usb_preview_vivid_experiment";
     private static final String PREF_ENHANCED_OCR = "enhanced_ocr";
     private static final String PREF_OCR_MODEL = "ocr_model_id";
     private static final String PREF_OCR_PROFILE = "x200_ocr_profile";
@@ -103,6 +107,12 @@ public class MainActivity extends CameraActivity {
     private TextView phonePreviewStatus;
     private TextView usbHealthView;
     private final UsbCameraHealthMonitor usbHealth = new UsbCameraHealthMonitor();
+    private final UsbTextFocusPolicy usbTextFocusPolicy = new UsbTextFocusPolicy();
+    private final AtomicBoolean usbFocusCommandPending = new AtomicBoolean(false);
+    private final java.util.concurrent.atomic.AtomicInteger usbFocusSession =
+        new java.util.concurrent.atomic.AtomicInteger(0);
+    private volatile boolean usbPreviewVivid = true;
+    private Boolean usbAppliedPreviewVivid = null;
     private final java.util.concurrent.ExecutorService usbLogWriter =
         java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
             Thread worker = new Thread(r, "bsg-usb-health-log");
@@ -344,6 +354,84 @@ public class MainActivity extends CameraActivity {
             .setNegativeButton("关闭",null).show();
     }
 
+    /** UVC controls execute on UI thread only; never from its high-frequency frame callback. */
+    private void requestUsbRefocusOnNewScene(long scene, long uptimeMs) {
+        if (usingPhoneCamera || !running ||
+            !usbTextFocusPolicy.shouldRelease(scene, uptimeMs) ||
+            !usbFocusCommandPending.compareAndSet(false, true)) return;
+        final int session = usbFocusSession.get();
+        mainHandler.post(() -> {
+            try {
+                if (usingPhoneCamera || session != usbFocusSession.get() || !isCameraOpened())
+                    return;
+                setAutoFocus(true);
+                boolean active = Boolean.TRUE.equals(getAutoFocus());
+                usbTextFocusPolicy.markReleased(android.os.SystemClock.uptimeMillis());
+                usbHealth.onEvent(UsbCameraHealthMonitor.nowMs(),
+                    active ? "EXPERIMENT AF REFOCUS on persistent new scene" :
+                             "EXPERIMENT AF re-enable requested; device did not report AF enabled");
+                persistUsbHealthLog();
+            } catch (RuntimeException error) {
+                // Never hold the camera state machine hostage to optional UVC controls.
+                usbTextFocusPolicy.markReleased(android.os.SystemClock.uptimeMillis());
+                Log.w("UsbFocusExperiment", "UVC refocus not supported", error);
+            } finally {
+                usbFocusCommandPending.set(false);
+            }
+        });
+    }
+
+    /** Lock only after the actual OCR model found sufficiently clear real text boxes. */
+    private void requestUsbFocusLock(int boxes, double confidence,
+                                     FrameQuality.Assessment quality, long scene) {
+        if (usingPhoneCamera || quality == null || !running ||
+            !usbFocusCommandPending.compareAndSet(false, true)) return;
+        final int session = usbFocusSession.get();
+        mainHandler.post(() -> {
+            try {
+                long now = android.os.SystemClock.uptimeMillis();
+                if (usingPhoneCamera || !running || session != usbFocusSession.get() ||
+                    !isCameraOpened() ||
+                    !usbTextFocusPolicy.canLock(boxes, confidence, quality.brightness,
+                        quality.edgeStrength, scene, realtimeScene.generation(), now)) return;
+                // getAutoFocus()==false/null means no proven AF support; do not force lock.
+                if (!Boolean.TRUE.equals(getAutoFocus())) return;
+                setAutoFocus(false);
+                if (Boolean.FALSE.equals(getAutoFocus())) {
+                    usbTextFocusPolicy.markLocked(scene, now);
+                    usbHealth.onEvent(UsbCameraHealthMonitor.nowMs(),
+                        "EXPERIMENT AF LOCK requested after verified OCR text boxes=" + boxes);
+                    persistUsbHealthLog();
+                } else {
+                    // Fail open: keep continuous AF if a lock was rejected.
+                    setAutoFocus(true);
+                }
+            } catch (RuntimeException error) {
+                Log.w("UsbFocusExperiment", "UVC lock unsupported; leave camera running", error);
+                try { if (isCameraOpened()) setAutoFocus(true); }
+                catch (RuntimeException ignored) {}
+            } finally {
+                usbFocusCommandPending.set(false);
+            }
+        });
+    }
+
+    /** Display-only saturation, never changes the USB NV21 or OCR input. */
+    private void applyUsbPreviewTone() {
+        if (cameraTextureView == null || android.os.Build.VERSION.SDK_INT < 31) return;
+        if (usbAppliedPreviewVivid != null &&
+            usbAppliedPreviewVivid.booleanValue() == usbPreviewVivid) return;
+        if (usbPreviewVivid) {
+            ColorMatrix color = new ColorMatrix();
+            color.setSaturation(1.07f);
+            cameraTextureView.setRenderEffect(
+                RenderEffect.createColorFilterEffect(new ColorMatrixColorFilter(color)));
+        } else {
+            cameraTextureView.setRenderEffect(null);
+        }
+        usbAppliedPreviewVivid = usbPreviewVivid;
+    }
+
     private final IPreviewDataCallBack previewCallback = new IPreviewDataCallBack() {
         @Override public void onPreviewData(byte[] data, int width, int height, DataFormat format) {
             if (format == DataFormat.NV21 && !usingPhoneCamera) {
@@ -449,6 +537,10 @@ public class MainActivity extends CameraActivity {
             long scene = live ? realtimeScene.observe(data, width, height, now)
                               : previousScene;
             if (live && scene != previousScene) frameChangeGate.reset();
+            // The cheap existing scene tracker runs during normal OCR scanning.
+            // A stable new scene releases AF lock without adding any inference.
+            if (live && !isPhoneCamera)
+                requestUsbRefocusOnNewScene(scene, android.os.SystemClock.uptimeMillis());
             boolean oneShot = manualCaptureRequested.get();
             if (oneShot) {
                 if (!manualCaptureRequested.compareAndSet(true, false)) return;
@@ -542,6 +634,10 @@ public class MainActivity extends CameraActivity {
                             onRecognized(found.getText(), oneShot,
                                 recognizedScene, recognizedEpoch);
                         }
+                        if (!isPhoneCamera)
+                            requestUsbFocusLock(found.getBoxes() == null ? 0 :
+                                found.getBoxes().size(), found.getAverageConfidence(),
+                                quality, recognizedScene);
                         onReadingQuality(found, quality);
                     }
                 }, firstText -> {
@@ -745,6 +841,7 @@ public class MainActivity extends CameraActivity {
         previewMirror = prefs.getBoolean(PREF_PREVIEW_MIRROR, false);
         usbPreviewCorrectMirror = prefs.getBoolean(PREF_USB_PREVIEW_CORRECT_MIRROR, true);
         previewVerticalFlip = prefs.getBoolean(PREF_PREVIEW_FLIP, false);
+        usbPreviewVivid = prefs.getBoolean(PREF_USB_PREVIEW_VIVID, true);
         enhancedOcr = prefs.getBoolean(PREF_ENHANCED_OCR, false);
         aiLayoutEnabled = prefs.getBoolean(PREF_AI_LAYOUT, false);
         verticalLiveReadingEnabled = prefs.getBoolean(PREF_VERTICAL_LIVE_READING, true);
@@ -1392,6 +1489,15 @@ public class MainActivity extends CameraActivity {
         flipCheck.setText("垂直翻转");
         flipCheck.setChecked(previewVerticalFlip);
         panel.addView(flipCheck);
+        CheckBox usbVividCheck = new CheckBox(this);
+        usbVividCheck.setText("USB预览轻度鲜明色彩（实验；仅显示，不修改OCR图像）");
+        usbVividCheck.setChecked(usbPreviewVivid);
+        panel.addView(usbVividCheck);
+        TextView afNote = new TextView(this);
+        afNote.setText("实验：USB最高帧率参数61；识别出清晰真实文字后尝试锁定自动对焦，画面持续变化时再恢复自动对焦。设备不支持锁焦时保持原有自动对焦；不自动改变光学变焦或曝光。");
+        afNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        afNote.setTextColor(0xFF667085);
+        panel.addView(afNote);
 
         TextView transformNote = new TextView(this);
         PreviewSize currentSize = previewCallbackAdded ? getCurrentPreviewSize() : null;
@@ -1667,9 +1773,11 @@ public class MainActivity extends CameraActivity {
                 previewMirror = mirrorCheck.isChecked();
                 usbPreviewCorrectMirror = usbCorrectMirrorCheck.isChecked();
                 previewVerticalFlip = flipCheck.isChecked();
+                usbPreviewVivid = usbVividCheck.isChecked();
                 enhancedOcr = enhancedCheck.isChecked();
                 if (tts != null && !followEngineSpeechRate) tts.setSpeechRate(speechRate);
                 applyPreviewTransform();
+                applyUsbPreviewTone();
                 applyPhonePreviewTransform();
                 if (ocrOverlay != null) ocrOverlay.clear();
                 getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
@@ -1682,6 +1790,7 @@ public class MainActivity extends CameraActivity {
                     .putBoolean(PREF_PREVIEW_MIRROR, previewMirror)
                     .putBoolean(PREF_USB_PREVIEW_CORRECT_MIRROR, usbPreviewCorrectMirror)
                     .putBoolean(PREF_PREVIEW_FLIP, previewVerticalFlip)
+                    .putBoolean(PREF_USB_PREVIEW_VIVID, usbPreviewVivid)
                     .putBoolean(PREF_ENHANCED_OCR, enhancedOcr)
                     .putString(PREF_OCR_MODEL, ocrModelId)
                     .putString(PREF_OCR_PROFILE, ocrProfileId)
@@ -1775,6 +1884,7 @@ public class MainActivity extends CameraActivity {
             cameraTextureView.setTransform(usbDisplay);
         }
         if (ocrOverlay != null) ocrOverlay.setUsbDisplayMirror(usbMirror);
+        applyUsbPreviewTone();
     }
 
     @Override protected ViewGroup getCameraViewContainer() { return previewContainer; }
@@ -1974,6 +2084,8 @@ public class MainActivity extends CameraActivity {
 
     @Override public void onCameraState(MultiCameraClient.ICamera self, ICameraStateCallBack.State code, String msg) {
         if (code == ICameraStateCallBack.State.OPENED) {
+            usbFocusSession.incrementAndGet();
+            usbTextFocusPolicy.onOpened(android.os.SystemClock.uptimeMillis());
             usbHealth.onOpened(UsbCameraHealthMonitor.nowMs(),
                 com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalSwapAttempts(),
                 com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalEglErrors());
@@ -1986,6 +2098,8 @@ public class MainActivity extends CameraActivity {
                 updateControlLabels();
             });
         } else if (code == ICameraStateCallBack.State.CLOSED) {
+            usbFocusSession.incrementAndGet();
+            usbTextFocusPolicy.onOpened(android.os.SystemClock.uptimeMillis());
             usbHealth.onClosed(UsbCameraHealthMonitor.nowMs());
             persistUsbHealthLog();
             previewCallbackAdded = false;
@@ -2021,6 +2135,18 @@ public class MainActivity extends CameraActivity {
     @Override protected void onResume() {
         super.onResume();
         traceUsbLifecycle("Activity onResume");
+        // Camera was left alive through Android onPause; old AF lock may now
+        // point to an entirely different page/distance. Restore default AF.
+        if (!usingPhoneCamera && usbTextFocusPolicy.isLocked() && isCameraOpened()) {
+            try {
+                setAutoFocus(true);
+                usbTextFocusPolicy.markReleased(android.os.SystemClock.uptimeMillis());
+                usbHealth.onEvent(UsbCameraHealthMonitor.nowMs(),
+                    "EXPERIMENT AF REFOCUS after Activity onResume");
+            } catch (RuntimeException error) {
+                Log.w("UsbFocusExperiment", "Restore AF after resume unsupported", error);
+            }
+        }
         mainHandler.removeCallbacks(usbHealthTicker);
         mainHandler.postDelayed(usbHealthTicker,1000L);
         diagnosticAttempts = 0;
@@ -2615,6 +2741,7 @@ public class MainActivity extends CameraActivity {
     @Override protected void onPause() {
         mainHandler.removeCallbacks(usbHealthTicker);
         traceUsbLifecycle("Activity onPause");
+        usbFocusSession.incrementAndGet(); // invalidate delayed AF commands
         // Accessibility safety: a camera that is no longer foreground must
         // neither scan nor continue speaking private surrounding text.
         running = false;
