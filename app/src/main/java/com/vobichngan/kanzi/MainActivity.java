@@ -60,7 +60,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "Blue Star Guide · 实验版 1.0.4";
+    private static final String APP_VERSION = "Blue Star Guide · 实验版 1.0.5";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -112,6 +112,9 @@ public class MainActivity extends CameraActivity {
     private final java.util.concurrent.atomic.AtomicInteger usbFocusSession =
         new java.util.concurrent.atomic.AtomicInteger(0);
     private volatile boolean usbPreviewVivid = true;
+    private volatile boolean usbVerifiedAutoFocus = false;
+    private volatile String usbHardwareControls = "未检测：等待USB相机就绪";
+    private volatile boolean usbControlsChecked = false;
     private Boolean usbAppliedPreviewVivid = null;
     private final java.util.concurrent.ExecutorService usbLogWriter =
         java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
@@ -141,7 +144,7 @@ public class MainActivity extends CameraActivity {
                     boolean surfaceReady = cameraTextureView != null && cameraTextureView.isAvailable();
                     String message = usbHealth.sample(now, glCount, glTime,
                         eglErrors, busy.get(), surfaceReady, true);
-                    usbHealthView.setText(message + "\n点击查看 / 复制近一分钟记录");
+                    usbHealthView.setText(message + "\nUSB控制：" + usbHardwareControls + "\n点击查看 / 复制近一分钟记录");
                     usbHealthView.setContentDescription("USB摄像头运行状态：" + message +
                         "。双击查看完整记录");
                     usbHealthView.setVisibility(View.VISIBLE);
@@ -354,9 +357,37 @@ public class MainActivity extends CameraActivity {
             .setNegativeButton("关闭",null).show();
     }
 
+    /**
+     * Avoid claiming software-side AF commands prove hardware support.
+     * UVC reports capability bits. Control read is delayed because the pinned
+     * UVCCamera docs warn against querying immediately after open.
+     */
+    private void readUsbHardwareControlsLater(final int focusSession) {
+        mainHandler.postDelayed(() -> {
+            if (usingPhoneCamera || focusSession != usbFocusSession.get() ||
+                !isCameraOpened()) return;
+            try {
+                String controls = getUsbHardwareControlsReport();
+                boolean supported = supportsUsbHardwareAutoFocus();
+                usbVerifiedAutoFocus = supported;
+                usbControlsChecked = true;
+                usbHardwareControls = controls;
+                usbHealth.onEvent(UsbCameraHealthMonitor.nowMs(),
+                    "USB_CTRL_CAPS " + controls + " checkedAutoFocus=" + supported);
+                persistUsbHealthLog();
+                Log.i("UsbControlCapabilities", controls);
+            } catch (RuntimeException failure) {
+                usbVerifiedAutoFocus = false;
+                usbControlsChecked = false;
+                usbHardwareControls = "读取失败：" + failure.getClass().getSimpleName();
+                Log.w("UsbControlCapabilities", usbHardwareControls, failure);
+            }
+        }, 700L);
+    }
+
     /** UVC controls execute on UI thread only; never from its high-frequency frame callback. */
     private void requestUsbRefocusOnNewScene(long scene, long uptimeMs) {
-        if (usingPhoneCamera || !running ||
+        if (usingPhoneCamera || !running || !usbVerifiedAutoFocus ||
             !usbTextFocusPolicy.shouldRelease(scene, uptimeMs) ||
             !usbFocusCommandPending.compareAndSet(false, true)) return;
         final int session = usbFocusSession.get();
@@ -385,6 +416,7 @@ public class MainActivity extends CameraActivity {
     private void requestUsbFocusLock(int boxes, double confidence,
                                      FrameQuality.Assessment quality, long scene) {
         if (usingPhoneCamera || quality == null || !running ||
+            !usbVerifiedAutoFocus ||
             !usbFocusCommandPending.compareAndSet(false, true)) return;
         final int session = usbFocusSession.get();
         mainHandler.post(() -> {
@@ -2084,8 +2116,12 @@ public class MainActivity extends CameraActivity {
 
     @Override public void onCameraState(MultiCameraClient.ICamera self, ICameraStateCallBack.State code, String msg) {
         if (code == ICameraStateCallBack.State.OPENED) {
-            usbFocusSession.incrementAndGet();
+            final int focusSession = usbFocusSession.incrementAndGet();
+            usbVerifiedAutoFocus = false;
+            usbControlsChecked = false;
+            usbHardwareControls = "等待USB摄像头控制能力报告";
             usbTextFocusPolicy.onOpened(android.os.SystemClock.uptimeMillis());
+            readUsbHardwareControlsLater(focusSession);
             usbHealth.onOpened(UsbCameraHealthMonitor.nowMs(),
                 com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalSwapAttempts(),
                 com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalEglErrors());
@@ -2099,6 +2135,9 @@ public class MainActivity extends CameraActivity {
             });
         } else if (code == ICameraStateCallBack.State.CLOSED) {
             usbFocusSession.incrementAndGet();
+            usbVerifiedAutoFocus = false;
+            usbControlsChecked = false;
+            usbHardwareControls = "USB摄像头已关闭";
             usbTextFocusPolicy.onOpened(android.os.SystemClock.uptimeMillis());
             usbHealth.onClosed(UsbCameraHealthMonitor.nowMs());
             persistUsbHealthLog();
@@ -2137,7 +2176,8 @@ public class MainActivity extends CameraActivity {
         traceUsbLifecycle("Activity onResume");
         // Camera was left alive through Android onPause; old AF lock may now
         // point to an entirely different page/distance. Restore default AF.
-        if (!usingPhoneCamera && usbTextFocusPolicy.isLocked() && isCameraOpened()) {
+        if (!usingPhoneCamera && usbVerifiedAutoFocus &&
+            usbTextFocusPolicy.isLocked() && isCameraOpened()) {
             try {
                 setAutoFocus(true);
                 usbTextFocusPolicy.markReleased(android.os.SystemClock.uptimeMillis());
@@ -2147,6 +2187,8 @@ public class MainActivity extends CameraActivity {
                 Log.w("UsbFocusExperiment", "Restore AF after resume unsupported", error);
             }
         }
+        if (!usingPhoneCamera && !usbControlsChecked && isCameraOpened())
+            readUsbHardwareControlsLater(usbFocusSession.get());
         mainHandler.removeCallbacks(usbHealthTicker);
         mainHandler.postDelayed(usbHealthTicker,1000L);
         diagnosticAttempts = 0;
