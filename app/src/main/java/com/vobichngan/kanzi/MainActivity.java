@@ -60,7 +60,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "Blue Star Guide · 实验版 1.0.5";
+    private static final String APP_VERSION = "Blue Star Guide · 实验版 1.0.6";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -144,7 +144,7 @@ public class MainActivity extends CameraActivity {
                     boolean surfaceReady = cameraTextureView != null && cameraTextureView.isAvailable();
                     String message = usbHealth.sample(now, glCount, glTime,
                         eglErrors, busy.get(), surfaceReady, true);
-                    usbHealthView.setText(message + "\nUSB控制：" + usbHardwareControls + "\n点击查看 / 复制近一分钟记录");
+                    usbHealthView.setText(message + "\n原生OCR取帧≤20FPS（预览仍可到约60FPS）\nUSB控制：" + usbHardwareControls + "\n点击查看 / 复制近一分钟记录");
                     usbHealthView.setContentDescription("USB摄像头运行状态：" + message +
                         "。双击查看完整记录");
                     usbHealthView.setVisibility(View.VISIBLE);
@@ -1526,7 +1526,7 @@ public class MainActivity extends CameraActivity {
         usbVividCheck.setChecked(usbPreviewVivid);
         panel.addView(usbVividCheck);
         TextView afNote = new TextView(this);
-        afNote.setText("实验：USB最高帧率参数61；识别出清晰真实文字后尝试锁定自动对焦，画面持续变化时再恢复自动对焦。设备不支持锁焦时保持原有自动对焦；不自动改变光学变焦或曝光。");
+        afNote.setText("实验：USB最高帧率参数61，屏幕预览不降帧；仅原生OCR取帧支路限制最多20FPS，避免每个视频帧都转换和复制NV21。识别出清晰真实文字后尝试锁定自动对焦，持续换页时恢复自动对焦。光学变焦和曝光不改。");
         afNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         afNote.setTextColor(0xFF667085);
         panel.addView(afNote);
