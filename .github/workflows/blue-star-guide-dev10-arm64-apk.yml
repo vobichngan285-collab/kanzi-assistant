@@ -5,7 +5,7 @@ on:
     paths:
       - 'app/**'
       - 'scripts/*.py'
-      - '.github/workflows/blue-star-guide-dev101-globe-fixed-apk.yml'
+      - '.github/workflows/blue-star-guide-dev10-arm64-apk.yml'
       - 'docs/phone-x200-combined-horizontal-vertical-20261103.md'
   workflow_dispatch:
 concurrency:
