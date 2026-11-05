@@ -564,6 +564,22 @@ public class MainActivity extends CameraActivity {
         ocrOverlay = new OcrOverlayView(this);
         root.addView(ocrOverlay, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        // Passive USB-only overlay; remains visible while OCR is paused.
+        usbHealthView = new TextView(this);
+        usbHealthView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        usbHealthView.setTextColor(Color.WHITE);
+        usbHealthView.setBackgroundColor(0xDD102033);
+        usbHealthView.setPadding(dp(10),dp(7),dp(10),dp(7));
+        usbHealthView.setVisibility(View.GONE);
+        usbHealthView.setClickable(true);
+        usbHealthView.setFocusable(true);
+        usbHealthView.setOnClickListener(v -> showUsbHealthHistory());
+        FrameLayout.LayoutParams healthParams=new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT,Gravity.TOP);
+        healthParams.topMargin=dp(6);
+        healthParams.leftMargin=dp(6);
+        healthParams.rightMargin=dp(6);
+        root.addView(usbHealthView,healthParams);
         phonePreviewStatus = new TextView(this);
         phonePreviewStatus.setTextColor(Color.WHITE);
         phonePreviewStatus.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
@@ -1724,6 +1740,7 @@ public class MainActivity extends CameraActivity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        prepareUsbHealthSession();
         // Upstream CameraActivity.initView() has now completed its removeAllViews()
         // and added the USB preview. The phone view must be attached afterward.
         attachPhonePreviewAfterUsbInit();
@@ -1900,6 +1917,9 @@ public class MainActivity extends CameraActivity {
 
     @Override public void onCameraState(MultiCameraClient.ICamera self, ICameraStateCallBack.State code, String msg) {
         if (code == ICameraStateCallBack.State.OPENED) {
+            usbHealth.onOpened(UsbCameraHealthMonitor.nowMs(),
+                com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalSwapAttempts(),
+                com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalEglErrors());
             if (!previewCallbackAdded) {
                 addPreviewDataCallBack(previewCallback);
                 previewCallbackAdded = true;
@@ -1909,16 +1929,22 @@ public class MainActivity extends CameraActivity {
                 updateControlLabels();
             });
         } else if (code == ICameraStateCallBack.State.CLOSED) {
+            usbHealth.onClosed(UsbCameraHealthMonitor.nowMs());
+            persistUsbHealthLog();
             previewCallbackAdded = false;
             manualCaptureRequested.set(false);
             runOnUiThread(() -> updateControlLabels());
         } else if (code == ICameraStateCallBack.State.ERROR) {
+            usbHealth.onError(UsbCameraHealthMonitor.nowMs(),msg);
+            persistUsbHealthLog();
             runOnUiThread(() -> status.setText("USB 摄像头启动失败：" + (msg == null ? "请重新插拔摄像头" : msg)));
         }
     }
 
     @Override protected void onResume() {
         super.onResume();
+        mainHandler.removeCallbacks(usbHealthTicker);
+        mainHandler.postDelayed(usbHealthTicker,1000L);
         diagnosticAttempts = 0;
         diagnosticHandler.removeCallbacks(diagnosticRunnable);
         diagnosticHandler.post(diagnosticRunnable);
@@ -2021,6 +2047,9 @@ public class MainActivity extends CameraActivity {
      * The epoch invalidates results from the previous mode that finish asynchronously.
      */
     private void switchCameraSource(boolean phone) {
+        usbHealth.onEvent(UsbCameraHealthMonitor.nowMs(),
+            phone?"switched to phone camera":"switched to USB camera");
+        persistUsbHealthLog();
         readingEpoch.incrementAndGet();
         frameChangeGate.reset();
         realtimeScene.reset();
@@ -2506,6 +2535,9 @@ public class MainActivity extends CameraActivity {
     }
 
     @Override protected void onPause() {
+        mainHandler.removeCallbacks(usbHealthTicker);
+        usbHealth.onEvent(UsbCameraHealthMonitor.nowMs(),"Activity onPause");
+        persistUsbHealthLog();
         // Accessibility safety: a camera that is no longer foreground must
         // neither scan nor continue speaking private surrounding text.
         running = false;
@@ -2523,6 +2555,10 @@ public class MainActivity extends CameraActivity {
     }
 
     @Override protected void onDestroy() {
+        mainHandler.removeCallbacks(usbHealthTicker);
+        usbHealth.onEvent(UsbCameraHealthMonitor.nowMs(),"Activity onDestroy");
+        persistUsbHealthLog();
+        usbLogWriter.shutdown();
         phoneStartSequence++;
         if (phoneController != null) phoneController.stop();
         running = false;
