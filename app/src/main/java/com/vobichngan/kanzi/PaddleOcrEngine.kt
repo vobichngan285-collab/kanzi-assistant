@@ -40,11 +40,14 @@ data class OcrReadResult(
     val frameHeight: Int,
     val boxCount: Int,
     val averageConfidence: Double,
-    val totalTimeMs: Long
+    val totalTimeMs: Long,
+    val speechBoxes: List<ReadingOrder.Box> = emptyList(),
+    val speechBoxIds: List<String> = emptyList()
 )
 fun interface OcrResultCallback { fun onResult(result: OcrReadResult?) }
-/** Only model-read text from the first genuine REC batch, no guesses or LLM. */
-fun interface OcrEarlyReadCallback { fun onEarlyText(text: String) }
+/** Stable per-frame source box identity, never guessed by substring matching. */
+data class OcrEarlyItem(val text: String, val id: String)
+fun interface OcrEarlyReadCallback { fun onEarlyText(boxes: List<OcrEarlyItem>) }
 fun interface OcrErrorCallback { fun onError(message: String) }
 data class OcrDiagnosticResult(
     val text: String,
@@ -734,9 +737,9 @@ class PaddleOcrEngine(
                     val earlyListener: ((List<OCRResult>) -> Unit)? =
                         if (fastScanMode && !usbAutomatic && modelId == "cnlite_smallrec" && onEarly != null)
                             { first ->
-                                val text = first.map { it.text.trim() }
-                                    .filter { it.isNotEmpty() }.joinToString("\n")
-                                if (text.isNotBlank()) onEarly.onEarlyText(text)
+                                val real = first.filter { it.text.isNotBlank() }
+                                    .map { OcrEarlyItem(it.text.trim(), stableBoxId(it)) }
+                                if (real.isNotEmpty()) onEarly.onEarlyText(real)
                             }
                         else null
                     var result = usbAuto?.result ?: current.recognize(bitmap, earlyListener)
@@ -870,7 +873,11 @@ class PaddleOcrEngine(
                         frameHeight = height,
                         boxCount = result.results.size,
                         averageConfidence = averageConfidence,
-                        totalTimeMs = result.totalTimeMs.toLong()
+                        totalTimeMs = result.totalTimeMs.toLong(),
+                        speechBoxes = readingBoxes,
+                        speechBoxIds = result.results.filter {
+                            it.box.points.size == 4 && it.text.isNotBlank()
+                        }.map(::stableBoxId)
                     )
                     withContext(Dispatchers.Main) { onResult.onResult(response) }
                 } finally {
@@ -933,6 +940,11 @@ class PaddleOcrEngine(
     }
 
     /** OCR sees all pixels; only the final spoken text is focused. */
+    private fun stableBoxId(result: OCRResult): String =
+        result.box.points.joinToString(";") { p ->
+            "${java.lang.Float.floatToIntBits(p.x)}:${java.lang.Float.floatToIntBits(p.y)}"
+        } + "#" + result.text
+
     private fun toReadingBoxes(results: List<OCRResult>): List<ReadingOrder.Box> =
         results.mapNotNull { item ->
             val p = item.box.points
