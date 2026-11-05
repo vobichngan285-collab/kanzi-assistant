@@ -37,15 +37,24 @@ def order_indices(widths, batch_size, bucket):
     return first + sorted(range(batch_size, len(widths)), key=lambda i:(widths[i],i))
 
 
-def do_pass(sess, name, crops, batch, bucket):
+def do_pass(sess, name, crops, batch, bucket, first_batch_size=None):
     widths = [a.shape[-1] for a in crops]
     order = order_indices(widths, batch, bucket)
+    # Hybrid A/B: first N original-order boxes, then larger width-bucketed groups.
+    # This is only a benchmark; no Android SDK scheduling is changed.
+    first_n = first_batch_size if first_batch_size is not None else batch
+    if first_batch_size is None:
+        groups=[order[i:i+batch] for i in range(0,len(order),batch)]
+    else:
+        front=list(range(min(first_n,len(crops))))
+        rest=list(range(len(front),len(crops)))
+        if bucket: rest.sort(key=lambda i:(widths[i],i))
+        groups=([front] if front else []) + [rest[i:i+batch] for i in range(0,len(rest),batch)]
     inf_total = pack_total = 0.0
     padded = 0
     calls = 0
     first_batch_inference_ms = None
-    for pos in range(0, len(order), batch):
-        indices = order[pos:pos+batch]
+    for indices in groups:
         maxw = max(widths[i] for i in indices)
         start = time.perf_counter()
         x = np.zeros((len(indices), 3, 48, maxw), dtype=np.float32)
@@ -87,6 +96,7 @@ def run_profile(model, threads, batch, reps):
                  for key in ("inference_ms","pack_ms","first_batch_inference_ms")}
             v.update({"scenario":scenario,
                       "threads":threads,"batch":batch,
+                      "first_batch_size":batch,
                       "width_bucket":bucket,
                       "n_boxes":len(widths),"ort_calls":vals[0]["ort_calls"],
                       "padded_input_floats":vals[0]["padded_input_floats"],
@@ -118,6 +128,33 @@ def main():
     allrows=[]
     for th,b in profiles:
         allrows.extend(run_profile(args.model,th,b,args.reps))
+    # Key hybrid hypothesis: keep exact 2-box first-batch latency while using
+    # batch4 for the rest, preserving the earliest genuine REC output timing.
+    opts=ort.SessionOptions()
+    opts.graph_optimization_level=ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    opts.intra_op_num_threads=4
+    opts.execution_mode=ort.ExecutionMode.ORT_SEQUENTIAL
+    opts.log_severity_level=3
+    sess=ort.InferenceSession(args.model,sess_options=opts,providers=["CPUExecutionProvider"])
+    inp=sess.get_inputs()[0].name
+    for case,widths in WORKLOADS:
+        crops=make_inputs(widths)
+        do_pass(sess,inp,crops,4,True,first_batch_size=2)
+        vals=[do_pass(sess,inp,crops,4,True,first_batch_size=2) for _ in range(args.reps)]
+        record={"scenario":case,"threads":4,"batch":4,
+                "first_batch_size":2,"width_bucket":True,
+                "profile":"hybrid_first2_then_rest4",
+                "n_boxes":len(crops),
+                "inference_ms":round(statistics.median(x["inference_ms"] for x in vals),3),
+                "first_batch_inference_ms":round(statistics.median(x["first_batch_inference_ms"] for x in vals),3),
+                "pack_ms":round(statistics.median(x["pack_ms"] for x in vals),3),
+                "ort_calls":vals[0]["ort_calls"],
+                "padded_input_floats":vals[0]["padded_input_floats"],
+                "inference_runs":args.reps,
+                "inference_ms_min":min(x["inference_ms"] for x in vals),
+                "inference_ms_max":max(x["inference_ms"] for x in vals)}
+        allrows.append(record)
+        print("REC_CLOUD_HYBRID "+json.dumps(record,ensure_ascii=False),flush=True)
     meta={"model_sha256":sha,"ort_version":ort.__version__,
           "host_arch":platform.machine(),"cpu_count":os.cpu_count(),
           "repetitions":args.reps,
