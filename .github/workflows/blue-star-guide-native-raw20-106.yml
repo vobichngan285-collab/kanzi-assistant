@@ -491,7 +491,7 @@ jobs:
           test -x "$AAPT" && test -x "$SIGNER" && test -s "$apk"
           "$AAPT" dump badging "$apk" | tee "$RUNNER_TEMP/ocr-apk-info.txt"
           grep -q "package: name='com.vobich.kanzi.experiment.dev106'" "$RUNNER_TEMP/ocr-apk-info.txt"
-          grep -q "versionCode='105'" "$RUNNER_TEMP/ocr-apk-info.txt"
+          grep -q "versionCode='106'" "$RUNNER_TEMP/ocr-apk-info.txt"
           "$AAPT" dump permissions "$apk" > "$RUNNER_TEMP/ocr-apk-permissions.txt"
           if grep -qi 'android.permission.INTERNET' "$RUNNER_TEMP/ocr-apk-permissions.txt"; then
             echo 'Offline APK MUST NOT have INTERNET permission' >&2; exit 1
@@ -567,7 +567,7 @@ jobs:
           先在设备确认支持自动对焦后才尝试合焦锁定；真机焦点是否保持仍待测。
           保留USB帧链追踪，无自动重启；曝光和光学变焦未改。
           独立Android arm64安装包，不覆盖先前看字助手v55/v56。
-          桌面软件名：Blue Star Guide。软件图标：用户确认的蓝色发光地球。
+          桌面软件名：蓝星向导 实验版。图标为用户确认的蓝色发光地球。
           保留ChineseOCR-Lite DET和PP-OCRv6 Small REC，以及Small DET回退与手机/USB摄像头支持。
           彻底不附带PP-OCRv5 Mobile、PP-OCRv6 Tiny、Sherpa-ONNX TTS运行库及语音包下载管理。
           通过安卓TTS接口调用用户已安装的广荣微软TTS及其他语音，不更改系统TTS默认引擎/音色设置。
