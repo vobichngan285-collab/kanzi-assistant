@@ -57,7 +57,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.9.23-CNLite-Immediate";
+    private static final String APP_VERSION = "0.9.24-CNLite-CleanUI";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -622,6 +622,76 @@ public class MainActivity extends CameraActivity {
     }
 
 
+
+    /**
+     * Only binds to a phone-installed Android TTS engine; never changes the
+     * phone's selected default engine, voice, pitch or speed. Crucially:
+     * setLanguage() chooses a new default voice for that language, so
+     * deliberately do NOT call it here. Users configure Microsoft Xiaoxiao
+     * or any other preferred voice in its own TTS application.
+     *
+     * The engine may itself require network access, even though 看字助手
+     * declares no INTERNET permission. Engine capability is external.
+     */
+    private int ttsInitGeneration=0;
+    private void initializeSelectedTextToSpeech() {
+        final int generation=++ttsInitGeneration;
+        TextToSpeech old=tts;
+        ttsReady=false;
+        tts=null;
+        if(old!=null) {
+            old.stop();old.shutdown(); // this app's TTS session only.
+        }
+        final String requested=appTtsEngine;
+        TextToSpeech.OnInitListener onInit=code->mainHandler.post(()->{
+            if(generation!=ttsInitGeneration)return;
+            if(tts==null)return;
+            if(code!=TextToSpeech.SUCCESS) {
+                ttsReady=false;
+                String engine=requested.isEmpty()?"手机系统默认引擎":requested;
+                Log.e("KanziTTS","TTS engine failed: "+engine+" code="+code);
+                Toast.makeText(this,"语音引擎初始化失败，请在设置中重新选择："+engine,
+                    Toast.LENGTH_LONG).show();
+                return;
+            }
+            // No setLanguage: would silently reset a user-configured voice.
+            // No setSpeechRate when following the installed package settings.
+            if(!followEngineSpeechRate)tts.setSpeechRate(speechRate);
+            ttsReady=true;
+            String voiceName="（由语音引擎决定）";
+            try {
+                android.speech.tts.Voice chosen=tts.getVoice();
+                if(chosen!=null)voiceName=chosen.getName();
+            }catch(Exception ignored){}
+            Log.i("KanziTTS","Connected engine "+
+                (requested.isEmpty()?"Android default":requested)+", voice="+voiceName+
+                ", appOverridesSpeed="+(!followEngineSpeechRate));
+            frameChangeGate.reset();
+            lastProcess=0L;
+            tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                @Override public void onStart(String id) {}
+                @Override public void onDone(String id) {
+                    mainHandler.post(()->finishQueuedUtterance(id));
+                }
+                @Override public void onError(String id) {
+                    mainHandler.post(()->{
+                        showSpeechFailure("当前语音引擎播报失败，请检查其网络/语音包状态");
+                        finishQueuedUtterance(id);
+                    });
+                }
+                @Override public void onStop(String id,boolean interrupted) {
+                    mainHandler.post(()->finishQueuedUtterance(id));
+                }
+            });
+            speakNextQueued();
+        });
+        // An empty package name follows the phone's globally configured
+        // default, while an explicit package is used ONLY in this app.
+        tts=requested.isEmpty()?
+            new TextToSpeech(this,onInit):
+            new TextToSpeech(this,onInit,requested);
+    }
+
     /**
      * v57: the default settings surface has exactly three everyday choices:
      * voice engine, speed and reading behaviour. Technical OCR tuning,
@@ -1077,7 +1147,7 @@ public class MainActivity extends CameraActivity {
         speechPreviewButton.setOnClickListener(v -> {
             if (canSpeak()) {
                 float previewRate = 0.5f + speechRateSeek.getProgress() / 100f;
-                if (tts != null) tts.setSpeechRate(previewRate);
+                if (tts != null && !followEngineSpeechRate) tts.setSpeechRate(previewRate);
                 clearSpeechQueue(true);
                 DownloadableVoiceStore.Voice previewVoice = voiceStore.selectedVoice();
                 String sample = "看字助手语音试听，现在是当前设置的朗读速度。";
@@ -1471,7 +1541,7 @@ public class MainActivity extends CameraActivity {
             .setTitle("识别与朗读设置")
             .setView(settingsScroll)
             .setNegativeButton("取消", (dialog, which) -> {
-                if (tts != null && ttsReady) tts.setSpeechRate(speechRate);
+                if (tts != null && ttsReady && !followEngineSpeechRate) tts.setSpeechRate(speechRate);
             })
             .setPositiveButton("保存", (dialog, which) -> {
                 long interval = 500L;
@@ -1535,7 +1605,7 @@ public class MainActivity extends CameraActivity {
                 usbPreviewCorrectMirror = usbCorrectMirrorCheck.isChecked();
                 previewVerticalFlip = flipCheck.isChecked();
                 enhancedOcr = enhancedCheck.isChecked();
-                if (tts != null) tts.setSpeechRate(speechRate);
+                if (tts != null && !followEngineSpeechRate) tts.setSpeechRate(speechRate);
                 applyPreviewTransform();
                 applyPhonePreviewTransform();
                 if (ocrOverlay != null) ocrOverlay.clear();
@@ -1744,60 +1814,8 @@ public class MainActivity extends CameraActivity {
         // app initialization never fetches models or contacts the Internet.
         voiceStore = new DownloadableVoiceStore(this);
         offlineVoicePlayback = new OfflineVoicePlayback(voiceStore);
-        tts = new TextToSpeech(this, code -> {
-            if (code == TextToSpeech.SUCCESS) {
-                int language = tts.setLanguage(Locale.SIMPLIFIED_CHINESE);
-                // Some Android installations only ship an offline traditional
-                // Chinese voice. Both can speak OCR Chinese characters; try a
-                // local alternative rather than silently disabling all audio.
-                if (language == TextToSpeech.LANG_MISSING_DATA ||
-                    language == TextToSpeech.LANG_NOT_SUPPORTED)
-                    language = tts.setLanguage(Locale.TRADITIONAL_CHINESE);
-                if (language == TextToSpeech.LANG_MISSING_DATA ||
-                    language == TextToSpeech.LANG_NOT_SUPPORTED)
-                    language = tts.setLanguage(Locale.CHINESE);
-                tts.setSpeechRate(speechRate);
-                ttsReady = language != TextToSpeech.LANG_MISSING_DATA &&
-                    language != TextToSpeech.LANG_NOT_SUPPORTED;
-                if (ttsReady) {
-                    Log.i("KanziTTS", "Chinese TextToSpeech engine ready");
-                    // If the camera already saw this page before TTS was ready,
-                    // make it immediately eligible for reading now.
-                    frameChangeGate.reset();
-                    lastProcess = 0L;
-                    tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
-                        @Override public void onStart(String utteranceId) {}
-                        @Override public void onDone(String utteranceId) {
-                            mainHandler.post(() -> finishQueuedUtterance(utteranceId));
-                        }
-                        @Override public void onError(String utteranceId) {
-                            Log.e("KanziTTS", "TTS utterance failed: " + utteranceId);
-                            mainHandler.post(() -> {
-                                showSpeechFailure("系统语音合成失败，请检查中文 TTS 引擎");
-                                finishQueuedUtterance(utteranceId);
-                            });
-                        }
-                        @Override public void onStop(String utteranceId, boolean interrupted) {
-                            mainHandler.post(() -> finishQueuedUtterance(utteranceId));
-                        }
-                    });
-                    speakNextQueued();
-                } else {
-                    status.setText("系统没有可用的中文语音，请先安装中文语音包");
-                    Log.e("KanziTTS", "Chinese TTS language unavailable: " + language);
-                    Toast.makeText(MainActivity.this,
-                        "OCR 已可识别，但系统中文语音不可用。请检查系统文字转语音设置。",
-                        Toast.LENGTH_LONG).show();
-                }
-            } else {
-                ttsReady = false;
-                Log.e("KanziTTS", "TTS initialize failed: " + code);
-                status.setText("系统中文语音引擎初始化失败，状态码：" + code);
-                Toast.makeText(MainActivity.this,
-                    "系统语音引擎初始化失败，OCR 识别仍可用但不能朗读。",
-                    Toast.LENGTH_LONG).show();
-            }
-        });
+        if (!appTtsEngine.isEmpty()) voiceStore.forceSystem();
+        initializeSelectedTextToSpeech();
 
         cameraSourceButton.setOnClickListener(v -> switchCameraSource(!usingPhoneCamera));
         lensButton.setOnClickListener(v -> {
