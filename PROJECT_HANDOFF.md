@@ -903,3 +903,11 @@
 - **最新x86对照：** 当前4T/B2整REC `62.13 / 210.33 / 413.07`ms，混合首2后4为`68.47 / 215.61 / 424.61`ms，反而更慢；强硬件依赖，**不能宣布“4T/批4必然更快”**。
 - **判断/限制：** 现有代码已宽度分桶、已支持批1/2/4和2/3/4线程；候选只是在SDK内部采用**首2框优先识别，余下同帧文字按宽度近似分桶每次4框**，要求保存原OCR框与阅读顺序，对长文/提前朗读/词典零改动。其潜在代价是更多padding、批处理不同可能改变模型的CTC输出。**没有做文字准确率/CER验证，也没有测得真机延迟/发热/USB帧流或模型推理后OCR文字符合度，不能认为优化已经实测成功。**
 - **决策边界：** 当前仅保留独立云端研究报告，**不加入已冻结的下一轮更新计划，不实现、不发布、不自动采用新的批处理配置**。先完成并验证Dev1.0.2摄像头卡死修复；将来用户另行授权可做vivo X200 Pro同帧真实样本4T/B2 vs 首2后4严格离线A/B，逐字文本一致和温控/首批/长文延迟门槛通过后再决定是否上线。
+
+#### 2026-11-05 — Dev1.0.2真实USB冻帧日志：onPause之后原始NV21与GL心跳同时停止（待复现生命周期触发）
+
+- **用户实测证据（原始粘贴日志，不是以往ZIP、不是屏幕截图）：** `Blue Star Guide 1.0.2 USB CAMERA HEALTH`。新一轮会话`usb-health-1793865483953.txt`：在`T+77236`记录`STATE OPENED`，随后从`T+77237`到`T+77271` USB原生NV21回调与GL提交均稳定约29.8-30.8次/秒，1920×1080，EGL错误0、`surface=true`、`OCR=false`。**T+77272记录`EVENT Activity onPause`；直到T+77313再次有1秒样本时，USB+GL末帧距今已约35.7秒，随后T+77314到T+77333连续0FPS，末帧间隔超过55.8秒，期间没有新的OPENED/CLOSED/ERROR日志。**前一会话`usb-health-1793865458491.txt`亦稳定约30FPS，`T+77233 onPause`，第二会话`T+77236 OPENED`。强烈提示**应用生命周期 / 返回前台后的USB流恢复问题**，并未证明相机硬件故障或OCR压力造成停帧。
+- **关键时间解释：**`T+77313 RAW=4.3 GL=4.3`不能理解为“故障期间仍有4.3FPS”；因为监测ticker在Activity `onPause`时暂停，到恢复后跨约41秒以较长采样间隔计算，且末帧已经在35.7秒前。不能精确断言相机在`onPause`瞬间停了：末次实际raw在约`T+77277`，即onPause若干秒之后，但**回到前台后监控恢复采样而原始流、GL都没有恢复**。
+- **源码复核：** `exp/blue-star-usb-health-102-20261105` `MainActivity.onPause`清除监测ticker、停止手机Camera2、清空语音并`super.onPause()`；`onResume`重启监测ticker，**只对手机内置相机显式`startPhoneCamera()`，对USB没有显式确认/补救**。上游AUSBC `ernestp/AndroidUSBCamera@3.6.0` 的`CameraActivity`/`BaseActivity`没有`onPause`/`onResume`的USB重连逻辑；相机注册通常依赖`TextureView.SurfaceTextureListener.onSurfaceTextureAvailable`，注销依赖`onSurfaceTextureDestroyed`；所以**SurfaceTexture对象仍显示available并不能保证UVC视频流仍活跃**。onCameraState只记录OPENED/CLOSED/ERROR；这次停流无新状态事件。`GL提交`监测仅记尝试而非物理屏幕呈现。
+- **鉴别诊断尚需用户一个关键信息：** 本次`T+77272`附近是否主动按Home、切换到其他APP、息屏/锁屏、收到电话或弹窗？如果确实切换前后台，则最先单独验证和修复**前后台切换后的UVC恢复与生命周期**；如果当时没有主动切出，需查系统意外进入onPause、窗口焦点/权限变化。另一独立实验是在屏幕常亮、只前台正常使用、不进后台时，是否仍会卡死；不可把所有冻帧都归因于`onPause`，因为尚无未切后台的完整崩溃日志。
+- **下一步建议（尚未写任何修复代码）：** 用有明确enter/exit的`onPause/onResume`事件监测并配套原始帧心跳及`isPreviewed`/USB Camera状态，确认前后台转换；查清SurfaceTexture销毁/重建或未销毁时流停止。若真是生命周期原因，设计**恢复前台后、仅当USB连接且监测确认连续缺帧**的受控重建USB采集/Render session，带超时/限次/退避，确保不会在OCR忙或尚在初始化期间循环重启；不要先引入无差别定时重启。留存1.0.2原APK并从独立分支做专项测试。OCR模型/左右阅读顺序/TTS和下一版冻结需求均不改。
