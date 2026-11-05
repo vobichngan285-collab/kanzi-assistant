@@ -336,6 +336,8 @@ public class MainActivity extends CameraActivity {
                 final int effectiveOcrInputAngle = isPhoneCamera
                     ? (longReadingMode ? 0 : liveTextRotationDegrees)
                     : usbOcrInputRotationDegrees;
+                final java.util.concurrent.atomic.AtomicReference<String> earlySpoken =
+                    new java.util.concurrent.atomic.AtomicReference<>();
                 recognizer.recognizeNv21(frame, width, height,
                     enhance, legacyDecode, effectiveOcrInputAngle, found -> {
                     busy.set(false);
@@ -367,10 +369,41 @@ public class MainActivity extends CameraActivity {
                                 isPhoneCamera, isPhoneCamera ? phoneSensorNaturalRotation : 0,
                                 isPhoneCamera ? phoneOcrRotation : 0);
                         }
-                        onRecognized(found.getText(), oneShot,
-                            live ? realtimeScene.generation() : recognizedScene, recognizedEpoch);
+                        if (live && !oneShot) {
+                            // The early batch callback is enqueued on the UI
+                            // thread before this full result. Only successful
+                            // first-batch speech adds remaining original text.
+                            runOnUiThread(() -> {
+                                String first = earlySpoken.get();
+                                if (first != null && !first.isEmpty())
+                                    appendRestOfRealOcr(first, found.getText(), recognizedEpoch);
+                                else
+                                    onRecognized(found.getText(), false,
+                                        realtimeScene.generation(), recognizedEpoch);
+                            });
+                        } else {
+                            onRecognized(found.getText(), oneShot,
+                                recognizedScene, recognizedEpoch);
+                        }
                         onReadingQuality(found, quality);
                     }
+                }, firstText -> {
+                    if (!live || oneShot || firstText == null || firstText.trim().isEmpty()) return;
+                    // Already recognized actual text from the first REC batch.
+                    // Only accept if this live run still belongs to the active
+                    // camera/mode and it would be a NEW text target.
+                    runOnUiThread(() -> {
+                        if (!running || longReadingMode || !automaticMode ||
+                            !canSpeak() || recognizedEpoch != readingEpoch.get()) return;
+                        String first = firstText.trim();
+                        long before = utteranceSequence;
+                        queueSpeechText(first, normalizeOcrText(first), false, recognizedScene);
+                        if (utteranceSequence > before) {
+                            earlySpoken.set(first);
+                            Log.i("BlueStarOCR", "FIRST_REAL_TEXT_TTS_EARLY: " +
+                                first.length() + " chars");
+                        }
+                    });
                 }, error -> {
                     busy.set(false);
                     Log.e("KanziOCR", "OCR failed for " + width + "x" + height, new RuntimeException(error));
@@ -2145,6 +2178,49 @@ public class MainActivity extends CameraActivity {
                 resultEpoch != readingEpoch.get()) return;
             queueSpeechText(fullSpeech, normalizedSpeech, manualCapture, sceneGeneration);
         });
+    }
+
+    /**
+     * Once first REAL REC lines have been announced, append only unspoken
+     * original lines from the exact same OCR frame. No synthesized words.
+     * A page turn later cancels this queue through the existing epoch.
+     */
+    private void appendRestOfRealOcr(String early, String full, int resultEpoch) {
+        if (!running || longReadingMode || !automaticMode ||
+            resultEpoch != readingEpoch.get() || !canSpeak() || full == null) return;
+        String rest=full;
+        int removed=0;
+        for (String row:early.split("\n")) {
+            String original=row.trim();
+            if (original.isEmpty()) continue;
+            int at=rest.indexOf(original);
+            if (at>=0) {
+                rest=rest.substring(0,at)+rest.substring(at+original.length());
+                removed++;
+            }
+        }
+        if (removed==0) {
+            // The final reading router can combine adjacent boxes with a
+            // different joiner. Safer to leave rest unchanged than invent
+            // an approximate replacement or silently discard real words.
+            Log.w("BlueStarOCR","First batch not found verbatim in complete OCR text");
+        }
+        if (speechNoEnglish)rest=rest.replaceAll("[A-Za-z]+"," ");
+        if (speechNoNumbers)rest=rest.replaceAll("[0-9]+"," ");
+        rest=rest.replaceAll("[\t ]+"," ").replaceAll(" *\n *","\n").trim();
+        if (rest.isEmpty())return;
+        // Same frame, same target. DO NOT call queueSpeechText again: its
+        // first-result preemption rule would restart the first spoken lines.
+        List<String> chunks=SpeechText.chunks(rest);
+        if (chunks.isEmpty())return;
+        speechPageActive=true;
+        String norm=normalizeOcrText(full);
+        for(String chunk:chunks)
+            speechQueue.addLast(new SpeechItem(chunk,norm,
+                "ocr-"+(++utteranceSequence)));
+        speakNextQueued();
+        Log.i("BlueStarOCR","REST_OCR_QUEUED: "+chunks.size+
+            " chunks after first real batch; matched="+removed);
     }
 
     /** Diagnostic/manual listening keeps the same explicit one-shot path. */
