@@ -63,8 +63,8 @@ assert "fastest_interval = *interval" in stream
 assert "requestMaxFps != max_fps" in preview
 assert "UVC_FPS_NEGOTIATION_107" in preview
 assert "UVC_NATIVE_OCR_RAW20_GATE_ENABLED" in preview
-assert "Blue Star Guide · 实验版 1.0.9" in main
-assert "versionCode 109" in gradle and "versionName '1.0.9'" in gradle
-assert "applicationIdSuffix '.experiment.dev109'" in gradle
+assert "Blue Star Guide · 2.0" in main
+assert "versionCode 200" in gradle and "versionName '2.0'" in gradle
+assert "applicationIdSuffix '.bluestarguide.dev20'" in gradle
 print("USB_NATIVE_DIRECT_109_STATIC_GUARDS=PASS")
 print("Direct visible updates, foreground stalls, background returns checked; physical A/B unverified")
