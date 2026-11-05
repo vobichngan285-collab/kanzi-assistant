@@ -19,6 +19,22 @@ def patch(path, a, b):
         raise SystemExit(f"REFUSE unsafe direct-camera patch in {path}: anchor count={s.count(a)}")
     path.write_text(s.replace(a,b,1), encoding="utf-8")
 
+# One startup marker in DEX, never logged per frame.
+patch(
+    base,
+    """            ) {
+                registerMultiCamera()
+            }
+
+            override fun onSurfaceTextureSizeChanged(""",
+    """            ) {
+                Logger.i(TAG, "BSG_USB_DIRECT_109 native TextureView mode available")
+                registerMultiCamera()
+            }
+
+            override fun onSurfaceTextureSizeChanged(""",
+)
+
 # Count genuine view content updates, not GL swaps. This is only active when
 # TextureView receives a new native camera buffer.
 patch(
@@ -48,6 +64,7 @@ patch(
         mUvcCamera?.destroy()
         mUvcCamera = null
         // BSG_USB_DIRECT_CLOSE_BARRIER_109: old native stream is fully torn down.
+        Logger.i(TAG, "BSG_USB_DIRECT_CLOSE_BARRIER_109")
         postStateEvent(ICameraStateCallBack.State.CLOSED)"""
 )
 
