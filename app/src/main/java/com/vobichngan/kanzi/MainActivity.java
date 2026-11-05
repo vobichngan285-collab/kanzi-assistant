@@ -2141,7 +2141,7 @@ public class MainActivity extends CameraActivity {
             usbTextFocusPolicy.onOpened(android.os.SystemClock.uptimeMillis());
             readUsbHardwareControlsLater(focusSession);
             usbHealth.onOpened(UsbCameraHealthMonitor.nowMs(),
-                com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalSwapAttempts(),
+                com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalDirectSurfaceUpdates(),
                 com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalEglErrors());
             if (!previewCallbackAdded) {
                 addPreviewDataCallBack(previewCallback);
