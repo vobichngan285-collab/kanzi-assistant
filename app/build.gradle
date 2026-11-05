@@ -22,8 +22,8 @@ android {
     }
     buildTypes {
         debug {
-            applicationIdSuffix '.cnliteclean57'
-            versionNameSuffix '-clean-settings-platform-tts'
+            applicationIdSuffix '.bluestarguide.dev10'
+            versionNameSuffix '-development'
             minifyEnabled false
         }
         release {
@@ -43,8 +43,10 @@ android {
         applicationId 'com.vobich.kanzi'
         minSdk 26
         targetSdk 35
-        versionCode 57
-        versionName '0.9.24'
+        // The supported production phone is arm64 (vivo X200 Pro).
+        ndk { abiFilters 'arm64-v8a' }
+        versionCode 100
+        versionName '1.0'
     }
 }
 
@@ -60,9 +62,4 @@ dependencies {
     // Optional locally bundled PP-DocLayout-S; matches OCR SDK version.
     implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.21.1'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
-    // JNI runtime only; all voice MODEL files are downloaded on user request.
-    // CI fetches the official, SHA256-pinned sherpa-onnx AAR before Gradle.
-    implementation files('libs/sherpa-onnx-2.0.1.aar')
-    implementation 'org.apache.commons:commons-compress:1.27.1'
-    implementation 'commons-io:commons-io:2.16.1'
 }
