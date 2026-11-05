@@ -28,8 +28,8 @@ assert 'mRenderHandler?.obtainMessage(MSG_GL_DRAW)?.sendToTarget()' not in rende
 assert 'setPreviewWidth(1920)' in activity and 'setPreviewHeight(1080)' in activity
 assert 'setPreviewFormat(CameraRequest.PreviewFormat.FORMAT_MJPEG)' in activity
 assert 'setRawPreviewData(true)' in activity
-assert 'Blue Star Guide · 实验版 1.0.8' in activity
-assert "versionName '1.0.8'" in Path("app/build.gradle").read_text()
+assert 'Blue Star Guide · 实验版 1.0.9' in activity
+assert "versionName '1.0.9'" in Path("app/build.gradle").read_text()
 
 
 def choose(intervals_100ns, min_fps=1, max_fps=61):
