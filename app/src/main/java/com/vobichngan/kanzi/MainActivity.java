@@ -57,7 +57,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "Blue Star Guide · Dev 1.0.1";
+    private static final String APP_VERSION = "Blue Star Guide · Dev 1.0.2 USB Health";
     private static final String PREF_NO_ENGLISH = "speech_no_english";
     private static final String PREF_NO_NUMBERS = "speech_no_numbers";
     private static final String PREF_MAX_SPEECH_CHARS = "speech_max_chars";
@@ -101,6 +101,46 @@ public class MainActivity extends CameraActivity {
     private Button cameraSourceButton, lensButton;
     private TextureView phoneTexture;
     private TextView phonePreviewStatus;
+    private TextView usbHealthView;
+    private final UsbCameraHealthMonitor usbHealth = new UsbCameraHealthMonitor();
+    private final java.util.concurrent.ExecutorService usbLogWriter =
+        java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+            Thread worker = new Thread(r, "bsg-usb-health-log");
+            worker.setDaemon(true);
+            return worker;
+        });
+    private java.io.File usbSessionLogFile;
+    private long lastUsbLogAt = 0L;
+    private String lastUsbDiagnosis = "";
+    private final Runnable usbHealthTicker = new Runnable() {
+        @Override public void run() {
+            if (usbHealthView != null) {
+                if (usingPhoneCamera) {
+                    usbHealthView.setVisibility(View.GONE);
+                } else {
+                    long now = UsbCameraHealthMonitor.nowMs();
+                    long glCount = com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalSwapAttempts();
+                    long glTime = com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.lastSwapAttemptMs();
+                    long eglErrors = com.jiangdg.ausbc.render.DiagnosticRenderHeartbeat.totalEglErrors();
+                    boolean surfaceReady = cameraTextureView != null && cameraTextureView.isAvailable();
+                    String message = usbHealth.sample(now, glCount, glTime,
+                        eglErrors, busy.get(), surfaceReady, true);
+                    usbHealthView.setText(message + "\n点击查看 / 复制近一分钟记录");
+                    usbHealthView.setContentDescription("USB摄像头运行状态：" + message +
+                        "。双击查看完整记录");
+                    usbHealthView.setVisibility(View.VISIBLE);
+                    String diagnosis = usbHealth.lastClassification();
+                    if (now-lastUsbLogAt >= 8000L ||
+                        (!diagnosis.isEmpty() && !diagnosis.equals(lastUsbDiagnosis))) {
+                        lastUsbLogAt = now;
+                        lastUsbDiagnosis = diagnosis;
+                        persistUsbHealthLog();
+                    }
+                }
+            }
+            mainHandler.postDelayed(this, 1000L);
+        }
+    };
     private int phoneStartSequence = 0;
     private boolean phonePreviewReceived = false;
     private InternalCameraController phoneController;
@@ -189,10 +229,74 @@ public class MainActivity extends CameraActivity {
         }
     }
 
+    /** Persist only health counters; no photos, OCR text, audio or USB frames. */
+    private void persistUsbHealthLog() {
+        if (usbSessionLogFile == null) return;
+        final java.io.File destination=usbSessionLogFile;
+        final byte[] bytes=usbHealth.dump().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        try {
+            usbLogWriter.execute(() -> {
+                try(java.io.FileOutputStream out=new java.io.FileOutputStream(destination,false)) {
+                    out.write(bytes);
+                }catch(Exception e) {
+                    Log.w("UsbHealth","Could not save health log",e);
+                }
+            });
+        }catch(java.util.concurrent.RejectedExecutionException ignored) {}
+    }
+
+    private void prepareUsbHealthSession() {
+        java.io.File dir=getFilesDir();
+        usbSessionLogFile=new java.io.File(dir,
+            "usb-health-"+System.currentTimeMillis()+".txt");
+        java.io.File[] logs=dir.listFiles((d,n)->n.startsWith("usb-health-")&&n.endsWith(".txt"));
+        if(logs!=null && logs.length>5) {
+            java.util.Arrays.sort(logs,java.util.Comparator.comparingLong(java.io.File::lastModified));
+            for(int i=0;i<logs.length-5;i++) logs[i].delete();
+        }
+    }
+
+    private void showUsbHealthHistory() {
+        StringBuilder report=new StringBuilder(usbHealth.dump());
+        java.io.File[] logs=getFilesDir().listFiles(
+            (d,n)->n.startsWith("usb-health-")&&n.endsWith(".txt"));
+        if(logs!=null) {
+            java.util.Arrays.sort(logs,(a,b)->Long.compare(b.lastModified(),a.lastModified()));
+            int examined=0;
+            for(java.io.File log:logs) {
+                if(examined++>=2)break;
+                try {
+                    String old=new String(java.nio.file.Files.readAllBytes(log.toPath()),
+                        java.nio.charset.StandardCharsets.UTF_8);
+                    if(old.length()>12000)old=old.substring(old.length()-12000);
+                    report.append("\n\n---- 已保存的会话 ").append(log.getName())
+                        .append(" ----\n").append(old);
+                }catch(Exception e){Log.w("UsbHealth","Could not read health log",e);}
+            }
+        }
+        final String content=report.toString();
+        ScrollView container=new ScrollView(this);
+        TextView details=new TextView(this);
+        details.setText(content);details.setTextSize(TypedValue.COMPLEX_UNIT_SP,12);
+        details.setTextColor(Color.WHITE);details.setPadding(dp(14),dp(12),dp(14),dp(12));
+        container.addView(details);
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("USB摄像头运行记录（仅监测，不会重启摄像头）")
+            .setView(container)
+            .setPositiveButton("复制全部记录",(d,w)->{
+                ClipboardManager cm=(ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+                if(cm!=null)cm.setPrimaryClip(ClipData.newPlainText("蓝星向导USB监测",content));
+                Toast.makeText(this,"USB运行记录已复制，可直接发给开发者",Toast.LENGTH_LONG).show();
+            })
+            .setNegativeButton("关闭",null).show();
+    }
+
     private final IPreviewDataCallBack previewCallback = new IPreviewDataCallBack() {
         @Override public void onPreviewData(byte[] data, int width, int height, DataFormat format) {
-            if (format == DataFormat.NV21 && !usingPhoneCamera)
+            if (format == DataFormat.NV21 && !usingPhoneCamera) {
+                usbHealth.onRawNv21(width,height);
                 processCameraFrame(data, width, height, false);
+            }
         }
     };
 
