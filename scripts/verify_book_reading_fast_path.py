@@ -4,7 +4,7 @@ from pathlib import Path
 root=Path(__file__).resolve().parents[1]
 main=(root/"app/src/main/java/com/vobichngan/kanzi/MainActivity.java").read_text()
 reading=(root/"app/src/main/java/com/vobichngan/kanzi/ReadingOrder.java").read_text()
-assert "APP_VERSION = \"Blue Star Guide · 实验版 1.0.9\"" in main
+assert "APP_VERSION = \"Blue Star Guide · 2.0\"" in main
 assert "if (recognizer == null || !recognizer.isReady()) return;" in main
 assert "if (candidateCount < 2) return;" not in main
 assert "needsConfirmation" not in main
@@ -20,7 +20,7 @@ print("BOOK_LAYOUT_ONE_PASS=PASS")
 focus=(root/"app/src/main/java/com/vobichngan/kanzi/ReadingFocus.java").read_text()
 ocr=(root/"app/src/main/java/com/vobichngan/kanzi/PaddleOcrEngine.kt").read_text()
 assert 'PREF_READING_FOCUS' in main
-assert 'pageFocusGroup' in main and 'readingFocusMode = requestedFocus' in main
+assert 'pageFocusGroup' not in main and 'readingFocusMode = "AUTO"' in main
 assert 'getFocusDescription()' in main and 'getFullPageText()' in main
 assert 'setReadingFocusMode(readingFocusMode)' in main
 assert 'ReadingFocus.Tracker' in ocr
@@ -33,7 +33,7 @@ print("BOOK_PAGE_FOCUS_WIRING=PASS")
 speech=(root/"app/src/main/java/com/vobichngan/kanzi/SpeechText.java").read_text()
 assert 'mode == Mode.AUTO || mode == Mode.ALL' in focus
 assert 'boxes.size(), boxes.size(), .5f, false' in focus
-assert '连续文字流（推荐，保留所有检测文字）' in main
+assert 'longReadingMode && speechPageActive' in main
 assert '单次' not in speech or 'CHUNK_LIMIT' in speech
 assert 'if (breaks >= 2)' in speech
 assert 'wrapped = true;' in speech
