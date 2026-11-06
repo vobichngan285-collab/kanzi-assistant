@@ -291,11 +291,15 @@ final class LargeSettingsScreen {
         if(custom){
             heading("任务图标");
             String[] palette=TaskCatalog.iconPalette();
-            row("图标："+icon[0],"点击切换图标",()->{
+            Button iconButton=button("点击切换图标："+icon[0],PANEL);
+            iconButton.setContentDescription("选择任务图标，当前"+icon[0]);
+            LinearLayout.LayoutParams iconLp=new LinearLayout.LayoutParams(-1,dp(68));
+            iconLp.bottomMargin=dp(13);content.addView(iconButton,iconLp);
+            iconButton.setOnClickListener(v->{
                 int current=0;for(int k=0;k<palette.length;k++)if(palette[k].equals(icon[0]))current=k;
                 icon[0]=palette[(current+1)%palette.length];
-                // Update the editor without losing typed content by using an inline label.
-                app.toastShort("已选图标："+icon[0]+"（保存任务时生效）");
+                iconButton.setText("点击切换图标："+icon[0]);
+                iconButton.setContentDescription("选择任务图标，当前"+icon[0]);
             });
         }
         note("只修改指令，不改变 OCR 与视觉 AI 的模型分工。");
