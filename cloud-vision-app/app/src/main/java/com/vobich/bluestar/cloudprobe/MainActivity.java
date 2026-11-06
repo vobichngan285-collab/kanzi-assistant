@@ -1859,6 +1859,20 @@ public final class MainActivity extends CameraActivity {
                     if(TaskCatalog.OCR.equals(task.engine)||delivered.get()==0)
                         speakForCapture(result.text,token,true);
                 });
+            }catch(OcrResponseGate.NoReadableTextException noText){
+                // Valid HTTP response with no readable characters. Do not block the camera
+                // behind an "error" dialog; give one brief accessible spoken outcome.
+                handler.post(()->{
+                    if(token!=requestVersion.get()||!uiActive)return;
+                    cloudBusy=false;
+                    if(diagnostics!=null){
+                        diagnostics.event("cloud","empty_result",0,"no_text");
+                        diagnostics.event("capture","total_ms",
+                            SystemClock.elapsedRealtime()-tapAtMs,"no_text");
+                    }
+                    setResultStatus("未识别到文字");
+                    speakForCapture("未识别到文字，请调整拍摄角度再试。",token,false);
+                });
             }catch(Exception error){
                 handler.post(()->{
                     if(token!=requestVersion.get()||!uiActive)return;
