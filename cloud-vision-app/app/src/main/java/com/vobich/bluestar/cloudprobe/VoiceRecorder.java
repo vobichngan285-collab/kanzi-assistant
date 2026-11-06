@@ -21,18 +21,20 @@ final class VoiceRecorder {
     private static final int SAMPLE_RATE=16000;
     private final AtomicBoolean running=new AtomicBoolean(false);
     private volatile AudioRecord current;
+    private final AtomicBoolean cancelled=new AtomicBoolean(false);
     private volatile Thread worker;
 
     boolean isRunning(){return running.get();}
 
     void begin(Listener listener){
         if(!running.compareAndSet(false,true))return;
+        cancelled.set(false);
         worker=new Thread(()->capture(listener),"BlueStarVoiceCapture");
         worker.start();
     }
 
     /** A second tap finishes immediately; lifecycle pause discards the sample. */
-    void end(){running.set(false);}
+    void cancel(){cancelled.set(true);running.set(false);}
 
     private void capture(Listener listener){
         AudioRecord record=null;
@@ -80,6 +82,7 @@ final class VoiceRecorder {
                 }
                 if(!speaking&&totalMs>=6500)throw new IOException("没有听到语音，请靠近手机麦克风重试");
             }
+            if(cancelled.get())return;
             if(!speaking||voicedMs<300)throw new IOException("没有听清语音，请重试");
             if(endedSilence)listener.onSilence();
             byte[] payload=pcm.toByteArray();
@@ -87,7 +90,7 @@ final class VoiceRecorder {
         }catch(SecurityException ex){
             listener.onFailure("麦克风权限不足，请检查应用录音权限");
         }catch(Exception ex){
-            listener.onFailure(ex.getMessage()==null?"录音失败":ex.getMessage());
+            if(!cancelled.get())listener.onFailure(ex.getMessage()==null?"录音失败":ex.getMessage());
         }finally{
             running.set(false);
             current=null;
