@@ -1398,7 +1398,7 @@ public final class MainActivity extends CameraActivity {
                     final int photoToken=requestVersion.get();
                     encodingTask=encoder.submit(()->{
                         try{
-                            String key=CloudKeyStore.load(this);
+                            String key=CloudKeyStore.load(MainActivity.this);
                             String transcript=CloudAsrClient.recognize(wav,key);
                             handler.post(()->{
                                 if(!uiActive||sequence!=voiceSequence.get()||
