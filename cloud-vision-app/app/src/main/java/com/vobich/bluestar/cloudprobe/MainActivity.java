@@ -1943,6 +1943,9 @@ public final class MainActivity extends CameraActivity {
                         speakForCapture(result.text,token,true);
                 });
             }catch(OcrResponseGate.NoReadableTextException noText){
+                if(modelUsage!=null)modelUsage.recordAsync(
+                    "qwen-vl-ocr",noText.serverModel,
+                    noText.inputTokens,noText.outputTokens,true);
                 // Valid HTTP response with no readable characters. Do not block the camera
                 // behind an "error" dialog; give one brief accessible spoken outcome.
                 handler.post(()->{
