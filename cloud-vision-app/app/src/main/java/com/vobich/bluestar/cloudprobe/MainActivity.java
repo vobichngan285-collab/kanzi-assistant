@@ -85,6 +85,7 @@ public final class MainActivity extends CameraActivity {
     private static final String PREF_TTS_ENGINE = "app_tts_engine_package";
     private static final String PREF_IMAGE_POLICY = "cloud_capture_quality";
     private static final String PREF_VISION_MODEL = "cloud_vision_model";
+    private static final String PREF_FINDING_TARGET = "continuous_find_target";
     private static final int REQUEST_PHONE_CAMERA = 4051;
     private static final int REQUEST_VOICE_MIC = 4052;
 
@@ -103,8 +104,10 @@ public final class MainActivity extends CameraActivity {
     private final AtomicInteger voiceSequence=new AtomicInteger();
     private LargeSettingsScreen largeSettings;
     private SoundPool clickPool;
-    private int metalClickSample;
-    private volatile boolean metalClickReady;
+    private int metalClickSample,sendWhooshSample;
+    private volatile boolean metalClickReady,sendWhooshReady;
+    private String findingTarget="";
+    private boolean fingerHoldingVoice,voiceSwipeCancelled;
     private byte[] lastSessionJpeg;
     private String lastSessionText="",lastSessionTask="";
     private final ArrayList<String> followupTurns=new ArrayList<>();
@@ -301,10 +304,10 @@ public final class MainActivity extends CameraActivity {
         }
         root.addView(dock,new FrameLayout.LayoutParams(-1,dp(89),Gravity.BOTTOM));
         modeButton.setContentDescription("任务选择");
-        startButton.setContentDescription("AI对话，追问刚才照片");
+        startButton.setContentDescription("AI对话，按住说话，松开发送");
         settingsButton.setContentDescription("设置");
         modeButton.setOnClickListener(v->showTaskSelector());
-        startButton.setOnClickListener(v->startVoiceFollowup());
+        startButton.setOnTouchListener((v,event)->handleVoiceButtonTouch(event));
         settingsButton.setOnClickListener(v->openLargeSettings());
         return root;
     }
@@ -337,8 +340,21 @@ public final class MainActivity extends CameraActivity {
         for(TaskCatalog.Task t:tasks)if(t.id.equals(id)){currentTask=t;break;}
         if(currentTask==null)currentTask=tasks.get(0);
         TaskCatalog.select(this,currentTask.id);
-        if(currentTaskChip!=null)currentTaskChip.setText("任务："+currentTask.name);
+        updateTaskBadge();
         if(modeButton!=null)modeButton.setContentDescription("任务选择，当前："+currentTask.name);
+    }
+
+    private void updateTaskBadge(){
+        if(currentTaskChip==null)return;
+        currentTaskChip.setText(findingTarget.isEmpty()?
+            ("任务："+(currentTask==null?"朗读文字":currentTask.name)):
+            ("寻找："+findingTarget));
+    }
+    private void setFindingTarget(String target){
+        findingTarget=target==null?"":target.trim();
+        getSharedPreferences(PREFS,MODE_PRIVATE).edit()
+            .putString(PREF_FINDING_TARGET,findingTarget).apply();
+        updateTaskBadge();
     }
 
     private void showTaskSelector(){
@@ -772,6 +788,8 @@ public final class MainActivity extends CameraActivity {
         loadCameraProfile();
         imagePolicy=prefs.getString(PREF_IMAGE_POLICY,"auto");
         visionModel=prefs.getString(PREF_VISION_MODEL,"qwen3-vl-plus");
+        findingTarget=prefs.getString(PREF_FINDING_TARGET,"");
+        if(findingTarget==null)findingTarget="";
         ttsEngine=prefs.getString(PREF_TTS_ENGINE,"");
         if(ttsEngine==null)ttsEngine="";
         refreshTask(TaskCatalog.selectedId(this));
@@ -1046,9 +1064,10 @@ public final class MainActivity extends CameraActivity {
     @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] results){
         super.onRequestPermissionsResult(requestCode,permissions,results);
         if(requestCode==REQUEST_VOICE_MIC){
+            fingerHoldingVoice=false;voiceSwipeCancelled=false;
             if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)
-                beginVoiceListening();
-            else Toast.makeText(this,"请授予麦克风权限，才能语音追问",Toast.LENGTH_LONG).show();
+                toastShort("麦克风已授权，请重新按住 AI 对话再说话");
+            else toastShort("需要麦克风权限才能按住语音对话");
             return;
         }
         if(requestCode!=REQUEST_PHONE_CAMERA)return;
@@ -1279,94 +1298,149 @@ public final class MainActivity extends CameraActivity {
     }
     void previewCaptureFeedback(){signalCapture();}
 
-    /** Single tap; local mic capture and cloud ASR work without system SpeechRecognizer. */
-    private void startVoiceFollowup(){
-        if(cloudBusy){toastShort("当前AI正在处理，请稍后");return;}
-        if(lastSessionJpeg==null||lastSessionText.isEmpty()){
-            speakUnfiltered("请先点击画面拍摄并识别一张照片。");return;
+    /** One gesture for all intentions: press records, release sends, swipe up cancels. */
+    private boolean handleVoiceButtonTouch(MotionEvent event){
+        switch(event.getActionMasked()){
+            case MotionEvent.ACTION_DOWN:
+                voiceSwipeCancelled=false;
+                fingerHoldingVoice=startVoiceHold();
+                return true;
+            case MotionEvent.ACTION_MOVE:
+                if(fingerHoldingVoice && event.getY() < -dp(100)){
+                    voiceSwipeCancelled=true;
+                    setResultStatus("松开取消录音");
+                }
+                return true;
+            case MotionEvent.ACTION_CANCEL:
+                if(fingerHoldingVoice){
+                    voiceRecorder.cancel();
+                    voiceSequence.incrementAndGet();
+                    voiceListening=false;
+                    fingerHoldingVoice=false;
+                    setResultStatus("录音已取消");
+                }
+                return true;
+            case MotionEvent.ACTION_UP:
+                if(fingerHoldingVoice){
+                    fingerHoldingVoice=false;
+                    if(voiceSwipeCancelled){
+                        voiceRecorder.cancel();
+                        voiceSequence.incrementAndGet();
+                        voiceListening=false;
+                        setResultStatus("录音已取消，不发送");
+                    }else{
+                        voiceRecorder.finish();
+                        setResultStatus("已松手，正在整理录音…");
+                    }
+                }
+                return true;
+            default:return true;
         }
-        if(voiceListening){
-            voiceSequence.incrementAndGet();
-            voiceRecorder.cancel();
-            voiceListening=false;
-            setResultStatus("已取消收音");
-            return;
-        }
-        if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
-            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},REQUEST_VOICE_MIC);
-            return;
-        }
-        beginVoiceListening();
     }
 
-    private void beginVoiceListening(){
-        if(!uiActive||voiceListening||cloudBusy)return;
-        String key;
-        try{key=CloudKeyStore.load(this);}
-        catch(Exception error){
-            toastShort("读取加密密钥失败，请在云端AI设置中重新保存");
-            return;
+    /** The target search command DOES NOT require a previously captured photo. */
+    private boolean startVoiceHold(){
+        if(!uiActive)return false;
+        if(cloudBusy){
+            toastShort("AI正在处理上一条消息，请稍后再按住");return false;
         }
-        if(key.isEmpty()){
-            toastShort("请先在云端 AI 设置中配置百炼 API Key");
-            return;
+        if(voiceRecorder.isBusy()||voiceListening){
+            toastShort("麦克风仍在录音");return false;
+        }
+        if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+            !=PackageManager.PERMISSION_GRANTED){
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},REQUEST_VOICE_MIC);
+            return false;
         }
         if(tts!=null)tts.stop();
         voiceListening=true;
         final int sequence=voiceSequence.incrementAndGet();
-        setResultStatus("正在收音，停顿后自动发送");
-        voiceRecorder.begin(new VoiceRecorder.Listener(){
-            @Override public void onListening(){
+        setResultStatus("正在连接麦克风…按住说话，松开发送");
+        boolean started=voiceRecorder.begin(this,new VoiceRecorder.Listener(){
+            @Override public void onReady(String mic){
                 handler.post(()->{
-                    if(sequence==voiceSequence.get()&&uiActive)
-                        setResultStatus("正在听你说话…");
+                    if(sequence!=voiceSequence.get()||!uiActive)return;
+                    setResultStatus("正在录音，松开发送");
+                    vibrationForVoiceStart();
                 });
             }
-            @Override public void onSilence(){
+            @Override public void onFinished(byte[] wav,int durationMs,int peak,int rms,String mic){
                 handler.post(()->{
-                    if(sequence==voiceSequence.get()&&uiActive)
-                        setResultStatus("语音已结束，准备识别…");
-                });
-            }
-            @Override public void onFinished(byte[] wav){
-                handler.post(()->{
-                    if(!uiActive||sequence!=voiceSequence.get())return;
+                    if(sequence!=voiceSequence.get()||!uiActive)return;
                     voiceListening=false;
                     cloudBusy=true;
-                    setResultStatus("正在转换中文语音（百炼ASR）…");
+                    // No arbitrary RMS gate. Quiet recordings are sent to the ASR itself.
+                    Log.i(TAG,"Voice microphone="+mic+" durationMs="+durationMs+
+                        " peak="+peak+" rms="+rms+" wavBytes="+wav.length);
+                    setResultStatus("语音已采集，正在提交识别…");
+                    playVoiceSendSound();
                     final int photoToken=requestVersion.get();
                     encodingTask=encoder.submit(()->{
                         try{
+                            String key=CloudKeyStore.load(this);
                             String transcript=CloudAsrClient.recognize(wav,key);
                             handler.post(()->{
-                                if(!uiActive||sequence!=voiceSequence.get()
-                                    ||photoToken!=requestVersion.get())return;
+                                if(!uiActive||sequence!=voiceSequence.get()||
+                                    photoToken!=requestVersion.get())return;
                                 cloudBusy=false;
-                                setResultStatus("语音已识别，正在向AI提问…");
-                                askAboutCurrentImage(transcript);
+                                routeSpokenRequest(transcript);
                             });
                         }catch(Exception error){
                             handler.post(()->{
-                                if(!uiActive||sequence!=voiceSequence.get()
-                                    ||photoToken!=requestVersion.get())return;
+                                if(!uiActive||sequence!=voiceSequence.get()||
+                                    photoToken!=requestVersion.get())return;
                                 cloudBusy=false;
-                                setResultStatus("语音识别失败，可再试一次");
+                                setResultStatus("语音上传或识别失败，请重试");
                                 toastShort("语音识别失败："+error.getMessage());
-                                showTextQuestionFallback("这次录音未能识别，可文字输入问题。");
+                                speakUnfiltered("语音识别失败，请再试一次。");
                             });
                         }
                     });
                 });
             }
-            @Override public void onFailure(String message){
+            @Override public void onFailure(String reason){
                 handler.post(()->{
-                    if(!uiActive||sequence!=voiceSequence.get())return;
+                    if(sequence!=voiceSequence.get()||!uiActive)return;
                     voiceListening=false;
-                    setResultStatus("未听清："+message);
-                    toastShort(message);
+                    setResultStatus("录音失败："+reason);
+                    toastShort(reason);
                 });
             }
         });
+        if(!started){
+            voiceListening=false;
+            toastShort("麦克风仍在处理上一段语音");
+            return false;
+        }
+        return true;
+    }
+
+    /** One conversation button: intent determines photo question vs ongoing target search. */
+    private void routeSpokenRequest(String transcript){
+        VoiceAction action=VoiceAction.classify(transcript);
+        if(action.type==VoiceAction.Type.STOP_FINDING){
+            if(findingTarget.isEmpty()){
+                setResultStatus("目前没有正在寻找的目标");
+                speakUnfiltered("目前没有正在寻找的目标。");
+            }else{
+                setFindingTarget("");
+                setResultStatus("已停止寻找，可以正常拍照识别");
+                speakUnfiltered("好的，已停止寻找。");
+            }
+            return;
+        }
+        if(action.type==VoiceAction.Type.START_FINDING){
+            setFindingTarget(action.target);
+            setResultStatus("已开始寻找："+findingTarget+" · 拍照自动检查");
+            speakUnfiltered("好的，正在帮你找"+findingTarget+"。继续走路时，点击画面拍照，我会逐张检查。");
+            return;
+        }
+        if(lastSessionJpeg==null||lastSessionText.isEmpty()){
+            setResultStatus("还没有照片，请先拍照或说帮我找超市");
+            speakUnfiltered("请先拍照，或者按住说出你要寻找的目标。");
+            return;
+        }
+        askAboutCurrentImage(transcript);
     }
 
     private void showTextQuestionFallback(String reason){
@@ -1447,6 +1521,9 @@ public final class MainActivity extends CameraActivity {
     }
 
     private void captureOneFrame(){
+        if(voiceListening||voiceRecorder.isBusy()){
+            toastShort("正在按住录音，请松手后再拍照");return;
+        }
         if(cloudBusy){Toast.makeText(this,"正在识别，请稍候",Toast.LENGTH_SHORT).show();return;}
         long now=SystemClock.elapsedRealtime();
         if(now-lastPinchMs<550L)return;
@@ -1472,6 +1549,7 @@ public final class MainActivity extends CameraActivity {
         ttsEngineStartMs=-1;
         ttsAudioCallbackMs=-1;
         TaskCatalog.Task task=currentTask;
+        final String targetToFind=findingTarget;
         String source=usingPhoneCamera?(phoneFrontFacing?"手机前置":"手机后置"):"USB 外接";
         String policy=imagePolicy;
         String model=visionModel;
@@ -1507,6 +1585,22 @@ public final class MainActivity extends CameraActivity {
                     return;
                 }
 
+                if(!targetToFind.isEmpty()){
+                    TargetVisionClient.Result inspection=TargetVisionClient.inspect(
+                        jpeg,targetToFind,key,model);
+                    handler.post(()->{
+                        if(token!=requestVersion.get()||!uiActive)return;
+                        cloudBusy=false;
+                        lastSessionJpeg=jpeg;
+                        lastSessionText=inspection.message;
+                        lastSessionTask="寻找"+targetToFind;
+                        lastCloudResult=inspection.message;
+                        setResultStatus("寻找："+targetToFind+" · "+inspection.decision);
+                        speakUnfiltered(inspection.message);
+                        if(inspection.confirmed())vibrationForTargetFound();
+                    });
+                    return;
+                }
                 java.util.concurrent.atomic.AtomicInteger segments=new java.util.concurrent.atomic.AtomicInteger(0);
                 CloudVisionClient.Result result=CloudVisionClient.recognize(jpeg,key,task,model,
                     part->handler.post(()->{
@@ -1573,7 +1667,8 @@ public final class MainActivity extends CameraActivity {
     }
     @Override protected void onPause(){
         uiActive=false;usbForeground=false;
-        voiceSequence.incrementAndGet();voiceRecorder.cancel();voiceListening=false;
+        voiceSequence.incrementAndGet();voiceRecorder.cancel();
+        voiceListening=false;fingerHoldingVoice=false;
         invalidate();
         cloudBusy=false;
         saveCameraProfile();
