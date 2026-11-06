@@ -97,10 +97,7 @@ public final class MainActivity extends CameraActivity {
     private boolean touchMulti;
     private float downX,downY,zoom=1f;
     private long downAtMs,lastPinchMs,lastZoomSentMs;
-    private final Runnable delayedPhoneZoom=()->{
-        if(usingPhoneCamera&&phoneController!=null)phoneController.setZoom(zoom);
-        lastZoomSentMs=SystemClock.elapsedRealtime();
-    };
+    private final Runnable delayedPhoneZoom=this::applyQueuedPhoneZoom;
     private boolean feedbackSound=true,feedbackVibration=true,followSystemSpeechRate=true;
     private float speechRate=1f;
     private SpeechRecognizer speechRecognizer;
@@ -1047,6 +1044,11 @@ public final class MainActivity extends CameraActivity {
             .putBoolean(prefix+"flip",previewVerticalFlip)
             .putBoolean(prefix+"usbCorrectMirror",usbPreviewCorrectMirror)
             .putFloat(prefix+"zoom",zoom).apply();
+    }
+
+    private void applyQueuedPhoneZoom(){
+        if(usingPhoneCamera&&phoneController!=null)phoneController.setZoom(zoom);
+        lastZoomSentMs=SystemClock.elapsedRealtime();
     }
 
     private void setCameraZoom(float next){
