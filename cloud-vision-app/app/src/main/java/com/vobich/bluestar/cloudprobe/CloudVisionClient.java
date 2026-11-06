@@ -42,7 +42,7 @@ final class CloudVisionClient {
                 Base64.encodeToString(jpeg,Base64.NO_WRAP)));
         String instruction;
         if(isOcr){
-            instruction="按自然阅读顺序，仅逐字输出图片中清晰可见的原文，保留换行、标点、数字；看不清的字不要猜测，不做解释。";
+            instruction="只依据照片中真实可见的信息完成任务；不猜测模糊文字。任务："+task.instruction;
         }else if("menu".equals(task.id)){
             instruction="只根据照片可见信息完成任务："+task.instruction+
                 "。请直接列出清晰的菜名和价格；有明确标注的推荐才称推荐。禁止长篇说明和Markdown格式。";
