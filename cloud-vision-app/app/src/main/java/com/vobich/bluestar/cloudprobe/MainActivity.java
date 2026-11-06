@@ -96,7 +96,11 @@ public final class MainActivity extends CameraActivity {
     private ScaleGestureDetector zoomDetector;
     private boolean touchMulti;
     private float downX,downY,zoom=1f;
-    private long downAtMs,lastPinchMs;
+    private long downAtMs,lastPinchMs,lastZoomSentMs;
+    private final Runnable delayedPhoneZoom=()->{
+        if(usingPhoneCamera&&phoneController!=null)phoneController.setZoom(zoom);
+        lastZoomSentMs=SystemClock.elapsedRealtime();
+    };
     private boolean feedbackSound=true,feedbackVibration=true,followSystemSpeechRate=true;
     private float speechRate=1f;
     private SpeechRecognizer speechRecognizer;
@@ -205,6 +209,9 @@ public final class MainActivity extends CameraActivity {
             }
             @Override public void onScaleEnd(ScaleGestureDetector d){
                 lastPinchMs=SystemClock.elapsedRealtime();
+                saveCameraProfile();
+                handler.removeCallbacks(delayedPhoneZoom);
+                if(usingPhoneCamera)handler.post(delayedPhoneZoom);
             }
         });
         tapOverlay.setOnTouchListener((v,e)->{
@@ -1050,9 +1057,15 @@ public final class MainActivity extends CameraActivity {
         if(Math.abs(applied-zoom)<.01f)return;
         zoom=applied;
         if(zoomChip!=null)zoomChip.setText(String.format(Locale.CHINA,"%.1f×",zoom));
-        if(usingPhoneCamera&&phoneController!=null)phoneController.setZoom(zoom);
-        else applyPreviewTransform();
-        saveCameraProfile();
+        if(usingPhoneCamera&&phoneController!=null){
+            long now=SystemClock.elapsedRealtime();
+            if(now-lastZoomSentMs>60L){
+                phoneController.setZoom(zoom);lastZoomSentMs=now;
+            }else{
+                handler.removeCallbacks(delayedPhoneZoom);
+                handler.postDelayed(delayedPhoneZoom,75L);
+            }
+        }else applyPreviewTransform();
     }
 
     @Override protected UsbDevice getDefaultCamera(){
@@ -1395,6 +1408,8 @@ public final class MainActivity extends CameraActivity {
         if(speechRecognizer!=null){speechRecognizer.cancel();voiceListening=false;}
         invalidate();
         cloudBusy=false;
+        saveCameraProfile();
+        handler.removeCallbacks(delayedPhoneZoom);
         stopUsb();
         phoneStartSequence++;
         if(phoneController!=null)phoneController.stop();
