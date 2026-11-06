@@ -6,8 +6,8 @@ android {
         applicationId 'com.vobich.bluestar.cloudprobe'
         minSdk 26
         targetSdk 35
-        versionCode 2
-        versionName '0.2.0-dual-camera'
+        versionCode 3
+        versionName '0.3.0-cloud-ai-test'
         ndk { abiFilters 'arm64-v8a' }
     }
     buildTypes {
