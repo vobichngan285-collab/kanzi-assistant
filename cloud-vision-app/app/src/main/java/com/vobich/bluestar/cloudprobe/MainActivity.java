@@ -99,6 +99,8 @@ public final class MainActivity extends CameraActivity {
     private String ttsEngine = "";
     private TaskCatalog.Task currentTask;
     private boolean uiActive;
+    private boolean cloudBusy;
+    private String lastCloudResult="";
 
     private static final class Frame {
         final byte[] pixels;
@@ -319,8 +321,10 @@ public final class MainActivity extends CameraActivity {
             ()->showCameraSourceSelector());
         addSimpleSettingsRow(panel,"任务",currentTask.name,
             ()->{if(settingsDialog!=null)settingsDialog.dismiss();showTaskSelector();});
-        addSimpleSettingsRow(panel,"识别服务","云端OCR / 云端VL（本测试版尚未连接）",
-            ()->Toast.makeText(this,"此版本只验证拍照和任务操作，未向云端上传任何图片",Toast.LENGTH_LONG).show());
+        addSimpleSettingsRow(panel,"云端识别","OCR：qwen-vl-ocr；视觉：qwen3-vl-plus（北京）",
+            ()->showCloudKeyDialog());
+        addSimpleSettingsRow(panel,"API Key","本机加密保存；仅发往阿里云百炼",
+            ()->showCloudKeyDialog());
         TextView preview= new TextView(this);
         preview.setText("▶ 试听当前语音");
         preview.setGravity(Gravity.CENTER);preview.setTextSize(18);
@@ -331,7 +335,7 @@ public final class MainActivity extends CameraActivity {
         preview.setOnClickListener(v->speak("蓝星向导语音试听。"));
         panel.addView(preview);
         TextView note=new TextView(this);
-        note.setText("双摄像头恢复测试：无本地OCR，不上传图片，也不产生云端费用。锁屏取帧尚未验证。");
+        note.setText("本测试版点击画面会上传单张JPEG到阿里云百炼，可能消耗免费Token。请先开启对应模型的用完即停。API Key只保存在本机。");
         note.setTextColor(0xFFBFC2C8);note.setPadding(0,dp(20),0,0);panel.addView(note);
         ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.addView(panel);
         AlertDialog dialog=new AlertDialog.Builder(this).setView(scroll)
@@ -457,7 +461,34 @@ public final class MainActivity extends CameraActivity {
             phoneTexture.setVisibility(View.VISIBLE);
             if(cameraTextureView!=null)cameraTextureView.setVisibility(View.INVISIBLE);
         }
-        Toast.makeText(this,"双摄像头云端任务实验版；本版不联网识别",Toast.LENGTH_LONG).show();
+        Toast.makeText(this,"云端AI测试版：请在设置中配置API Key，再点击画面识别",Toast.LENGTH_LONG).show();
+    }
+
+    private void showCloudKeyDialog() {
+        EditText input=new EditText(this);
+        input.setSingleLine(true);
+        input.setHint("粘贴百炼普通按量付费 API Key");
+        input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        LinearLayout layout=new LinearLayout(this);
+        layout.setPadding(dp(20),dp(10),dp(20),0);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.addView(input);
+        new AlertDialog.Builder(this).setTitle("配置云端 API Key（北京地域）")
+            .setMessage("密钥由 Android Keystore 加密后仅保存在本机；不会写入APK或GitHub。请勿截图密钥。")
+            .setView(layout).setNegativeButton("取消",null)
+            .setNeutralButton("清除已保存密钥",(d,w)->{
+                CloudKeyStore.clear(this);
+                Toast.makeText(this,"已清除本机API Key",Toast.LENGTH_SHORT).show();
+            })
+            .setPositiveButton("加密保存",(d,w)->{
+                try {
+                    CloudKeyStore.save(this,input.getText().toString());
+                    input.setText("");
+                    Toast.makeText(this,"API Key已安全保存",Toast.LENGTH_SHORT).show();
+                }catch(Exception e){
+                    Toast.makeText(this,"密钥保存失败："+e.getClass().getSimpleName(),Toast.LENGTH_LONG).show();
+                }
+            }).show();
     }
 
     private void initializeSpeech() {
@@ -690,6 +721,7 @@ public final class MainActivity extends CameraActivity {
     }
 
     private void captureOneFrame(){
+        if(cloudBusy){Toast.makeText(this,"正在识别，请稍候",Toast.LENGTH_SHORT).show();return;}
         long now=SystemClock.elapsedRealtime();
         if(!uiActive)return;
         if(now-lastTapMs<1500L){
@@ -709,19 +741,38 @@ public final class MainActivity extends CameraActivity {
             try{
                 byte[] jpeg=FrameCompressor.to720pJpeg(current.pixels,current.width,current.height);
                 if(token!=requestVersion.get())return;
+                String key=CloudKeyStore.load(this);
+                if(key.isEmpty()) {
+                    handler.post(()->{if(token==requestVersion.get())showCloudKeyDialog();});
+                    return;
+                }
+                long started=SystemClock.elapsedRealtime();
                 handler.post(()->{
+                    if(token==requestVersion.get()&&uiActive){
+                        cloudBusy=true;
+                        Toast.makeText(this,"已拍照，正在云端识别："+task.name,Toast.LENGTH_SHORT).show();
+                    }
+                });
+                String result=CloudVisionClient.recognize(jpeg,key,task);
+                long elapsed=SystemClock.elapsedRealtime()-started;
+                handler.post(()->{
+                    cloudBusy=false;
                     if(token!=requestVersion.get()||!uiActive)return;
-                    String message="已取得"+source+"摄像头最新画面，"
-                        +current.width+"×"+current.height+"，JPEG "+jpeg.length/1024+"KB，任务："+task.name;
-                    Log.i(TAG,"Mock single-frame success: "+source+" "+current.width+"x"+current.height+
-                        " compressedBytes="+jpeg.length+" route="+task.engine);
-                    Toast.makeText(this,message,Toast.LENGTH_LONG).show();
-                    speak("模拟测试，已拍到一张当前照片。暂时没有连接云端人工智能，无法朗读真实文字。");
+                    lastCloudResult=result;
+                    Log.i(TAG,"Cloud request succeeded; source="+source+" modelRoute="+task.engine+
+                        " elapsedMs="+elapsed+" jpegBytes="+jpeg.length);
+                    new AlertDialog.Builder(this).setTitle(task.name+" · "+elapsed+"毫秒")
+                        .setMessage(result).setPositiveButton("再次朗读",(d,w)->speak(result))
+                        .setNegativeButton("关闭",null).show();
+                    speak(result);
                 });
             }catch(Exception e){
                 handler.post(()->{
+                    cloudBusy=false;
                     if(token==requestVersion.get()&&uiActive)
-                        Toast.makeText(this,"取图压缩失败："+e.getClass().getSimpleName(),Toast.LENGTH_LONG).show();
+                        new AlertDialog.Builder(this).setTitle("云端识别失败")
+                            .setMessage(e.getMessage()==null?e.getClass().getSimpleName():e.getMessage())
+                            .setPositiveButton("知道了",null).show();
                 });
             }
         });
@@ -738,6 +789,7 @@ public final class MainActivity extends CameraActivity {
     @Override protected void onPause(){
         uiActive=false;usbForeground=false;
         invalidate();
+        cloudBusy=false;
         stopUsb();
         phoneStartSequence++;
         if(phoneController!=null)phoneController.stop();
