@@ -1135,3 +1135,12 @@
 - **相机**：沿用v0.5.0手机前后Camera2和原生USB UVC直显；前后/USB各自记忆旋转0/90/180/270°、镜像、翻转，USB用户的90°一经校准下次插入/切换自动恢复；屏幕预览和云端上传JPEG必须真正同向。新增双指平滑缩放（建议1–3×），手机Camera2原生变焦、USB显示层与截图同一窗口裁切，不触发误拍；删除旧USB鲜明色彩增强。720p优先、必要时原生1080p；OCR qwen-vl-ocr与视觉 qwen3-vl-plus保持成功基线，Flash仅供有费用保护的手动A/B。
 - **中间AI对话**：仅针对最后一张已识别照片追加语音提问，单击按钮自动开启麦克风、自动判定结束、手机ASR转文字、云端根据该照片与已识别内容回答、手机本地TTS朗读；不长按、不偷偷持续录音、没有照片时提示先拍；新拍照重置上下文，避免无必要重复上传图片。Android本地TTS列出可用引擎、试听、跟随引擎默认速度/独立0.5–3.0x速度。阿里云/火山在线语音合成暂缓；ASR有可能需要联网。
 - **安全/验收**：单机测试密钥仅本机Keystore，正式公开版本需要后端代理与成本/请求防护；手机后/前/USB真机、镜像旋转与上传一致、双指缩放与AI分析区域一致、语音追问及TTS的连续稳定验收。熄屏USB+音量键属后续研究，不列本版必须完成。代码开发推荐逐模块联调，禁止破坏已实测的v0.5.0 OCR/TTS。
+
+
+### 2026-11-06 — 蓝星向导 1.0.0 RC1 功能整合构建验收（2026-11-06）
+- **用户已明确授权生成正式版安装包，并要求逐项检查代码/逻辑/原图标**；小米/其他AI眼镜接入**暂时搁置**，不纳入本包。
+- 基于前述 v0.5.0 实验分支 \`exp/cloud-vision-usb-click-v1-20261106\` 开发。最终源码提交：\`c69ff9c8a2092643e2754eefd6c675a30c3d6a1f\`。正式版候选 APK：\`BlueStar_1.0.0_RC1_arm64.apk\`，版本号\`1.0.0-rc1\` / versionCode10；**新应用ID \`com.vobich.bluestar\` 与旧 \`com.vobich.bluestar.cloudprobe\` 可并存**，需在新应用重新配置已持有的 API Key。
+- **最终GitHub Actions SUCCESS**：run 42190246492（https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42190246492），产物ID \`13489167506\`（https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42190246492/artifacts/13489167506），arm64 debug-signed，SHA256 \`ca079d9887a4e3b8384f33a7927202e0e6d7c16a749e50f311ef8d7f8c0eb09a\`。已解包复核 SHA256SUMS PASS；APK 包含蓝星地球原有图标（bluestar_icon.webp）和 arm64 USB UVC 原生库。CI单元测试验证语音分段、画质政策及NV21方向转换旋转回环；完整 Android / USB native 编译和产物检查通过。中间曾修复CI旧文件名引用和Java缩放字段初始化前向引用错误，**这些中间失败都不是当前最终构建结果**。
+- **本轮实现**：深蓝相机主页+蓝星地球图标、底部略放大的「任务／AI对话／设置」；点击非按钮画面自动拍照+叮叮提示与振动+云端OCR/VL识别+本地TTS；任务浮层仅在左下点开、无外框的3×3桌面式六入口+分页；五个用户批准预设任务和提示词、任务设置内编辑/保存/恢复默认，支持自定义任务+图标；按手机前/后与 USB VID/PID 分别记住90°校正及翻转、镜像；手机/USB双指缩放，照片方向/裁切随所见；图片识别后点击中间AI对话，自动麦克风ASR识别结束+发送上张图片/短上下文提问给视觉模型，答复继续本地TTS；TTS本地引擎与语速0.5–3.0×，无在线配音。
+- **技术与产品边界务必保留**：此为**功能集成后的 RC1 私人真机验收 APK**，不是已经真实设备全面验证的最终公开发行版。还需用户在 vivo X200 Pro 上验收USB/手机镜头、90°校正、双指缩放与真正上传图、AI语音追问、TTS和ASR实际行为、长时间稳定性。ASR依赖手机语音识别服务，可能需要网络；若缺服务可文字输入。用户自己的API Key只允许本机 Keystore 安全保存，商用公开发布需服务器代理、配额限流、签名、费用保护。不开眼镜功能，不做云端TTS，不实现熄屏USB/音量键控制。
+- **详细交接与测试指引**：\`docs/bluestar-v1-rc1-build-handoff-20261106.md\`，位于实验分支，URL：https://github.com/vobichngan285-collab/kanzi-assistant/blob/exp/cloud-vision-usb-click-v1-20261106/docs/bluestar-v1-rc1-build-handoff-20261106.md 。此前完整批准的正式版规格仍在\`docs/bluestar-v1-final-spec-approved-20261106.md\`。完整历史和旧版交接记录不得删除。
