@@ -1,7 +1,7 @@
-name: Blue Star Guide 1.0.3 - RC4 Camera Diagnostics and Voice
+name: Blue Star Guide 1.0.4 - RC5 OCR Empty-Result Voice
 on:
   push:
-    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106]
+    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106, fix/bluestar-104-ocr-voice-empty-20261106]
     paths:
       - 'cloud-vision-app/**'
       - '.github/workflows/cloud-vision-usb-click.yml'
@@ -75,6 +75,13 @@ jobs:
           assert 'row("上次识别结果"' in settings
           assert settings.index('row("运行诊断"')>settings.index('row("上次识别结果"')
           assert 'CloudAsrClient.recognize(' in activity
+          cloud_client=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/CloudVisionClient.java').read_text()
+          assert 'OcrResponseGate.requireReadable(answer)' in cloud_client
+          assert 'catch(OcrResponseGate.NoReadableTextException noText)' in activity
+          no_text_handler=activity.split('catch(OcrResponseGate.NoReadableTextException noText)')[1].split('catch(Exception error)')[0]
+          assert 'speakForCapture("未识别到文字，请调整拍摄角度再试。",token,false)' in no_text_handler
+          assert 'new AlertDialog.Builder' not in no_text_handler
+          assert 'new AlertDialog.Builder(this).setTitle("云端识别失败")' in activity
           assert 'new VoiceRecorder()' in activity
           assert 'new LargeSettingsScreen(' in activity
           assert 'SpeechFilter.apply(' in activity
@@ -122,8 +129,8 @@ jobs:
           camera2=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/InternalCameraController.java').read_text()
           assert 'CameraManager' in camera2 and 'CameraCaptureSession' in camera2
           assert 'Nv21Rotation.rotate(' in camera2
-          assert "versionCode 13" in app and "versionName '1.0.3-rc4'" in app
-          assert "applicationIdSuffix '.rc4'" in app
+          assert "versionCode 14" in app and "versionName '1.0.4-rc5'" in app
+          assert "applicationIdSuffix '.rc5'" in app
           assert Path('cloud-vision-app/app/src/main/res/drawable-nodpi/bluestar_globe.png').is_file()
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('ic_launcher.webp'))
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('bluestar_icon.webp'))
@@ -146,6 +153,7 @@ jobs:
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/VoiceWav.java \
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/VoiceAction.java \
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/VoicePressState.java \
+            cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/OcrResponseGate.java \
             cloud-vision-app/tests/VoiceFlowTest.java \
             cloud-vision-app/tests/CloudOptimizationTest.java
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.CloudOptimizationTest
@@ -187,28 +195,28 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p cloud-vision-artifact
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.3_RC4_arm64.apk
-          test -s cloud-vision-artifact/BlueStar_Guide_1.0.3_RC4_arm64.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.4_RC5_arm64.apk
+          test -s cloud-vision-artifact/BlueStar_Guide_1.0.4_RC5_arm64.apk
           (cd cloud-vision-artifact && sha256sum *.apk > SHA256SUMS.txt)
           unzip -Z1 cloud-vision-artifact/*.apk > cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' cloud-vision-artifact/apk-entries.txt
           cd cloud-vision-app
-          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.3_RC4_arm64.apk
-          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.3_RC4_arm64.apk
+          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.4_RC5_arm64.apk
+          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.4_RC5_arm64.apk
           cd ..
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           test -x "$AAPT"
-          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.3_RC4_arm64.apk > cloud-vision-artifact/badging.txt
+          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.4_RC5_arm64.apk > cloud-vision-artifact/badging.txt
           grep -F "application-label:'Blue Star Guide'" cloud-vision-artifact/badging.txt
-          grep -F "package: name='com.vobich.bluestar.rc4'" cloud-vision-artifact/badging.txt
+          grep -F "package: name='com.vobich.bluestar.rc5'" cloud-vision-artifact/badging.txt
           grep -q 'application-icon-' cloud-vision-artifact/badging.txt
           grep -Fxq 'res/raw/c_metal_clack_ding.mp3' cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'res/raw/voice_send_whoosh.wav' cloud-vision-artifact/apk-entries.txt
           ! grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx' cloud-vision-artifact/apk-entries.txt
-          echo 'Blue Star Guide 1.0.3 RC4 standalone test package: com.vobich.bluestar.rc4 avoids overwriting RC3 with different debug certificate. Checked globe PNG densities, selected C clack MP3, voice whoosh, fresh Camera2, bounded diagnostics, target auto-exit. Real vivo tests still required.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Blue Star Guide 1.0.4 RC5 standalone test package: com.vobich.bluestar.rc5 avoids overwriting RC3 with different debug certificate. Checked globe PNG densities, selected C clack MP3, voice whoosh, fresh Camera2, bounded diagnostics, target auto-exit. Real vivo tests still required.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload 1.0 release candidate APK (debug-signed, device testing)
         uses: actions/upload-artifact@v4
         with:
-          name: blue-star-guide-1-0-3-rc4-arm64
+          name: blue-star-guide-1-0-4-rc5-arm64
           path: cloud-vision-artifact/*
           retention-days: 7
