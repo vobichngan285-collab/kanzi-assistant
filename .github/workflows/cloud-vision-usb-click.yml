@@ -37,7 +37,10 @@ jobs:
               assert bad.lower() not in app.lower()
           assert 'setRenderMode(CameraRequest.RenderMode.NORMAL)' in activity
           assert 'now-current.atMs>1400L' in activity
-          assert 'CloudVisionClient.recognize(jpeg,key,task)' in activity
+          assert 'CloudVisionClient.recognize(jpeg,key,task,model,' in activity
+          assert 'FrameCompressor.choose(' in activity
+          assert 'showImagePolicySelector()' in activity
+          assert 'showVisionModelSelector()' in activity
           assert 'TextToSpeech.QUEUE_FLUSH' in activity
           assert 'final String OCR = "ocr"' not in tasks or 'static final String OCR = "ocr"' in tasks
           assert 'selected_task_id' in tasks and 'custom_tasks' in tasks
@@ -54,7 +57,7 @@ jobs:
           camera2=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/InternalCameraController.java').read_text()
           assert 'CameraManager' in camera2 and 'CameraCaptureSession' in camera2
           assert 'Nv21Rotation.rotate(' in camera2
-          assert "versionCode 3" in app and "versionName '0.3.0-cloud-ai-test'" in app
+          assert "versionCode 4" in app and "versionName '0.4.0-adaptive-vision'" in app
           print('DUAL_CAMERA_CLOUD_AI_NO_LOCAL_OCR_AUDIT=PASS')
           PY
       - name: Patch pinned Android 16 USB permission and native sampling safely
@@ -85,15 +88,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p cloud-vision-artifact
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_CloudVision_DualCamera_CloudAI_v0.3.0_arm64.apk
-          test -s cloud-vision-artifact/BlueStar_CloudVision_DualCamera_CloudAI_v0.3.0_arm64.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_CloudVision_Adaptive_0.4.0_arm64.apk
+          test -s cloud-vision-artifact/BlueStar_CloudVision_Adaptive_0.4.0_arm64.apk
           (cd cloud-vision-artifact && sha256sum *.apk > SHA256SUMS.txt)
           unzip -l cloud-vision-artifact/*.apk | grep -q 'lib/arm64-v8a/libUVCCamera.so'
           ! unzip -Z1 cloud-vision-artifact/*.apk | grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx'
-          echo 'Native USB + Camera2 cloud AI client compiled; real phone, USB and cloud calls require user testing.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Native USB + Camera2 compiled with adaptive image sizing and streaming visual TTS; runtime and billing require user tests.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload experimental APK (not a release)
         uses: actions/upload-artifact@v4
         with:
-          name: blue-star-cloud-dual-camera-ai-030-arm64
+          name: blue-star-cloud-adaptive-040-arm64
           path: cloud-vision-artifact/*
           retention-days: 7
