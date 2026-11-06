@@ -1501,7 +1501,8 @@ public final class MainActivity extends CameraActivity {
                     handler.post(()->{
                         if(token!=requestVersion.get()||!uiActive)return;
                         cloudBusy=false;
-                        showCloudKeyDialog();
+                        openLargeSettings();
+                        if(largeSettings!=null)largeSettings.openApiKey();
                     });
                     return;
                 }
