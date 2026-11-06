@@ -69,6 +69,8 @@ public final class MainActivity extends CameraActivity {
     private static final String PREF_USB_PREVIEW_CORRECT_MIRROR = "usb_preview_correct_left_right";
     private static final String PREF_USB_PREVIEW_VIVID = "usb_preview_vivid_experiment";
     private static final String PREF_TTS_ENGINE = "app_tts_engine_package";
+    private static final String PREF_IMAGE_POLICY = "cloud_capture_quality";
+    private static final String PREF_VISION_MODEL = "cloud_vision_model";
     private static final int REQUEST_PHONE_CAMERA = 4051;
 
     private FrameLayout previewContainer;
@@ -100,6 +102,8 @@ public final class MainActivity extends CameraActivity {
     private TaskCatalog.Task currentTask;
     private boolean uiActive;
     private boolean cloudBusy;
+    private String imagePolicy="auto";
+    private String visionModel="qwen3-vl-plus";
     private String lastCloudResult="";
 
     private static final class Frame {
@@ -321,8 +325,11 @@ public final class MainActivity extends CameraActivity {
             ()->showCameraSourceSelector());
         addSimpleSettingsRow(panel,"任务",currentTask.name,
             ()->{if(settingsDialog!=null)settingsDialog.dismiss();showTaskSelector();});
-        addSimpleSettingsRow(panel,"云端识别","OCR：qwen-vl-ocr；视觉：qwen3-vl-plus（北京）",
-            ()->showCloudKeyDialog());
+        addSimpleSettingsRow(panel,"云端识别","OCR：qwen-vl-ocr；视觉："+visionModel+"（北京）",
+            ()->showVisionModelSelector());
+        addSimpleSettingsRow(panel,"图片分辨率",imagePolicy.equals("auto")?
+            "自动：清晰720p，低细节1080p":("1080".equals(imagePolicy)?"固定1080p":"固定720p"),
+            ()->showImagePolicySelector());
         addSimpleSettingsRow(panel,"API Key","本机加密保存；仅发往阿里云百炼",
             ()->showCloudKeyDialog());
         TextView preview= new TextView(this);
@@ -423,6 +430,8 @@ public final class MainActivity extends CameraActivity {
         previewVerticalFlip=prefs.getBoolean(PREF_PREVIEW_FLIP,false);
         usbPreviewCorrectMirror=prefs.getBoolean(PREF_USB_PREVIEW_CORRECT_MIRROR,true);
         usbPreviewVivid=prefs.getBoolean(PREF_USB_PREVIEW_VIVID,true);
+        imagePolicy=prefs.getString(PREF_IMAGE_POLICY,"auto");
+        visionModel=prefs.getString(PREF_VISION_MODEL,"qwen3-vl-plus");
         ttsEngine=prefs.getString(PREF_TTS_ENGINE,"");
         if(ttsEngine==null)ttsEngine="";
         refreshTask(TaskCatalog.selectedId(this));
@@ -462,6 +471,37 @@ public final class MainActivity extends CameraActivity {
             if(cameraTextureView!=null)cameraTextureView.setVisibility(View.INVISIBLE);
         }
         Toast.makeText(this,"云端AI测试版：请在设置中配置API Key，再点击画面识别",Toast.LENGTH_LONG).show();
+    }
+
+    private void showImagePolicySelector(){
+        String[] names={"自动：清晰720p／低细节原生1080p（推荐）",
+            "固定720p（速度对照）","固定1080p（清晰度对照）"};
+        String[] values={"auto","720","1080"};
+        int selected="720".equals(imagePolicy)?1:("1080".equals(imagePolicy)?2:0);
+        new AlertDialog.Builder(this).setTitle("图片分辨率实验")
+            .setMessage("自动档只在原始相机画面足够大且细节较少时使用1080p，不放大小图，不会重复收费请求。")
+            .setSingleChoiceItems(names,selected,(d,i)->{
+                imagePolicy=values[i];getSharedPreferences(PREFS,MODE_PRIVATE)
+                    .edit().putString(PREF_IMAGE_POLICY,imagePolicy).apply();
+                d.dismiss();
+                if(settingsDialog!=null)settingsDialog.dismiss();
+                Toast.makeText(this,"已选："+names[i],Toast.LENGTH_SHORT).show();
+            }).setNegativeButton("取消",null).show();
+    }
+
+    private void showVisionModelSelector(){
+        String[] names={"qwen3-vl-plus（稳定优先）","qwen3-vl-flash（速度A/B实验）"};
+        int selected="qwen3-vl-flash".equals(visionModel)?1:0;
+        new AlertDialog.Builder(this).setTitle("视觉模型")
+            .setMessage("切换为flash前，请确认百炼免费额度页面有该模型的额度且已开启用完即停；否则可能产生费用。OCR仍固定使用qwen-vl-ocr。")
+            .setSingleChoiceItems(names,selected,(d,i)->{
+                visionModel=i==1?"qwen3-vl-flash":"qwen3-vl-plus";
+                getSharedPreferences(PREFS,MODE_PRIVATE).edit()
+                    .putString(PREF_VISION_MODEL,visionModel).apply();
+                d.dismiss();
+                if(settingsDialog!=null)settingsDialog.dismiss();
+                Toast.makeText(this,"视觉模型："+visionModel,Toast.LENGTH_SHORT).show();
+            }).setNegativeButton("取消",null).show();
     }
 
     private void showCloudKeyDialog() {
@@ -734,37 +774,70 @@ public final class MainActivity extends CameraActivity {
         }
         lastTapMs=now;
         invalidate();
+        cloudBusy=true;
         int token=requestVersion.get();
         TaskCatalog.Task task=currentTask;
         String source=usingPhoneCamera?(phoneFrontFacing?"手机前置":"手机后置"):"USB 外接";
+        String policy=imagePolicy;
+        String model=visionModel;
         encodingTask=encoder.submit(()->{
+            long takenAt=SystemClock.elapsedRealtime();
             try{
-                byte[] jpeg=FrameCompressor.to720pJpeg(current.pixels,current.width,current.height);
+                FrameCompressor.Plan plan=FrameCompressor.choose(
+                    current.pixels,current.width,current.height,policy);
+                byte[] jpeg=FrameCompressor.encodeJpeg(
+                    current.pixels,current.width,current.height,plan.limit);
+                long compressedAt=SystemClock.elapsedRealtime();
+                long encodingMs=compressedAt-takenAt;
                 if(token!=requestVersion.get())return;
                 String key=CloudKeyStore.load(this);
-                if(key.isEmpty()) {
-                    handler.post(()->{if(token==requestVersion.get())showCloudKeyDialog();});
+                if(key.isEmpty()){
+                    handler.post(()->{
+                        cloudBusy=false;
+                        if(token==requestVersion.get()&&uiActive)showCloudKeyDialog();
+                    });
                     return;
                 }
-                long started=SystemClock.elapsedRealtime();
                 handler.post(()->{
-                    if(token==requestVersion.get()&&uiActive){
-                        cloudBusy=true;
-                        Toast.makeText(this,"已拍照，正在云端识别："+task.name,Toast.LENGTH_SHORT).show();
-                    }
+                    if(token==requestVersion.get()&&uiActive)
+                        Toast.makeText(this,"正在云端识别："+task.name+"／"+(plan.limit==1920?"1080p":"720p"),
+                            Toast.LENGTH_SHORT).show();
                 });
-                String result=CloudVisionClient.recognize(jpeg,key,task);
-                long elapsed=SystemClock.elapsedRealtime()-started;
+                java.util.concurrent.atomic.AtomicInteger segments=new java.util.concurrent.atomic.AtomicInteger(0);
+                CloudVisionClient.Result result=CloudVisionClient.recognize(jpeg,key,task,model,
+                    part->handler.post(()->{
+                        if(token!=requestVersion.get()||!uiActive||tts==null||!ttsReady)return;
+                        int mode=segments.getAndIncrement()==0?
+                            TextToSpeech.QUEUE_FLUSH:TextToSpeech.QUEUE_ADD;
+                        tts.speak(part,mode,null,"cloud-chunk-"+System.nanoTime());
+                    }));
+                long overallMs=SystemClock.elapsedRealtime()-takenAt;
                 handler.post(()->{
                     cloudBusy=false;
                     if(token!=requestVersion.get()||!uiActive)return;
-                    lastCloudResult=result;
-                    Log.i(TAG,"Cloud request succeeded; source="+source+" modelRoute="+task.engine+
-                        " elapsedMs="+elapsed+" jpegBytes="+jpeg.length);
-                    new AlertDialog.Builder(this).setTitle(task.name+" · "+elapsed+"毫秒")
-                        .setMessage(result).setPositiveButton("再次朗读",(d,w)->speak(result))
+                    lastCloudResult=result.text;
+                    Log.i(TAG,"Cloud timing: route="+task.engine+" model="+result.model+
+                        " capture="+source+" raw="+current.width+"x"+current.height+
+                        " imageLimit="+plan.limit+" jpegBytes="+jpeg.length+
+                        " sharpnessEdgeRatio="+plan.edgeRatio+" jpegMs="+encodingMs+
+                        " requestMs="+result.networkMs+" firstTextMs="+result.firstTextMs+
+                        " firstSpeakableMs="+result.firstSpeakableMs+
+                        " promptTokens="+result.promptTokens+
+                        " completionTokens="+result.completionTokens);
+                    String first=result.firstSpeakableMs>=0?
+                        ("首句就绪 "+result.firstSpeakableMs+"毫秒；"):"";
+                    String diagnostic="本机编码 "+encodingMs+"毫秒；"+
+                        first+"完整响应 "+result.networkMs+"毫秒；"+
+                        "总计 "+overallMs+"毫秒\n"+
+                        "模型 "+result.model+"；发送 "+jpeg.length/1024+"KB，"+
+                        (plan.limit==1920?"1080p":"720p")+"（"+plan.decision+"）"+
+                        (result.completionTokens>=0?"；输出Token "+result.completionTokens:"")+
+                        "\n\n";
+                    new AlertDialog.Builder(this).setTitle(task.name+" · "+overallMs+"毫秒")
+                        .setMessage(diagnostic+result.text)
+                        .setPositiveButton("再次朗读",(d,w)->speak(result.text))
                         .setNegativeButton("关闭",null).show();
-                    speak(result);
+                    if(TaskCatalog.OCR.equals(task.engine))speak(result.text);
                 });
             }catch(Exception e){
                 handler.post(()->{
