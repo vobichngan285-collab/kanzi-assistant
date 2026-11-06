@@ -1,6 +1,7 @@
 package com.vobich.bluestar.cloudprobe;
 
 import android.content.Context;
+import androidx.appcompat.app.AlertDialog;
 import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
@@ -103,6 +104,7 @@ final class LargeSettingsScreen {
             case "cloud":heading="云端 AI";break;
             case "key":heading="API Key";break;
             case "result":heading="上次识别结果";break;
+            case "diagnostics":heading="运行诊断";break;
             default:heading="蓝星向导 · 设置";
         }
         TextView title=text(heading,25,TEXT,true);
@@ -128,6 +130,7 @@ final class LargeSettingsScreen {
         else if(p.name.equals("cloud"))cloud();
         else if(p.name.equals("key"))apiKey();
         else if(p.name.equals("result"))result();
+        else if(p.name.equals("diagnostics"))diagnostics();
     }
     private Button button(String value,int color){
         Button b=new Button(app);
@@ -203,7 +206,8 @@ final class LargeSettingsScreen {
         row("提示音与振动","金属咔嗒音、清脆点击振动",()->navigate("feedback",""));
         row("云端 AI","识别模型、图片清晰度、API Key",()->navigate("cloud",""));
         row("上次识别结果","查看完整内容与再次朗读",()->navigate("result",""));
-        note("所有设置自动保存。关闭设置后，点击摄像头画面即可拍照识别。");
+        row("运行诊断","仅排障时查看本机匿名耗时与错误记录",()->navigate("diagnostics",""));
+        note("诊断只在本机轻量记录性能事件，平时相机页面不显示。");
     }
     private void speech(){
         SharedPreferences prefs=app.getSharedPreferences("kanzi_settings",Context.MODE_PRIVATE);
@@ -386,6 +390,26 @@ final class LargeSettingsScreen {
             CloudKeyStore.clear(app);
             app.toastShort("密钥已清除");back();
         });
+    }
+    private void diagnostics(){
+        note("自动保留最近50次操作或7天的数值事件，固定容量覆盖旧记录。不会保存照片、识别文字、语音内容、API Key或完整请求。");
+        action("复制诊断摘要",()->app.copyRuntimeDiagnostics());
+        action("导出匿名诊断日志",()->app.exportRuntimeDiagnostics());
+        action("刷新诊断记录",()->render(history.get(history.size()-1)));
+        action("清空全部诊断记录",()->new AlertDialog.Builder(app)
+            .setTitle("清空运行诊断")
+            .setMessage("确定清除本机保存的全部匿名性能事件？此操作不能撤销。")
+            .setNegativeButton("取消",null)
+            .setPositiveButton("确定清空",(dialog,which)->{
+                app.clearRuntimeDiagnostics();
+                render(history.get(history.size()-1));
+            }).show());
+        heading("最近的诊断记录");
+        TextView report=text(app.runtimeDiagnosticSummary(),16,TEXT,false);
+        report.setTextIsSelectable(true);
+        report.setPadding(dp(12),dp(12),dp(12),dp(12));
+        report.setBackground(bg(PANEL,12));
+        content.addView(report,new LinearLayout.LayoutParams(-1,-2));
     }
     private void result(){
         String result=app.lastRecognizedText();
