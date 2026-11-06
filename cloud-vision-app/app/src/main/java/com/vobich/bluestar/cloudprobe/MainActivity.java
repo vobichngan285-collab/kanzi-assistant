@@ -309,82 +309,124 @@ public final class MainActivity extends CameraActivity {
         return button;
     }
 
-    private void refreshTask(String id) {
+    private void refreshTask(String id){
         currentTask=null;
-        for (TaskCatalog.Task task:TaskCatalog.all(this))
-            if(task.id.equals(id)){currentTask=task;break;}
-        if(currentTask==null)currentTask=TaskCatalog.all(this).get(0);
+        List<TaskCatalog.Task> tasks=TaskCatalog.all(this);
+        for(TaskCatalog.Task t:tasks)if(t.id.equals(id)){currentTask=t;break;}
+        if(currentTask==null)currentTask=tasks.get(0);
         TaskCatalog.select(this,currentTask.id);
-        if(modeButton!=null) {
-            String label="任务："+currentTask.name;
-            modeButton.setText(label);
-            modeButton.setContentDescription(label+"；点击选择或新建任务");
-        }
+        if(currentTaskChip!=null)currentTaskChip.setText("任务："+currentTask.name);
+        if(modeButton!=null)modeButton.setContentDescription("任务选择，当前："+currentTask.name);
     }
 
-    private void showTaskSelector() {
-        List<TaskCatalog.Task> list=TaskCatalog.all(this);
-        String[] names=new String[list.size()+1];
-        int selected=-1;
-        for(int i=0;i<list.size();i++){
-            names[i]=list.get(i).name;
-            if(currentTask!=null&&currentTask.id.equals(list.get(i).id))selected=i;
-        }
-        names[list.size()]="＋ 自定义任务";
-        new AlertDialog.Builder(this).setTitle("选择任务")
-            .setSingleChoiceItems(names,selected,(dialog,which)->{
-                dialog.dismiss();
-                if(which==list.size()){editTask(null);return;}
-                invalidate();
-                refreshTask(list.get(which).id);
-                if(currentTask.custom) showCustomTaskActions();
-                else Toast.makeText(this,"已选择："+currentTask.name,Toast.LENGTH_SHORT).show();
-            })
-            .setNegativeButton("取消",null).show();
+    private void showTaskSelector(){
+        TaskDesktopOverlay.show(this,TaskCatalog.all(this),currentTask.id,
+            new TaskDesktopOverlay.Listener(){
+                @Override public void selected(TaskCatalog.Task task){
+                    invalidate();refreshTask(task.id);
+                    setResultStatus("已选择："+task.name);
+                }
+                @Override public void createTask(){editTask(null);}
+            });
     }
 
-    private void showCustomTaskActions() {
-        TaskCatalog.Task task=currentTask;
-        new AlertDialog.Builder(this).setTitle(task.name)
-            .setItems(new String[]{"执行此任务","编辑任务","删除任务"},
-                (dialog,which)->{
-                    if(which==1)editTask(task);
-                    else if(which==2)new AlertDialog.Builder(this).setTitle("删除自定义任务？")
-                        .setNegativeButton("取消",null)
-                        .setPositiveButton("删除",(d,b)->{
-                            invalidate();TaskCatalog.remove(this,task.id);refreshTask("ocr");
-                        }).show();
-                }).show();
-    }
-
-    private void editTask(TaskCatalog.Task original) {
+    private void editTask(TaskCatalog.Task original){
+        boolean existing=original!=null;
+        String[] icon={existing?original.icon:"✦"};
         EditText name=new EditText(this);
-        name.setSingleLine(true);
-        name.setHint("任务名称");
-        name.setText(original==null?"":original.name);
-        EditText instruction=new EditText(this);
-        instruction.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);
-        instruction.setMinLines(3);
-        instruction.setHint("请输入希望AI看图完成的具体任务");
-        instruction.setText(original==null?"":original.instruction);
+        name.setSingleLine(true);name.setTextColor(Color.WHITE);
+        name.setHint("任务名称");name.setText(existing?original.name:"");
+        EditText prompt=new EditText(this);
+        prompt.setTextColor(Color.WHITE);
+        prompt.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        prompt.setMinLines(4);prompt.setHint("请输入AI任务指令");
+        prompt.setText(existing?original.instruction:"");
+        Button symbol=new Button(this);
+        symbol.setAllCaps(false);symbol.setText("选择图标："+icon[0]);
+        symbol.setOnClickListener(v->{
+            String[] symbols=TaskCatalog.iconPalette();
+            new AlertDialog.Builder(this).setTitle("选择任务图标")
+                .setItems(symbols,(d,which)->{
+                    icon[0]=symbols[which];symbol.setText("选择图标："+icon[0]);
+                }).show();
+        });
         LinearLayout form=new LinearLayout(this);
-        form.setPadding(dp(18),dp(10),dp(18),dp(3));
+        form.setPadding(dp(20),dp(8),dp(20),dp(8));
         form.setOrientation(LinearLayout.VERTICAL);
-        form.addView(name);form.addView(instruction);
+        form.addView(name);form.addView(prompt);form.addView(symbol);
         AlertDialog dialog=new AlertDialog.Builder(this)
-            .setTitle(original==null?"新建自定义任务":"编辑自定义任务")
+            .setTitle(existing?"编辑自定义任务":"新建自定义任务")
             .setView(form).setNegativeButton("取消",null)
             .setPositiveButton("保存",null).create();
         dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE)
             .setOnClickListener(w->{
                 try{
                     TaskCatalog.Task saved=TaskCatalog.upsert(this,
-                        original==null?null:original.id,
-                        name.getText().toString(),instruction.getText().toString());
+                        existing?original.id:null,name.getText().toString(),
+                        prompt.getText().toString(),icon[0]);
                     invalidate();refreshTask(saved.id);dialog.dismiss();
-                }catch(IllegalArgumentException error){instruction.setError(error.getMessage());}
+                }catch(IllegalArgumentException error){prompt.setError(error.getMessage());}
             }));
         dialog.show();
+    }
+
+    private void showTaskManagement(){
+        List<TaskCatalog.Task> tasks=TaskCatalog.all(this);
+        String[] names=new String[tasks.size()+1];
+        for(int i=0;i<tasks.size();i++)
+            names[i]=(tasks.get(i).custom?"✦ ":"预设 · ")+tasks.get(i).name;
+        names[tasks.size()]="＋ 新建自定义任务";
+        new AlertDialog.Builder(this).setTitle("任务管理 · 编辑AI提示词")
+            .setItems(names,(d,index)->{
+                if(index==tasks.size()){editTask(null);return;}
+                TaskCatalog.Task task=tasks.get(index);
+                if(task.custom)showCustomTaskEditActions(task);
+                else editPresetTask(task);
+            }).setNegativeButton("关闭",null).show();
+    }
+    private void showCustomTaskEditActions(TaskCatalog.Task task){
+        new AlertDialog.Builder(this).setTitle(task.name)
+            .setItems(new String[]{"编辑任务、图标及提示词","删除任务"},(d,index)->{
+                if(index==0)editTask(task);
+                else new AlertDialog.Builder(this).setTitle("确认删除："+task.name)
+                    .setNegativeButton("取消",null)
+                    .setPositiveButton("删除",(yes,which)->{
+                        TaskCatalog.remove(this,task.id);
+                        refreshTask(TaskCatalog.selectedId(this));
+                    }).show();
+            }).show();
+    }
+    private void editPresetTask(TaskCatalog.Task task){
+        EditText prompt=new EditText(this);
+        prompt.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        prompt.setTextColor(Color.WHITE);
+        prompt.setMinLines(4);prompt.setText(task.instruction);
+        LinearLayout panel=new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(20),dp(8),dp(20),dp(8));panel.addView(prompt);
+        AlertDialog dialog=new AlertDialog.Builder(this)
+            .setTitle("编辑："+task.name)
+            .setMessage("保存后下次识别将使用这里的AI指令。")
+            .setView(panel)
+            .setNeutralButton("恢复默认",(d,w)->{
+                TaskCatalog.restorePreset(this,task.id);
+                refreshTask(currentTask.id);
+                Toast.makeText(this,"已恢复："+task.name,Toast.LENGTH_SHORT).show();
+            })
+            .setNegativeButton("取消",null).setPositiveButton("保存",null).create();
+        dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            .setOnClickListener(w->{
+                try{
+                    TaskCatalog.updatePreset(this,task.id,prompt.getText().toString());
+                    refreshTask(currentTask.id);dialog.dismiss();
+                    Toast.makeText(this,"提示词已保存",Toast.LENGTH_SHORT).show();
+                }catch(IllegalArgumentException e){prompt.setError(e.getMessage());}
+            }));
+        dialog.show();
+    }
+
+    private void setResultStatus(String text){
+        if(resultChip!=null)resultChip.setText(text);
     }
 
     private void addSimpleSettingsRow(LinearLayout panel,String label,String detail,Runnable clicked) {
