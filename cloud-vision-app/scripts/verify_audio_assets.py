@@ -34,14 +34,14 @@ def decode(zf, name):
 
 if __name__=="__main__":
     with zipfile.ZipFile(sys.argv[1]) as z:
-        click=decode(z,"metal_sharp_click")
+        # The exact 230ms candidate C chosen by the user (source MP3, not re-synthesized).
+        selected=z.read("res/raw/c_metal_clack_ding.mp3")
+        expected="4a5c7f989e16109d2cfb51b4f7f324cbfcc9be9724ca2ffc038dcd727e6005e6"
+        assert hashlib.sha256(selected).hexdigest()==expected,"Candidate C audio changed"
+        assert len(selected)==2910 and selected[:3]==b"ID3","C sound must be the original MP3"
         whoosh=decode(z,"voice_send_whoosh")
-        assert .110<=click[0]<=.135,"click must be short and sharp"
-        assert click[1]>.90 and click[2]>.12,"click is too weak"
-        assert click[3]<.045,"click has too long/soft tail"
-        assert .185<=whoosh[0]<=.215,"whoosh duration is incorrect"
+        assert .185<=whoosh[0]<=.215,"whoosh duration incorrect"
         assert whoosh[1]>.90 and whoosh[4]>.055,"whoosh is inaudible/weak"
-        assert click[5]!=whoosh[5],"send must not reuse camera sound"
-        assert "res/raw/metal_lid_click.wav" not in z.namelist(),\
-            "obsolete soft camera sound must be removed"
-        print("TWO_DISTINCT_SHARP_AUDIO_ASSETS_VERIFIED=PASS")
+        assert "res/raw/metal_sharp_click.wav" not in z.namelist(),            "old camera sound must not remain packaged"
+        assert "res/raw/metal_lid_click.wav" not in z.namelist(),            "obsolete camera sound must not remain packaged"
+        print("USER_SELECTED_C_MP3_AND_VOICE_WHOOSH_VERIFIED=PASS")
