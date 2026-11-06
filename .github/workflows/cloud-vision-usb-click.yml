@@ -85,6 +85,7 @@ jobs:
           javac -encoding UTF-8 -d /tmp/bluestar-unit \
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/SpeechChunker.java \
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/ImageQualityPolicy.java \
+            cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/Nv21Rotation.java \
             cloud-vision-app/tests/CloudOptimizationTest.java
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.CloudOptimizationTest
       - name: Patch pinned Android 16 USB permission and native sampling safely
