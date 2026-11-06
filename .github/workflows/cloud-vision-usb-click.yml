@@ -34,6 +34,8 @@ jobs:
           assert 'android.permission.CAMERA' in manifest
           assert 'android.permission.RECORD_AUDIO' in manifest
           assert 'android:label="蓝星向导"' in manifest
+          assert 'android:name="com.vobich.bluestar.cloudprobe.MainActivity"' in manifest
+          assert "applicationId 'com.vobich.bluestar'" in app
           assert 'TaskDesktopOverlay.show(' in activity
           assert 'startVoiceFollowup()' in activity
           assert 'FrameCompressor.encodeAdjustedJpeg(' in activity
@@ -114,9 +116,10 @@ jobs:
           set -euo pipefail
           mkdir -p cloud-vision-artifact
           cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_1.0.0_RC1_arm64.apk
-          test -s cloud-vision-artifact/BlueStar_CloudVision_EarlySpeech_v0.5.0_arm64.apk
+          test -s cloud-vision-artifact/BlueStar_1.0.0_RC1_arm64.apk
           (cd cloud-vision-artifact && sha256sum *.apk > SHA256SUMS.txt)
           unzip -l cloud-vision-artifact/*.apk | grep -q 'lib/arm64-v8a/libUVCCamera.so'
+          unzip -Z1 cloud-vision-artifact/*.apk | grep -q 'bluestar_icon.webp'
           ! unzip -Z1 cloud-vision-artifact/*.apk | grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx'
           echo 'Blue Star 1.0 release candidate: native USB, Camera2, editable tasks, native ASR and TTS; real-device A/B and production signing/backend security still required.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload 1.0 release candidate APK (debug-signed, device testing)
