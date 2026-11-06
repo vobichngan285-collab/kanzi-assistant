@@ -3,7 +3,7 @@ android {
     namespace 'com.vobich.bluestar.cloudprobe'
     compileSdk 36
     defaultConfig {
-        applicationId 'com.vobich.bluestar.cloudprobe'
+        applicationId 'com.vobich.bluestar'
         minSdk 26
         targetSdk 35
         versionCode 10
