@@ -32,11 +32,15 @@
 - 隐私：AndroidManifest `allowBackup=false`，`usesCleartextTraffic=false`；API Key 使用 `CloudKeyStore` 的 Android Keystore AES-GCM 加密，诊断仅白名单结构化数值。
 - 发布限制：这是可并存的 **调试签名RC4测试版**，非稳定发布签名的正式升级包。独立应用设置不会自动继承旧包。
 
-## 待核实构建与交付（本报告建档时）
+## 最终构建与APK独立验收（全部已复核）
 
-- 独立 `com.vobich.bluestar.rc4` 版本的最终 GitHub Actions Run：[`42239675700`](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42239675700)，源码 `a2cc58cd8c80730eb7776ff61b8414cf8abd314e`。
-- **当前仍在等待该次 Run 最终 success / artifact / 文件哈希复核；不得将未验证值填写为通过。**
-- 前一份同代码功能、未加独立包名的 Run `42237781234` 已通过：`BUILD SUCCESSFUL`、音频二进制测试、五密度图标解码、Java 单元测试。该包因与RC3证书不兼容**不作为最终用户下载候选**。
+- **最终源码提交：** `a2cc58cd8c80730eb7776ff61b8414cf8abd314e`（之后的报告文档提交不改变代码）；独立 `com.vobich.bluestar.rc4`。
+- **GitHub Actions 真正 SUCCESS：** [Run 42239675700](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42239675700)，Job `127966482414` conclusion=success，全部步骤完成。日志实证：`DUAL_CAMERA_CLOUD_AI_NO_LOCAL_OCR_AUDIT=PASS`、`CLOUD_OPTIMIZATION_UNIT_TESTS=PASS`、`VOICE_PRESS_TARGET_AND_WAV_TESTS=PASS`、`BSG_CLOUD_RAW5_GATED=PASS`、`BSG_CLOUD_CLOSE_BARRIER=PASS`、`ALL_FIVE_LAUNCHER_DENSITIES_DECODED=PASS`、`BUILD SUCCESSFUL`、`PACKAGED_LAUNCHER_VISUAL_ASSET_VERIFIED=PASS`、`USER_SELECTED_C_MP3_AND_VOICE_WHOOSH_VERIFIED=PASS`。
+- **实际上传的 Artifact ID：** `13515246685`，名称 `blue-star-guide-1-0-3-rc4-arm64`；[Actions Artifact 下载](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42239675700/artifacts/13515246685)，临时保存期至 `2026-11-13T15:08:21Z` 左右，过期后链接可能失效，非永久公开 GitHub Release。
+- **实际独立安装APK：** `BlueStar_Guide_1.0.3_RC4_arm64.apk`，字节大小 `8,551,584`（以本轮从ZIP解出的实际文件大小为准）；**SHA256** `591265a830f8a3ed8b4e52af06cb039d42cec3670355f5045475073b3f0f7dca`。ZIP 完整哈希 `25539648d5bcb5d4908b5d6df91acebc3353af2f342a4d16234d51bba9073f54`。
+- **独立下载后再审计：** APK自身 `SHA256SUMS.txt` 校验PASS、ZIP内文件完整 `unzip -t` PASS；真正 aapt `badging` 为 package `com.vobich.bluestar.rc4`、versionCode13、versionName1.0.3-rc4；二进制存在 v2 APK Signing Block；arm64 `libUVCCamera.so` 存在、无离线ONNX；C音效MP3 2910B且SHA `4a5c7f989e16109d2cfb51b4f7f324cbfcc9be9724ca2ffc038dcd727e6005e6` 精确一致；嗖声 WAV 13164B且 SHA `8286b634fd0f4ab3f9579d09d15fa4387af5dc144bdbc8228c8ebf5cc4d607ff`；旧音频不存在。
+- **包名与用户数据保护：** 原 RC3 同包名 `com.vobich.bluestar`，但RC3与旧版RC4签名证书SHA256分别为 `75d80d878d63e5869e9bf038e61f0bfaf45ff242cd6f6fa51dd22f3763a5a765`、`32b380c3df0d351907f604a648dc75a84bafb89ae09102129507b16fbf0ce95f`，证实不可覆盖升级。最终独立包名避免卸载旧包、保留旧Key和旧设置；新包单独加密配置Key并独立保存设置。
+- **结果边界：** 无本轮真人真机测试、录音/ASR真实请求、真实首声、USB长期卡顿稳定性或APK商用签名验收。成功为源码/单元/CI/真实二进制审计成功，**不是手机端全链路功能已确认无故障**。
 
 ## 真机回归优先顺序
 
