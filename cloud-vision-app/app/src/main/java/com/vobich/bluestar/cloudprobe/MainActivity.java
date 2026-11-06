@@ -498,6 +498,15 @@ public final class MainActivity extends CameraActivity {
     private final Runnable hideStatus=()->{
         if(resultChip!=null)resultChip.setVisibility(View.GONE);
     };
+    /** Only preserve a numeric HTTP status, never response bodies or user text. */
+    private static long diagnosticHttpStatus(Throwable error){
+        if(error==null||error.getMessage()==null)return -1L;
+        java.util.regex.Matcher m=java.util.regex.Pattern.compile(
+            "HTTP\\s*(\\d{3})").matcher(error.getMessage());
+        if(!m.find())return -1L;
+        try{return Long.parseLong(m.group(1));}catch(NumberFormatException ignored){return -1L;}
+    }
+
     private void setResultStatus(String text){
         if(resultChip==null)return;
         handler.removeCallbacks(hideStatus);
@@ -1531,7 +1540,11 @@ public final class MainActivity extends CameraActivity {
                                 if(!uiActive||sequence!=voiceSequence.get()||
                                     photoToken!=requestVersion.get())return;
                                 cloudBusy=false;
-                                if(diagnostics!=null)diagnostics.event("asr","request",0,"failed");
+                                if(diagnostics!=null){
+                                    diagnostics.event("asr","request",0,"failed");
+                                    diagnostics.event("asr","http_status",
+                                        diagnosticHttpStatus(error),"failed");
+                                }
                                 setResultStatus("语音上传或识别失败，请重试");
                                 toastShort("语音识别失败："+error.getMessage());
                                 speakUnfiltered("语音识别失败，请再试一次。");
@@ -1661,7 +1674,11 @@ public final class MainActivity extends CameraActivity {
                 handler.post(()->{
                     if(!uiActive||token!=requestVersion.get())return;
                     cloudBusy=false;
-                    if(diagnostics!=null)diagnostics.event("followup","network",0,"failed");
+                    if(diagnostics!=null){
+                        diagnostics.event("followup","network",0,"failed");
+                        diagnostics.event("followup","http_status",
+                            diagnosticHttpStatus(ex),"failed");
+                    }
                     setResultStatus("AI对话失败");
                     Toast.makeText(this,"追问失败："+ex.getMessage(),Toast.LENGTH_LONG).show();
                 });
@@ -1846,7 +1863,13 @@ public final class MainActivity extends CameraActivity {
                 handler.post(()->{
                     if(token!=requestVersion.get()||!uiActive)return;
                     cloudBusy=false;
-                    if(diagnostics!=null)diagnostics.event("cloud","request",0,"failed");
+                    if(diagnostics!=null){
+                        diagnostics.event("cloud","request",0,"failed");
+                        diagnostics.event("cloud","http_status",
+                            diagnosticHttpStatus(error),"failed");
+                        diagnostics.event("cloud","elapsed_before_error_ms",
+                            SystemClock.elapsedRealtime()-tapAtMs,"failed");
+                    }
                     setResultStatus("云端识别失败，请重试");
                     new AlertDialog.Builder(this).setTitle("云端识别失败")
                         .setMessage(error.getMessage()==null?
