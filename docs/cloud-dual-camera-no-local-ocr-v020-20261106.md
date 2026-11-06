@@ -14,3 +14,12 @@
 
 ## 验收
 本文件随源码提交。GitHub Actions需要确认编译、包名、源代码双摄像头链路和无OCR模型。必须在vivo X200 Pro依次测试USB/手机前后摄像头实际画面、拍照是否为当前帧、切换回USB及返回前台、TTS；CI成功不能替代真机通过。
+
+
+## 2026-11-06 构建与产物复核结果
+- 双摄像头源码提交 SHA：`a3d4ad37fcf8d27ad4ec6debeaa007e1d5e28653`。
+- GitHub Actions `42158082173` **SUCCESS**：静态双摄像头 / 原版全屏布局 / 无OCR依赖审核、固定AUSBC原生补丁、arm64构建、APK检查均通过。https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42158082173
+- Artifact `13475213529`：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42158082173/artifacts/13475213529 ；过期时间 `2026-11-13T03:44:30Z`。
+- 独立下载实际 ZIP、提取实际 APK 后复核 `SHA256SUMS.txt`：`BlueStar_CloudVision_DualCamera_Probe_v0.2.0_arm64.apk` 8,348,015 bytes，SHA256 `896a535f450fa0ed12fa81e1b40b6114cdef18c276118cca91e850c665830814`，完全一致。
+- ZIP 内APK仅带原生UVC USB/JPEG动态库；完整打包条目检查未出现 `inference.onnx`、Paddle、PP-OCR、sherpa等模型或库。
+- **尚未通过** vivo X200 Pro USB/手机前后相机真机画面、切换后回USB、熄屏工作、云端识别测试；本APK只有模拟语音提示，不能当作完成云端OCR。
