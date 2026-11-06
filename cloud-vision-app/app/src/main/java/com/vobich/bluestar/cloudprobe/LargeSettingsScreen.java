@@ -352,6 +352,8 @@ final class LargeSettingsScreen {
         action("▶ 试听拍照咔嗒声",()->app.previewCaptureFeedback());
         action("▶ 试听语音发送嗖声",()->app.previewVoiceSendFeedback());
         action("▶ 体验按住说话振动",()->app.previewVoiceStartHaptic());
+        heading("最近一次录音诊断");
+        note(app.lastMicDiagnostic());
         note("提示音与振动分别控制。录音取消或太短时，不播放发送成功提示。");
     }
     private void cloud(){
