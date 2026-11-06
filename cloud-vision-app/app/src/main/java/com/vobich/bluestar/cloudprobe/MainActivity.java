@@ -454,58 +454,147 @@ public final class MainActivity extends CameraActivity {
         row.setOnClickListener(v->clicked.run());
     }
 
-    private void showSettingsDialog() {
+    private void showSettingsDialog(){
         LinearLayout panel=new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(22),dp(23),dp(22),dp(12));
-        panel.setBackgroundColor(0xFF0B0B0D);
+        panel.setPadding(dp(18),dp(20),dp(18),dp(12));
+        panel.setBackgroundColor(0xFF0B1B30);
         TextView heading=new TextView(this);
-        heading.setText("设置");heading.setTextSize(TypedValue.COMPLEX_UNIT_SP,26);
-        heading.setTextColor(Color.WHITE);heading.setTypeface(null,android.graphics.Typeface.BOLD);
-        heading.setGravity(Gravity.CENTER);panel.addView(heading);
-
-        addSimpleSettingsRow(panel,"语音",ttsEngine.isEmpty()?"跟随手机默认语音":ttsEngine,
-            ()->showInstalledTtsSelector());
-        addSimpleSettingsRow(panel,"摄像头",usingPhoneCamera
-            ?(phoneFrontFacing?"手机前置摄像头":"手机后置摄像头"):"USB 外接摄像头",
-            ()->showCameraSourceSelector());
-        addSimpleSettingsRow(panel,"任务",currentTask.name,
-            ()->{if(settingsDialog!=null)settingsDialog.dismiss();showTaskSelector();});
-        addSimpleSettingsRow(panel,"云端识别","OCR：qwen-vl-ocr；视觉："+visionModel+"（北京）",
-            ()->showVisionModelSelector());
-        addSimpleSettingsRow(panel,"图片分辨率",imagePolicy.equals("auto")?
-            "自动：清晰720p，低细节1080p":("1080".equals(imagePolicy)?"固定1080p":"固定720p"),
-            ()->showImagePolicySelector());
-        addSimpleSettingsRow(panel,"API Key","本机加密保存；仅发往阿里云百炼",
-            ()->showCloudKeyDialog());
-        TextView preview= new TextView(this);
-        preview.setText("▶ 试听当前语音");
-        preview.setGravity(Gravity.CENTER);preview.setTextSize(18);
-        preview.setTextColor(0xFF151515);preview.setTypeface(null,android.graphics.Typeface.BOLD);
-        preview.setPadding(dp(12),dp(15),dp(12),dp(15));
-        android.graphics.drawable.GradientDrawable bg=new android.graphics.drawable.GradientDrawable();
-        bg.setColor(0xFF66B4EA);bg.setCornerRadius(dp(12));preview.setBackground(bg);
-        preview.setOnClickListener(v->speak("蓝星向导语音试听。"));
-        panel.addView(preview);
-        TextView note=new TextView(this);
-        note.setText("本测试版点击画面会上传单张JPEG到阿里云百炼，可能消耗免费Token。请先开启对应模型的用完即停。API Key只保存在本机。");
-        note.setTextColor(0xFFBFC2C8);note.setPadding(0,dp(20),0,0);panel.addView(note);
-        ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.addView(panel);
-        AlertDialog dialog=new AlertDialog.Builder(this).setView(scroll)
-            .setPositiveButton("完成",(d,w)->{}).create();
-        dialog.setOnShowListener(d->{
-            if(dialog.getWindow()!=null){
-                android.graphics.drawable.GradientDrawable frame=new android.graphics.drawable.GradientDrawable();
-                frame.setColor(0xFF0B0B0D);frame.setCornerRadius(dp(18));
-                dialog.getWindow().setBackgroundDrawable(frame);
-                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(0xFF66B4EA);
-                dialog.getWindow().setLayout(
-                    getResources().getDisplayMetrics().widthPixels-dp(24),
-                    ViewGroup.LayoutParams.WRAP_CONTENT);
-            }
-        });
+        heading.setText("蓝星向导 · 设置");
+        heading.setTextSize(TypedValue.COMPLEX_UNIT_SP,25);
+        heading.setTextColor(Color.WHITE);
+        heading.setTypeface(null,android.graphics.Typeface.BOLD);
+        heading.setGravity(Gravity.CENTER);
+        panel.addView(heading);
+        addSimpleSettingsRow(panel,"语音与语速","本地TTS引擎、0.5–3倍语速、试听",
+            ()->showSpeechSettings());
+        addSimpleSettingsRow(panel,"任务管理","编辑五个预设提示词、新增与修改自定义任务",
+            ()->{if(settingsDialog!=null)settingsDialog.dismiss();showTaskManagement();});
+        addSimpleSettingsRow(panel,"摄像头设置","镜头来源、独立方向记忆、镜像、缩放",
+            ()->showCameraOptions());
+        addSimpleSettingsRow(panel,"提示音与振动","拍照叮叮提示和短振动，均可单独关闭",
+            ()->showFeedbackSettings());
+        addSimpleSettingsRow(panel,"云端AI","模型、分辨率、API Key及用完即停提醒",
+            ()->showCloudOptions());
+        addSimpleSettingsRow(panel,"上次识别结果","查看全文或再次朗读",
+            ()->showLastResultDialog());
+        TextView footer=new TextView(this);
+        footer.setText("识别需要联网并可能消耗百炼Token；公开发布需服务端密钥与限额保护。");
+        footer.setTextColor(0xFFD0E1F3);
+        footer.setPadding(0,dp(9),0,0);panel.addView(footer);
+        ScrollView scroll=new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.addView(panel);
+        AlertDialog dialog=new AlertDialog.Builder(this)
+            .setView(scroll).setPositiveButton("完成",null).create();
         dialog.show();settingsDialog=dialog;
+        if(dialog.getWindow()!=null)
+            dialog.getWindow().setLayout(getResources().getDisplayMetrics().widthPixels-dp(20),
+                ViewGroup.LayoutParams.WRAP_CONTENT);
         dialog.setOnDismissListener(d->{if(settingsDialog==dialog)settingsDialog=null;});
+    }
+
+    private void showSpeechSettings(){
+        LinearLayout form=new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(20),dp(12),dp(20),dp(12));
+        Switch follow=new Switch(this);
+        follow.setText("跟随语音引擎默认语速");
+        follow.setTextColor(Color.WHITE);
+        follow.setChecked(followSystemSpeechRate);
+        form.addView(follow);
+        TextView speed=new TextView(this);
+        speed.setTextColor(Color.WHITE);speed.setTextSize(17);
+        speed.setText("本地语速："+String.format(Locale.CHINA,"%.2f",speechRate)+"×");
+        form.addView(speed);
+        SeekBar seek=new SeekBar(this);seek.setMax(50);
+        seek.setProgress(Math.round((speechRate-.5f)*20f));
+        seek.setEnabled(!followSystemSpeechRate);
+        form.addView(seek);
+        follow.setOnCheckedChangeListener((view,isChecked)->{
+            followSystemSpeechRate=isChecked;
+            seek.setEnabled(!isChecked);
+            persistSpeechRate();
+        });
+        seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            @Override public void onProgressChanged(SeekBar bar,int value,boolean fromUser){
+                if(!fromUser)return;
+                speechRate=.5f+value*.05f;
+                speed.setText("本地语速："+String.format(Locale.CHINA,"%.2f",speechRate)+"×");
+                persistSpeechRate();
+            }
+            @Override public void onStartTrackingTouch(SeekBar b){}
+            @Override public void onStopTrackingTouch(SeekBar b){}
+        });
+        new AlertDialog.Builder(this).setTitle("本地语音")
+            .setView(form)
+            .setNeutralButton("选择语音引擎",(d,w)->showInstalledTtsSelector())
+            .setNegativeButton("关闭",null)
+            .setPositiveButton("试听",(d,w)->speak("蓝星向导，当前语速试听。")).show();
+    }
+    private void persistSpeechRate(){
+        getSharedPreferences(PREFS,MODE_PRIVATE).edit()
+            .putFloat(PREF_SPEECH_RATE,speechRate)
+            .putBoolean(PREF_SPEECH_DEFAULT,followSystemSpeechRate).apply();
+        if(tts!=null&&ttsReady)
+            tts.setSpeechRate(followSystemSpeechRate?1f:speechRate);
+    }
+
+    private void showFeedbackSettings(){
+        String[] titles={"拍照叮叮提示音","拍照短振动"};
+        boolean[] choices={feedbackSound,feedbackVibration};
+        new AlertDialog.Builder(this).setTitle("提示与振动")
+            .setMultiChoiceItems(titles,choices,(d,which,checked)->{
+                if(which==0)feedbackSound=checked;else feedbackVibration=checked;
+                getSharedPreferences(PREFS,MODE_PRIVATE).edit()
+                    .putBoolean(PREF_SOUND,feedbackSound)
+                    .putBoolean(PREF_HAPTIC,feedbackVibration).apply();
+            }).setPositiveButton("完成",null).show();
+    }
+
+    private void showCameraOptions(){
+        String[] names={"切换摄像头","旋转画面（当前："+previewRotation+"°）",
+            "水平镜像（"+(previewMirror?"开":"关")+"）",
+            "垂直翻转（"+(previewVerticalFlip?"开":"关")+"）",
+            "USB左右校正（"+(usbPreviewCorrectMirror?"开":"关")+"）",
+            "缩放恢复1×"};
+        new AlertDialog.Builder(this).setTitle("摄像头设置 · 各镜头分别记忆")
+            .setItems(names,(d,i)->{
+                if(i==0){showCameraSourceSelector();return;}
+                if(i==1)previewRotation=(previewRotation+90)%360;
+                else if(i==2)previewMirror=!previewMirror;
+                else if(i==3)previewVerticalFlip=!previewVerticalFlip;
+                else if(i==4)usbPreviewCorrectMirror=!usbPreviewCorrectMirror;
+                else if(i==5)setCameraZoom(1f);
+                saveCameraProfile();
+                applyPreviewTransform();applyPhonePreviewTransform();
+                setResultStatus("摄像头画面设置已保存");
+                showCameraOptions();
+            }).setNegativeButton("完成",null).show();
+    }
+
+    private void showCloudOptions(){
+        String[] menu={"选择视觉AI模型（当前："+visionModel+"）",
+            "选择照片分辨率","配置或清除 API Key","用完即停说明"};
+        new AlertDialog.Builder(this).setTitle("云端 AI")
+            .setItems(menu,(d,i)->{
+                if(i==0)showVisionModelSelector();
+                else if(i==1)showImagePolicySelector();
+                else if(i==2)showCloudKeyDialog();
+                else new AlertDialog.Builder(this).setTitle("费用保护")
+                    .setMessage("务必在阿里云百炼对各模型确认免费额度并开启「用完即停」。所有照片仅在你主动点击时上传。")
+                    .setPositiveButton("知道了",null).show();
+            }).setNegativeButton("关闭",null).show();
+    }
+
+    private void showLastResultDialog(){
+        if(lastCloudResult==null||lastCloudResult.isEmpty()){
+            Toast.makeText(this,"尚无识别结果",Toast.LENGTH_SHORT).show();return;
+        }
+        new AlertDialog.Builder(this).setTitle("上次识别结果")
+            .setMessage(lastCloudResult)
+            .setPositiveButton("朗读",(d,w)->speak(lastCloudResult))
+            .setNegativeButton("关闭",null).show();
     }
 
     /** Identical selection labels and saved preferences as 2.0. */
