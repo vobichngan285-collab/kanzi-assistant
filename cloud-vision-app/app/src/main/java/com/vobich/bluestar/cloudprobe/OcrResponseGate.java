@@ -7,7 +7,13 @@ package com.vobich.bluestar.cloudprobe;
  */
 final class OcrResponseGate {
     static final class NoReadableTextException extends Exception {
-        NoReadableTextException() { super("OCR returned no readable text"); }
+        final String serverModel;
+        final int inputTokens, outputTokens;
+        NoReadableTextException() { this("",-1,-1); }
+        NoReadableTextException(String model,int input,int output) {
+            super("OCR returned no readable text");
+            serverModel=model;inputTokens=input;outputTokens=output;
+        }
     }
 
     private OcrResponseGate() {}
