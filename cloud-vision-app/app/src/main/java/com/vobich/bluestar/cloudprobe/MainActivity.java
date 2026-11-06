@@ -1278,15 +1278,18 @@ public final class MainActivity extends CameraActivity {
     }
     void previewCaptureFeedback(){signalCapture();}
 
-    /** One tap initiates native Android ASR; microphone is never left listening. */
+    /** Single tap; local mic capture and cloud ASR work without system SpeechRecognizer. */
     private void startVoiceFollowup(){
-        if(cloudBusy){Toast.makeText(this,"请等当前AI回答完成",Toast.LENGTH_SHORT).show();return;}
+        if(cloudBusy){toastShort("当前AI正在处理，请稍后");return;}
         if(lastSessionJpeg==null||lastSessionText.isEmpty()){
             speakUnfiltered("请先点击画面拍摄并识别一张照片。");return;
         }
         if(voiceListening){
-            if(speechRecognizer!=null)speechRecognizer.cancel();
-            voiceListening=false;setResultStatus("已取消录音");return;
+            voiceSequence.incrementAndGet();
+            voiceRecorder.cancel();
+            voiceListening=false;
+            setResultStatus("已取消收音");
+            return;
         }
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},REQUEST_VOICE_MIC);
@@ -1296,56 +1299,68 @@ public final class MainActivity extends CameraActivity {
     }
 
     private void beginVoiceListening(){
-        if(!SpeechRecognizer.isRecognitionAvailable(this)){
-            showTextQuestionFallback("未发现手机语音识别服务，可输入问题继续追问。");
+        if(!uiActive||voiceListening||cloudBusy)return;
+        String key=CloudKeyStore.load(this);
+        if(key.isEmpty()){
+            toastShort("请先在云端 AI 设置中配置百炼 API Key");
             return;
         }
         if(tts!=null)tts.stop();
-        try{
-            if(speechRecognizer!=null){speechRecognizer.destroy();speechRecognizer=null;}
-            speechRecognizer=SpeechRecognizer.createSpeechRecognizer(this);
-            speechRecognizer.setRecognitionListener(new RecognitionListener(){
-                @Override public void onReadyForSpeech(Bundle params){
-                    setResultStatus("正在听你说话…");
-                }
-                @Override public void onBeginningOfSpeech(){setResultStatus("正在收音…");}
-                @Override public void onRmsChanged(float rmsdB){}
-                @Override public void onBufferReceived(byte[] buffer){}
-                @Override public void onEndOfSpeech(){setResultStatus("正在转换语音…");}
-                @Override public void onError(int error){
+        voiceListening=true;
+        final int sequence=voiceSequence.incrementAndGet();
+        setResultStatus("正在收音，停顿后自动发送");
+        voiceRecorder.begin(new VoiceRecorder.Listener(){
+            @Override public void onListening(){
+                handler.post(()->{
+                    if(sequence==voiceSequence.get()&&uiActive)
+                        setResultStatus("正在听你说话…");
+                });
+            }
+            @Override public void onSilence(){
+                handler.post(()->{
+                    if(sequence==voiceSequence.get()&&uiActive)
+                        setResultStatus("语音已结束，准备识别…");
+                });
+            }
+            @Override public void onFinished(byte[] wav){
+                handler.post(()->{
+                    if(!uiActive||sequence!=voiceSequence.get())return;
                     voiceListening=false;
-                    setResultStatus("语音识别未成功，请重试");
-                    if(error==SpeechRecognizer.ERROR_CLIENT||
-                       error==SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS||
-                       error==SpeechRecognizer.ERROR_RECOGNIZER_BUSY)
-                        showTextQuestionFallback("语音识别暂不可用，可手动输入问题。");
-                }
-                @Override public void onResults(Bundle results){
+                    cloudBusy=true;
+                    setResultStatus("正在转换中文语音（百炼ASR）…");
+                    final int photoToken=requestVersion.get();
+                    encodingTask=encoder.submit(()->{
+                        try{
+                            String transcript=CloudAsrClient.recognize(wav,key);
+                            handler.post(()->{
+                                if(!uiActive||sequence!=voiceSequence.get()
+                                    ||photoToken!=requestVersion.get())return;
+                                cloudBusy=false;
+                                setResultStatus("语音已识别，正在向AI提问…");
+                                askAboutCurrentImage(transcript);
+                            });
+                        }catch(Exception error){
+                            handler.post(()->{
+                                if(!uiActive||sequence!=voiceSequence.get()
+                                    ||photoToken!=requestVersion.get())return;
+                                cloudBusy=false;
+                                setResultStatus("语音识别失败，可再试一次");
+                                toastShort("语音识别失败："+error.getMessage());
+                                showTextQuestionFallback("这次录音未能识别，可文字输入问题。");
+                            });
+                        }
+                    });
+                });
+            }
+            @Override public void onFailure(String message){
+                handler.post(()->{
+                    if(!uiActive||sequence!=voiceSequence.get())return;
                     voiceListening=false;
-                    ArrayList<String> answers=results.getStringArrayList(
-                        SpeechRecognizer.RESULTS_RECOGNITION);
-                    String question=answers==null||answers.isEmpty()?"":answers.get(0).trim();
-                    if(question.isEmpty()){
-                        setResultStatus("未听清，请再点AI对话");return;
-                    }
-                    askAboutCurrentImage(question);
-                }
-                @Override public void onPartialResults(Bundle partial){}
-                @Override public void onEvent(int eventType,Bundle params){}
-            });
-            Intent intent=new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE,"zh-CN");
-            intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS,1);
-            voiceListening=true;
-            setResultStatus("请说话，结束后自动发送");
-            speechRecognizer.startListening(intent);
-        }catch(RuntimeException error){
-            voiceListening=false;
-            setResultStatus("无法启动语音识别");
-            showTextQuestionFallback("手机语音服务启动失败，可以输入问题。");
-        }
+                    setResultStatus("未听清："+message);
+                    toastShort(message);
+                });
+            }
+        });
     }
 
     private void showTextQuestionFallback(String reason){
@@ -1545,7 +1560,7 @@ public final class MainActivity extends CameraActivity {
     }
     @Override protected void onPause(){
         uiActive=false;usbForeground=false;
-        if(speechRecognizer!=null){speechRecognizer.cancel();voiceListening=false;}
+        voiceSequence.incrementAndGet();voiceRecorder.cancel();voiceListening=false;
         invalidate();
         cloudBusy=false;
         saveCameraProfile();
@@ -1560,7 +1575,7 @@ public final class MainActivity extends CameraActivity {
         invalidate();
         if(phoneController!=null)phoneController.stop();
         encoder.shutdownNow();
-        if(speechRecognizer!=null){speechRecognizer.destroy();speechRecognizer=null;}
+        voiceSequence.incrementAndGet();voiceRecorder.cancel();
         lastSessionJpeg=null;
         if(tts!=null){tts.stop();tts.shutdown();tts=null;}
         if(clickPool!=null){clickPool.release();clickPool=null;}
