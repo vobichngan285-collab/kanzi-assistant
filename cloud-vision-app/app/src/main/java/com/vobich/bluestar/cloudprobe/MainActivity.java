@@ -279,7 +279,7 @@ public final class MainActivity extends CameraActivity {
         dock.setPadding(dp(7),dp(5),dp(7),dp(7));
         dock.setBackground(roundRect(0xED091D36,20));
         modeButton=createControlButton("▦\n任务",0xFF2C547D);
-        startButton=createControlButton("●\nAI对话",0xFF176BAC);
+        startButton=createControlButton("🎙\nAI对话",0xFF176BAC);
         settingsButton=createControlButton("⚙\n设置",0xFF2C547D);
         for(Button btt:new Button[]{modeButton,startButton,settingsButton}){
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(75),1f);
@@ -304,8 +304,12 @@ public final class MainActivity extends CameraActivity {
     private Button createControlButton(String label,int background){
         Button button=new Button(this);
         button.setAllCaps(false);
-        button.setText(label);
-        button.setTextSize(TypedValue.COMPLEX_UNIT_SP,17);
+        android.text.SpannableString styled=new android.text.SpannableString(label);
+        int lineEnd=label.indexOf('\n');
+        if(lineEnd>0)styled.setSpan(new android.text.style.RelativeSizeSpan(1.6f),
+            0,lineEnd,android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        button.setText(styled);
+        button.setTextSize(TypedValue.COMPLEX_UNIT_SP,16);
         button.setTextColor(Color.WHITE);
         button.setGravity(Gravity.CENTER);
         button.setPadding(dp(4),0,dp(4),0);
