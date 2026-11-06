@@ -10,12 +10,12 @@ public final class CloudOptimizationTest {
     public static void main(String[] args){
         List<String> lines=new ArrayList<>();
         SpeechChunker chunks=new SpeechChunker();
-        chunks.append("墙上贴着一张刮痧宣传",lines::add);
+        chunks.append("墙上贴着一张完整的刮痧宣传",lines::add);
         check(lines.isEmpty(),"incomplete clause must wait");
         chunks.append("单，上面写有中医养生和专业学校毕业。",lines::add);
         chunks.finish(lines::add);
         check(lines.size()==2,"early comma boundary and complete final sentence");
-        check(String.join("",lines).equals("墙上贴着一张刮痧宣传单，上面写有中医养生和专业学校毕业。"),
+        check(String.join("",lines).equals("墙上贴着一张完整的刮痧宣传单，上面写有中医养生和专业学校毕业。"),
             "no dropped/duplicated characters");
         List<String> shortText=new ArrayList<>();
         SpeechChunker other=new SpeechChunker();
