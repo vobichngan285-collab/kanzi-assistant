@@ -1,6 +1,12 @@
 package com.vobich.bluestar.cloudprobe;
 
 import android.Manifest;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Intent;
+import android.net.Uri;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
@@ -88,6 +94,7 @@ public final class MainActivity extends CameraActivity {
     private static final String PREF_FINDING_TARGET = "continuous_find_target";
     private static final int REQUEST_PHONE_CAMERA = 4051;
     private static final int REQUEST_VOICE_MIC = 4052;
+    private static final int REQUEST_DIAG_EXPORT = 4053;
 
     private FrameLayout previewContainer,rootFrame;
     private TextView currentTaskChip,zoomChip,resultChip;
@@ -101,6 +108,11 @@ public final class MainActivity extends CameraActivity {
     private float speechRate=1f;
     private final VoiceRecorder voiceRecorder=new VoiceRecorder();
     private boolean voiceListening;
+    private volatile int pendingPhoneFrameToken=-1;
+    private long phoneCaptureTapAtMs;
+    private RuntimeDiagnostics diagnostics;
+    private boolean usbFirstFrameRecorded;
+    private boolean phoneFirstFrameRecorded;
     private final AtomicInteger voiceSequence=new AtomicInteger();
     private LargeSettingsScreen largeSettings;
     private SoundPool clickPool;
@@ -169,13 +181,27 @@ public final class MainActivity extends CameraActivity {
     };
 
     private void updateFrame(byte[] bytes,int w,int h,boolean phone) {
-        if (bytes==null || w<2 || h<2 || (w&1)!=0 || (h&1)!=0 ||
-            (long)bytes.length != (long)w*h*3L/2L) return;
-        // UVC callbacks may reuse a native buffer immediately. Own a copy only for sampled frames.
-        Frame frame = new Frame(java.util.Arrays.copyOf(bytes,bytes.length),w,h,
-            SystemClock.elapsedRealtime());
-        if(phone) latestPhoneFrame=frame;
-        else { latestUsbFrame=frame; usbFrameCount.incrementAndGet(); }
+        if(bytes==null||w<2||h<2||(w&1)!=0||(h&1)!=0||
+            (long)bytes.length!=(long)w*h*3L/2L)return;
+        // Native USB callback buffer can be reused: keep the defensive copy.
+        // Camera2 always creates its own NV21 byte[], so never clone that a second time.
+        Frame frame=new Frame(phone?bytes:java.util.Arrays.copyOf(bytes,bytes.length),
+            w,h,SystemClock.elapsedRealtime());
+        if(phone){
+            handler.post(()->{
+                int token=pendingPhoneFrameToken;
+                if(token<0||token!=requestVersion.get()||!usingPhoneCamera||!uiActive)return;
+                pendingPhoneFrameToken=-1;
+                beginCapturedFrame(frame,phoneCaptureTapAtMs,token);
+            });
+        }else{
+            latestUsbFrame=frame;
+            usbFrameCount.incrementAndGet();
+            if(!usbFirstFrameRecorded){
+                usbFirstFrameRecorded=true;
+                if(diagnostics!=null)diagnostics.event("camera","usb_first_frame",0,"ok");
+            }
+        }
     }
 
     /** Full screen camera + one-tap capture/pinch + accessible dock. */
@@ -285,7 +311,8 @@ public final class MainActivity extends CameraActivity {
         resultChip.setGravity(Gravity.CENTER);
         resultChip.setTextColor(Color.WHITE);
         resultChip.setTextSize(TypedValue.COMPLEX_UNIT_SP,13);
-        resultChip.setText("点击画面识别");
+        resultChip.setText("");
+        resultChip.setVisibility(View.GONE);
         resultChip.setPadding(dp(10),dp(6),dp(10),dp(6));
         resultChip.setBackground(roundRect(0xCE163758,13));
         FrameLayout.LayoutParams stat=new FrameLayout.LayoutParams(-2,dp(36),Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);
@@ -363,7 +390,9 @@ public final class MainActivity extends CameraActivity {
         TaskDesktopOverlay.show(this,TaskCatalog.all(this),currentTask.id,
             new TaskDesktopOverlay.Listener(){
                 @Override public void selected(TaskCatalog.Task task){
-                    invalidate();refreshTask(task.id);
+                    invalidate();
+                    if(!findingTarget.isEmpty())setFindingTarget("");
+                    refreshTask(task.id);
                     setResultStatus("已选择："+task.name);
                 }
                 @Override public void createTask(){editTask(null);}
@@ -465,8 +494,16 @@ public final class MainActivity extends CameraActivity {
         dialog.show();
     }
 
+    private final Runnable hideStatus=()->{
+        if(resultChip!=null)resultChip.setVisibility(View.GONE);
+    };
     private void setResultStatus(String text){
-        if(resultChip!=null)resultChip.setText(text);
+        if(resultChip==null)return;
+        handler.removeCallbacks(hideStatus);
+        if(text==null||text.trim().isEmpty()){resultChip.setVisibility(View.GONE);return;}
+        resultChip.setText(text);
+        resultChip.setVisibility(View.VISIBLE);
+        handler.postDelayed(hideStatus,4500L);
     }
 
     private void addSimpleSettingsRow(LinearLayout panel,String label,String detail,Runnable clicked) {
@@ -527,6 +564,35 @@ public final class MainActivity extends CameraActivity {
     void previewLastRecognizedText(){speak(lastCloudResult);}
     String lastRecognizedText(){return lastCloudResult;}
     void refreshSelectedTask(String id){refreshTask(id);}
+    String runtimeDiagnosticSummary(){return diagnostics==null?"暂无记录":diagnostics.summary();}
+    void copyRuntimeDiagnostics(){
+        ClipboardManager clipboard=(ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+        if(clipboard==null){toastShort("剪贴板暂不可用");return;}
+        clipboard.setPrimaryClip(ClipData.newPlainText("蓝星向导运行诊断",runtimeDiagnosticSummary()));
+        toastShort("已复制匿名运行诊断摘要");
+    }
+    void exportRuntimeDiagnostics(){
+        Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.setType("text/plain");
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.putExtra(Intent.EXTRA_TITLE,"BlueStar_Running_Diagnostics.txt");
+        startActivityForResult(intent,REQUEST_DIAG_EXPORT);
+    }
+    void clearRuntimeDiagnostics(){
+        if(diagnostics!=null)diagnostics.clear();
+        toastShort("本机诊断记录已清空");
+    }
+    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){
+        super.onActivityResult(requestCode,resultCode,data);
+        if(requestCode!=REQUEST_DIAG_EXPORT||resultCode!=RESULT_OK||data==null)return;
+        Uri uri=data.getData();
+        if(uri==null)return;
+        try(OutputStream out=getContentResolver().openOutputStream(uri)){
+            if(out==null)throw new Exception("无法创建导出文件");
+            out.write(runtimeDiagnosticSummary().getBytes(StandardCharsets.UTF_8));
+            toastShort("匿名诊断日志已保存");
+        }catch(Exception e){toastShort("导出失败，请重新选择位置");}
+    }
     String sourceDescription(){return usingPhoneCamera?
         (phoneFrontFacing?"手机前置摄像头":"手机后置摄像头"):"USB 外接摄像头";}
     String rotationDescription(){return previewRotation+"度";}
@@ -775,6 +841,7 @@ public final class MainActivity extends CameraActivity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        diagnostics=new RuntimeDiagnostics(this);
         SharedPreferences prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
         usingPhoneCamera=prefs.getBoolean(PREF_PHONE_CAMERA,false);
         phoneFrontFacing=prefs.getBoolean(PREF_FRONT_CAMERA,false);
@@ -800,8 +867,7 @@ public final class MainActivity extends CameraActivity {
         phoneController=new InternalCameraController(this,phoneTexture,new InternalCameraController.Listener(){
             @Override public boolean shouldReceiveFrame() {
                 return uiActive && usingPhoneCamera &&
-                    (latestPhoneFrame==null ||
-                     SystemClock.elapsedRealtime()-latestPhoneFrame.atMs>=220L);
+                    pendingPhoneFrameToken==requestVersion.get();
             }
             @Override public void onFrame(byte[] nv21,int w,int h){
                 if(usingPhoneCamera)updateFrame(nv21,w,h,true);
@@ -817,6 +883,10 @@ public final class MainActivity extends CameraActivity {
                     if(!usingPhoneCamera)return;
                     if(phoneController!=null)phoneController.setZoom(zoom);
                     phonePreviewReceived=true;
+                    if(!phoneFirstFrameRecorded){
+                        phoneFirstFrameRecorded=true;
+                        if(diagnostics!=null)diagnostics.event("camera","phone_preview_ready",0,"ok");
+                    }
                     if(phonePreviewStatus!=null)phonePreviewStatus.setVisibility(View.GONE);
                 });
             }
@@ -831,7 +901,7 @@ public final class MainActivity extends CameraActivity {
             phoneTexture.setVisibility(View.VISIBLE);
             if(cameraTextureView!=null)cameraTextureView.setVisibility(View.INVISIBLE);
         }
-        setResultStatus("点击画面识别 · 点击AI对话追问");
+        setResultStatus("");
     }
 
     private void showImagePolicySelector(){
@@ -909,7 +979,9 @@ public final class MainActivity extends CameraActivity {
                     recordTtsProgress(utteranceId,false);
                 }
                 @Override public void onDone(String utteranceId){}
-                @Override public void onError(String utteranceId){}
+                @Override public void onError(String utteranceId){
+                    if(diagnostics!=null)diagnostics.event("tts","engine_error",0,"failed");
+                }
                 @Override public void onAudioAvailable(String utteranceId,byte[] audio){
                     if(audio!=null&&audio.length>0)recordTtsProgress(utteranceId,true);
                 }
@@ -930,6 +1002,8 @@ public final class MainActivity extends CameraActivity {
             ttsEngineStartMs=ms;
         }
         Log.i(TAG,"TTS timing: "+(audio?"firstAudioCallbackMs=":"engineOnStartMs=")+ms);
+        if(diagnostics!=null)diagnostics.event("tts",
+            audio?"first_audio_callback_ms":"onstart_ms",ms,"callback_only");
         handler.post(this::refreshCloudResultTtsStatus);
     }
 
@@ -977,6 +1051,10 @@ public final class MainActivity extends CameraActivity {
     /** Preserve camera/source switching and attachment order from 2.0. */
     private void switchCameraSource(boolean phone) {
         invalidate();
+        pendingPhoneFrameToken=-1;
+        if(phoneController!=null)phoneController.cancelFreshFrame();
+        usbFirstFrameRecorded=false;
+        phoneFirstFrameRecorded=false;
         usingPhoneCamera=phone;
         latestPhoneFrame=null;
         latestUsbFrame=null;
@@ -1273,7 +1351,7 @@ public final class MainActivity extends CameraActivity {
                 if(status==0)soundLoaded.add(id);
                 else Log.w(TAG,"Feedback sound loading failed: sampleId="+id);
             });
-            metalClickSample=clickPool.load(this,R.raw.metal_sharp_click,1);
+            metalClickSample=clickPool.load(this,R.raw.c_metal_clack_ding,1);
             sendWhooshSample=clickPool.load(this,R.raw.voice_send_whoosh,1);
         }catch(RuntimeException error){
             Log.w(TAG,"Feedback sound loading failed",error);
@@ -1378,6 +1456,7 @@ public final class MainActivity extends CameraActivity {
         }
         if(tts!=null)tts.stop();
         voiceListening=true;
+        if(diagnostics!=null)diagnostics.event("voice","hold_started",0,"ok");
         final int sequence=voiceSequence.incrementAndGet();
         setResultStatus("正在连接麦克风…按住说话，松开发送");
         boolean started=voiceRecorder.begin(this,new VoiceRecorder.Listener(){
@@ -1394,6 +1473,11 @@ public final class MainActivity extends CameraActivity {
                     voiceListening=false;
                     cloudBusy=true;
                     lastMicDiagnostic="输入："+mic+"；录音："+durationMs+"毫秒；峰值："+peak+"；均方根："+rms;
+                    if(diagnostics!=null){
+                        diagnostics.event("voice","duration_ms",durationMs,"ok");
+                        diagnostics.event("voice","peak",peak,peak>0?"ok":"silent");
+                        diagnostics.event("voice","rms",rms,"ok");
+                    }
                     // No arbitrary RMS gate. Quiet recordings are sent to the ASR itself.
                     Log.i(TAG,"Voice microphone="+mic+" durationMs="+durationMs+
                         " peak="+peak+" rms="+rms+" wavBytes="+wav.length);
@@ -1408,7 +1492,10 @@ public final class MainActivity extends CameraActivity {
                                     photoToken==requestVersion.get())
                                     playVoiceSendSound();
                             });
+                            long asrAt=SystemClock.elapsedRealtime();
                             String transcript=CloudAsrClient.recognize(wav,key);
+                            if(diagnostics!=null)diagnostics.event("asr","response_ms",
+                                SystemClock.elapsedRealtime()-asrAt,"ok");
                             handler.post(()->{
                                 if(!uiActive||sequence!=voiceSequence.get()||
                                     photoToken!=requestVersion.get())return;
@@ -1420,6 +1507,7 @@ public final class MainActivity extends CameraActivity {
                                 if(!uiActive||sequence!=voiceSequence.get()||
                                     photoToken!=requestVersion.get())return;
                                 cloudBusy=false;
+                                if(diagnostics!=null)diagnostics.event("asr","request",0,"failed");
                                 setResultStatus("语音上传或识别失败，请重试");
                                 toastShort("语音识别失败："+error.getMessage());
                                 speakUnfiltered("语音识别失败，请再试一次。");
@@ -1433,6 +1521,7 @@ public final class MainActivity extends CameraActivity {
                     if(sequence!=voiceSequence.get()||!uiActive)return;
                     voiceListening=false;
                     lastMicDiagnostic="录音失败："+reason;
+                    if(diagnostics!=null)diagnostics.event("voice","record",0,"failed");
                     setResultStatus("录音失败："+reason);
                     toastShort(reason);
                 });
@@ -1532,6 +1621,11 @@ public final class MainActivity extends CameraActivity {
                     cloudBusy=false;
                     setResultStatus("AI追问已回答 · 再点可继续提问");
                     lastCloudResult=result.text;
+                    if(pieces.get()==0)speakUnfiltered(result.text);
+                    if(diagnostics!=null){
+                        diagnostics.event("followup","network_ms",result.networkMs,"ok");
+                        diagnostics.event("followup","first_text_ms",result.firstTextMs,"ok");
+                    }
                     followupTurns.add("问："+question+"，答："+result.text);
                     while(followupTurns.size()>3)followupTurns.remove(0);
                 });
@@ -1539,6 +1633,7 @@ public final class MainActivity extends CameraActivity {
                 handler.post(()->{
                     if(!uiActive||token!=requestVersion.get())return;
                     cloudBusy=false;
+                    if(diagnostics!=null)diagnostics.event("followup","network",0,"failed");
                     setResultStatus("AI对话失败");
                     Toast.makeText(this,"追问失败："+ex.getMessage(),Toast.LENGTH_LONG).show();
                 });
@@ -1548,54 +1643,91 @@ public final class MainActivity extends CameraActivity {
 
     private void invalidate(){
         requestVersion.incrementAndGet();
+        pendingPhoneFrameToken=-1;
+        if(phoneController!=null)phoneController.cancelFreshFrame();
         cloudBusy=false;
         if(encodingTask!=null){encodingTask.cancel(true);encodingTask=null;}
         if(tts!=null)tts.stop();
     }
 
+    /** USB retains its last owned NV21; Camera2 only converts a new frame after tap. */
     private void captureOneFrame(){
         if(voiceListening||voiceRecorder.isBusy()){
-            toastShort("正在按住录音，请松手后再拍照");return;
+            toastShort("正在录音，请松手后再拍照");return;
         }
-        if(cloudBusy){Toast.makeText(this,"正在识别，请稍候",Toast.LENGTH_SHORT).show();return;}
+        if(cloudBusy){toastShort("AI正在处理上一项操作");return;}
         long now=SystemClock.elapsedRealtime();
-        if(now-lastPinchMs<550L)return;
-        if(!uiActive)return;
-        if(now-lastTapMs<1500L){
-            Toast.makeText(this,"已忽略连续误触",Toast.LENGTH_SHORT).show();return;
-        }
-        Frame current=usingPhoneCamera?latestPhoneFrame:latestUsbFrame;
-        if(current==null||now-current.atMs>1400L){
-            Toast.makeText(this,"没有最新摄像头画面，不会使用旧照片",Toast.LENGTH_LONG).show();
+        if(now-lastPinchMs<550L||!uiActive)return;
+        if(now-lastTapMs<1500L){toastShort("已忽略连续误触");return;}
+        Frame usbShot=usingPhoneCamera?null:latestUsbFrame;
+        if(!usingPhoneCamera&&(usbShot==null||now-usbShot.atMs>1400L)){
+            toastShort("USB没有最新画面，不会使用旧照片");
+            if(diagnostics!=null)diagnostics.event("camera","usb_stale_frame",0,"failed");
             return;
+        }
+        if(usingPhoneCamera&&phoneController==null){
+            toastShort("手机摄像头尚未就绪");return;
         }
         lastTapMs=now;
         invalidate();
-        lastSessionJpeg=null;lastSessionText="";lastSessionTask="";
-        lastCloudResult="";followupTurns.clear();
-        signalCapture();
-        setResultStatus("已拍照 · 正在云端识别…");
+        final int token=requestVersion.get();
         cloudBusy=true;
-        int token=requestVersion.get();
         speechRequestToken=token;
         speechCaptureAtMs=now;
         ttsEngineStartMs=-1;
         ttsAudioCallbackMs=-1;
-        TaskCatalog.Task task=currentTask;
+        if(diagnostics!=null){
+            diagnostics.begin(usingPhoneCamera?
+                (phoneFrontFacing?"phone_front":"phone_back"):"usb");
+            diagnostics.event("camera","tap",0,"ok");
+        }
+        if(usingPhoneCamera){
+            pendingPhoneFrameToken=token;
+            phoneCaptureTapAtMs=now;
+            setResultStatus("正在获取最新手机画面…");
+            phoneController.requestFreshFrame();
+            handler.postDelayed(()->{
+                if(!uiActive||token!=requestVersion.get()||
+                    pendingPhoneFrameToken!=token)return;
+                pendingPhoneFrameToken=-1;
+                phoneController.cancelFreshFrame();
+                cloudBusy=false;
+                if(diagnostics!=null)diagnostics.event("camera","fresh_frame_ms",
+                    SystemClock.elapsedRealtime()-now,"timeout");
+                setResultStatus("手机摄像头未提供新照片，请检查预览后重试");
+            },3000L);
+        }else beginCapturedFrame(usbShot,now,token);
+    }
+
+    private void beginCapturedFrame(Frame current,long tapAtMs,int token){
+        if(!uiActive||token!=requestVersion.get())return;
+        // Do not reuse prior image as the new frame; only clear the previous
+        // image session once a genuinely new frame is acquired.
+        lastSessionJpeg=null;
+        lastSessionText="";
+        lastSessionTask="";
+        lastCloudResult="";
+        followupTurns.clear();
+        signalCapture();
+        cloudBusy=true;
+        setResultStatus("已拍照 · 正在云端识别…");
+        if(diagnostics!=null)diagnostics.event("camera","fresh_frame_ms",
+            Math.max(0,current.atMs-tapAtMs),"ok");
+        final TaskCatalog.Task task=currentTask;
         final String targetToFind=findingTarget;
-        String source=usingPhoneCamera?(phoneFrontFacing?"手机前置":"手机后置"):"USB 外接";
-        String policy=imagePolicy;
-        String model=visionModel;
-        int photoRotation=previewRotation;
-        // USB mirror is a TextureView-local transform BEFORE View rotation;
-        // on 90/270 it becomes a vertical flip in display coordinates.
+        final String source=usingPhoneCamera?
+            (phoneFrontFacing?"手机前置":"手机后置"):"USB 外接";
+        final String policy=imagePolicy;
+        final String model=visionModel;
+        final int photoRotation=previewRotation;
+        // Match USB TextureView-local mirror before 90/270-degree rotation.
         boolean localUsbMirror=usbPreviewCorrectMirror^previewMirror;
         boolean quarterTurn=previewRotation==90||previewRotation==270;
-        boolean photoMirror=usingPhoneCamera?previewMirror:
+        final boolean photoMirror=usingPhoneCamera?previewMirror:
             (quarterTurn?false:localUsbMirror);
-        boolean photoFlip=usingPhoneCamera?previewVerticalFlip:
+        final boolean photoFlip=usingPhoneCamera?previewVerticalFlip:
             (previewVerticalFlip^(quarterTurn&&localUsbMirror));
-        float photoZoom=usingPhoneCamera?1f:zoom;
+        final float photoZoom=usingPhoneCamera?1f:zoom;
         encodingTask=encoder.submit(()->{
             long takenAt=SystemClock.elapsedRealtime();
             try{
@@ -1604,23 +1736,29 @@ public final class MainActivity extends CameraActivity {
                 byte[] jpeg=FrameCompressor.encodeAdjustedJpeg(
                     current.pixels,current.width,current.height,plan.limit,
                     photoRotation,photoMirror,photoFlip,photoZoom);
-                long compressedAt=SystemClock.elapsedRealtime();
-                long encodingMs=compressedAt-takenAt;
+                long encodingMs=SystemClock.elapsedRealtime()-takenAt;
                 if(token!=requestVersion.get())return;
+                if(diagnostics!=null){
+                    diagnostics.event("jpeg","encode_ms",encodingMs,"ok");
+                    diagnostics.event("jpeg","bytes",jpeg.length,"ok");
+                }
                 String key=CloudKeyStore.load(this);
                 if(key.isEmpty()){
                     handler.post(()->{
                         if(token!=requestVersion.get()||!uiActive)return;
                         cloudBusy=false;
+                        if(diagnostics!=null)diagnostics.event("cloud","key",0,"missing");
                         openLargeSettings();
                         if(largeSettings!=null)largeSettings.openApiKey();
                     });
                     return;
                 }
-
                 if(!targetToFind.isEmpty()){
+                    long cloudAt=SystemClock.elapsedRealtime();
                     TargetVisionClient.Result inspection=TargetVisionClient.inspect(
                         jpeg,targetToFind,key,model);
+                    if(diagnostics!=null)diagnostics.event("cloud","target_ms",
+                        SystemClock.elapsedRealtime()-cloudAt,"ok");
                     handler.post(()->{
                         if(token!=requestVersion.get()||!uiActive)return;
                         cloudBusy=false;
@@ -1628,63 +1766,61 @@ public final class MainActivity extends CameraActivity {
                         lastSessionText=inspection.message;
                         lastSessionTask="寻找"+targetToFind;
                         lastCloudResult=inspection.message;
-                        setResultStatus("寻找："+targetToFind+" · "+inspection.decision);
+                        if(inspection.confirmed()&&targetToFind.equals(findingTarget)){
+                            setFindingTarget("");
+                            setResultStatus("已经找到目标 · 自动结束寻找");
+                            vibrationForTargetFound();
+                        }else setResultStatus("寻找："+targetToFind+" · "+inspection.decision);
                         speakUnfiltered(inspection.message);
-                        if(inspection.confirmed())vibrationForTargetFound();
                     });
                     return;
                 }
-                java.util.concurrent.atomic.AtomicInteger segments=new java.util.concurrent.atomic.AtomicInteger(0);
+                java.util.concurrent.atomic.AtomicInteger delivered=
+                    new java.util.concurrent.atomic.AtomicInteger();
                 CloudVisionClient.Result result=CloudVisionClient.recognize(jpeg,key,task,model,
                     part->handler.post(()->{
                         if(token!=requestVersion.get()||!uiActive||tts==null||!ttsReady)return;
                         String spoken=filterForSpeech(part,task);
                         if(spoken.trim().isEmpty())return;
-                        int partIndex=segments.getAndIncrement();
-                        int mode=partIndex==0?
-                            TextToSpeech.QUEUE_FLUSH:TextToSpeech.QUEUE_ADD;
-                        tts.speak(spoken,mode,null,"vision-"+token+"-"+partIndex);
+                        int index=delivered.get();
+                        int mode=index==0?TextToSpeech.QUEUE_FLUSH:TextToSpeech.QUEUE_ADD;
+                        if(tts.speak(spoken,mode,null,"vision-"+token+"-"+index)
+                            ==TextToSpeech.SUCCESS)delivered.incrementAndGet();
                     }));
-                long overallMs=SystemClock.elapsedRealtime()-takenAt;
+                long overallMs=SystemClock.elapsedRealtime()-tapAtMs;
                 handler.post(()->{
                     if(token!=requestVersion.get()||!uiActive)return;
                     cloudBusy=false;
-                    lastCloudResult=result.text;
-                    Log.i(TAG,"Cloud timing: route="+task.engine+" model="+result.model+
-                        " capture="+source+" raw="+current.width+"x"+current.height+
-                        " imageLimit="+plan.limit+" jpegBytes="+jpeg.length+
-                        " sharpnessEdgeRatio="+plan.edgeRatio+" jpegMs="+encodingMs+
-                        " requestMs="+result.networkMs+" firstTextMs="+result.firstTextMs+
-                        " firstSpeakableMs="+result.firstSpeakableMs+
-                        " promptTokens="+result.promptTokens+
-                        " completionTokens="+result.completionTokens);
-                    String first=result.firstSpeakableMs>=0?
-                        ("首句就绪 "+result.firstSpeakableMs+"毫秒；"):"";
-                    String diagnostic="本机编码 "+encodingMs+"毫秒；"+
-                        first+"完整响应 "+result.networkMs+"毫秒；"+
-                        "总计 "+overallMs+"毫秒\n"+
-                        "模型 "+result.model+"；发送 "+jpeg.length/1024+"KB，"+
-                        (plan.limit==1920?"1080p":"720p")+"（"+plan.decision+"）"+
-                        (result.completionTokens>=0?"；输出Token "+result.completionTokens:"")+
-                        "\n\n";
-                    // Never show a modal dialog over the camera after recognition:
-                    // a single click on the middle AI button can follow up immediately.
                     lastSessionJpeg=jpeg;
                     lastSessionText=result.text;
                     lastSessionTask=task.name;
                     lastCloudResult=result.text;
-                    setResultStatus("已识别："+task.name+" · 点击AI对话可追问");
-                    if(TaskCatalog.OCR.equals(task.engine))speak(result.text);
-                });
-            }catch(Exception e){
-                handler.post(()->{
-                    if(token==requestVersion.get()&&uiActive){
-                        cloudBusy=false;
-                        setResultStatus("识别失败，请重试");
-                        new AlertDialog.Builder(this).setTitle("云端识别失败")
-                            .setMessage(e.getMessage()==null?e.getClass().getSimpleName():e.getMessage())
-                            .setPositiveButton("知道了",null).show();
+                    if(diagnostics!=null){
+                        diagnostics.event("cloud","network_ms",result.networkMs,"ok");
+                        diagnostics.event("cloud","first_text_ms",result.firstTextMs,"ok");
+                        diagnostics.event("cloud","first_speakable_ms",result.firstSpeakableMs,"ok");
+                        diagnostics.event("capture","total_ms",overallMs,"ok");
                     }
+                    Log.i(TAG,"Cloud timing: route="+task.engine+" model="+result.model+
+                        " capture="+source+" raw="+current.width+"x"+current.height+
+                        " imageLimit="+plan.limit+" jpegBytes="+jpeg.length+
+                        " jpegMs="+encodingMs+" requestMs="+result.networkMs+
+                        " firstTextMs="+result.firstTextMs+
+                        " firstSpeakableMs="+result.firstSpeakableMs);
+                    setResultStatus("已识别："+task.name+" · 可按住AI对话追问");
+                    if(TaskCatalog.OCR.equals(task.engine)||delivered.get()==0)
+                        speak(result.text);
+                });
+            }catch(Exception error){
+                handler.post(()->{
+                    if(token!=requestVersion.get()||!uiActive)return;
+                    cloudBusy=false;
+                    if(diagnostics!=null)diagnostics.event("cloud","request",0,"failed");
+                    setResultStatus("云端识别失败，请重试");
+                    new AlertDialog.Builder(this).setTitle("云端识别失败")
+                        .setMessage(error.getMessage()==null?
+                            error.getClass().getSimpleName():error.getMessage())
+                        .setPositiveButton("知道了",null).show();
                 });
             }
         });
@@ -1702,6 +1838,8 @@ public final class MainActivity extends CameraActivity {
         uiActive=false;usbForeground=false;
         voiceSequence.incrementAndGet();voiceRecorder.cancel();
         voiceListening=false;voicePress.interrupt();
+        pendingPhoneFrameToken=-1;
+        if(phoneController!=null)phoneController.cancelFreshFrame();
         invalidate();
         cloudBusy=false;
         saveCameraProfile();
@@ -1720,6 +1858,7 @@ public final class MainActivity extends CameraActivity {
         lastSessionJpeg=null;
         if(tts!=null){tts.stop();tts.shutdown();tts=null;}
         if(clickPool!=null){clickPool.release();clickPool=null;}
+        handler.removeCallbacks(hideStatus);
         super.onDestroy();
     }
 }
