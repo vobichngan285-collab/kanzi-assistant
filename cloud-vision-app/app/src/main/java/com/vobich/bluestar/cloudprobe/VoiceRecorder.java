@@ -1,133 +1,119 @@
 package com.vobich.bluestar.cloudprobe;
 
+import android.media.AudioDeviceInfo;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
+import android.media.AudioManager;
 import android.media.MediaRecorder;
+import android.content.Context;
 import android.os.SystemClock;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
-/** Single short push-on voice clip; auto-end after a natural silence. */
+/**
+ * Explicit press-to-talk: no voice activity gate, no 6.5s silence timeout.
+ * Only a real ACTION_UP can request a send; ACTION_CANCEL discards.
+ * All AudioRecord ownership and release stays on one worker thread.
+ */
 final class VoiceRecorder {
     interface Listener {
-        void onListening();
-        void onSilence();
-        void onFinished(byte[] wav);
-        void onFailure(String message);
+        void onReady(String inputDescription);
+        void onFinished(byte[] wav,int durationMs,int peak,int rms,String inputDescription);
+        void onFailure(String reason);
     }
-    private static final int SAMPLE_RATE=16000;
-    private final AtomicBoolean running=new AtomicBoolean(false);
-    private volatile AudioRecord current;
-    private final AtomicInteger generation=new AtomicInteger();
-    private volatile Thread worker;
+    private final AtomicBoolean busy=new AtomicBoolean(false);
+    private final AtomicBoolean finishRequested=new AtomicBoolean(false);
+    private final AtomicBoolean cancelled=new AtomicBoolean(false);
+    private volatile AudioRecord active;
+    boolean isBusy(){return busy.get();}
 
-    boolean isRunning(){return running.get();}
-
-    void begin(Listener listener){
-        if(!running.compareAndSet(false,true))return;
-        int token=generation.incrementAndGet();
-        worker=new Thread(()->capture(listener,token),"BlueStarVoiceCapture");
-        worker.start();
+    boolean begin(Context context,Listener listener){
+        if(!busy.compareAndSet(false,true))return false;
+        finishRequested.set(false);cancelled.set(false);
+        new Thread(()->capture(context,listener),"BlueStarHoldToTalk").start();
+        return true;
     }
+    /** Called only from ACTION_UP: keep whatever PCM was actually captured. */
+    void finish(){finishRequested.set(true);}
+    /** Called from ACTION_CANCEL, lifecycle teardown or swipe-to-cancel. */
+    void cancel(){cancelled.set(true);finishRequested.set(true);}
 
-    /** A second tap finishes immediately; lifecycle pause discards the sample. */
-    void cancel(){generation.incrementAndGet();running.set(false);}
-
-    private void capture(Listener listener,int token){
+    private void capture(Context context,Listener listener){
         AudioRecord record=null;
-        ByteArrayOutputStream pcm=new ByteArrayOutputStream();
-        int voicedMs=0,silentMs=0,totalMs=0;
-        boolean speaking=false;
-        boolean endedSilence=false;
+        ByteArrayOutputStream pcm=new ByteArrayOutputStream(16000);
+        int samples=0,peak=0;
+        long squared=0;
+        String input="默认手机麦克风";
         try{
-            int buffer=Math.max(6400,AudioRecord.getMinBufferSize(
-                SAMPLE_RATE,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT)*2);
-            if(buffer<=0)throw new IOException("设备不支持16000Hz录音");
-            record=new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                SAMPLE_RATE,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT,buffer);
-            if(record.getState()!=AudioRecord.STATE_INITIALIZED)
-                throw new IOException("麦克风未能初始化");
-            current=record;
+            AudioManager manager=(AudioManager)context.getSystemService(Context.AUDIO_SERVICE);
+            if(manager!=null&&manager.isMicrophoneMute())
+                throw new IOException("系统麦克风已静音，请先取消静音");
+            int min=AudioRecord.getMinBufferSize(VoiceWav.SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT);
+            if(min<=0)throw new IOException("设备不支持16kHz单声道录音："+min);
+            int capacity=Math.max(min*2,VoiceWav.SAMPLE_RATE/2);
+            record=makeRecorder(MediaRecorder.AudioSource.MIC,capacity);
+            if(record==null)
+                record=makeRecorder(MediaRecorder.AudioSource.VOICE_RECOGNITION,capacity);
+            if(record==null)throw new IOException("手机麦克风没有初始化成功");
+            active=record;
             record.startRecording();
-            listener.onListening();
-            short[] samples=new short[1600]; // 100ms
-            long began=SystemClock.elapsedRealtime();
-            while(running.get() && token==generation.get()
-                && SystemClock.elapsedRealtime()-began<16000){
-                int n=record.read(samples,0,samples.length,AudioRecord.READ_BLOCKING);
-                if(n<=0)throw new IOException("麦克风读取失败（"+n+"）");
-                long sum=0;
-                for(int k=0;k<n;k++){
-                    int value=samples[k];
-                    sum+=(long)value*value;
-                    pcm.write(value&255);pcm.write((value>>8)&255);
-                }
-                int ms=n*1000/SAMPLE_RATE;
-                totalMs+=ms;
-                double rms=Math.sqrt((double)sum/n);
-                // Conservative noise-gate; stop only after sustained voiced audio.
-                if(rms>420){
-                    voicedMs+=ms; silentMs=0;
-                    if(voicedMs>=250)speaking=true;
-                }else if(speaking){
-                    silentMs+=ms;
-                    if(silentMs>=1250 && voicedMs>=300){
-                        endedSilence=true;
-                        break;
-                    }
-                }else{
-                    voicedMs=0;
-                }
-                if(!speaking&&totalMs>=6500)throw new IOException("没有听到语音，请靠近手机麦克风重试");
+            if(record.getRecordingState()!=AudioRecord.RECORDSTATE_RECORDING)
+                throw new IOException("麦克风未进入录音状态");
+            AudioDeviceInfo routed=record.getRoutedDevice();
+            if(routed!=null){
+                String product=routed.getProductName()==null?"":routed.getProductName().toString();
+                input=product.length()>55?product.substring(0,55):product;
             }
-            if(token!=generation.get())return;
-            if(!speaking||voicedMs<300)throw new IOException("没有听清语音，请重试");
-            if(endedSilence)listener.onSilence();
-            byte[] payload=pcm.toByteArray();
-            listener.onFinished(wav(payload));
-        }catch(SecurityException ex){
-            listener.onFailure("麦克风权限不足，请检查应用录音权限");
-        }catch(Exception ex){
-            if(token==generation.get())listener.onFailure(
-                ex.getMessage()==null?"录音失败":ex.getMessage());
+            final String chosenInput=input;
+            listener.onReady(chosenInput);
+            short[] buffer=new short[1600]; // 100ms; release stops within one block
+            long start=SystemClock.elapsedRealtime();
+            while(!finishRequested.get()&&!cancelled.get() &&
+                    SystemClock.elapsedRealtime()-start<25000){
+                int n=record.read(buffer,0,buffer.length,AudioRecord.READ_BLOCKING);
+                if(n<=0)throw new IOException("录音数据读取失败，错误码："+n);
+                for(int i=0;i<n;i++){
+                    int v=buffer[i];
+                    int magnitude=v==Short.MIN_VALUE?32768:Math.abs(v);
+                    if(magnitude>peak)peak=magnitude;
+                    squared+=(long)v*v;
+                    pcm.write(v&255);pcm.write((v>>8)&255);
+                }
+                samples+=n;
+            }
+            if(cancelled.get())return;
+            if(!finishRequested.get())
+                throw new IOException("按住录音超过25秒，请分段提问");
+            int durationMs=samples*1000/VoiceWav.SAMPLE_RATE;
+            if(durationMs<350)throw new IOException("按住时间太短，请按住说话再松开");
+            int rms=(int)Math.sqrt((double)squared/Math.max(1,samples));
+            // Never discard quiet but valid audio by an arbitrary threshold.
+            listener.onFinished(VoiceWav.wrap(pcm.toByteArray()),durationMs,
+                peak,rms,chosenInput);
+        }catch(SecurityException e){
+            if(!cancelled.get())listener.onFailure("没有麦克风权限");
+        }catch(Exception e){
+            if(!cancelled.get())listener.onFailure(e.getMessage()==null?"录音失败":e.getMessage());
         }finally{
-            if(token==generation.get())running.set(false);
-            current=null;
             if(record!=null){
-                try{record.stop();}catch(IllegalStateException ignored){}
+                try{if(record.getRecordingState()==AudioRecord.RECORDSTATE_RECORDING)record.stop();}
+                catch(RuntimeException ignored){}
                 record.release();
             }
+            active=null;
+            busy.set(false);
         }
     }
-
-    private static byte[] wav(byte[] pcm) throws IOException {
-        if(pcm.length<2||pcm.length>16*16000*2+1000)
-            throw new IOException("录音大小异常");
-        ByteArrayOutputStream output=new ByteArrayOutputStream(pcm.length+44);
-        writeTag(output,"RIFF");writeInt(output,36+pcm.length);
-        writeTag(output,"WAVE");writeTag(output,"fmt ");
-        writeInt(output,16);
-        writeShort(output,1); // PCM
-        writeShort(output,1); // mono
-        writeInt(output,SAMPLE_RATE);
-        writeInt(output,SAMPLE_RATE*2);
-        writeShort(output,2);writeShort(output,16);
-        writeTag(output,"data");writeInt(output,pcm.length);
-        output.write(pcm);
-        return output.toByteArray();
-    }
-    private static void writeTag(ByteArrayOutputStream output,String text)throws IOException{
-        output.write(text.getBytes("US-ASCII"));
-    }
-    private static void writeInt(ByteArrayOutputStream out,int value){
-        out.write(value&255);out.write((value>>8)&255);
-        out.write((value>>16)&255);out.write((value>>24)&255);
-    }
-    private static void writeShort(ByteArrayOutputStream out,int value){
-        out.write(value&255);out.write((value>>8)&255);
+    private AudioRecord makeRecorder(int source,int capacity){
+        try{
+            AudioRecord candidate=new AudioRecord(source,VoiceWav.SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT,capacity);
+            if(candidate.getState()==AudioRecord.STATE_INITIALIZED)return candidate;
+            candidate.release();
+        }catch(RuntimeException ignored){}
+        return null;
     }
 }
