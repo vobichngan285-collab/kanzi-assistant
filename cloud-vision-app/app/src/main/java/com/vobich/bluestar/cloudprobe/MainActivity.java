@@ -1317,6 +1317,8 @@ public final class MainActivity extends CameraActivity {
                 vib.vibrate(VibrationEffect.createWaveform(new long[]{0,20,80,20},-1));
         }catch(RuntimeException ignored){}
     }
+    void previewVoiceSendFeedback(){playVoiceSendSound();}
+    void previewVoiceStartHaptic(){vibrationForVoiceStart();}
     private void playVoiceSendSound(){
         // Only called after a complete, valid user-released WAV has been captured.
         if(getSharedPreferences(PREFS,MODE_PRIVATE).getBoolean(PREF_SOUND,true))
