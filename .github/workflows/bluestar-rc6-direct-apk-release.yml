@@ -1,0 +1,70 @@
+name: Publish verified RC6 APK direct download
+on:
+  push:
+    branches:
+      - fix/bluestar-105-model-options-20261107
+    paths:
+      - '.github/workflows/bluestar-rc6-direct-apk-release.yml'
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish-verified-rc6:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Confirm exact original Android build success
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          result="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/42261149782" --jq '.conclusion')"
+          test "$result" = success
+          echo "RC6 original build: SUCCESS"
+
+      - name: Download original immutable RC6 APK artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p downloaded
+          gh run download 42261149782 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name blue-star-guide-1-0-5-rc6-arm64 \
+            --dir downloaded
+          test -s downloaded/BlueStar_Guide_1.0.5_RC6_arm64.apk
+          test -s downloaded/SHA256SUMS.txt
+
+      - name: Verify original APK checksum, bytes, CRC and USB stack
+        run: |
+          set -euo pipefail
+          cd downloaded
+          sha256sum -c SHA256SUMS.txt
+          echo "91595fd5f42837c64d25fe536992325307130ffa03f145124196a4aef7f0e480  BlueStar_Guide_1.0.5_RC6_arm64.apk" | sha256sum -c -
+          test "$(stat -c%s BlueStar_Guide_1.0.5_RC6_arm64.apk)" = 8567972
+          unzip -tq BlueStar_Guide_1.0.5_RC6_arm64.apk >/dev/null
+          unzip -Z1 BlueStar_Guide_1.0.5_RC6_arm64.apk | grep -Fx 'lib/arm64-v8a/libUVCCamera.so'
+          unzip -Z1 BlueStar_Guide_1.0.5_RC6_arm64.apk | grep -Fx 'res/raw/c_metal_clack_ding.mp3'
+          unzip -Z1 BlueStar_Guide_1.0.5_RC6_arm64.apk | grep -Fx 'res/raw/voice_send_whoosh.wav'
+
+      - name: Publish permanent public pre-release direct APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=blue-star-guide-cloud-rc6-20261107
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release already exists. Refusing to overwrite signed bytes." >&2
+            exit 1
+          fi
+          gh release create "$TAG" \
+            "downloaded/BlueStar_Guide_1.0.5_RC6_arm64.apk" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target 5f04753b8ebe28d47a4835b278819df7e16c4eb9 \
+            --title "Blue Star Guide 1.0.5 RC6 - Model Options and Usage (arm64)" \
+            --notes "Direct APK for vivo X200 Pro and arm64 devices. Includes selectable qwen3-vl-plus, qwen3.7-flash, qwen3.5-flash and qwen3.8-flash with optional explicit model connection test, dark-blue settings and asynchronous per-model daily token ledger. OCR remains qwen-vl-ocr; ASR remains qwen3-asr-flash. Does not auto-fallback to a more costly model. The exact APK was built in successful Actions run 42261149782, SHA256 91595fd5f42837c64d25fe536992325307130ffa03f145124196a4aef7f0e480, size 8,567,972 bytes; no re-signing. Independent app ID com.vobich.bluestar.rc6 preserves RC5. Please configure your own Aliyun Key and confirm provider permissions and quota. No vivo device testing has been performed by CI." \
+            --prerelease
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -Fx 'BlueStar_Guide_1.0.5_RC6_arm64.apk'
+          echo "Direct APK: https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/BlueStar_Guide_1.0.5_RC6_arm64.apk" >> "$GITHUB_STEP_SUMMARY"
