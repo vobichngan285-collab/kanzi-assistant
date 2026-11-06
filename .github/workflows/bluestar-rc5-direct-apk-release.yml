@@ -1,0 +1,70 @@
+name: Publish exact RC5 APK as direct GitHub Release asset
+on:
+  push:
+    branches:
+      - fix/bluestar-104-ocr-voice-empty-20261106
+    paths:
+      - '.github/workflows/bluestar-rc5-direct-apk-release.yml'
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish-verified-rc5:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Check source APK build succeeded
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          result="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/42244749476" --jq '.conclusion')"
+          test "$result" = success
+          echo "Original RC5 build: SUCCESS"
+
+      - name: Download existing RC5 APK without rebuilding or resigning
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p downloaded
+          gh run download 42244749476 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name blue-star-guide-1-0-4-rc5-arm64 \
+            --dir downloaded
+          test -f downloaded/BlueStar_Guide_1.0.4_RC5_arm64.apk
+          test -f downloaded/SHA256SUMS.txt
+
+      - name: Verify original ZIP checksum and exact debug APK bytes
+        run: |
+          set -euo pipefail
+          cd downloaded
+          sha256sum -c SHA256SUMS.txt
+          echo "e4ff506069b0c0592774bccd2f54a1e2de88499930bb9f540e014f1b68bb0d17  BlueStar_Guide_1.0.4_RC5_arm64.apk" | sha256sum -c -
+          test "$(stat -c%s BlueStar_Guide_1.0.4_RC5_arm64.apk)" = 8551588
+          unzip -tq BlueStar_Guide_1.0.4_RC5_arm64.apk > /dev/null
+          unzip -Z1 BlueStar_Guide_1.0.4_RC5_arm64.apk | grep -Fx 'lib/arm64-v8a/libUVCCamera.so'
+          echo "RC5 original APK bytes verified; no re-signing"
+
+      - name: Publish public prerelease with direct APK download URL
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=blue-star-guide-cloud-rc5-20261107
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing release $TAG" >&2
+            exit 1
+          fi
+          gh release create "$TAG" \
+            "downloaded/BlueStar_Guide_1.0.4_RC5_arm64.apk" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target eca8c992afff5cc695cae9915b0fd5e5ef3d8b7e \
+            --title "Blue Star Guide 1.0.4 RC5 - Cloud Vision (arm64)" \
+            --notes "Exact debug-signed RC5 APK from the successful GitHub Actions run 42244749476, byte-for-byte verified SHA256 e4ff506069b0c0592774bccd2f54a1e2de88499930bb9f540e014f1b68bb0d17 (8,551,588 bytes). Includes nonblocking voice-only no-text prompt. This research build uses applicationId com.vobich.bluestar.rc5, requires the user's own API key, and has not been fully validated on the vivo X200 Pro. Screen-off USB trigger is not implemented." \
+            --prerelease
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' \
+            | grep -Fx 'BlueStar_Guide_1.0.4_RC5_arm64.apk'
+          echo "Direct APK: https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/BlueStar_Guide_1.0.4_RC5_arm64.apk" >> "$GITHUB_STEP_SUMMARY"
