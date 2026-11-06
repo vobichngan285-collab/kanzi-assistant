@@ -347,10 +347,12 @@ final class LargeSettingsScreen {
         row("手机前置摄像头","原生 Camera2",()->{app.setCameraSourceFromSettings(2);back();});
     }
     private void feedback(){
-        toggle("拍照金属提示音","短促、清亮的金属开盖咔嗒声","shutter_feedback_sound",true);
-        toggle("拍照清脆振动","系统预设短点击效果，非持续嗡嗡声","shutter_feedback_vibration",true);
-        action("▶ 试听声音与振动",()->app.previewCaptureFeedback());
-        note("两项开关互相独立，点击拍照时尽量同步反馈。");
+        toggle("提示音","拍照金属咔嗒声、语音松手嗖声","shutter_feedback_sound",true);
+        toggle("触觉反馈","拍照短振、按住录音重振、找到目标双振","shutter_feedback_vibration",true);
+        action("▶ 试听拍照咔嗒声",()->app.previewCaptureFeedback());
+        action("▶ 试听语音发送嗖声",()->app.previewVoiceSendFeedback());
+        action("▶ 体验按住说话振动",()->app.previewVoiceStartHaptic());
+        note("提示音与振动分别控制。录音取消或太短时，不播放发送成功提示。");
     }
     private void cloud(){
         row("视觉模型",app.visionModelDescription(),()->{
