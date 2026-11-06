@@ -18,12 +18,12 @@ final class CloudVisionClient {
     private static final String ENDPOINT="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
     interface PartListener { void onSpeakablePart(String part); }
     static final class Result {
-        final String text, model;
+        final String text, model, serverModel;
         final long networkMs, uploadMs, firstTextMs, firstSpeakableMs;
         final int promptTokens, completionTokens;
-        Result(String text,String model,long networkMs,long uploadMs,long firstTextMs,
-               long firstSpeakableMs,int promptTokens,int completionTokens){
-            this.text=text;this.model=model;this.networkMs=networkMs;
+        Result(String text,String model,String serverModel,long networkMs,long uploadMs,
+               long firstTextMs,long firstSpeakableMs,int promptTokens,int completionTokens){
+            this.text=text;this.model=model;this.serverModel=serverModel;this.networkMs=networkMs;
             this.uploadMs=uploadMs;
             this.firstTextMs=firstTextMs;this.firstSpeakableMs=firstSpeakableMs;
             this.promptTokens=promptTokens;this.completionTokens=completionTokens;
@@ -110,7 +110,8 @@ final class CloudVisionClient {
                 // Empty success is not a server/transport failure: notify via voice, no modal.
                 String readable=OcrResponseGate.requireReadable(answer);
                 JSONObject usage=response.optJSONObject("usage");
-                return new Result(readable,model,SystemClock.elapsedRealtime()-started,
+                return new Result(readable,model,response.optString("model",""),
+                    SystemClock.elapsedRealtime()-started,
                     uploadMs,headersMs,-1,usage==null?-1:usage.optInt("prompt_tokens",-1),
                     usage==null?-1:usage.optInt("completion_tokens",-1));
             }
@@ -118,6 +119,7 @@ final class CloudVisionClient {
             StringBuilder all=new StringBuilder();
             SpeechChunker speechChunks=new SpeechChunker();
             long firstText=-1;
+            String serverModel="";
             final long[] firstSpeakable={-1};
             java.util.function.Consumer<String> speakPart=part->{
                 if(firstSpeakable[0]<0)
@@ -136,6 +138,8 @@ final class CloudVisionClient {
                     if("[DONE]".equals(payload))break;
                     if(payload.isEmpty())continue;
                     JSONObject chunk=new JSONObject(payload);
+                    if(serverModel.isEmpty())
+                        serverModel=chunk.optString("model","");
                     JSONObject usage=chunk.optJSONObject("usage");
                     if(usage!=null){
                         promptTokens=usage.optInt("prompt_tokens",promptTokens);
@@ -156,7 +160,7 @@ final class CloudVisionClient {
             speechChunks.finish(speakPart);
             String answer=all.toString().trim();
             if(answer.isEmpty())throw new Exception("云端没有返回有效内容");
-            return new Result(answer,model,SystemClock.elapsedRealtime()-started,
+            return new Result(answer,model,serverModel,SystemClock.elapsedRealtime()-started,
                 uploadMs,firstText,firstSpeakable[0],promptTokens,completionTokens);
         }finally{connection.disconnect();}
     }
