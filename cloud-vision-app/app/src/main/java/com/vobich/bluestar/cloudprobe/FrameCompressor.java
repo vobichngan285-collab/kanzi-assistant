@@ -1,9 +1,6 @@
 package com.vobich.bluestar.cloudprobe;
 
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.ImageFormat;
-import android.graphics.Matrix;
 import android.graphics.Rect;
 import android.graphics.YuvImage;
 import java.io.ByteArrayOutputStream;
@@ -62,74 +59,36 @@ final class FrameCompressor {
         return new Plan(limit,fineRatio,reason);
     }
 
+    /**
+     * A single JPEG encode after native NV21 downscale, never JPEG -> Bitmap -> JPEG.
+     */
     static byte[] encodeJpeg(byte[] nv21,int width,int height,int longEdge) {
         validate(nv21,width,height);
-        int limit=Math.min(LONG_1080,Math.max(LONG_720,longEdge));
-        ByteArrayOutputStream original=new ByteArrayOutputStream();
-        boolean ok=new YuvImage(nv21,ImageFormat.NV21,width,height,null)
-            .compressToJpeg(new Rect(0,0,width,height),83,original);
-        if(!ok)throw new IllegalStateException("相机JPEG编码失败");
-        int longest=Math.max(width,height);
-        if(longest<=limit)return original.toByteArray(); // never invent extra pixels
-        Bitmap decoded=BitmapFactory.decodeByteArray(original.toByteArray(),0,original.size());
-        if(decoded==null)throw new IllegalStateException("JPEG解析失败");
-        int newW=Math.max(2,(int)Math.round(width*(double)limit/longest));
-        int newH=Math.max(2,(int)Math.round(height*(double)limit/longest));
-        Bitmap scaled=Bitmap.createScaledBitmap(decoded,newW,newH,true);
-        ByteArrayOutputStream small=new ByteArrayOutputStream();
-        try{
-            if(!scaled.compress(Bitmap.CompressFormat.JPEG,80,small))
-                throw new IllegalStateException("照片缩放失败");
-            return small.toByteArray();
-        }finally{
-            if(scaled!=decoded)scaled.recycle();
-            decoded.recycle();
-        }
+        Nv21ImageOps.Image resized=Nv21ImageOps.resizeLimit(
+            new Nv21ImageOps.Image(nv21,width,height),clampLimit(longEdge));
+        return compress(resized);
     }
 
-    /**
-     * Same source region as rotated/mirrored/zoomed UVC preview; phone zoom
-     * is applied upstream by Camera2 so its zoom arg must remain 1.
-     * Image manipulation happens only once per explicit capture, never in preview.
-     */
+    /** One capture, one JPEG encode, matching USB display geometry. */
     static byte[] encodeAdjustedJpeg(byte[] nv21,int width,int height,int longEdge,
                                      int degrees,boolean mirror,boolean flip,float zoom){
-        int angle=((degrees%360)+360)%360;
-        if(angle%90!=0)throw new IllegalArgumentException("照片角度须为90度倍数");
-        float factor=Math.max(1f,Math.min(3f,zoom));
-        if(angle==0&&!mirror&&!flip&&factor<=1.001f)
-            return encodeJpeg(nv21,width,height,longEdge);
-        byte[] original=encodeJpeg(nv21,width,height,LONG_1080);
-        Bitmap source=BitmapFactory.decodeByteArray(original,0,original.length);
-        if(source==null)throw new IllegalStateException("无法解码相机快照");
-        Bitmap oriented=null,cropped=null,scaled=null;
-        try{
-            Matrix matrix=new Matrix();
-            if(mirror||flip)
-                matrix.postScale(mirror?-1f:1f,flip?-1f:1f);
-            if(angle!=0)matrix.postRotate(angle);
-            oriented=Bitmap.createBitmap(source,0,0,source.getWidth(),source.getHeight(),matrix,true);
-            int cutW=Math.max(2,((int)(oriented.getWidth()/factor))&~1);
-            int cutH=Math.max(2,((int)(oriented.getHeight()/factor))&~1);
-            int x=(oriented.getWidth()-cutW)/2,y=(oriented.getHeight()-cutH)/2;
-            cropped=Bitmap.createBitmap(oriented,x,y,cutW,cutH);
-            int longest=Math.max(cropped.getWidth(),cropped.getHeight());
-            int limit=Math.max(LONG_720,Math.min(LONG_1080,longEdge));
-            if(longest>limit){
-                int nw=Math.max(2,Math.round(cropped.getWidth()*(float)limit/longest));
-                int nh=Math.max(2,Math.round(cropped.getHeight()*(float)limit/longest));
-                scaled=Bitmap.createScaledBitmap(cropped,nw,nh,true);
-            }else scaled=cropped;
-            ByteArrayOutputStream result=new ByteArrayOutputStream();
-            if(!scaled.compress(Bitmap.CompressFormat.JPEG,82,result))
-                throw new IllegalStateException("校正照片编码失败");
-            return result.toByteArray();
-        }finally{
-            if(scaled!=null&&scaled!=cropped&&!scaled.isRecycled())scaled.recycle();
-            if(cropped!=null&&cropped!=oriented&&!cropped.isRecycled())cropped.recycle();
-            if(oriented!=null&&oriented!=source&&!oriented.isRecycled())oriented.recycle();
-            if(!source.isRecycled())source.recycle();
-        }
+        validate(nv21,width,height);
+        Nv21ImageOps.Image adjusted=Nv21ImageOps.orient(
+            nv21,width,height,degrees,mirror,flip);
+        adjusted=Nv21ImageOps.centerCrop(adjusted,zoom);
+        adjusted=Nv21ImageOps.resizeLimit(adjusted,clampLimit(longEdge));
+        return compress(adjusted);
+    }
+
+    private static byte[] compress(Nv21ImageOps.Image img){
+        ByteArrayOutputStream out=new ByteArrayOutputStream();
+        boolean encoded=new YuvImage(img.bytes,ImageFormat.NV21,img.width,img.height,null)
+            .compressToJpeg(new Rect(0,0,img.width,img.height),85,out);
+        if(!encoded)throw new IllegalStateException("相机JPEG编码失败");
+        return out.toByteArray();
+    }
+    private static int clampLimit(int limit){
+        return Math.min(LONG_1080,Math.max(LONG_720,limit));
     }
 
     static byte[] to720pJpeg(byte[] nv21,int width,int height) {
