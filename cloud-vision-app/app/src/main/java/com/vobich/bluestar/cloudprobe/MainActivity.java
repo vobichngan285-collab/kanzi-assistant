@@ -1300,7 +1300,12 @@ public final class MainActivity extends CameraActivity {
 
     private void beginVoiceListening(){
         if(!uiActive||voiceListening||cloudBusy)return;
-        String key=CloudKeyStore.load(this);
+        String key;
+        try{key=CloudKeyStore.load(this);}
+        catch(Exception error){
+            toastShort("读取加密密钥失败，请在云端AI设置中重新保存");
+            return;
+        }
         if(key.isEmpty()){
             toastShort("请先在云端 AI 设置中配置百炼 API Key");
             return;
