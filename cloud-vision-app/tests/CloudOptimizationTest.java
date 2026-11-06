@@ -2,6 +2,7 @@ package com.vobich.bluestar.cloudprobe;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Arrays;
 
 public final class CloudOptimizationTest {
     private static void check(boolean good,String why){
@@ -37,6 +38,18 @@ public final class CloudOptimizationTest {
             "fixed 720p");
         check(ImageQualityPolicy.pick(1920,"1080",0.060,0.090,100,800)==1920,
             "fixed 1080p");
+        // Round-trip every quarter-turn including interleaved VU chroma.
+        byte[] frame=new byte[4*2*3/2];
+        for(int i=0;i<frame.length;i++)frame[i]=(byte)(i*7+3);
+        for(int degrees:new int[]{90,180,270}){
+            int w=degrees%180==0?4:2,h=degrees%180==0?2:4;
+            byte[] rotated=Nv21Rotation.rotate(frame,4,2,degrees);
+            byte[] inverse=Nv21Rotation.rotate(rotated,w,h,360-degrees);
+            check(Arrays.equals(frame,inverse),"NV21 orientation roundtrip "+degrees);
+        }
+        check(Nv21Rotation.rotate(frame,4,2,0)==frame,"0 degree avoids copying");
+        check(!Arrays.equals(frame,Nv21Rotation.rotate(frame,4,2,90)),
+            "90 degree actually changes sensor data");
         System.out.println("CLOUD_OPTIMIZATION_UNIT_TESTS=PASS");
     }
 }
