@@ -123,6 +123,7 @@ jobs:
           assert 'CameraManager' in camera2 and 'CameraCaptureSession' in camera2
           assert 'Nv21Rotation.rotate(' in camera2
           assert "versionCode 13" in app and "versionName '1.0.3-rc4'" in app
+          assert "applicationIdSuffix '.rc4'" in app
           assert Path('cloud-vision-app/app/src/main/res/drawable-nodpi/bluestar_globe.png').is_file()
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('ic_launcher.webp'))
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('bluestar_icon.webp'))
@@ -199,12 +200,12 @@ jobs:
           test -x "$AAPT"
           "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.3_RC4_arm64.apk > cloud-vision-artifact/badging.txt
           grep -F "application-label:'Blue Star Guide'" cloud-vision-artifact/badging.txt
-          grep -F "package: name='com.vobich.bluestar'" cloud-vision-artifact/badging.txt
+          grep -F "package: name='com.vobich.bluestar.rc4'" cloud-vision-artifact/badging.txt
           grep -q 'application-icon-' cloud-vision-artifact/badging.txt
           grep -Fxq 'res/raw/c_metal_clack_ding.mp3' cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'res/raw/voice_send_whoosh.wav' cloud-vision-artifact/apk-entries.txt
           ! grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx' cloud-vision-artifact/apk-entries.txt
-          echo 'Blue Star Guide 1.0.3 RC4: checked globe launcher PNG densities, exact selected C clack MP3, separate voice whoosh, fresh Camera2 photo capture, bounded privacy diagnostics, target auto-exit. vivo X200 Pro true runtime acceptance still required.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Blue Star Guide 1.0.3 RC4 standalone test package: com.vobich.bluestar.rc4 avoids overwriting RC3 with different debug certificate. Checked globe PNG densities, selected C clack MP3, voice whoosh, fresh Camera2, bounded diagnostics, target auto-exit. Real vivo tests still required.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload 1.0 release candidate APK (debug-signed, device testing)
         uses: actions/upload-artifact@v4
         with:
