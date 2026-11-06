@@ -991,7 +991,8 @@ public final class MainActivity extends CameraActivity {
 
     private void recordTtsProgress(String id,boolean audio){
         int token=speechRequestToken;
-        if(id==null||!id.equals("vision-"+token+"-0")||
+        if(id==null||(!id.equals("vision-"+token+"-0")&&
+            !id.equals("follow-"+token+"-0"))||
             token!=requestVersion.get()||speechCaptureAtMs<0)return;
         long ms=SystemClock.elapsedRealtime()-speechCaptureAtMs;
         if(audio){
@@ -1046,6 +1047,23 @@ public final class MainActivity extends CameraActivity {
             return;
         }
         speakUnfiltered(text);
+    }
+    /** Photo-related speech always uses a traceable first utterance ID, including OCR. */
+    private void speakForCapture(String message,int token,boolean filtered){
+        String text=filtered?filterForSpeech(message,currentTask):message;
+        if(text==null||text.trim().isEmpty()){
+            if(filtered)toastShort("没有可朗读内容，请调整过滤设置");
+            return;
+        }
+        if(tts==null||!ttsReady){
+            if(diagnostics!=null)diagnostics.event("tts","engine",0,"unavailable");
+            toastShort("本地TTS未就绪，请检查已安装语音引擎");
+            return;
+        }
+        int result=tts.speak(text,TextToSpeech.QUEUE_FLUSH,null,
+            "vision-"+token+"-0");
+        if(result!=TextToSpeech.SUCCESS&&diagnostics!=null)
+            diagnostics.event("tts","enqueue",0,"failed");
     }
 
     /** Preserve camera/source switching and attachment order from 2.0. */
@@ -1601,6 +1619,10 @@ public final class MainActivity extends CameraActivity {
         invalidate();
         final int token=requestVersion.get();
         cloudBusy=true;
+        speechRequestToken=token;
+        speechCaptureAtMs=SystemClock.elapsedRealtime();
+        ttsEngineStartMs=-1;
+        ttsAudioCallbackMs=-1;
         setResultStatus("AI正在回答图片追问…");
         final java.util.concurrent.atomic.AtomicInteger pieces=new java.util.concurrent.atomic.AtomicInteger();
         encodingTask=encoder.submit(()->{
@@ -1621,7 +1643,7 @@ public final class MainActivity extends CameraActivity {
                     cloudBusy=false;
                     setResultStatus("AI追问已回答 · 再点可继续提问");
                     lastCloudResult=result.text;
-                    if(pieces.get()==0)speakUnfiltered(result.text);
+                    if(pieces.get()==0)speakForCapture(result.text,token,false);
                     if(diagnostics!=null){
                         diagnostics.event("followup","network_ms",result.networkMs,"ok");
                         diagnostics.event("followup","first_text_ms",result.firstTextMs,"ok");
@@ -1771,7 +1793,7 @@ public final class MainActivity extends CameraActivity {
                             setResultStatus("已经找到目标 · 自动结束寻找");
                             vibrationForTargetFound();
                         }else setResultStatus("寻找："+targetToFind+" · "+inspection.decision);
-                        speakUnfiltered(inspection.message);
+                        speakForCapture(inspection.message,token,false);
                     });
                     return;
                 }
@@ -1797,7 +1819,8 @@ public final class MainActivity extends CameraActivity {
                     lastCloudResult=result.text;
                     if(diagnostics!=null){
                         diagnostics.event("cloud","network_ms",result.networkMs,"ok");
-                        diagnostics.event("cloud","first_text_ms",result.firstTextMs,"ok");
+                        diagnostics.event("cloud",TaskCatalog.OCR.equals(task.engine)?
+                            "response_headers_ms":"first_text_ms",result.firstTextMs,"ok");
                         diagnostics.event("cloud","first_speakable_ms",result.firstSpeakableMs,"ok");
                         diagnostics.event("capture","total_ms",overallMs,"ok");
                     }
@@ -1809,7 +1832,7 @@ public final class MainActivity extends CameraActivity {
                         " firstSpeakableMs="+result.firstSpeakableMs);
                     setResultStatus("已识别："+task.name+" · 可按住AI对话追问");
                     if(TaskCatalog.OCR.equals(task.engine)||delivered.get()==0)
-                        speak(result.text);
+                        speakForCapture(result.text,token,true);
                 });
             }catch(Exception error){
                 handler.post(()->{
