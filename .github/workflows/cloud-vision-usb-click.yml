@@ -1,4 +1,4 @@
-name: Blue Star Cloud Vision - 2.0 UI dual camera no-OCR
+name: Blue Star Cloud Vision - Dual Camera Cloud AI Test
 on:
   push:
     branches: [exp/cloud-vision-usb-click-v1-20261106]
@@ -21,7 +21,7 @@ jobs:
           repository: ernestp/AndroidUSBCamera
           ref: 3.6.0
           path: cloud-vision-app/third_party/AndroidUSBCamera
-      - name: Static scope/security audit (no local OCR, no API keys, no network)
+      - name: Static scope/security audit (no local OCR, no embedded API keys)
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -30,14 +30,14 @@ jobs:
           app = Path('cloud-vision-app/app/build.gradle').read_text()
           activity = Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/MainActivity.java').read_text()
           tasks = Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/TaskCatalog.java').read_text()
-          assert 'android.permission.INTERNET' not in manifest
+          assert 'android.permission.INTERNET' in manifest
           assert 'android.permission.CAMERA' in manifest
           assert 'com.vobich.bluestar.cloudprobe' in app
           for bad in ['ppocr-sdk', 'PaddleOCR', 'onnxruntime', 'sherpa-onnx']:
               assert bad.lower() not in app.lower()
           assert 'setRenderMode(CameraRequest.RenderMode.NORMAL)' in activity
           assert 'now-current.atMs>1400L' in activity
-          assert '暂时没有连接云端人工智能' in activity
+          assert 'CloudVisionClient.recognize(jpeg,key,task)' in activity
           assert 'TextToSpeech.QUEUE_FLUSH' in activity
           assert 'final String OCR = "ocr"' not in tasks or 'static final String OCR = "ocr"' in tasks
           assert 'selected_task_id' in tasks and 'custom_tasks' in tasks
@@ -54,8 +54,8 @@ jobs:
           camera2=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/InternalCameraController.java').read_text()
           assert 'CameraManager' in camera2 and 'CameraCaptureSession' in camera2
           assert 'Nv21Rotation.rotate(' in camera2
-          assert "versionCode 2" in app and "versionName '0.2.0-dual-camera'" in app
-          print('DUAL_CAMERA_ORIGINAL_UI_NO_LOCAL_OCR_AUDIT=PASS')
+          assert "versionCode 3" in app and "versionName '0.3.0-cloud-ai-test'" in app
+          print('DUAL_CAMERA_CLOUD_AI_NO_LOCAL_OCR_AUDIT=PASS')
           PY
       - name: Patch pinned Android 16 USB permission and native sampling safely
         run: |
@@ -85,15 +85,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p cloud-vision-artifact
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_CloudVision_DualCamera_Probe_v0.2.0_arm64.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_CloudVision_DualCamera_CloudAI_v0.3.0_arm64.apk
           test -s cloud-vision-artifact/BlueStar_CloudVision_DualCamera_Probe_v0.2.0_arm64.apk
           (cd cloud-vision-artifact && sha256sum *.apk > SHA256SUMS.txt)
           unzip -l cloud-vision-artifact/*.apk | grep -q 'lib/arm64-v8a/libUVCCamera.so'
           ! unzip -Z1 cloud-vision-artifact/*.apk | grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx'
-          echo 'Native USB + stock Camera2 source compiled; vivo X200 Pro dual-source and cloud API NOT tested.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Native USB + Camera2 cloud AI client compiled; real phone, USB and cloud calls require user testing.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload experimental APK (not a release)
         uses: actions/upload-artifact@v4
         with:
-          name: blue-star-cloud-dual-camera-probe-020-arm64
+          name: blue-star-cloud-dual-camera-ai-030-arm64
           path: cloud-vision-artifact/*
           retention-days: 7
