@@ -2,14 +2,14 @@ package com.vobich.bluestar.cloudprobe;
 
 import android.Manifest;
 import android.content.SharedPreferences;
-import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.Matrix;
 import android.media.AudioManager;
-import android.media.ToneGenerator;
+import android.media.SoundPool;
+import android.media.AudioAttributes;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.os.Bundle;
@@ -18,9 +18,6 @@ import android.os.Vibrator;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
-import android.speech.RecognitionListener;
-import android.speech.RecognizerIntent;
-import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.util.Log;
@@ -30,6 +27,7 @@ import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.View;
+import android.view.WindowInsets;
 import android.view.ViewGroup;
 import android.view.TextureView;
 import android.widget.Button;
@@ -100,8 +98,13 @@ public final class MainActivity extends CameraActivity {
     private final Runnable delayedPhoneZoom=this::applyQueuedPhoneZoom;
     private boolean feedbackSound=true,feedbackVibration=true,followSystemSpeechRate=true;
     private float speechRate=1f;
-    private SpeechRecognizer speechRecognizer;
+    private final VoiceRecorder voiceRecorder=new VoiceRecorder();
     private boolean voiceListening;
+    private final AtomicInteger voiceSequence=new AtomicInteger();
+    private LargeSettingsScreen largeSettings;
+    private SoundPool clickPool;
+    private int metalClickSample;
+    private volatile boolean metalClickReady;
     private byte[] lastSessionJpeg;
     private String lastSessionText="",lastSessionTask="";
     private final ArrayList<String> followupTurns=new ArrayList<>();
@@ -163,7 +166,9 @@ public final class MainActivity extends CameraActivity {
     private void updateFrame(byte[] bytes,int w,int h,boolean phone) {
         if (bytes==null || w<2 || h<2 || (w&1)!=0 || (h&1)!=0 ||
             (long)bytes.length != (long)w*h*3L/2L) return;
-        Frame frame = new Frame(bytes,w,h,SystemClock.elapsedRealtime());
+        // UVC callbacks may reuse a native buffer immediately. Own a copy only for sampled frames.
+        Frame frame = new Frame(java.util.Arrays.copyOf(bytes,bytes.length),w,h,
+            SystemClock.elapsedRealtime());
         if(phone) latestPhoneFrame=frame;
         else { latestUsbFrame=frame; usbFrameCount.incrementAndGet(); }
     }
@@ -172,6 +177,15 @@ public final class MainActivity extends CameraActivity {
     @Override protected View getRootView(LayoutInflater inflater){
         FrameLayout root=new FrameLayout(this);
         rootFrame=root;
+        // Android 15/16 enforce edge-to-edge: reserve status/navigation bar areas.
+        root.setOnApplyWindowInsetsListener((view,insets)->{
+            int top=insets.getSystemWindowInsetTop();
+            int bottom=insets.getSystemWindowInsetBottom();
+            if(view.getPaddingTop()!=top||view.getPaddingBottom()!=bottom)
+                view.setPadding(0,top,0,bottom);
+            return insets;
+        });
+        root.requestApplyInsets();
         root.setBackgroundColor(Color.BLACK);
         previewContainer=new FrameLayout(this);
         previewContainer.setBackgroundColor(Color.BLACK);
@@ -291,7 +305,7 @@ public final class MainActivity extends CameraActivity {
         settingsButton.setContentDescription("设置");
         modeButton.setOnClickListener(v->showTaskSelector());
         startButton.setOnClickListener(v->startVoiceFollowup());
-        settingsButton.setOnClickListener(v->showSettingsDialog());
+        settingsButton.setOnClickListener(v->openLargeSettings());
         return root;
     }
 
@@ -460,6 +474,83 @@ public final class MainActivity extends CameraActivity {
         row.setContentDescription(label+"："+detail+"；双击选择");
         row.setClickable(true);row.setFocusable(true);
         row.setOnClickListener(v->clicked.run());
+    }
+
+    private void openLargeSettings(){
+        if(largeSettings!=null&&!largeSettings.isClosed())return;
+        largeSettings=new LargeSettingsScreen(this,rootFrame);
+    }
+    void settingsPageClosed(){largeSettings=null;}
+    @Override public void onBackPressed(){
+        if(largeSettings!=null&&!largeSettings.isClosed()){largeSettings.back();return;}
+        super.onBackPressed();
+    }
+    void toastShort(String value){Toast.makeText(this,value,Toast.LENGTH_SHORT).show();}
+    List<TextToSpeech.EngineInfo> availableTtsEngines(){
+        return tts==null?new ArrayList<>():tts.getEngines();
+    }
+    String currentSpeechEngineDescription(){
+        return ttsEngine==null||ttsEngine.isEmpty()?"手机系统默认语音引擎":ttsEngine;
+    }
+    void changeSpeechEngine(String id){
+        ttsEngine=id==null?"":id;
+        getSharedPreferences(PREFS,MODE_PRIVATE).edit().putString(PREF_TTS_ENGINE,ttsEngine).apply();
+        initializeSpeech();
+    }
+    void applySpeechSpeed(float value){
+        speechRate=Math.min(3f,Math.max(.5f,value));
+        followSystemSpeechRate=false;
+        getSharedPreferences(PREFS,MODE_PRIVATE).edit()
+            .putFloat(PREF_SPEECH_RATE,speechRate)
+            .putBoolean(PREF_SPEECH_DEFAULT,false).apply();
+        if(tts!=null&&ttsReady)tts.setSpeechRate(speechRate);
+    }
+    void previewSpeech(){speakUnfiltered("蓝星向导，当前语音和语速试听。");}
+    void previewLastRecognizedText(){speak(lastCloudResult);}
+    String lastRecognizedText(){return lastCloudResult;}
+    void refreshSelectedTask(String id){refreshTask(id);}
+    String sourceDescription(){return usingPhoneCamera?
+        (phoneFrontFacing?"手机前置摄像头":"手机后置摄像头"):"USB 外接摄像头";}
+    String rotationDescription(){return previewRotation+"度";}
+    String mirrorDescription(){return previewMirror?"已开启":"已关闭";}
+    String flipDescription(){return previewVerticalFlip?"已开启":"已关闭";}
+    String usbCorrectionDescription(){return usbPreviewCorrectMirror?"已开启":"已关闭";}
+    void adjustCamera(int index){
+        if(index==1)previewRotation=(previewRotation+90)%360;
+        else if(index==2)previewMirror=!previewMirror;
+        else if(index==3)previewVerticalFlip=!previewVerticalFlip;
+        else if(index==4)usbPreviewCorrectMirror=!usbPreviewCorrectMirror;
+        else if(index==5)setCameraZoom(1f);
+        saveCameraProfile();applyPreviewTransform();applyPhonePreviewTransform();
+    }
+    void setCameraSourceFromSettings(int index){
+        if(index<0||index>2)return;
+        boolean phone=index!=0,front=index==2;
+        if(phone==usingPhoneCamera&&(!phone||front==phoneFrontFacing))return;
+        saveCameraProfile();
+        if(phone){
+            phoneFrontFacing=front;
+            getSharedPreferences(PREFS,MODE_PRIVATE).edit()
+                .putBoolean(PREF_FRONT_CAMERA,front).apply();
+        }
+        switchCameraSource(phone);
+    }
+    String visionModelDescription(){return visionModel;}
+    void toggleVisionModel(){
+        if("qwen3-vl-plus".equals(visionModel)){
+            toastShort("Flash模型可能产生额外费用，请先确保用完即停");
+            visionModel="qwen3-vl-flash";
+        }else visionModel="qwen3-vl-plus";
+        getSharedPreferences(PREFS,MODE_PRIVATE).edit()
+            .putString(PREF_VISION_MODEL,visionModel).apply();
+    }
+    String imagePolicyDescription(){
+        return "auto".equals(imagePolicy)?"自动720p／必要时1080p":
+            ("720".equals(imagePolicy)?"固定720p":"固定1080p");
+    }
+    void cycleImagePolicy(){
+        imagePolicy="auto".equals(imagePolicy)?"720":("720".equals(imagePolicy)?"1080":"auto");
+        getSharedPreferences(PREFS,MODE_PRIVATE).edit().putString(PREF_IMAGE_POLICY,imagePolicy).apply();
     }
 
     private void showSettingsDialog(){
@@ -675,6 +766,7 @@ public final class MainActivity extends CameraActivity {
         usbPreviewCorrectMirror=prefs.getBoolean(PREF_USB_PREVIEW_CORRECT_MIRROR,true);
         feedbackSound=prefs.getBoolean(PREF_SOUND,true);
         feedbackVibration=prefs.getBoolean(PREF_HAPTIC,true);
+        initMetalClick();
         speechRate=prefs.getFloat(PREF_SPEECH_RATE,1f);
         followSystemSpeechRate=prefs.getBoolean(PREF_SPEECH_DEFAULT,true);
         loadCameraProfile();
