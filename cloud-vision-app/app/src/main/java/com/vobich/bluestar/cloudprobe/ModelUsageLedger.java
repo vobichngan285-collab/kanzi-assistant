@@ -96,7 +96,7 @@ final class ModelUsageLedger {
         final String actual=safe(returned);
         if(sent.isEmpty())return;
         // A separate single thread owns all mutations, aggregation and disk writes.
-        disk.execute(()->{
+        try{disk.execute(()->{
             synchronized(this){
                 String day=todayKey(),key=day+"|"+sent;
                 Mutable m=rows.get(key);
@@ -113,6 +113,9 @@ final class ModelUsageLedger {
                 persist();
             }
         });
+        }catch(java.util.concurrent.RejectedExecutionException ignored){
+            // A late callback after Activity shutdown must not crash the app.
+        }
     }
     synchronized Snapshot today(){
         final String day=todayKey();
