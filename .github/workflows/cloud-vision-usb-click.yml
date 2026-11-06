@@ -39,6 +39,9 @@ jobs:
           assert 'now-current.atMs>1400L' in activity
           assert 'CloudVisionClient.recognize(jpeg,key,task,model,' in activity
           assert 'FrameCompressor.choose(' in activity
+          assert 'recordTtsProgress(' in activity
+          assert 'tts.setOnUtteranceProgressListener' in activity
+          assert 'SpeechChunker' in Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/CloudVisionClient.java').read_text()
           assert 'showImagePolicySelector()' in activity
           assert 'showVisionModelSelector()' in activity
           assert 'TextToSpeech.QUEUE_FLUSH' in activity
@@ -57,9 +60,18 @@ jobs:
           camera2=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/InternalCameraController.java').read_text()
           assert 'CameraManager' in camera2 and 'CameraCaptureSession' in camera2
           assert 'Nv21Rotation.rotate(' in camera2
-          assert "versionCode 4" in app and "versionName '0.4.0-adaptive-vision'" in app
+          assert "versionCode 5" in app and "versionName '0.5.0-early-speech'" in app
           print('DUAL_CAMERA_CLOUD_AI_NO_LOCAL_OCR_AUDIT=PASS')
           PY
+      - name: Unit checks for speech chunks and image resolution policy
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bluestar-unit
+          javac -encoding UTF-8 -d /tmp/bluestar-unit \
+            cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/SpeechChunker.java \
+            cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/ImageQualityPolicy.java \
+            cloud-vision-app/tests/CloudOptimizationTest.java
+          java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.CloudOptimizationTest
       - name: Patch pinned Android 16 USB permission and native sampling safely
         run: |
           set -euo pipefail
@@ -88,8 +100,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p cloud-vision-artifact
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_CloudVision_Adaptive_0.4.0_arm64.apk
-          test -s cloud-vision-artifact/BlueStar_CloudVision_Adaptive_0.4.0_arm64.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_CloudVision_EarlySpeech_v0.5.0_arm64.apk
+          test -s cloud-vision-artifact/BlueStar_CloudVision_EarlySpeech_v0.5.0_arm64.apk
           (cd cloud-vision-artifact && sha256sum *.apk > SHA256SUMS.txt)
           unzip -l cloud-vision-artifact/*.apk | grep -q 'lib/arm64-v8a/libUVCCamera.so'
           ! unzip -Z1 cloud-vision-artifact/*.apk | grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx'
@@ -97,6 +109,6 @@ jobs:
       - name: Upload experimental APK (not a release)
         uses: actions/upload-artifact@v4
         with:
-          name: blue-star-cloud-adaptive-040-arm64
+          name: blue-star-cloud-early-speech-050-arm64
           path: cloud-vision-artifact/*
           retention-days: 7

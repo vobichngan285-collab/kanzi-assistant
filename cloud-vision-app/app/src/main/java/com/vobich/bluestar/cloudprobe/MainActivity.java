@@ -16,6 +16,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -102,6 +103,13 @@ public final class MainActivity extends CameraActivity {
     private TaskCatalog.Task currentTask;
     private boolean uiActive;
     private boolean cloudBusy;
+    private volatile int speechRequestToken=-1;
+    private volatile long speechCaptureAtMs=-1;
+    private volatile long ttsEngineStartMs=-1;
+    private volatile long ttsAudioCallbackMs=-1;
+    private AlertDialog cloudResultDialog;
+    private String cloudResultInfo="",cloudResultText="";
+    private int cloudResultToken=-1;
     private String imagePolicy="auto";
     private String visionModel="qwen3-vl-plus";
     private String lastCloudResult="";
@@ -538,7 +546,49 @@ public final class MainActivity extends CameraActivity {
             TextToSpeech.OnInitListener listener=result->ttsReady=result==TextToSpeech.SUCCESS;
             tts=ttsEngine.isEmpty()?new TextToSpeech(this,listener):
                 new TextToSpeech(this,listener,ttsEngine);
+            // Neither callback proves the speaker has audibly played sound.
+            tts.setOnUtteranceProgressListener(new UtteranceProgressListener(){
+                @Override public void onStart(String utteranceId){
+                    recordTtsProgress(utteranceId,false);
+                }
+                @Override public void onDone(String utteranceId){}
+                @Override public void onError(String utteranceId){}
+                @Override public void onAudioAvailable(String utteranceId,byte[] audio){
+                    if(audio!=null&&audio.length>0)recordTtsProgress(utteranceId,true);
+                }
+            });
         }catch(Exception error){Log.w(TAG,"TTS initialization unavailable",error);}
+    }
+
+    private void recordTtsProgress(String id,boolean audio){
+        int token=speechRequestToken;
+        if(id==null||!id.equals("vision-"+token+"-0")||
+            token!=requestVersion.get()||speechCaptureAtMs<0)return;
+        long ms=SystemClock.elapsedRealtime()-speechCaptureAtMs;
+        if(audio){
+            if(ttsAudioCallbackMs>=0)return;
+            ttsAudioCallbackMs=ms;
+        }else{
+            if(ttsEngineStartMs>=0)return;
+            ttsEngineStartMs=ms;
+        }
+        Log.i(TAG,"TTS timing: "+(audio?"firstAudioCallbackMs=":"engineOnStartMs=")+ms);
+        handler.post(this::refreshCloudResultTtsStatus);
+    }
+
+    private String ttsTimingText(){
+        return "TTS引擎启动 "+
+            (ttsEngineStartMs<0?"未报告":(ttsEngineStartMs+"毫秒"))+"；"+
+            "音频数据回调 "+(ttsAudioCallbackMs<0?"引擎未提供":(ttsAudioCallbackMs+"毫秒"))+
+            "\n（TTS回调不等于扬声器真正发声）";
+    }
+
+    private void refreshCloudResultTtsStatus(){
+        if(cloudResultDialog!=null&&cloudResultDialog.isShowing()&&
+            cloudResultToken==requestVersion.get()&&
+            currentTask!=null&&!TaskCatalog.OCR.equals(currentTask.engine))
+            cloudResultDialog.setMessage(cloudResultInfo+
+                ttsTimingText()+"\n\n"+cloudResultText);
     }
 
     private void speak(String message) {
@@ -776,6 +826,10 @@ public final class MainActivity extends CameraActivity {
         invalidate();
         cloudBusy=true;
         int token=requestVersion.get();
+        speechRequestToken=token;
+        speechCaptureAtMs=now;
+        ttsEngineStartMs=-1;
+        ttsAudioCallbackMs=-1;
         TaskCatalog.Task task=currentTask;
         String source=usingPhoneCamera?(phoneFrontFacing?"手机前置":"手机后置"):"USB 外接";
         String policy=imagePolicy;
@@ -807,9 +861,10 @@ public final class MainActivity extends CameraActivity {
                 CloudVisionClient.Result result=CloudVisionClient.recognize(jpeg,key,task,model,
                     part->handler.post(()->{
                         if(token!=requestVersion.get()||!uiActive||tts==null||!ttsReady)return;
-                        int mode=segments.getAndIncrement()==0?
+                        int partIndex=segments.getAndIncrement();
+                        int mode=partIndex==0?
                             TextToSpeech.QUEUE_FLUSH:TextToSpeech.QUEUE_ADD;
-                        tts.speak(part,mode,null,"cloud-chunk-"+System.nanoTime());
+                        tts.speak(part,mode,null,"vision-"+token+"-"+partIndex);
                     }));
                 long overallMs=SystemClock.elapsedRealtime()-takenAt;
                 handler.post(()->{
@@ -833,10 +888,19 @@ public final class MainActivity extends CameraActivity {
                         (plan.limit==1920?"1080p":"720p")+"（"+plan.decision+"）"+
                         (result.completionTokens>=0?"；输出Token "+result.completionTokens:"")+
                         "\n\n";
-                    new AlertDialog.Builder(this).setTitle(task.name+" · "+overallMs+"毫秒")
-                        .setMessage(diagnostic+result.text)
+                    cloudResultInfo=diagnostic;
+                    cloudResultText=result.text;
+                    cloudResultToken=token;
+                    cloudResultDialog=new AlertDialog.Builder(this)
+                        .setTitle(task.name+" · "+overallMs+"毫秒")
+                        .setMessage(diagnostic+(TaskCatalog.OCR.equals(task.engine)?
+                            "OCR完整识别后朗读\n\n":ttsTimingText()+"\n\n")+result.text)
                         .setPositiveButton("再次朗读",(d,w)->speak(result.text))
                         .setNegativeButton("关闭",null).show();
+                    AlertDialog shown=cloudResultDialog;
+                    shown.setOnDismissListener(d->{
+                        if(cloudResultDialog==shown)cloudResultDialog=null;
+                    });
                     if(TaskCatalog.OCR.equals(task.engine))speak(result.text);
                 });
             }catch(Exception e){

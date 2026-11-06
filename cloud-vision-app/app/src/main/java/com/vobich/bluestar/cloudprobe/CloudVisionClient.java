@@ -102,8 +102,14 @@ final class CloudVisionClient {
             }
 
             StringBuilder all=new StringBuilder();
-            StringBuilder pending=new StringBuilder();
-            long firstText=-1,firstSpeakable=-1;
+            SpeechChunker speechChunks=new SpeechChunker();
+            long firstText=-1;
+            final long[] firstSpeakable={-1};
+            java.util.function.Consumer<String> speakPart=part->{
+                if(firstSpeakable[0]<0)
+                    firstSpeakable[0]=SystemClock.elapsedRealtime()-started;
+                if(listener!=null)listener.onSpeakablePart(part);
+            };
             int promptTokens=-1,completionTokens=-1;
             try(BufferedReader reader=new BufferedReader(
                     new InputStreamReader(connection.getInputStream(),StandardCharsets.UTF_8))){
@@ -130,51 +136,17 @@ final class CloudVisionClient {
                     charBudget+=part.length();
                     if(charBudget>6000)throw new Exception("云端响应超过安全长度");
                     all.append(part);
-                    pending.append(part);
-                    String sentence;
-                    while((sentence=takeSentence(pending,false))!=null){
-                        if(firstSpeakable<0)firstSpeakable=SystemClock.elapsedRealtime()-started;
-                        if(listener!=null)listener.onSpeakablePart(sentence);
-                    }
+                    speechChunks.append(part,speakPart);
                 }
             }
-            String tail=takeSentence(pending,true);
-            if(tail!=null){
-                if(firstSpeakable<0)firstSpeakable=SystemClock.elapsedRealtime()-started;
-                if(listener!=null)listener.onSpeakablePart(tail);
-            }
+            speechChunks.finish(speakPart);
             String answer=all.toString().trim();
             if(answer.isEmpty())throw new Exception("云端没有返回有效内容");
             return new Result(answer,model,SystemClock.elapsedRealtime()-started,
-                firstText,firstSpeakable,promptTokens,completionTokens);
+                firstText,firstSpeakable[0],promptTokens,completionTokens);
         }finally{connection.disconnect();}
     }
 
-    /** Speech waits for punctuation, so it never pronounces half a word. */
-    private static String takeSentence(StringBuilder pending,boolean finalPart){
-        if(pending.length()==0)return null;
-        int split=-1;
-        for(int i=0;i<pending.length();i++){
-            char c=pending.charAt(i);
-            if((c=='。'||c=='！'||c=='？'||c=='!'||c=='?'||c=='\n'||c==';'||c=='；')&&i>=5){
-                split=i+1;break;
-            }
-        }
-        if(split<0&&pending.length()>110){
-            for(int i=110;i>=50;i--){
-                char c=pending.charAt(i);
-                if(c=='，'||c==','||c==' '){split=i+1;break;}
-            }
-            if(split<0)split=110;
-        }
-        if(split<0&&!finalPart)return null;
-        if(split<0)split=pending.length();
-        String text=pending.substring(0,split).trim();
-        pending.delete(0,split);
-        text=text.replace("**","").replace("##","").replace("###","")
-            .replace("•","").replace("- ","").trim();
-        return text.isEmpty()?null:text;
-    }
     private static String readLimited(InputStream stream) throws Exception {
         if(stream==null)return "";
         ByteArrayOutputStream bytes=new ByteArrayOutputStream();
