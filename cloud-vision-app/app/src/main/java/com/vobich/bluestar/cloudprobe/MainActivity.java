@@ -2,6 +2,11 @@ package com.vobich.bluestar.cloudprobe;
 
 import android.Manifest;
 import android.content.ClipData;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import java.io.ByteArrayOutputStream;
+import java.util.concurrent.atomic.AtomicBoolean;
 import android.content.ClipboardManager;
 import android.content.Intent;
 import android.net.Uri;
@@ -111,6 +116,9 @@ public final class MainActivity extends CameraActivity {
     private volatile int pendingPhoneFrameToken=-1;
     private long phoneCaptureTapAtMs;
     private RuntimeDiagnostics diagnostics;
+    private ModelUsageLedger modelUsage;
+    private final ExecutorService modelTestExecutor=Executors.newSingleThreadExecutor();
+    private final AtomicBoolean modelTestBusy=new AtomicBoolean(false);
     private boolean usbFirstFrameRecorded;
     private boolean phoneFirstFrameRecorded;
     private final AtomicInteger voiceSequence=new AtomicInteger();
@@ -630,14 +638,74 @@ public final class MainActivity extends CameraActivity {
         switchCameraSource(phone);
     }
     String visionModelDescription(){return visionModel;}
-    void toggleVisionModel(){
-        if("qwen3-vl-plus".equals(visionModel)){
-            toastShort("Flash模型可能产生额外费用，请先确保用完即停");
-            visionModel="qwen3-vl-flash";
-        }else visionModel="qwen3-vl-plus";
+    boolean selectVisionModel(String id){
+        if(VisionModelCatalog.indexOf(id)<0)return false;
+        visionModel=id;
         getSharedPreferences(PREFS,MODE_PRIVATE).edit()
-            .putString(PREF_VISION_MODEL,visionModel).apply();
+            .putString(PREF_VISION_MODEL,id).apply();
+        return true;
     }
+    // Legacy settings route remains functional, but no longer cycles to rejected Flash.
+    void toggleVisionModel(){showVisionModelSelector();}
+    ModelUsageLedger.Snapshot todayModelUsage(){
+        return modelUsage==null?null:modelUsage.today();
+    }
+    void clearModelUsage(){
+        if(modelUsage!=null)modelUsage.clearAsync();
+    }
+
+    /** One explicit tiny synthetic image request; never silently retry using Plus. */
+    void testSelectedVisionModel(){
+        if(!uiActive){toastShort("请在前台测试模型");return;}
+        if(cloudBusy||voiceListening||voiceRecorder.isBusy()){
+            toastShort("请先完成当前拍照或语音任务");return;
+        }
+        if(!modelTestBusy.compareAndSet(false,true)){
+            toastShort("已有模型连接测试在进行");return;
+        }
+        final String chosen=visionModel;
+        setResultStatus("正在测试 "+chosen+"（会消耗少量 Token）");
+        modelTestExecutor.execute(()->{
+            try{
+                String key=CloudKeyStore.load(this);
+                if(key.isEmpty())throw new Exception("请先配置百炼 API Key");
+                Bitmap bitmap=Bitmap.createBitmap(64,64,Bitmap.Config.RGB_565);
+                try{
+                    Canvas canvas=new Canvas(bitmap);
+                    canvas.drawColor(0xFFFFFFFF);
+                    Paint p=new Paint();
+                    p.setColor(0xFF101010);p.setTextSize(28);p.setAntiAlias(true);
+                    canvas.drawText("A",22,43,p);
+                    ByteArrayOutputStream bytes=new ByteArrayOutputStream();
+                    bitmap.compress(Bitmap.CompressFormat.JPEG,75,bytes);
+                    byte[] jpeg=bytes.toByteArray();
+                    TaskCatalog.Task probe=new TaskCatalog.Task(
+                        "model-probe","视觉连接测试",
+                        "这是一张测试图片。请只用一句简短中文确认你能看到图片。",
+                        TaskCatalog.VISION,false,"✦");
+                    CloudVisionClient.Result result=CloudVisionClient.recognize(
+                        jpeg,key,probe,chosen,null);
+                    if(modelUsage!=null)modelUsage.recordAsync(chosen,result.serverModel,
+                        result.promptTokens,result.completionTokens,true);
+                    handler.post(()->{
+                        if(!uiActive)return;
+                        setResultStatus("模型连接成功："+chosen);
+                        toastShort("连接成功："+chosen+"（已计入本机用量）");
+                    });
+                }finally{bitmap.recycle();}
+            }catch(Exception error){
+                if(modelUsage!=null)modelUsage.recordAsync(chosen,"",-1,-1,false);
+                final String message=error.getMessage()==null?
+                    error.getClass().getSimpleName():error.getMessage();
+                handler.post(()->{
+                    if(!uiActive)return;
+                    setResultStatus("模型测试失败："+chosen);
+                    toastShort("连接失败："+chosen+"；"+message);
+                });
+            }finally{modelTestBusy.set(false);}
+        });
+    }
+
     String imagePolicyDescription(){
         return "auto".equals(imagePolicy)?"自动720p／必要时1080p":
             ("720".equals(imagePolicy)?"固定720p":"固定1080p");
@@ -852,6 +920,7 @@ public final class MainActivity extends CameraActivity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         diagnostics=new RuntimeDiagnostics(this);
+        modelUsage=new ModelUsageLedger(this);
         SharedPreferences prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
         usingPhoneCamera=prefs.getBoolean(PREF_PHONE_CAMERA,false);
         phoneFrontFacing=prefs.getBoolean(PREF_FRONT_CAMERA,false);
@@ -866,7 +935,10 @@ public final class MainActivity extends CameraActivity {
         followSystemSpeechRate=prefs.getBoolean(PREF_SPEECH_DEFAULT,true);
         loadCameraProfile();
         imagePolicy=prefs.getString(PREF_IMAGE_POLICY,"auto");
-        visionModel=prefs.getString(PREF_VISION_MODEL,"qwen3-vl-plus");
+        String storedModel=prefs.getString(PREF_VISION_MODEL,VisionModelCatalog.PLUS);
+        visionModel=VisionModelCatalog.normalize(storedModel);
+        if(!visionModel.equals(storedModel))
+            prefs.edit().putString(PREF_VISION_MODEL,visionModel).apply();
         findingTarget=prefs.getString(PREF_FINDING_TARGET,"");
         if(findingTarget==null)findingTarget="";
         ttsEngine=prefs.getString(PREF_TTS_ENGINE,"");
@@ -933,17 +1005,15 @@ public final class MainActivity extends CameraActivity {
     }
 
     private void showVisionModelSelector(){
-        String[] names={"qwen3-vl-plus（稳定优先）","qwen3-vl-flash（速度A/B实验）"};
-        int selected="qwen3-vl-flash".equals(visionModel)?1:0;
+        // Legacy selector: the primary large-text settings page uses a solid dark panel.
+        int selected=Math.max(0,VisionModelCatalog.indexOf(visionModel));
         new AlertDialog.Builder(this).setTitle("视觉模型")
-            .setMessage("切换为flash前，请确认百炼免费额度页面有该模型的额度且已开启用完即停；否则可能产生费用。OCR仍固定使用qwen-vl-ocr。")
-            .setSingleChoiceItems(names,selected,(d,i)->{
-                visionModel=i==1?"qwen3-vl-flash":"qwen3-vl-plus";
-                getSharedPreferences(PREFS,MODE_PRIVATE).edit()
-                    .putString(PREF_VISION_MODEL,visionModel).apply();
+            .setMessage("新模型需要先测试可用性；选中失败不自动切换Plus。OCR仍固定使用qwen-vl-ocr。")
+            .setSingleChoiceItems(VisionModelCatalog.LABELS,selected,(d,i)->{
+                selectVisionModel(VisionModelCatalog.IDS[i]);
                 d.dismiss();
                 if(settingsDialog!=null)settingsDialog.dismiss();
-                Toast.makeText(this,"视觉模型："+visionModel,Toast.LENGTH_SHORT).show();
+                toastShort("视觉模型："+visionModel);
             }).setNegativeButton("取消",null).show();
     }
 
@@ -1922,6 +1992,8 @@ public final class MainActivity extends CameraActivity {
         invalidate();
         if(phoneController!=null)phoneController.stop();
         encoder.shutdownNow();
+        modelTestExecutor.shutdownNow();
+        if(modelUsage!=null)modelUsage.shutdown();
         voiceSequence.incrementAndGet();voiceRecorder.cancel();
         lastSessionJpeg=null;
         if(tts!=null){tts.stop();tts.shutdown();tts=null;}
