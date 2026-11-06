@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** Single short push-on voice clip; auto-end after a natural silence. */
 final class VoiceRecorder {
@@ -21,22 +22,22 @@ final class VoiceRecorder {
     private static final int SAMPLE_RATE=16000;
     private final AtomicBoolean running=new AtomicBoolean(false);
     private volatile AudioRecord current;
-    private final AtomicBoolean cancelled=new AtomicBoolean(false);
+    private final AtomicInteger generation=new AtomicInteger();
     private volatile Thread worker;
 
     boolean isRunning(){return running.get();}
 
     void begin(Listener listener){
         if(!running.compareAndSet(false,true))return;
-        cancelled.set(false);
-        worker=new Thread(()->capture(listener),"BlueStarVoiceCapture");
+        int token=generation.incrementAndGet();
+        worker=new Thread(()->capture(listener,token),"BlueStarVoiceCapture");
         worker.start();
     }
 
     /** A second tap finishes immediately; lifecycle pause discards the sample. */
-    void cancel(){cancelled.set(true);running.set(false);}
+    void cancel(){generation.incrementAndGet();running.set(false);}
 
-    private void capture(Listener listener){
+    private void capture(Listener listener,int token){
         AudioRecord record=null;
         ByteArrayOutputStream pcm=new ByteArrayOutputStream();
         int voicedMs=0,silentMs=0,totalMs=0;
@@ -55,7 +56,8 @@ final class VoiceRecorder {
             listener.onListening();
             short[] samples=new short[1600]; // 100ms
             long began=SystemClock.elapsedRealtime();
-            while(running.get() && SystemClock.elapsedRealtime()-began<16000){
+            while(running.get() && token==generation.get()
+                && SystemClock.elapsedRealtime()-began<16000){
                 int n=record.read(samples,0,samples.length,AudioRecord.READ_BLOCKING);
                 if(n<=0)throw new IOException("麦克风读取失败（"+n+"）");
                 long sum=0;
@@ -82,7 +84,7 @@ final class VoiceRecorder {
                 }
                 if(!speaking&&totalMs>=6500)throw new IOException("没有听到语音，请靠近手机麦克风重试");
             }
-            if(cancelled.get())return;
+            if(token!=generation.get())return;
             if(!speaking||voicedMs<300)throw new IOException("没有听清语音，请重试");
             if(endedSilence)listener.onSilence();
             byte[] payload=pcm.toByteArray();
@@ -90,9 +92,10 @@ final class VoiceRecorder {
         }catch(SecurityException ex){
             listener.onFailure("麦克风权限不足，请检查应用录音权限");
         }catch(Exception ex){
-            if(!cancelled.get())listener.onFailure(ex.getMessage()==null?"录音失败":ex.getMessage());
+            if(token==generation.get())listener.onFailure(
+                ex.getMessage()==null?"录音失败":ex.getMessage());
         }finally{
-            running.set(false);
+            if(token==generation.get())running.set(false);
             current=null;
             if(record!=null){
                 try{record.stop();}catch(IllegalStateException ignored){}
