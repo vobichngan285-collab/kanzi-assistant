@@ -164,7 +164,7 @@ jobs:
           set -euo pipefail
           mkdir -p cloud-vision-artifact
           cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.2_RC3_arm64.apk
-          test -s cloud-vision-artifact/BlueStar_Guide_1.0.1_RC2_arm64.apk
+          test -s cloud-vision-artifact/BlueStar_Guide_1.0.2_RC3_arm64.apk
           (cd cloud-vision-artifact && sha256sum *.apk > SHA256SUMS.txt)
           unzip -Z1 cloud-vision-artifact/*.apk > cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' cloud-vision-artifact/apk-entries.txt
