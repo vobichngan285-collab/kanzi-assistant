@@ -82,7 +82,12 @@ final class TargetVisionClient {
                 position="未知";
             String t=safeTarget(target);
             if("found".equals(decision)){
-                String where="未知".equals(position)?"画面中":("画面"+position);
+                // A naked 'found' without any visible evidence is not enough
+                // to give a high-confidence spoken notification.
+                if(evidence.trim().isEmpty())
+                    return new Result("possible","可能看到"+t+"，但还无法确认。","");
+                String where=("未知".equals(position)||"画面中".equals(position))?
+                    "画面中":("画面"+position);
                 return new Result(decision,"发现"+t+"，就在"+where+"。",evidence);
             }
             if("possible".equals(decision))
