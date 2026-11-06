@@ -10,11 +10,12 @@ final class Nv21ImageOps {
     }
     static Image orient(byte[] src,int w,int h,int angle,boolean mirror,boolean flip){
         check(src,w,h);
-        byte[] changed=src;
-        if(mirror||flip) changed=flipNV21(changed,w,h,mirror,flip);
         int degrees=((angle%360)+360)%360;
-        if(degrees!=0)changed=Nv21Rotation.rotate(changed,w,h,degrees);
-        return new Image(changed,degrees%180==0?w:h,degrees%180==0?h:w);
+        int outW=degrees%180==0?w:h,outH=degrees%180==0?h:w;
+        byte[] changed=degrees==0?src:Nv21Rotation.rotate(src,w,h,degrees);
+        // Mirror/vertical-flip are expressed in DISPLAY coordinates after rotation.
+        if(mirror||flip)changed=flipNV21(changed,outW,outH,mirror,flip);
+        return new Image(changed,outW,outH);
     }
     static Image centerCrop(Image image,float zoom){
         float factor=Math.max(1f,Math.min(3f,zoom));
