@@ -18,8 +18,12 @@ import java.nio.charset.StandardCharsets;
  */
 final class TargetVisionClient {
     static final class Result {
-        final String decision, message, evidence;
-        Result(String d,String m,String e){decision=d;message=m;evidence=e;}
+        final String decision, message, evidence, serverModel;
+        final int promptTokens, completionTokens;
+        Result(String d,String m,String e,String model,int prompt,int completion){
+            decision=d;message=m;evidence=e;serverModel=model;
+            promptTokens=prompt;completionTokens=completion;
+        }
         boolean confirmed(){return "found".equals(decision);}
     }
     private TargetVisionClient(){}
@@ -27,7 +31,9 @@ final class TargetVisionClient {
         if(jpeg==null||jpeg.length<200)throw new Exception("没有有效的照片");
         if(target==null||target.trim().isEmpty())throw new Exception("没有寻找目标");
         if(key==null||key.trim().isEmpty())throw new Exception("请先设置百炼 API Key");
-        String model="qwen3-vl-flash".equals(visualModel)?"qwen3-vl-flash":"qwen3-vl-plus";
+        if(VisionModelCatalog.indexOf(visualModel)<0)
+            throw new IllegalArgumentException("视觉模型未获支持，无法寻找目标");
+        String model=visualModel;
         // Use natural image-relative words only, never distances, street directions or GPS.
         String instruction="你是盲人辅助寻找物品的视觉审核员。要寻找的目标是："+target+
             "。仅根据本张真实照片判断目标是否作为实际店铺、场所或物体出现。"+
@@ -46,6 +52,7 @@ final class TargetVisionClient {
                 .put("content",new JSONArray()
                     .put(new JSONObject().put("type","text").put("text",instruction))
                     .put(image))));
+        if(VisionModelCatalog.isBudgetFlash(model))body.put("enable_thinking",false);
         HttpURLConnection c=(HttpURLConnection)new URL(
             "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions").openConnection();
         c.setRequestMethod("POST");
@@ -66,11 +73,16 @@ final class TargetVisionClient {
             if(choices==null||choices.length()==0)throw new Exception("云端没有返回视觉结果");
             String raw=choices.getJSONObject(0).getJSONObject("message")
                 .optString("content","").trim();
+            String serverModel=response.optString("model","");
+            JSONObject usage=response.optJSONObject("usage");
+            int promptTokens=usage==null?-1:usage.optInt("prompt_tokens",-1);
+            int completionTokens=usage==null?-1:usage.optInt("completion_tokens",-1);
             // If the model violates JSON format, treat as uncertainty, NEVER a match.
             JSONObject value;
             try{value=new JSONObject(raw);}
             catch(Exception ignored){
-                return new Result("possible","本张照片无法确认是否有"+safeTarget(target),"格式异常");
+                return new Result("possible","本张照片无法确认是否有"+safeTarget(target),"格式异常",
+                    serverModel,promptTokens,completionTokens);
             }
             String decision=value.optString("decision","not_found");
             String position=value.optString("position","未知");
@@ -85,14 +97,18 @@ final class TargetVisionClient {
                 // A naked 'found' without any visible evidence is not enough
                 // to give a high-confidence spoken notification.
                 if(evidence.trim().isEmpty())
-                    return new Result("possible","可能看到"+t+"，但还无法确认。","");
+                    return new Result("possible","可能看到"+t+"，但还无法确认。","",
+                        serverModel,promptTokens,completionTokens);
                 String where=("未知".equals(position)||"画面中".equals(position))?
                     "画面中":("画面"+position);
-                return new Result(decision,"发现"+t+"，就在"+where+"。",evidence);
+                return new Result(decision,"发现"+t+"，就在"+where+"。",evidence,
+                    serverModel,promptTokens,completionTokens);
             }
             if("possible".equals(decision))
-                return new Result(decision,"可能看到"+t+"，但这张照片还不能确认。",evidence);
-            return new Result(decision,"这张照片暂时没看到"+t+"。",evidence);
+                return new Result(decision,"可能看到"+t+"，但这张照片还不能确认。",evidence,
+                    serverModel,promptTokens,completionTokens);
+            return new Result(decision,"这张照片暂时没看到"+t+"。",evidence,
+                serverModel,promptTokens,completionTokens);
         }finally{c.disconnect();}
     }
     private static String safeTarget(String target){
