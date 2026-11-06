@@ -1597,6 +1597,9 @@ public final class MainActivity extends CameraActivity {
                             });
                             long asrAt=SystemClock.elapsedRealtime();
                             String transcript=CloudAsrClient.recognize(wav,key);
+                            // ASR currently exposes no reliable Token usage: record call only.
+                            if(modelUsage!=null)modelUsage.recordAsync(
+                                "qwen3-asr-flash","",-1,-1,true);
                             if(diagnostics!=null)diagnostics.event("asr","response_ms",
                                 SystemClock.elapsedRealtime()-asrAt,"ok");
                             handler.post(()->{
@@ -1606,6 +1609,8 @@ public final class MainActivity extends CameraActivity {
                                 routeSpokenRequest(transcript);
                             });
                         }catch(Exception error){
+                            if(modelUsage!=null)modelUsage.recordAsync(
+                                "qwen3-asr-flash","",-1,-1,false);
                             handler.post(()->{
                                 if(!uiActive||sequence!=voiceSequence.get()||
                                     photoToken!=requestVersion.get())return;
@@ -1718,8 +1723,9 @@ public final class MainActivity extends CameraActivity {
             try{
                 String key=CloudKeyStore.load(this);
                 if(key.isEmpty())throw new Exception("请先在设置中配置API Key");
+                final String selectedModel=visionModel;
                 CloudVisionClient.Result result=CloudVisionClient.recognize(
-                    jpeg,key,ask,visionModel,part->handler.post(()->{
+                    jpeg,key,ask,selectedModel,part->handler.post(()->{
                         if(token!=requestVersion.get()||!uiActive||tts==null||!ttsReady)return;
                         String spoken=filterForSpeech(part,null);
                         if(spoken.trim().isEmpty())return;
@@ -1727,6 +1733,8 @@ public final class MainActivity extends CameraActivity {
                         tts.speak(spoken,partIndex==0?TextToSpeech.QUEUE_FLUSH:
                             TextToSpeech.QUEUE_ADD,null,"follow-"+token+"-"+partIndex);
                     }));
+                if(modelUsage!=null)modelUsage.recordAsync(selectedModel,result.serverModel,
+                    result.promptTokens,result.completionTokens,true);
                 handler.post(()->{
                     if(!uiActive||token!=requestVersion.get())return;
                     cloudBusy=false;
@@ -1741,6 +1749,7 @@ public final class MainActivity extends CameraActivity {
                     while(followupTurns.size()>3)followupTurns.remove(0);
                 });
             }catch(Exception ex){
+                if(modelUsage!=null)modelUsage.recordAsync(visionModel,"",-1,-1,false);
                 handler.post(()->{
                     if(!uiActive||token!=requestVersion.get())return;
                     cloudBusy=false;
@@ -1872,6 +1881,8 @@ public final class MainActivity extends CameraActivity {
                     long cloudAt=SystemClock.elapsedRealtime();
                     TargetVisionClient.Result inspection=TargetVisionClient.inspect(
                         jpeg,targetToFind,key,model);
+                    if(modelUsage!=null)modelUsage.recordAsync(model,inspection.serverModel,
+                        inspection.promptTokens,inspection.completionTokens,true);
                     if(diagnostics!=null)diagnostics.event("cloud","target_ms",
                         SystemClock.elapsedRealtime()-cloudAt,"ok");
                     handler.post(()->{
@@ -1902,6 +1913,8 @@ public final class MainActivity extends CameraActivity {
                         if(tts.speak(spoken,mode,null,"vision-"+token+"-"+index)
                             ==TextToSpeech.SUCCESS)delivered.incrementAndGet();
                     }));
+                if(modelUsage!=null)modelUsage.recordAsync(result.model,result.serverModel,
+                    result.promptTokens,result.completionTokens,true);
                 long overallMs=SystemClock.elapsedRealtime()-tapAtMs;
                 handler.post(()->{
                     if(token!=requestVersion.get()||!uiActive)return;
@@ -1944,6 +1957,9 @@ public final class MainActivity extends CameraActivity {
                     speakForCapture("未识别到文字，请调整拍摄角度再试。",token,false);
                 });
             }catch(Exception error){
+                String attempted=targetToFind.isEmpty()&&TaskCatalog.OCR.equals(task.engine)?
+                    "qwen-vl-ocr":model;
+                if(modelUsage!=null)modelUsage.recordAsync(attempted,"",-1,-1,false);
                 handler.post(()->{
                     if(token!=requestVersion.get()||!uiActive)return;
                     cloudBusy=false;
