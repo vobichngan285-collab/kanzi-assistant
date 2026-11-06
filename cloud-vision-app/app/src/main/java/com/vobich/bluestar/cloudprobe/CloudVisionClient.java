@@ -19,11 +19,12 @@ final class CloudVisionClient {
     interface PartListener { void onSpeakablePart(String part); }
     static final class Result {
         final String text, model;
-        final long networkMs, firstTextMs, firstSpeakableMs;
+        final long networkMs, uploadMs, firstTextMs, firstSpeakableMs;
         final int promptTokens, completionTokens;
-        Result(String text,String model,long networkMs,long firstTextMs,
+        Result(String text,String model,long networkMs,long uploadMs,long firstTextMs,
                long firstSpeakableMs,int promptTokens,int completionTokens){
             this.text=text;this.model=model;this.networkMs=networkMs;
+            this.uploadMs=uploadMs;
             this.firstTextMs=firstTextMs;this.firstSpeakableMs=firstSpeakableMs;
             this.promptTokens=promptTokens;this.completionTokens=completionTokens;
         }
@@ -76,6 +77,8 @@ final class CloudVisionClient {
         try{
             byte[] request=body.toString().getBytes(StandardCharsets.UTF_8);
             try(OutputStream out=connection.getOutputStream()){out.write(request);}
+            // Includes connection establishment and request-body upload, not model execution.
+            long uploadMs=SystemClock.elapsedRealtime()-started;
             int status=connection.getResponseCode();
             long headersMs=SystemClock.elapsedRealtime()-started;
             if(status<200||status>=300){
@@ -99,7 +102,7 @@ final class CloudVisionClient {
                 if(answer.trim().isEmpty())throw new Exception("没有识别到清晰内容");
                 JSONObject usage=response.optJSONObject("usage");
                 return new Result(answer.trim(),model,SystemClock.elapsedRealtime()-started,
-                    headersMs,-1,usage==null?-1:usage.optInt("prompt_tokens",-1),
+                    uploadMs,headersMs,-1,usage==null?-1:usage.optInt("prompt_tokens",-1),
                     usage==null?-1:usage.optInt("completion_tokens",-1));
             }
 
@@ -145,7 +148,7 @@ final class CloudVisionClient {
             String answer=all.toString().trim();
             if(answer.isEmpty())throw new Exception("云端没有返回有效内容");
             return new Result(answer,model,SystemClock.elapsedRealtime()-started,
-                firstText,firstSpeakable[0],promptTokens,completionTokens);
+                uploadMs,firstText,firstSpeakable[0],promptTokens,completionTokens);
         }finally{connection.disconnect();}
     }
 
