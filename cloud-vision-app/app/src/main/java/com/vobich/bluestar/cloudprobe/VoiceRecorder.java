@@ -89,6 +89,7 @@ final class VoiceRecorder {
                 throw new IOException("按住录音超过25秒，请分段提问");
             int durationMs=samples*1000/VoiceWav.SAMPLE_RATE;
             if(durationMs<350)throw new IOException("按住时间太短，请按住说话再松开");
+            if(peak==0)throw new IOException("麦克风返回全零音频，请检查录音权限和输入设备");
             int rms=(int)Math.sqrt((double)squared/Math.max(1,samples));
             // Never discard quiet but valid audio by an arbitrary threshold.
             listener.onFinished(VoiceWav.wrap(pcm.toByteArray()),durationMs,
