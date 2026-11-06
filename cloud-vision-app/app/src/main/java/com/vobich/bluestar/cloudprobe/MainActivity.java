@@ -1470,8 +1470,14 @@ public final class MainActivity extends CameraActivity {
         String policy=imagePolicy;
         String model=visionModel;
         int photoRotation=previewRotation;
-        boolean photoMirror=usingPhoneCamera?previewMirror:(usbPreviewCorrectMirror^previewMirror);
-        boolean photoFlip=previewVerticalFlip;
+        // USB mirror is a TextureView-local transform BEFORE View rotation;
+        // on 90/270 it becomes a vertical flip in display coordinates.
+        boolean localUsbMirror=usbPreviewCorrectMirror^previewMirror;
+        boolean quarterTurn=previewRotation==90||previewRotation==270;
+        boolean photoMirror=usingPhoneCamera?previewMirror:
+            (quarterTurn?false:localUsbMirror);
+        boolean photoFlip=usingPhoneCamera?previewVerticalFlip:
+            (previewVerticalFlip^(quarterTurn&&localUsbMirror));
         float photoZoom=usingPhoneCamera?1f:zoom;
         encodingTask=encoder.submit(()->{
             long takenAt=SystemClock.elapsedRealtime();
