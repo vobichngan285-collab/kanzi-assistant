@@ -16,7 +16,7 @@
         android:supportsRtl="true"
         android:usesCleartextTraffic="false">
         <activity
-            android:name=".MainActivity"
+            android:name="com.vobich.bluestar.cloudprobe.MainActivity"
             android:screenOrientation="portrait"
             android:exported="true">
             <intent-filter>
