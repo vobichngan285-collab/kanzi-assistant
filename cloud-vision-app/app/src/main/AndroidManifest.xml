@@ -4,7 +4,9 @@
     <queries><intent><action android:name="android.intent.action.TTS_SERVICE"/></intent></queries>
     <application
         android:allowBackup="false"
-        android:label="蓝星向导·云端实验"
+        android:label="蓝星向导 云端实验0.2"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/AppTheme"
         android:supportsRtl="true"
         android:usesCleartextTraffic="false">

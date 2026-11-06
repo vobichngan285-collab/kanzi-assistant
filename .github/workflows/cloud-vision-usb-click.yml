@@ -1,4 +1,4 @@
-name: Blue Star Cloud Vision - independent USB click probe
+name: Blue Star Cloud Vision - 2.0 UI dual camera no-OCR
 on:
   push:
     branches: [exp/cloud-vision-usb-click-v1-20261106]
@@ -36,13 +36,26 @@ jobs:
           for bad in ['ppocr-sdk', 'PaddleOCR', 'onnxruntime', 'sherpa-onnx']:
               assert bad.lower() not in app.lower()
           assert 'setRenderMode(CameraRequest.RenderMode.NORMAL)' in activity
-          assert 'now - snapshot.timestampMs > 1400L' in activity
-          assert '模拟测试。已经拍到一张新照片' in activity
+          assert 'now-current.atMs>1400L' in activity
+          assert '暂时没有连接云端人工智能' in activity
           assert 'TextToSpeech.QUEUE_FLUSH' in activity
           assert 'final String OCR = "ocr"' not in tasks or 'static final String OCR = "ocr"' in tasks
           assert 'selected_task_id' in tasks and 'custom_tasks' in tasks
-          assert 'getUsbDevice()' in activity and 'onDetachDec' in activity
-          print('STATIC_UI_USB_OFFLINE_NO_LOCAL_OCR_AUDIT=PASS')
+          assert 'extends CameraActivity' in activity
+          assert 'InternalCameraController' in activity
+          assert 'attachPhonePreviewAfterUsbInit();' in activity
+          assert 'private void switchCameraSource(boolean phone)' in activity
+          assert 'showCameraSourceSelector()' in activity
+          assert '"手机后置摄像头","手机前置摄像头"' in activity
+          assert 'setPreviewWidth(1920).setPreviewHeight(1080)' in activity
+          assert 'new FrameLayout(this)' in activity and 'Gravity.BOTTOM' in activity
+          assert 'TaskCatalog.upsert(this' in activity
+          assert 'PaddleOcrEngine' not in activity
+          camera2=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/InternalCameraController.java').read_text()
+          assert 'CameraManager' in camera2 and 'CameraCaptureSession' in camera2
+          assert 'Nv21Rotation.rotate(' in camera2
+          assert "versionCode 2" in app and "versionName '0.2.0-dual-camera'" in app
+          print('DUAL_CAMERA_ORIGINAL_UI_NO_LOCAL_OCR_AUDIT=PASS')
           PY
       - name: Patch pinned Android 16 USB permission and native sampling safely
         run: |
@@ -72,14 +85,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p cloud-vision-artifact
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_CloudVision_USBClick_Probe_v0.1.0_arm64.apk
-          test -s cloud-vision-artifact/BlueStar_CloudVision_USBClick_Probe_v0.1.0_arm64.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_CloudVision_DualCamera_Probe_v0.2.0_arm64.apk
+          test -s cloud-vision-artifact/BlueStar_CloudVision_DualCamera_Probe_v0.2.0_arm64.apk
           (cd cloud-vision-artifact && sha256sum *.apk > SHA256SUMS.txt)
           unzip -l cloud-vision-artifact/*.apk | grep -q 'lib/arm64-v8a/libUVCCamera.so'
-          echo 'USB preview/sample compile passed; vivo X200 Pro hardware and cloud API tests NOT executed.' >> "$GITHUB_STEP_SUMMARY"
+          ! unzip -Z1 cloud-vision-artifact/*.apk | grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx'
+          echo 'Native USB + stock Camera2 source compiled; vivo X200 Pro dual-source and cloud API NOT tested.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload experimental APK (not a release)
         uses: actions/upload-artifact@v4
         with:
-          name: blue-star-cloud-usb-click-probe-010-arm64
+          name: blue-star-cloud-dual-camera-probe-020-arm64
           path: cloud-vision-artifact/*
           retention-days: 7
