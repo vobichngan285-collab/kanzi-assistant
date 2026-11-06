@@ -58,6 +58,16 @@ final class VoiceRecorder {
             if(record==null)
                 record=makeRecorder(MediaRecorder.AudioSource.VOICE_RECOGNITION,capacity);
             if(record==null)throw new IOException("手机麦克风没有初始化成功");
+            // USB cameras may expose an audio input. Prefer the real phone mic
+            // when present, rather than silently recording an inactive USB mic.
+            if(manager!=null){
+                for(AudioDeviceInfo device:manager.getDevices(AudioManager.GET_DEVICES_INPUTS)){
+                    if(device.getType()==AudioDeviceInfo.TYPE_BUILTIN_MIC){
+                        record.setPreferredDevice(device);
+                        break;
+                    }
+                }
+            }
             active=record;
             record.startRecording();
             if(record.getRecordingState()!=AudioRecord.RECORDSTATE_RECORDING)
