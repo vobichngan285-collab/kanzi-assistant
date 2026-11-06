@@ -45,6 +45,7 @@ final class LargeSettingsScreen {
         navigate("home","");
     }
     boolean isClosed(){return closed;}
+    void openApiKey(){navigate("cloud","");navigate("key","");}
     void close(){
         if(closed)return;
         closed=true;
