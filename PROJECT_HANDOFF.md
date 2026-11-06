@@ -1057,3 +1057,11 @@
 - **新实现**：在原独立分支 `exp/cloud-vision-usb-click-v1-20261106` 的 `cloud-vision-app/` 工程中恢复2.0风格全屏相机布局和旧应用图标，直接复用2.0原始 `InternalCameraController.java`、`Nv21Rotation.java`、`PhonePreviewGeometry.java` 的Camera2采集与FIT预览显示。USB路径为原生AUSBC Native NORMAL/TextureView、1920×1080 MJPEG，5Hz NV21快照回调不限制视频预览。设置内USB/前后手机摄像头选项与选择记忆保持；任务按钮替换旧识别模式，点击拍照替换旧开始识别；旧OCR引擎与模型未打包。
 - **CI结果**：Commit `a3d4ad37fcf8d27ad4ec6debeaa007e1d5e28653`；GitHub Actions `42158082173` SUCCESS（静态审查、编译、APK验包）。https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42158082173 。Artifact `13475213529`，下载页 https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42158082173/artifacts/13475213529 ；APK `BlueStar_CloudVision_DualCamera_Probe_v0.2.0_arm64.apk` 8,348,015 bytes，ZIP独立核对SHA256 `896a535f450fa0ed12fa81e1b40b6114cdef18c276118cca91e850c665830814` 与`SHA256SUMS.txt`一致，未发现本地OCR模型/库。
 - **边界**：此版仅双摄像头/任务/单帧/模拟TTS测试，没有INTERNET权限、无云端API、无实时AI读字能力；USB和手机内外切换及画面是否正常尚待vivo X200 Pro实机验收。蓝星1.0.9、1.0.10、2.0旧分支保持不动；云端分支独立applicationId。详细文件 `docs/cloud-dual-camera-no-local-ocr-v020-20261106.md` 在新实验分支。
+
+
+#### 2026-11-06 — 云端双摄像头实验版 v0.2.0：用户首次手机后摄实机截图
+- **证据性质：用户提供的 vivo X200 Pro 实际应用截图，不是模拟器或CI。** 画面呈现正常手机后置摄像头预览，保留原黑色全屏画面+底部“任务：原样朗读文字 / 点击拍照 / 设置”三按钮；照片中有蓝色包装盒、遥控器和桌面。
+- 点击拍照后的系统Toast可读：“已取得手机后置摄像头最新画面，1080×1920，JPEG 73KB，任务：…” 。据此将**手机后摄预览可见、手动取当前帧与内存JPEG压缩成功**标记为用户实机初步通过；是否语音播报成功无法单凭静态截图确认。
+- **尚未验收**：手机前置、USB外接、内外切换往返、持续运行稳定、锁屏操作、真实云端OCR/VL及计费。不得把单帧成功等同整套摄像头验收。
+- 后续云端实际识别需要留意包装小字：目前73KB是压缩后的体积，长边缩至1280可能影响远处小字；应以真实图像识别率确定自适应清晰度，而非一律极限压缩。
+- 这一条只更新日志；未更改APK、旧分支或AI调用范围。
