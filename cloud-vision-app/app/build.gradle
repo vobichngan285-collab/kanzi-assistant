@@ -23,4 +23,6 @@ android {
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.7.0'
     implementation project(':libausbc')
+    // USBMonitor.UsbControlBlock is a public callback type from libuvc.
+    implementation project(':libuvc')
 }
