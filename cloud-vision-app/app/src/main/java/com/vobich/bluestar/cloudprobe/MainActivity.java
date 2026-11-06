@@ -108,6 +108,7 @@ public final class MainActivity extends CameraActivity {
     private final java.util.Set<Integer> soundLoaded=
         java.util.Collections.synchronizedSet(new java.util.HashSet<Integer>());
     private String findingTarget="";
+    private String lastMicDiagnostic="尚未完成录音";
     private final VoicePressState voicePress=new VoicePressState();
     private byte[] lastSessionJpeg;
     private String lastSessionText="",lastSessionTask="";
@@ -1319,6 +1320,7 @@ public final class MainActivity extends CameraActivity {
     }
     void previewVoiceSendFeedback(){playVoiceSendSound();}
     void previewVoiceStartHaptic(){vibrationForVoiceStart();}
+    String lastMicDiagnostic(){return lastMicDiagnostic;}
     private void playVoiceSendSound(){
         // Only called after a complete, valid user-released WAV has been captured.
         if(getSharedPreferences(PREFS,MODE_PRIVATE).getBoolean(PREF_SOUND,true))
@@ -1382,6 +1384,7 @@ public final class MainActivity extends CameraActivity {
             @Override public void onReady(String mic){
                 handler.post(()->{
                     if(sequence!=voiceSequence.get()||!uiActive)return;
+                    lastMicDiagnostic="正在录音；当前麦克风："+mic;
                     if(voicePress.isHeld())setResultStatus("正在录音，松开发送");
                 });
             }
@@ -1390,15 +1393,21 @@ public final class MainActivity extends CameraActivity {
                     if(sequence!=voiceSequence.get()||!uiActive)return;
                     voiceListening=false;
                     cloudBusy=true;
+                    lastMicDiagnostic="输入："+mic+"；录音："+durationMs+"毫秒；峰值："+peak+"；均方根："+rms;
                     // No arbitrary RMS gate. Quiet recordings are sent to the ASR itself.
                     Log.i(TAG,"Voice microphone="+mic+" durationMs="+durationMs+
                         " peak="+peak+" rms="+rms+" wavBytes="+wav.length);
                     setResultStatus("语音已采集，正在提交识别…");
-                    playVoiceSendSound();
                     final int photoToken=requestVersion.get();
                     encodingTask=encoder.submit(()->{
                         try{
                             String key=CloudKeyStore.load(MainActivity.this);
+                            if(key.isEmpty())throw new Exception("请先在设置中配置百炼 API Key");
+                            handler.post(()->{
+                                if(uiActive&&sequence==voiceSequence.get()&&
+                                    photoToken==requestVersion.get())
+                                    playVoiceSendSound();
+                            });
                             String transcript=CloudAsrClient.recognize(wav,key);
                             handler.post(()->{
                                 if(!uiActive||sequence!=voiceSequence.get()||
@@ -1423,6 +1432,7 @@ public final class MainActivity extends CameraActivity {
                 handler.post(()->{
                     if(sequence!=voiceSequence.get()||!uiActive)return;
                     voiceListening=false;
+                    lastMicDiagnostic="录音失败："+reason;
                     setResultStatus("录音失败："+reason);
                     toastShort(reason);
                 });
