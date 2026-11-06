@@ -1191,3 +1191,16 @@
 - **永久发布工作流**：只在 `fix/bluestar-104-ocr-voice-empty-20261106` 增加 `.github/workflows/bluestar-rc5-direct-apk-release.yml`，Run 下载原 Artifact、校验后上传 Release。此工作流仅用于一次性发布，若同 tag 已存在则拒绝覆盖。main 无 APK 代码修改，旧 RC4/离线 OCR 分支均未改变。
 - **真实验收边界不变**：发布成功≠在 vivo X200 Pro 真实设备上通过无字播报、USB 稳定性或真正息屏按键。RC5 仅修复无可读文字的语音提示；息屏 USB 功能仍未实施。
 
+
+
+### 2026-11-07 — 蓝星向导 RC6 四款视觉模型、独立 Token 统计、深蓝设置、APK 公网直链（已打包，真机仍待验收）
+
+- **用户授权要求**：基于原仓库 RC5，在独立修复分支删去当前百炼账号返回 `404 model_not_found` 的 `qwen3-vl-flash` 选项；保留已在用户手机验证的 `qwen3-vl-plus`，加入 `qwen3.7-flash`、`qwen3.5-flash`、`qwen3.8-flash`，提供手动「测试当前模型能否看图」。增加「设置 → 云端 AI → 模型用量统计」，显示当前已选择的视觉模型、最近一次真实请求/服务端模型、今日逐模型**真实响应 Token** 输入/输出与调用次数，独立最近30天本机记录。**设置底色、面板沿用原深蓝不透明颜色，不能白色/透明**；不增加默认拍照/朗读链路网络请求或等待。用户要求彻底检查后发布 APK、优先公网浏览器直链而不是内部链接/ZIP。
+- **基线和分支**：从 `fix/bluestar-104-ocr-voice-empty-20261106` HEAD `f6e6fd51ebc37aaec20f52c1a23cba558afa710f` 新建同仓库 `fix/bluestar-105-model-options-20261107`。RC5、RC4、离线看字助手 OCR、USB 相关分支及旧 Release 全部保留不覆盖。已在该分支提交全部修改。真实编译/验包源码快照为 **`5f04753b8ebe28d47a4835b278819df7e16c4eb9`**；后续添加发布工作流和审计文档，未变更该最终打包源码。
+- **具体实施与安全边界**：`VisionModelCatalog` 仅允许四个视觉模型；旧废弃 Flash 设置迁移为可用 Plus（迁移本身不发请求），视觉聊天、拍照分析及寻找目标都发送用户实际选中的模型，失败**不悄悄退回 Plus**；新 Flash 默认明确传 `enable_thinking=false`，OCR 始终 `qwen-vl-ocr`、ASR 始终 `qwen3-asr-flash`；模型测试是用户显式点击一次才发送的64x64程序生成测试图片，单次可能收费。`ModelUsageLedger` 独立工作线程异步记录，每次从服务端响应 `usage` 获取输入/输出Token、响应 model，有则记录，无则显示「未知」绝不捏造；本机保存最近30天，仅有模型名、计数、Token和时间，不存照片、OCR文字、语音内容或API Key；ASR 另计调用次数但不虚报视觉Token；正常无字 OCR 的 HTTP 200 也携真实 usage 入账。已有 USB、音效、OCR 空结果播报、相机架构/图标不改。新页面继续 `BG #091B32 / PANEL #183553` 不透明深蓝。
+- **真实 GitHub CI 检验**：run **[42261149782](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42261149782)** 完成且 success；对模型白名单和弃用ID迁移的 JVM 单测、此前 VoiceFlow/CloudOptimization 单测、静态权限和固有功能检查、USB native ARM64 Gradle 编译、五密度图标检查、原 C 金属咔叮/嗖声和 APK 资源检查全部通过。原始 Artifact `13525147115` 有效期短（约 2026-11-13 UTC），不是长期用户直链。CI **不等于 vivo 真机端到端验证**。
+- **独立 APK 实包审计**：`BlueStar_Guide_1.0.5_RC6_arm64.apk` 大小 **8,567,972B**，SHA256 `91595fd5f42837c64d25fe536992325307130ffa03f145124196a4aef7f0e480`；实际解包后复验 `SHA256SUMS.txt` PASS、APK CRC PASS，包名 `com.vobich.bluestar.rc6`、versionCode `15`、versionName `1.0.5-rc6`、桌面名 `Blue Star Guide`；ARM64 UVC 本地库和两件原音效均通过构建核查。RC5 与 RC6 可并存，但 RC6 要重新设置百炼 API Key，不能声称可无损覆盖更新。
+- **GitHub Release 直接下载已成功发布且 API 回读确认**：发布 Actions run **[42261788230](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42261788230)** `completed/success`；对原构建 APK 做严格 SHA256/大小/CRC复核，**没有重新构建或重新签名**。公开预发布 tag `blue-star-guide-cloud-rc6-20261107`、asset 状态 `uploaded`、GitHub 服务器 digest与原 APK 完全一致。**用户可以直接复制到浏览器安装的永久 APK 网址（不是 ZIP）**：
+  https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/blue-star-guide-cloud-rc6-20261107/BlueStar_Guide_1.0.5_RC6_arm64.apk
+- **详细逐项审计交接**：https://github.com/vobichngan285-collab/kanzi-assistant/blob/fix/bluestar-105-model-options-20261107/docs/bluestar-v105-rc6-model-usage-build-audit-20261107.md 。下一步请用户真实安装 RC6、独立输入 Key、先对新 Flash 做一次明确的连接测试（确认百炼模型权限/地域/额度），再实测 OCR、语音追问、找目标和日 Token 统计；未通过的模型不做隐藏重试。没有真机对新增模型成功调用、真实 TTS 出声、USB 长时间运行、真正息屏按钮进行证实。必须区分已通过的 CI 与待验收项。
+
