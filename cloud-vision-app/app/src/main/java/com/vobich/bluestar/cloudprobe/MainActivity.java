@@ -608,6 +608,7 @@ public final class MainActivity extends CameraActivity {
                 boolean front=which==2;
                 if(phone==usingPhoneCamera&&(!phone||front==phoneFrontFacing))return;
                 if(settingsDialog!=null)settingsDialog.dismiss();
+                saveCameraProfile();
                 if(phone){
                     phoneFrontFacing=front;
                     getSharedPreferences(PREFS,MODE_PRIVATE).edit()
@@ -664,7 +665,11 @@ public final class MainActivity extends CameraActivity {
         previewMirror=prefs.getBoolean(PREF_PREVIEW_MIRROR,false);
         previewVerticalFlip=prefs.getBoolean(PREF_PREVIEW_FLIP,false);
         usbPreviewCorrectMirror=prefs.getBoolean(PREF_USB_PREVIEW_CORRECT_MIRROR,true);
-        usbPreviewVivid=prefs.getBoolean(PREF_USB_PREVIEW_VIVID,true);
+        feedbackSound=prefs.getBoolean(PREF_SOUND,true);
+        feedbackVibration=prefs.getBoolean(PREF_HAPTIC,true);
+        speechRate=prefs.getFloat(PREF_SPEECH_RATE,1f);
+        followSystemSpeechRate=prefs.getBoolean(PREF_SPEECH_DEFAULT,true);
+        loadCameraProfile();
         imagePolicy=prefs.getString(PREF_IMAGE_POLICY,"auto");
         visionModel=prefs.getString(PREF_VISION_MODEL,"qwen3-vl-plus");
         ttsEngine=prefs.getString(PREF_TTS_ENGINE,"");
@@ -690,6 +695,7 @@ public final class MainActivity extends CameraActivity {
             @Override public void onPreviewStarted(){
                 runOnUiThread(()->{
                     if(!usingPhoneCamera)return;
+                    if(phoneController!=null)phoneController.setZoom(zoom);
                     phonePreviewReceived=true;
                     if(phonePreviewStatus!=null)phonePreviewStatus.setVisibility(View.GONE);
                 });
@@ -705,7 +711,7 @@ public final class MainActivity extends CameraActivity {
             phoneTexture.setVisibility(View.VISIBLE);
             if(cameraTextureView!=null)cameraTextureView.setVisibility(View.INVISIBLE);
         }
-        Toast.makeText(this,"云端AI测试版：请在设置中配置API Key，再点击画面识别",Toast.LENGTH_LONG).show();
+        setResultStatus("点击画面识别 · 点击AI对话追问");
     }
 
     private void showImagePolicySelector(){
@@ -829,13 +835,18 @@ public final class MainActivity extends CameraActivity {
         invalidate();
         usingPhoneCamera=phone;
         latestPhoneFrame=null;
+        latestUsbFrame=null;
+        loadCameraProfile();
         getSharedPreferences(PREFS,MODE_PRIVATE).edit()
             .putBoolean(PREF_PHONE_CAMERA,phone).apply();
         phoneStartSequence++;
         if(phoneController!=null)phoneController.stop();
         if(phoneTexture!=null)phoneTexture.setVisibility(phone?View.VISIBLE:View.GONE);
         if(cameraTextureView!=null)cameraTextureView.setVisibility(phone?View.INVISIBLE:View.VISIBLE);
-        if(phone)startPhoneCamera();
+        if(phone){
+            if(phoneController!=null)phoneController.setZoom(zoom);
+            startPhoneCamera();
+        }
         else{
             phonePreviewReceived=false;
             if(phonePreviewStatus!=null)phonePreviewStatus.setVisibility(View.GONE);
@@ -964,19 +975,74 @@ public final class MainActivity extends CameraActivity {
         cameraTextureView.setRotation(previewRotation);
         int vw=cameraTextureView.getWidth(),vh=cameraTextureView.getHeight();
         cameraTextureView.setPivotX(vw/2f);cameraTextureView.setPivotY(vh/2f);
-        cameraTextureView.setScaleX(1f);
-        cameraTextureView.setScaleY(previewVerticalFlip?-1f:1f);
+        cameraTextureView.setScaleX(zoom);
+        cameraTextureView.setScaleY(zoom*(previewVerticalFlip?-1f:1f));
         if(vw>0&&vh>0){
             Matrix matrix=new Matrix();
             if(usbPreviewCorrectMirror^previewMirror)
                 matrix.setScale(-1f,1f,vw*.5f,vh*.5f);
             cameraTextureView.setTransform(matrix);
         }
-        if(usbPreviewVivid){
-            ColorMatrix m=new ColorMatrix();m.setSaturation(1.07f);
-            cameraTextureView.setRenderEffect(
-                RenderEffect.createColorFilterEffect(new ColorMatrixColorFilter(m)));
-        }else cameraTextureView.setRenderEffect(null);
+        // No USB vivid/saturation effects in official edition.
+    }
+
+    /**
+     * Profiles are isolated by built-in front/back and USB VID/PID.
+     * The test UVC model EBA4:6579 is known to be mounted sideways: default 90°.
+     * Users can recalibrate any device from the settings menu.
+     */
+    private String cameraProfilePrefix(){
+        if(usingPhoneCamera)return phoneFrontFacing?"camera_phone_front_":"camera_phone_back_";
+        UsbDevice device=null;
+        MultiCameraClient.ICamera current=getCurrentCamera();
+        if(current!=null)device=current.getUsbDevice();
+        if(device==null)device=getDefaultCamera();
+        if(device==null){
+            UsbManager manager=(UsbManager)getSystemService(USB_SERVICE);
+            if(manager!=null&&!manager.getDeviceList().isEmpty())
+                device=manager.getDeviceList().values().iterator().next();
+        }
+        if(device==null)return "camera_usb_default_";
+        return "camera_usb_"+device.getVendorId()+"_"+device.getProductId()+"_";
+    }
+
+    private void loadCameraProfile(){
+        SharedPreferences p=getSharedPreferences(PREFS,MODE_PRIVATE);
+        String id=cameraProfilePrefix();
+        boolean knownUsb=id.equals("camera_usb_60324_25977_"); // EBA4:6579
+        int def=knownUsb?90:0;
+        // Legacy single rotation applies to USB only when no profile exists.
+        if(!p.contains(id+"rotation")&&!usingPhoneCamera&&p.contains(PREF_PREVIEW_ROTATION))
+            def=p.getInt(PREF_PREVIEW_ROTATION,def);
+        previewRotation=p.getInt(id+"rotation",def);
+        previewMirror=p.getBoolean(id+"mirror",false);
+        previewVerticalFlip=p.getBoolean(id+"flip",false);
+        usbPreviewCorrectMirror=p.getBoolean(id+"usbCorrectMirror",true);
+        zoom=Math.max(1f,Math.min(3f,p.getFloat(id+"zoom",1f)));
+        if(zoomChip!=null)zoomChip.setText(String.format(Locale.CHINA,"%.1f×",zoom));
+    }
+
+    private void saveCameraProfile(){
+        String prefix=cameraProfilePrefix();
+        getSharedPreferences(PREFS,MODE_PRIVATE).edit()
+            .putInt(prefix+"rotation",previewRotation)
+            .putBoolean(prefix+"mirror",previewMirror)
+            .putBoolean(prefix+"flip",previewVerticalFlip)
+            .putBoolean(prefix+"usbCorrectMirror",usbPreviewCorrectMirror)
+            .putFloat(prefix+"zoom",zoom).apply();
+    }
+
+    private void setCameraZoom(float next){
+        float limit=3f;
+        if(usingPhoneCamera&&phoneController!=null)
+            limit=Math.max(1f,Math.min(3f,phoneController.zoomLimit()));
+        float applied=Math.max(1f,Math.min(limit,next));
+        if(Math.abs(applied-zoom)<.01f)return;
+        zoom=applied;
+        if(zoomChip!=null)zoomChip.setText(String.format(Locale.CHINA,"%.1f×",zoom));
+        if(usingPhoneCamera&&phoneController!=null)phoneController.setZoom(zoom);
+        else applyPreviewTransform();
+        saveCameraProfile();
     }
 
     @Override protected UsbDevice getDefaultCamera(){
@@ -997,7 +1063,9 @@ public final class MainActivity extends CameraActivity {
                 addPreviewDataCallBack(previewCallback);
                 previewCallbackAdded=true;
             }
-            handler.post(this::applyPreviewTransform);
+            handler.post(()->{
+                if(!usingPhoneCamera){loadCameraProfile();applyPreviewTransform();}
+            });
         }else if(code==ICameraStateCallBack.State.CLOSED){
             previewCallbackAdded=false;
             latestUsbFrame=null;
