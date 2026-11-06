@@ -1718,12 +1718,12 @@ public final class MainActivity extends CameraActivity {
         ttsEngineStartMs=-1;
         ttsAudioCallbackMs=-1;
         setResultStatus("AI正在回答图片追问…");
+        final String selectedModel=visionModel;
         final java.util.concurrent.atomic.AtomicInteger pieces=new java.util.concurrent.atomic.AtomicInteger();
         encodingTask=encoder.submit(()->{
             try{
                 String key=CloudKeyStore.load(this);
                 if(key.isEmpty())throw new Exception("请先在设置中配置API Key");
-                final String selectedModel=visionModel;
                 CloudVisionClient.Result result=CloudVisionClient.recognize(
                     jpeg,key,ask,selectedModel,part->handler.post(()->{
                         if(token!=requestVersion.get()||!uiActive||tts==null||!ttsReady)return;
@@ -1749,7 +1749,7 @@ public final class MainActivity extends CameraActivity {
                     while(followupTurns.size()>3)followupTurns.remove(0);
                 });
             }catch(Exception ex){
-                if(modelUsage!=null)modelUsage.recordAsync(visionModel,"",-1,-1,false);
+                if(modelUsage!=null)modelUsage.recordAsync(selectedModel,"",-1,-1,false);
                 handler.post(()->{
                     if(!uiActive||token!=requestVersion.get())return;
                     cloudBusy=false;
