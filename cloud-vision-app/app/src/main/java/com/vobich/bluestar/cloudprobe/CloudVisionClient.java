@@ -44,8 +44,8 @@ final class CloudVisionClient {
         if(isOcr){
             instruction="只依据照片中真实可见的信息完成任务；不猜测模糊文字。任务："+task.instruction;
         }else if("menu".equals(task.id)){
-            instruction="只根据照片可见信息完成任务："+task.instruction+
-                "。请直接列出清晰的菜名和价格；有明确标注的推荐才称推荐。禁止长篇说明和Markdown格式。";
+            instruction="只根据照片可见信息完成用户当前任务："+task.instruction+
+                "。不猜测看不清的信息，不使用Markdown格式。";
         }else if(task.custom){
             instruction="只根据照片可见信息完成任务："+task.instruction+
                 "。尽可能简洁直接，不猜测。不要Markdown格式。";
@@ -57,7 +57,7 @@ final class CloudVisionClient {
         JSONArray content=new JSONArray()
             .put(new JSONObject().put("type","text").put("text",instruction))
             .put(image);
-        int maxOutput=isOcr?1200:("menu".equals(task.id)?550:(task.custom?650:250));
+        int maxOutput=isOcr?1200:("menu".equals(task.id)?550:(task.custom?650:350));
         JSONObject body=new JSONObject().put("model",model).put("stream",streaming)
             .put("max_tokens",maxOutput).put("messages",new JSONArray().put(
                 new JSONObject().put("role","user").put("content",content)));
