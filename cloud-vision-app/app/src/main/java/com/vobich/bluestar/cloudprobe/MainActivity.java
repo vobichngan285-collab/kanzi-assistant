@@ -1248,7 +1248,8 @@ public final class MainActivity extends CameraActivity {
             clickPool=new SoundPool.Builder().setMaxStreams(1)
                 .setAudioAttributes(attributes).build();
             clickPool.setOnLoadCompleteListener((pool,id,status)->{
-                metalClickReady=(status==0&&id==metalClickSample);
+                // Callback can occur before load() has returned its sample id.
+                metalClickReady=(status==0);
             });
             metalClickSample=clickPool.load(this,R.raw.metal_lid_click,1);
         }catch(RuntimeException ex){
