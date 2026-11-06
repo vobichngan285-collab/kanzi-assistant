@@ -139,7 +139,7 @@ public final class MainActivity extends CameraActivity {
 
     private boolean previewCallbackAdded;
     private boolean usbForeground, usbStopPending, usbReopenWanted;
-    private long usbOpenedAtMs, usbRecoveryAtMs;
+    private long usbOpenedAtMs, usbRecoveryAtMs, phoneStartAtMs;
     private volatile Frame latestPhoneFrame, latestUsbFrame;
     private final AtomicLong usbFrameCount = new AtomicLong();
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -199,7 +199,8 @@ public final class MainActivity extends CameraActivity {
             usbFrameCount.incrementAndGet();
             if(!usbFirstFrameRecorded){
                 usbFirstFrameRecorded=true;
-                if(diagnostics!=null)diagnostics.event("camera","usb_first_frame",0,"ok");
+                if(diagnostics!=null)diagnostics.event("camera","usb_first_frame_ms",
+                    usbOpenedAtMs>0?Math.max(0,frame.atMs-usbOpenedAtMs):-1,"ok");
             }
         }
     }
@@ -885,7 +886,9 @@ public final class MainActivity extends CameraActivity {
                     phonePreviewReceived=true;
                     if(!phoneFirstFrameRecorded){
                         phoneFirstFrameRecorded=true;
-                        if(diagnostics!=null)diagnostics.event("camera","phone_preview_ready",0,"ok");
+                        if(diagnostics!=null)diagnostics.event("camera","phone_preview_ready_ms",
+                            phoneStartAtMs>0?
+                                Math.max(0,SystemClock.elapsedRealtime()-phoneStartAtMs):-1,"ok");
                     }
                     if(phonePreviewStatus!=null)phonePreviewStatus.setVisibility(View.GONE);
                 });
@@ -1129,6 +1132,8 @@ public final class MainActivity extends CameraActivity {
         phoneTexture.bringToFront();
         if(cameraTextureView!=null)cameraTextureView.setVisibility(View.INVISIBLE);
         phonePreviewReceived=false;
+        phoneFirstFrameRecorded=false;
+        phoneStartAtMs=SystemClock.elapsedRealtime();
         showPhonePreviewStatus(phoneFrontFacing?"正在打开手机前置摄像头…":"正在打开手机后置摄像头…",false);
         final int sequence=++phoneStartSequence;
         handler.postDelayed(()->{
@@ -1316,6 +1321,7 @@ public final class MainActivity extends CameraActivity {
                                         ICameraStateCallBack.State code,String msg){
         if(code==ICameraStateCallBack.State.OPENED){
             usbOpenedAtMs=SystemClock.elapsedRealtime();
+            usbFirstFrameRecorded=false;
             usbStopPending=false;usbReopenWanted=false;
             if(!previewCallbackAdded){
                 addPreviewDataCallBack(previewCallback);
@@ -1818,6 +1824,7 @@ public final class MainActivity extends CameraActivity {
                     lastSessionTask=task.name;
                     lastCloudResult=result.text;
                     if(diagnostics!=null){
+                        diagnostics.event("cloud","upload_ms",result.uploadMs,"ok");
                         diagnostics.event("cloud","network_ms",result.networkMs,"ok");
                         diagnostics.event("cloud",TaskCatalog.OCR.equals(task.engine)?
                             "response_headers_ms":"first_text_ms",result.firstTextMs,"ok");
@@ -1827,7 +1834,8 @@ public final class MainActivity extends CameraActivity {
                     Log.i(TAG,"Cloud timing: route="+task.engine+" model="+result.model+
                         " capture="+source+" raw="+current.width+"x"+current.height+
                         " imageLimit="+plan.limit+" jpegBytes="+jpeg.length+
-                        " jpegMs="+encodingMs+" requestMs="+result.networkMs+
+                        " jpegMs="+encodingMs+" uploadMs="+result.uploadMs+
+                        " requestMs="+result.networkMs+
                         " firstTextMs="+result.firstTextMs+
                         " firstSpeakableMs="+result.firstSpeakableMs);
                     setResultStatus("已识别："+task.name+" · 可按住AI对话追问");
