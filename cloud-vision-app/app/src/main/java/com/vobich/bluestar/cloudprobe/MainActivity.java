@@ -1099,6 +1099,164 @@ public final class MainActivity extends CameraActivity {
         camera.openCamera(cameraTextureView,getCameraRequest());
     }
 
+    private void signalCapture(){
+        if(feedbackSound){
+            try{
+                ToneGenerator tone=new ToneGenerator(AudioManager.STREAM_NOTIFICATION,60);
+                tone.startTone(ToneGenerator.TONE_PROP_BEEP,75);
+                handler.postDelayed(()->{
+                    try{tone.startTone(ToneGenerator.TONE_PROP_BEEP,80);}
+                    finally{handler.postDelayed(tone::release,130);}
+                },135L);
+            }catch(RuntimeException error){Log.w(TAG,"Capture tone unavailable");}
+        }
+        if(feedbackVibration){
+            try{
+                Vibrator vibrator=(Vibrator)getSystemService(VIBRATOR_SERVICE);
+                if(vibrator!=null&&vibrator.hasVibrator())
+                    vibrator.vibrate(VibrationEffect.createOneShot(45,VibrationEffect.DEFAULT_AMPLITUDE));
+            }catch(RuntimeException error){Log.w(TAG,"Capture vibration unavailable");}
+        }
+    }
+
+    /** One tap initiates native Android ASR; microphone is never left listening. */
+    private void startVoiceFollowup(){
+        if(cloudBusy){Toast.makeText(this,"请等当前AI回答完成",Toast.LENGTH_SHORT).show();return;}
+        if(lastSessionJpeg==null||lastSessionText.isEmpty()){
+            speak("请先点击画面拍摄并识别一张照片。");return;
+        }
+        if(voiceListening){
+            if(speechRecognizer!=null)speechRecognizer.cancel();
+            voiceListening=false;setResultStatus("已取消录音");return;
+        }
+        if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},REQUEST_VOICE_MIC);
+            return;
+        }
+        beginVoiceListening();
+    }
+
+    private void beginVoiceListening(){
+        if(!SpeechRecognizer.isRecognitionAvailable(this)){
+            showTextQuestionFallback("未发现手机语音识别服务，可输入问题继续追问。");
+            return;
+        }
+        if(tts!=null)tts.stop();
+        try{
+            if(speechRecognizer!=null){speechRecognizer.destroy();speechRecognizer=null;}
+            speechRecognizer=SpeechRecognizer.createSpeechRecognizer(this);
+            speechRecognizer.setRecognitionListener(new RecognitionListener(){
+                @Override public void onReadyForSpeech(Bundle params){
+                    setResultStatus("正在听你说话…");
+                }
+                @Override public void onBeginningOfSpeech(){setResultStatus("正在收音…");}
+                @Override public void onRmsChanged(float rmsdB){}
+                @Override public void onBufferReceived(byte[] buffer){}
+                @Override public void onEndOfSpeech(){setResultStatus("正在转换语音…");}
+                @Override public void onError(int error){
+                    voiceListening=false;
+                    setResultStatus("语音识别未成功，请重试");
+                    if(error==SpeechRecognizer.ERROR_CLIENT||
+                       error==SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS||
+                       error==SpeechRecognizer.ERROR_RECOGNIZER_BUSY)
+                        showTextQuestionFallback("语音识别暂不可用，可手动输入问题。");
+                }
+                @Override public void onResults(Bundle results){
+                    voiceListening=false;
+                    ArrayList<String> answers=results.getStringArrayList(
+                        SpeechRecognizer.RESULTS_RECOGNITION);
+                    String question=answers==null||answers.isEmpty()?"":answers.get(0).trim();
+                    if(question.isEmpty()){
+                        setResultStatus("未听清，请再点AI对话");return;
+                    }
+                    askAboutCurrentImage(question);
+                }
+                @Override public void onPartialResults(Bundle partial){}
+                @Override public void onEvent(int eventType,Bundle params){}
+            });
+            Intent intent=new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE,"zh-CN");
+            intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS,1);
+            voiceListening=true;
+            setResultStatus("请说话，结束后自动发送");
+            speechRecognizer.startListening(intent);
+        }catch(RuntimeException error){
+            voiceListening=false;
+            setResultStatus("无法启动语音识别");
+            showTextQuestionFallback("手机语音服务启动失败，可以输入问题。");
+        }
+    }
+
+    private void showTextQuestionFallback(String reason){
+        EditText question=new EditText(this);
+        question.setSingleLine(false);
+        question.setTextColor(Color.WHITE);
+        question.setHint("请输入关于上一张照片的问题");
+        LinearLayout content=new LinearLayout(this);
+        content.setPadding(dp(22),dp(10),dp(22),dp(4));
+        content.addView(question);
+        new AlertDialog.Builder(this).setTitle("AI对话")
+            .setMessage(reason).setView(content).setNegativeButton("取消",null)
+            .setPositiveButton("发送",(d,w)->{
+                String text=question.getText().toString().trim();
+                if(!text.isEmpty())askAboutCurrentImage(text);
+            }).show();
+    }
+
+    private void askAboutCurrentImage(String question){
+        if(cloudBusy||lastSessionJpeg==null||lastSessionText.isEmpty())return;
+        // Always include the actual image: earlier short summary may omit the
+        // details needed for follow-up. The cloud does not remember prior calls.
+        final byte[] jpeg=lastSessionJpeg;
+        final String observed=lastSessionText;
+        final String taskName=lastSessionTask;
+        final StringBuilder prompt=new StringBuilder();
+        prompt.append("你正在回答用户对上一张照片的追问。照片之前的任务：")
+            .append(taskName).append("。此前识别结果：")
+            .append(observed.length()>2500?observed.substring(0,2500):observed)
+            .append("。只依据照片中的真实内容回答，不猜测看不清的信息。");
+        for(String prior:followupTurns)prompt.append("此前对话：").append(prior).append("。");
+        prompt.append("用户最新问题：").append(question)
+            .append("。请直接给出清晰的中文回答，不要Markdown。");
+        final TaskCatalog.Task ask=new TaskCatalog.Task(
+            "user-followup","图片追问",prompt.toString(),TaskCatalog.VISION,true,"✦");
+        invalidate();
+        final int token=requestVersion.get();
+        cloudBusy=true;
+        setResultStatus("AI正在回答图片追问…");
+        final java.util.concurrent.atomic.AtomicInteger pieces=new java.util.concurrent.atomic.AtomicInteger();
+        encodingTask=encoder.submit(()->{
+            try{
+                String key=CloudKeyStore.load(this);
+                if(key.isEmpty())throw new Exception("请先在设置中配置API Key");
+                CloudVisionClient.Result result=CloudVisionClient.recognize(
+                    jpeg,key,ask,visionModel,part->handler.post(()->{
+                        if(token!=requestVersion.get()||!uiActive||tts==null||!ttsReady)return;
+                        int partIndex=pieces.getAndIncrement();
+                        tts.speak(part,partIndex==0?TextToSpeech.QUEUE_FLUSH:
+                            TextToSpeech.QUEUE_ADD,null,"follow-"+token+"-"+partIndex);
+                    }));
+                handler.post(()->{
+                    cloudBusy=false;
+                    if(!uiActive||token!=requestVersion.get())return;
+                    setResultStatus("AI追问已回答 · 再点可继续提问");
+                    lastCloudResult=result.text;
+                    followupTurns.add("问："+question+"，答："+result.text);
+                    while(followupTurns.size()>3)followupTurns.remove(0);
+                });
+            }catch(Exception ex){
+                handler.post(()->{
+                    cloudBusy=false;
+                    if(!uiActive||token!=requestVersion.get())return;
+                    setResultStatus("AI对话失败");
+                    Toast.makeText(this,"追问失败："+ex.getMessage(),Toast.LENGTH_LONG).show();
+                });
+            }
+        });
+    }
+
     private void invalidate(){
         requestVersion.incrementAndGet();
         if(encodingTask!=null){encodingTask.cancel(true);encodingTask=null;}
