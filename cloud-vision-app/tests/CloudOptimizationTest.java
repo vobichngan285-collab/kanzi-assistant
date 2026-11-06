@@ -80,7 +80,7 @@ public final class CloudOptimizationTest {
             "camera must never upscale original image");
         // A successful HTTP OCR response with empty content is an expected
         // no-text outcome, never a generic cloud/network failure.
-        for(String empty:new String[]{null,"","  ","\\n\\t"}){
+        for(String empty:new String[]{null,"","  ","\n\t"}){
             boolean typed=false;
             try{OcrResponseGate.requireReadable(empty);}
             catch(OcrResponseGate.NoReadableTextException expected){typed=true;}
