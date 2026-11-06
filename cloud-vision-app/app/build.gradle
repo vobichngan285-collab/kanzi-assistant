@@ -1,0 +1,26 @@
+plugins { id 'com.android.application'; id 'org.jetbrains.kotlin.android' }
+android {
+    namespace 'com.vobich.bluestar.cloudprobe'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'com.vobich.bluestar.cloudprobe'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0-probe'
+        ndk { abiFilters 'arm64-v8a' }
+    }
+    buildTypes {
+        debug { minifyEnabled false }
+        release { minifyEnabled false }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    packaging { jniLibs { pickFirsts += ['**/libc++_shared.so'] } }
+}
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation project(':libausbc')
+}

@@ -1,0 +1,6 @@
+pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+rootProject.name = 'BlueStarCloudVisionProbe'
+include ':app', ':libausbc', ':libuvc', ':libnative'
+project(':libausbc').projectDir = file('third_party/AndroidUSBCamera/libausbc')
+project(':libuvc').projectDir = file('third_party/AndroidUSBCamera/libuvc')
+project(':libnative').projectDir = file('third_party/AndroidUSBCamera/libnative')
