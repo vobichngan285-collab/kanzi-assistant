@@ -1,7 +1,7 @@
-name: Blue Star Guide 1.0.2 - Press-to-talk RC3
+name: Blue Star Guide 1.0.3 - RC4 Camera Diagnostics and Voice
 on:
   push:
-    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106]
+    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106]
     paths:
       - 'cloud-vision-app/**'
       - '.github/workflows/cloud-vision-usb-click.yml'
@@ -52,12 +52,31 @@ jobs:
           assert 'new VoicePressState()' in activity
           assert 'rms>420' not in Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/VoiceRecorder.java').read_text()
           assert '6500' not in Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/VoiceRecorder.java').read_text()
+          assert 'requestFreshFrame();' in activity
+          assert 'pendingPhoneFrameToken' in activity
+          assert 'beginCapturedFrame(' in activity
+          assert 'if(!findingTarget.isEmpty())setFindingTarget("");' in activity
+          assert 'setFindingTarget("");' in activity
+          assert 'new RuntimeDiagnostics(this)' in activity
+          assert 'copyRuntimeDiagnostics()' in activity
+          assert 'exportRuntimeDiagnostics()' in activity
+          assert 'clearRuntimeDiagnostics()' in activity
+          assert 'diagnostics.event("cloud"' in activity
+          assert 'R.raw.metal_sharp_click' not in activity
+          diagnostic=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/RuntimeDiagnostics.java').read_text()
+          assert 'MAX_SESSIONS=50' in diagnostic and 'MAX_EVENTS=24' in diagnostic
+          assert 'SEVEN_DAYS=7L' in diagnostic
+          assert 'raw.matches("[a-zA-Z0-9_]{1,32}")' in diagnostic
+          settings=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/LargeSettingsScreen.java').read_text()
+          assert 'row("运行诊断"' in settings and 'private void diagnostics()' in settings
+          assert 'row("上次识别结果"' in settings
+          assert settings.index('row("运行诊断"')>settings.index('row("上次识别结果"')
           assert 'CloudAsrClient.recognize(' in activity
           assert 'new VoiceRecorder()' in activity
           assert 'new LargeSettingsScreen(' in activity
           assert 'SpeechFilter.apply(' in activity
           assert 'ToneGenerator' not in activity
-          assert 'R.raw.metal_sharp_click' in activity
+          assert 'R.raw.c_metal_clack_ding' in activity
           assert 'R.raw.voice_send_whoosh' in activity
           assert 'R.raw.metal_lid_click' not in activity
           assert 'R.drawable.bluestar_globe' in activity
@@ -76,7 +95,7 @@ jobs:
           for bad in ['ppocr-sdk', 'PaddleOCR', 'onnxruntime', 'sherpa-onnx']:
               assert bad.lower() not in app.lower()
           assert 'setRenderMode(CameraRequest.RenderMode.NORMAL)' in activity
-          assert 'now-current.atMs>1400L' in activity
+          assert 'now-usbShot.atMs>1400L' in activity
           assert 'CloudVisionClient.recognize(jpeg,key,task,model,' in activity
           assert 'FrameCompressor.choose(' in activity
           assert 'recordTtsProgress(' in activity
@@ -100,13 +119,14 @@ jobs:
           camera2=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/InternalCameraController.java').read_text()
           assert 'CameraManager' in camera2 and 'CameraCaptureSession' in camera2
           assert 'Nv21Rotation.rotate(' in camera2
-          assert "versionCode 12" in app and "versionName '1.0.2-rc3'" in app
+          assert "versionCode 13" in app and "versionName '1.0.3-rc4'" in app
           assert Path('cloud-vision-app/app/src/main/res/drawable-nodpi/bluestar_globe.png').is_file()
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('ic_launcher.webp'))
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('bluestar_icon.webp'))
-          assert Path('cloud-vision-app/app/src/main/res/raw/metal_sharp_click.wav').is_file()
+          assert Path('cloud-vision-app/app/src/main/res/raw/c_metal_clack_ding.mp3').is_file()
           assert Path('cloud-vision-app/app/src/main/res/raw/voice_send_whoosh.wav').is_file()
           assert not Path('cloud-vision-app/app/src/main/res/raw/metal_lid_click.wav').exists()
+          assert not Path('cloud-vision-app/app/src/main/res/raw/metal_sharp_click.wav').exists()
           print('DUAL_CAMERA_CLOUD_AI_NO_LOCAL_OCR_AUDIT=PASS')
           PY
       - name: Unit checks for speech chunks and image resolution policy
@@ -163,28 +183,28 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p cloud-vision-artifact
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.2_RC3_arm64.apk
-          test -s cloud-vision-artifact/BlueStar_Guide_1.0.2_RC3_arm64.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.3_RC4_arm64.apk
+          test -s cloud-vision-artifact/BlueStar_Guide_1.0.3_RC4_arm64.apk
           (cd cloud-vision-artifact && sha256sum *.apk > SHA256SUMS.txt)
           unzip -Z1 cloud-vision-artifact/*.apk > cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' cloud-vision-artifact/apk-entries.txt
           cd cloud-vision-app
-          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.2_RC3_arm64.apk
-          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.2_RC3_arm64.apk
+          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.3_RC4_arm64.apk
+          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.3_RC4_arm64.apk
           cd ..
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           test -x "$AAPT"
-          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.2_RC3_arm64.apk > cloud-vision-artifact/badging.txt
+          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.3_RC4_arm64.apk > cloud-vision-artifact/badging.txt
           grep -F "application-label:'Blue Star Guide'" cloud-vision-artifact/badging.txt
           grep -F "package: name='com.vobich.bluestar'" cloud-vision-artifact/badging.txt
           grep -q 'application-icon-' cloud-vision-artifact/badging.txt
-          grep -Fxq 'res/raw/metal_sharp_click.wav' cloud-vision-artifact/apk-entries.txt
+          grep -Fxq 'res/raw/c_metal_clack_ding.mp3' cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'res/raw/voice_send_whoosh.wav' cloud-vision-artifact/apk-entries.txt
           ! grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx' cloud-vision-artifact/apk-entries.txt
-          echo 'Blue Star Guide 1.0.2 RC3: independently decoded globe launcher PNG for every density, crisp metal click, separate send whoosh, hold haptic, explicit send WAV, persistent target search. Real vivo X200 device acceptance still required.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Blue Star Guide 1.0.3 RC4: checked globe launcher PNG densities, exact selected C clack MP3, separate voice whoosh, fresh Camera2 photo capture, bounded privacy diagnostics, target auto-exit. vivo X200 Pro true runtime acceptance still required.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload 1.0 release candidate APK (debug-signed, device testing)
         uses: actions/upload-artifact@v4
         with:
-          name: blue-star-guide-1-0-2-rc3-arm64
+          name: blue-star-guide-1-0-3-rc4-arm64
           path: cloud-vision-artifact/*
           retention-days: 7
