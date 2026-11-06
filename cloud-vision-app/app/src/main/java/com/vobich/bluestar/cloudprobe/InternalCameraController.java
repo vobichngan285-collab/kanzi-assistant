@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.graphics.ImageFormat;
+import android.graphics.Rect;
 import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
@@ -55,6 +56,10 @@ public final class InternalCameraController {
     private int generation;
     private boolean openRequested;
     private boolean previewDelivered;
+    private float wantedZoom=1f;
+    private float supportedZoom=3f;
+    private Rect sensorActiveArray;
+    private CaptureRequest.Builder repeatBuilder;
 
     public InternalCameraController(Activity activity, TextureView textureView, Listener listener) {
         this.activity = activity;
@@ -133,6 +138,9 @@ public final class InternalCameraController {
             Log.i(TAG, "Opening phone camera ID=" + selectedId + " front=" + front);
             Integer orientation = selected.get(CameraCharacteristics.SENSOR_ORIENTATION);
             int sensor = orientation == null ? 90 : orientation;
+            sensorActiveArray=selected.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
+            Float max=selected.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM);
+            supportedZoom=max==null?1f:Math.max(1f,Math.min(3f,max));
             int display = activity.getWindowManager().getDefaultDisplay().getRotation() * 90;
             // Portrait phone sensor orientation. Only internal camera pixels
             // are normalized; USB still gives OCR its untouched original frame.
@@ -267,6 +275,8 @@ public final class InternalCameraController {
             // per-frame enhancement or disturbing the continuous AF loop.
             builder.set(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE,
                 CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_AUTO);
+            repeatBuilder=builder;
+            applyZoomCrop();
             camera.createCaptureSession(Arrays.asList(previewSurface, analysis),
                 new CameraCaptureSession.StateCallback() {
                     @Override public void onConfigured(CameraCaptureSession configured) {
@@ -316,11 +326,36 @@ public final class InternalCameraController {
         return output;
     }
 
+    /** Apply the same Camera2 crop to both preview and ImageReader in one repeating request. */
+    public void setZoom(float zoom){
+        wantedZoom=Math.max(1f,Math.min(3f,zoom));
+        Handler h=handler;
+        if(h!=null)h.post(()->{
+            applyZoomCrop();
+            if(session!=null&&repeatBuilder!=null){
+                try{session.setRepeatingRequest(repeatBuilder.build(),null,handler);}
+                catch(CameraAccessException|IllegalStateException e){Log.w(TAG,"Phone camera zoom unavailable",e);}
+            }
+        });
+    }
+    public float zoomLimit(){return supportedZoom;}
+    private void applyZoomCrop(){
+        if(repeatBuilder==null||sensorActiveArray==null)return;
+        float factor=Math.max(1f,Math.min(supportedZoom,wantedZoom));
+        int w=Math.max(2,(int)(sensorActiveArray.width()/factor));
+        int h=Math.max(2,(int)(sensorActiveArray.height()/factor));
+        int left=sensorActiveArray.centerX()-w/2;
+        int top=sensorActiveArray.centerY()-h/2;
+        Rect crop=new Rect(left,top,left+w,top+h);
+        repeatBuilder.set(CaptureRequest.SCALER_CROP_REGION,crop);
+    }
+
     public void stop() {
         generation++;
         active = false;
         openRequested = false;
         previewDelivered = false;
+        repeatBuilder=null;
         if (session != null) { try { session.close(); } catch (Exception ignored) {} session = null; }
         if (camera != null) { try { camera.close(); } catch (Exception ignored) {} camera = null; }
         if (reader != null) { try { reader.close(); } catch (Exception ignored) {} reader = null; }
