@@ -108,7 +108,7 @@ public final class MainActivity extends CameraActivity {
     private final java.util.Set<Integer> soundLoaded=
         java.util.Collections.synchronizedSet(new java.util.HashSet<Integer>());
     private String findingTarget="";
-    private boolean fingerHoldingVoice,voiceSwipeCancelled;
+    private final VoicePressState voicePress=new VoicePressState();
     private byte[] lastSessionJpeg;
     private String lastSessionText="",lastSessionTask="";
     private final ArrayList<String> followupTurns=new ArrayList<>();
@@ -1065,7 +1065,7 @@ public final class MainActivity extends CameraActivity {
     @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] results){
         super.onRequestPermissionsResult(requestCode,permissions,results);
         if(requestCode==REQUEST_VOICE_MIC){
-            fingerHoldingVoice=false;voiceSwipeCancelled=false;
+            voicePress.interrupt();
             if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)
                 toastShort("麦克风已授权，请重新按住 AI 对话再说话");
             else toastShort("需要麦克风权限才能按住语音对话");
@@ -1327,36 +1327,31 @@ public final class MainActivity extends CameraActivity {
     private boolean handleVoiceButtonTouch(MotionEvent event){
         switch(event.getActionMasked()){
             case MotionEvent.ACTION_DOWN:
-                voiceSwipeCancelled=false;
-                fingerHoldingVoice=startVoiceHold();
+                voicePress.down(startVoiceHold());
                 return true;
             case MotionEvent.ACTION_MOVE:
-                if(fingerHoldingVoice && event.getY() < -dp(100)){
-                    voiceSwipeCancelled=true;
+                if(voicePress.move(event.getY(),-dp(100)))
                     setResultStatus("松开取消录音");
-                }
                 return true;
+            case MotionEvent.ACTION_POINTER_DOWN:
             case MotionEvent.ACTION_CANCEL:
-                if(fingerHoldingVoice){
+                if(voicePress.interrupt()==VoicePressState.Decision.CANCEL){
                     voiceRecorder.cancel();
                     voiceSequence.incrementAndGet();
                     voiceListening=false;
-                    fingerHoldingVoice=false;
                     setResultStatus("录音已取消");
                 }
                 return true;
             case MotionEvent.ACTION_UP:
-                if(fingerHoldingVoice){
-                    fingerHoldingVoice=false;
-                    if(voiceSwipeCancelled){
-                        voiceRecorder.cancel();
-                        voiceSequence.incrementAndGet();
-                        voiceListening=false;
-                        setResultStatus("录音已取消，不发送");
-                    }else{
-                        voiceRecorder.finish();
-                        setResultStatus("已松手，正在整理录音…");
-                    }
+                VoicePressState.Decision result=voicePress.up();
+                if(result==VoicePressState.Decision.CANCEL){
+                    voiceRecorder.cancel();
+                    voiceSequence.incrementAndGet();
+                    voiceListening=false;
+                    setResultStatus("录音已取消，不发送");
+                }else if(result==VoicePressState.Decision.SEND){
+                    voiceRecorder.finish();
+                    setResultStatus("已松手，正在整理录音…");
                 }
                 return true;
             default:return true;
@@ -1385,8 +1380,7 @@ public final class MainActivity extends CameraActivity {
             @Override public void onReady(String mic){
                 handler.post(()->{
                     if(sequence!=voiceSequence.get()||!uiActive)return;
-                    setResultStatus("正在录音，松开发送");
-                    vibrationForVoiceStart();
+                    if(voicePress.isHeld())setResultStatus("正在录音，松开发送");
                 });
             }
             @Override public void onFinished(byte[] wav,int durationMs,int peak,int rms,String mic){
@@ -1437,6 +1431,8 @@ public final class MainActivity extends CameraActivity {
             toastShort("麦克风仍在处理上一段语音");
             return false;
         }
+        // Haptic fires at the first accepted press, not after ACTION_UP.
+        vibrationForVoiceStart();
         return true;
     }
 
@@ -1693,7 +1689,7 @@ public final class MainActivity extends CameraActivity {
     @Override protected void onPause(){
         uiActive=false;usbForeground=false;
         voiceSequence.incrementAndGet();voiceRecorder.cancel();
-        voiceListening=false;fingerHoldingVoice=false;
+        voiceListening=false;voicePress.interrupt();
         invalidate();
         cloudBusy=false;
         saveCameraProfile();
