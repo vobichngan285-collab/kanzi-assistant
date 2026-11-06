@@ -1,4 +1,4 @@
-name: Blue Star Cloud Vision - Dual Camera Cloud AI Test
+name: Blue Star 1.0 - Cloud Visual Guide Candidate
 on:
   push:
     branches: [exp/cloud-vision-usb-click-v1-20261106]
@@ -32,6 +32,19 @@ jobs:
           tasks = Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/TaskCatalog.java').read_text()
           assert 'android.permission.INTERNET' in manifest
           assert 'android.permission.CAMERA' in manifest
+          assert 'android.permission.RECORD_AUDIO' in manifest
+          assert 'android:label="蓝星向导"' in manifest
+          assert 'TaskDesktopOverlay.show(' in activity
+          assert 'startVoiceFollowup()' in activity
+          assert 'FrameCompressor.encodeAdjustedJpeg(' in activity
+          assert 'loadCameraProfile();' in activity
+          assert 'setCameraZoom(' in activity
+          assert 'PREF_USB_PREVIEW_VIVID' not in activity
+          assert '"逛商场"' not in tasks and '"场景识别"' not in tasks
+          assert '"朗读文字"' in tasks and '"餐厅菜单"' in tasks
+          assert '"医院科室"' in tasks and '"店铺招牌"' in tasks and '"商品信息"' in tasks
+          assert 'TaskCatalog.updatePreset(' in activity
+          assert 'android:icon="@mipmap/ic_launcher"' in manifest
           assert 'com.vobich.bluestar.cloudprobe' in app
           for bad in ['ppocr-sdk', 'PaddleOCR', 'onnxruntime', 'sherpa-onnx']:
               assert bad.lower() not in app.lower()
@@ -60,7 +73,7 @@ jobs:
           camera2=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/InternalCameraController.java').read_text()
           assert 'CameraManager' in camera2 and 'CameraCaptureSession' in camera2
           assert 'Nv21Rotation.rotate(' in camera2
-          assert "versionCode 5" in app and "versionName '0.5.0-early-speech'" in app
+          assert "versionCode 10" in app and "versionName '1.0.0-rc1'" in app
           print('DUAL_CAMERA_CLOUD_AI_NO_LOCAL_OCR_AUDIT=PASS')
           PY
       - name: Unit checks for speech chunks and image resolution policy
@@ -100,15 +113,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p cloud-vision-artifact
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_CloudVision_EarlySpeech_v0.5.0_arm64.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_1.0.0_RC1_arm64.apk
           test -s cloud-vision-artifact/BlueStar_CloudVision_EarlySpeech_v0.5.0_arm64.apk
           (cd cloud-vision-artifact && sha256sum *.apk > SHA256SUMS.txt)
           unzip -l cloud-vision-artifact/*.apk | grep -q 'lib/arm64-v8a/libUVCCamera.so'
           ! unzip -Z1 cloud-vision-artifact/*.apk | grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx'
-          echo 'Native USB + Camera2 compiled with adaptive image sizing and streaming visual TTS; runtime and billing require user tests.' >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload experimental APK (not a release)
+          echo 'Blue Star 1.0 release candidate: native USB, Camera2, editable tasks, native ASR and TTS; real-device A/B and production signing/backend security still required.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload 1.0 release candidate APK (debug-signed, device testing)
         uses: actions/upload-artifact@v4
         with:
-          name: blue-star-cloud-early-speech-050-arm64
+          name: blue-star-1-0-0-rc1-arm64
           path: cloud-vision-artifact/*
           retention-days: 7
