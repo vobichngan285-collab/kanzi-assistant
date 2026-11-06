@@ -1249,8 +1249,8 @@ public final class MainActivity extends CameraActivity {
                             TextToSpeech.QUEUE_ADD,null,"follow-"+token+"-"+partIndex);
                     }));
                 handler.post(()->{
-                    cloudBusy=false;
                     if(!uiActive||token!=requestVersion.get())return;
+                    cloudBusy=false;
                     setResultStatus("AI追问已回答 · 再点可继续提问");
                     lastCloudResult=result.text;
                     followupTurns.add("问："+question+"，答："+result.text);
@@ -1258,8 +1258,8 @@ public final class MainActivity extends CameraActivity {
                 });
             }catch(Exception ex){
                 handler.post(()->{
-                    cloudBusy=false;
                     if(!uiActive||token!=requestVersion.get())return;
+                    cloudBusy=false;
                     setResultStatus("AI对话失败");
                     Toast.makeText(this,"追问失败："+ex.getMessage(),Toast.LENGTH_LONG).show();
                 });
@@ -1269,6 +1269,7 @@ public final class MainActivity extends CameraActivity {
 
     private void invalidate(){
         requestVersion.incrementAndGet();
+        cloudBusy=false;
         if(encodingTask!=null){encodingTask.cancel(true);encodingTask=null;}
         if(tts!=null)tts.stop();
     }
@@ -1320,8 +1321,9 @@ public final class MainActivity extends CameraActivity {
                 String key=CloudKeyStore.load(this);
                 if(key.isEmpty()){
                     handler.post(()->{
+                        if(token!=requestVersion.get()||!uiActive)return;
                         cloudBusy=false;
-                        if(token==requestVersion.get()&&uiActive)showCloudKeyDialog();
+                        showCloudKeyDialog();
                     });
                     return;
                 }
@@ -1337,8 +1339,8 @@ public final class MainActivity extends CameraActivity {
                     }));
                 long overallMs=SystemClock.elapsedRealtime()-takenAt;
                 handler.post(()->{
-                    cloudBusy=false;
                     if(token!=requestVersion.get()||!uiActive)return;
+                    cloudBusy=false;
                     lastCloudResult=result.text;
                     Log.i(TAG,"Cloud timing: route="+task.engine+" model="+result.model+
                         " capture="+source+" raw="+current.width+"x"+current.height+
@@ -1368,8 +1370,8 @@ public final class MainActivity extends CameraActivity {
                 });
             }catch(Exception e){
                 handler.post(()->{
-                    cloudBusy=false;
                     if(token==requestVersion.get()&&uiActive){
+                        cloudBusy=false;
                         setResultStatus("识别失败，请重试");
                         new AlertDialog.Builder(this).setTitle("云端识别失败")
                             .setMessage(e.getMessage()==null?e.getClass().getSimpleName():e.getMessage())
