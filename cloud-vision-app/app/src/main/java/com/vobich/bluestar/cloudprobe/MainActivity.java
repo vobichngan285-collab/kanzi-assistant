@@ -253,7 +253,7 @@ public final class MainActivity extends CameraActivity {
         title.setGravity(Gravity.CENTER_VERTICAL);
         title.setPadding(dp(12),dp(5),dp(12),dp(5));
         ImageView brand=new ImageView(this);
-        brand.setImageResource(R.drawable.bluestar_icon);
+        brand.setImageResource(R.drawable.bluestar_globe);
         title.addView(brand,new LinearLayout.LayoutParams(dp(40),dp(40)));
         TextView appTitle=new TextView(this);
         appTitle.setText("蓝星向导");
