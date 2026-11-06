@@ -78,6 +78,23 @@ public final class CloudOptimizationTest {
             "NV21 resize must preserve YUV420 format");
         check(Nv21ImageOps.resizeLimit(new Nv21ImageOps.Image(special,8,8),16).bytes==special,
             "camera must never upscale original image");
+        // A successful HTTP OCR response with empty content is an expected
+        // no-text outcome, never a generic cloud/network failure.
+        for(String empty:new String[]{null,"","  ","\\n\\t"}){
+            boolean typed=false;
+            try{OcrResponseGate.requireReadable(empty);}
+            catch(OcrResponseGate.NoReadableTextException expected){typed=true;}
+            check(typed,"empty successful OCR returns a typed no-text outcome");
+        }
+        try{
+            check(OcrResponseGate.requireReadable("  患者须知\n第二行  ")
+                .equals("患者须知\n第二行"),"valid Chinese text must be preserved");
+            check(OcrResponseGate.requireReadable("价格 25.00 元").equals("价格 25.00 元"),
+                "OCR must not change amounts or insert text");
+        }catch(OcrResponseGate.NoReadableTextException unexpected){
+            throw new AssertionError("valid OCR should never be classified as no-text",unexpected);
+        }
+        System.out.println("OCR_EMPTY_RESPONSE_GATE_TESTS=PASS");
         System.out.println("CLOUD_OPTIMIZATION_UNIT_TESTS=PASS");
     }
 }
