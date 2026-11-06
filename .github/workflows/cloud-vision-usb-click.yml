@@ -1,7 +1,7 @@
-name: Blue Star 1.0 - Cloud Visual Guide Candidate
+name: Blue Star Guide 1.0.1 - Accessibility Fix RC2
 on:
   push:
-    branches: [exp/cloud-vision-usb-click-v1-20261106]
+    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106]
     paths:
       - 'cloud-vision-app/**'
       - '.github/workflows/cloud-vision-usb-click.yml'
@@ -33,11 +33,19 @@ jobs:
           assert 'android.permission.INTERNET' in manifest
           assert 'android.permission.CAMERA' in manifest
           assert 'android.permission.RECORD_AUDIO' in manifest
-          assert 'android:label="蓝星向导"' in manifest
+          assert 'android.permission.VIBRATE' in manifest
+          assert 'android:label="Blue Star Guide"' in manifest
           assert 'android:name="com.vobich.bluestar.cloudprobe.MainActivity"' in manifest
           assert "applicationId 'com.vobich.bluestar'" in app
           assert 'TaskDesktopOverlay.show(' in activity
           assert 'startVoiceFollowup()' in activity
+          assert 'CloudAsrClient.recognize(' in activity
+          assert 'new VoiceRecorder()' in activity
+          assert 'new LargeSettingsScreen(' in activity
+          assert 'SpeechFilter.apply(' in activity
+          assert 'ToneGenerator' not in activity
+          assert 'R.raw.metal_lid_click' in activity
+          assert 'android:label="Blue Star Guide"' in manifest
           assert 'FrameCompressor.encodeAdjustedJpeg(' in activity
           assert 'loadCameraProfile();' in activity
           assert 'setCameraZoom(' in activity
@@ -75,7 +83,7 @@ jobs:
           camera2=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/InternalCameraController.java').read_text()
           assert 'CameraManager' in camera2 and 'CameraCaptureSession' in camera2
           assert 'Nv21Rotation.rotate(' in camera2
-          assert "versionCode 10" in app and "versionName '1.0.0-rc1'" in app
+          assert "versionCode 11" in app and "versionName '1.0.1-rc2'" in app
           print('DUAL_CAMERA_CLOUD_AI_NO_LOCAL_OCR_AUDIT=PASS')
           PY
       - name: Unit checks for speech chunks and image resolution policy
@@ -86,6 +94,8 @@ jobs:
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/SpeechChunker.java \
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/ImageQualityPolicy.java \
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/Nv21Rotation.java \
+            cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/Nv21ImageOps.java \
+            cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/SpeechFilter.java \
             cloud-vision-app/tests/CloudOptimizationTest.java
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.CloudOptimizationTest
       - name: Patch pinned Android 16 USB permission and native sampling safely
@@ -116,16 +126,18 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p cloud-vision-artifact
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_1.0.0_RC1_arm64.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.1_RC2_arm64.apk
           test -s cloud-vision-artifact/BlueStar_1.0.0_RC1_arm64.apk
           (cd cloud-vision-artifact && sha256sum *.apk > SHA256SUMS.txt)
           unzip -l cloud-vision-artifact/*.apk | grep -q 'lib/arm64-v8a/libUVCCamera.so'
           unzip -Z1 cloud-vision-artifact/*.apk | grep -q 'bluestar_icon.webp'
+          unzip -Z1 cloud-vision-artifact/*.apk | grep -q 'metal_lid_click.wav'
+          unzip -Z1 cloud-vision-artifact/*.apk | grep -q 'ic_launcher.webp'
           ! unzip -Z1 cloud-vision-artifact/*.apk | grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx'
-          echo 'Blue Star 1.0 release candidate: native USB, Camera2, editable tasks, native ASR and TTS; real-device A/B and production signing/backend security still required.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Blue Star Guide 1.0.1 RC2: fixed launcher icon/name, large settings, Qwen ASR, metallic audio/haptic, TTS filters, single-encode NV21 pipeline. Requires real device acceptance.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload 1.0 release candidate APK (debug-signed, device testing)
         uses: actions/upload-artifact@v4
         with:
-          name: blue-star-1-0-0-rc1-arm64
+          name: blue-star-guide-1-0-1-rc2-arm64
           path: cloud-vision-artifact/*
           retention-days: 7
