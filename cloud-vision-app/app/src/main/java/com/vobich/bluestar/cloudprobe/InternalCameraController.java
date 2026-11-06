@@ -60,6 +60,9 @@ public final class InternalCameraController {
     private float supportedZoom=3f;
     private Rect sensorActiveArray;
     private CaptureRequest.Builder repeatBuilder;
+    // -1=idle, 1=discard the possibly queued first frame, 0=convert next fresh frame.
+    private final java.util.concurrent.atomic.AtomicInteger freshPhotoSkip=
+        new java.util.concurrent.atomic.AtomicInteger(-1);
 
     public InternalCameraController(Activity activity, TextureView textureView, Listener listener) {
         this.activity = activity;
@@ -166,6 +169,11 @@ public final class InternalCameraController {
                 if (image == null) return;
                 try {
                     if (!active || !listener.shouldReceiveFrame()) return;
+                    int skip=freshPhotoSkip.get();
+                    if(skip<0)return;
+                    if(skip>0){freshPhotoSkip.compareAndSet(skip,skip-1);return;}
+                    if(!freshPhotoSkip.compareAndSet(0,-1))return;
+                    // Only a user tap performs YUV->NV21/rotation; preview always stays live.
                     byte[] nv21 = yuvToNv21(image);
                     byte[] upright = Nv21Rotation.rotate(nv21, activeWidth, activeHeight, rotationDegrees);
                     int w = rotationDegrees % 180 == 0 ? activeWidth : activeHeight;
@@ -326,6 +334,10 @@ public final class InternalCameraController {
         return output;
     }
 
+    /** The ImageReader drains frames without converting them until an explicit photo request. */
+    public void requestFreshFrame(){freshPhotoSkip.set(1);}
+    public void cancelFreshFrame(){freshPhotoSkip.set(-1);}
+
     /** Apply the same Camera2 crop to both preview and ImageReader in one repeating request. */
     public void setZoom(float zoom){
         wantedZoom=Math.max(1f,Math.min(3f,zoom));
@@ -351,6 +363,7 @@ public final class InternalCameraController {
     }
 
     public void stop() {
+        cancelFreshFrame();
         generation++;
         active = false;
         openRequested = false;
