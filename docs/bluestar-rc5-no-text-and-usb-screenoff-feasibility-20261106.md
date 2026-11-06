@@ -34,3 +34,11 @@
 3. 仅当真正熄屏下取帧+按键双重通过，再集成「一次按键→抓最新 JPEG→用户选定任务→百炼→本机 TTS」，限制功耗、费用、连续触发频率；预览与截图同向，保持摄像头原生直显和原有 RC4 能力可回退。
 
 **现阶段结论：系统机制存在可能路线，但 vivo X200 Pro Android 16 真正息屏 + USB 持续取帧 + 机身音量键三条件同时满足尚无真机证据。不能宣称已支持。**
+
+## RC5 构建与独立实包复核（2026-11-06）
+
+- **最终构建源码快照**：`eca8c992afff5cc695cae9915b0fd5e5ef3d8b7e`（上述独立分支的 Workflow 与代码）；本报告后续文档提交不更改该打包快照。
+- GitHub Actions Run [42244749476](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42244749476) **completed/success**，包含独立纯 Java 回归、静态安全检查、Android ARM64 Gradle 编译、真实 APK 验包、上游 USB native 编译、五密度图标生成、两套原音效校验及 Artifact 上传。编译通过不等于真实 vivo 手机上已听到音效/语音。
+- Artifact ID `13516869885`，名称 `blue-star-guide-1-0-4-rc5-arm64`，下载 https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42244749476/artifacts/13516869885 ，**到期约 2026-11-13 15:40 UTC**，不要称为永久链接。此版本**未创建公开 GitHub Release**。
+- 从实际 Artifact ZIP 提取 APK 并重算 SHA，与 ZIP 内 SHA256SUMS 一致。文件 `BlueStar_Guide_1.0.4_RC5_arm64.apk`，大小 **8,551,588 bytes**，SHA256 **`e4ff506069b0c0592774bccd2f54a1e2de88499930bb9f540e014f1b68bb0d17`**；APK ZIP CRC 通过，包含 `lib/arm64-v8a/libUVCCamera.so`、`res/raw/c_metal_clack_ding.mp3`、`res/raw/voice_send_whoosh.wav` 与签名块；CI 内 `aapt` 查验 `com.vobich.bluestar.rc5`。
+- **用户真机仍待测**：实际摄像头拍没有文字的物体，确认只有本机播报，不再出现阻塞弹窗；再拍正常中文文字确认照常识别朗读；断网或故意用无效 Key 验证真正故障仍明确提示。另需复验 USB 帧与前后台稳定，**息屏 USB 和机身音量键没有改代码、更没有通过真机测试**。
