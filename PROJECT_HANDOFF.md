@@ -1050,3 +1050,10 @@
 - **严格CI与产物：** 初次运行 `42153408725` 因旧SDK安装工具失败，次运行 `42153507729` 揭示新app缺失`:libuvc`直接依赖，修复后最终成功CI `42153808969`，源码提交 `9061fc7bab308c6344b041bcfdf0909fa1413e13`：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42153808969 。Artifact ID `13473743021`，下载页：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42153808969/artifacts/13473743021 ；APK `BlueStar_CloudVision_USBClick_Probe_v0.1.0_arm64.apk` `8,324,507`字节，独立校验SHA256 `e3ab8c3c7ac04e7a83d9229cfb5a18fcc6d0e87c0055a5f3528d2c3621c74199` 与`SHA256SUMS.txt`一致。
 - **详细开发日志：** 分支 `docs/cloud-usb-click-probe-devlog-20261106.md`；后续先在vivo X200 Pro上对USB新鲜帧/截图/TTS/5-10分钟稳定性做真机测试，然后独立解决真锁屏/物理键可行性；最后才设计安全后端、百炼账号预算及OCR/VL调用，不可提前把静态/CI成果写成真机成果。
 
+
+
+#### 2026-11-06 — 云端分支0.2.0恢复2.0原版全屏显示及USB/手机双摄像头（CI通过，待真机）
+- **用户纠正**：云端0.1.0重新设计UI且失去手机内置摄像头，用户明确要求不要大改显示逻辑，直接恢复原先2.0的全屏预览、底部三列按钮、设置内的USB/手机前置/手机后置摄像头选择，只移除本地OCR。
+- **新实现**：在原独立分支 `exp/cloud-vision-usb-click-v1-20261106` 的 `cloud-vision-app/` 工程中恢复2.0风格全屏相机布局和旧应用图标，直接复用2.0原始 `InternalCameraController.java`、`Nv21Rotation.java`、`PhonePreviewGeometry.java` 的Camera2采集与FIT预览显示。USB路径为原生AUSBC Native NORMAL/TextureView、1920×1080 MJPEG，5Hz NV21快照回调不限制视频预览。设置内USB/前后手机摄像头选项与选择记忆保持；任务按钮替换旧识别模式，点击拍照替换旧开始识别；旧OCR引擎与模型未打包。
+- **CI结果**：Commit `a3d4ad37fcf8d27ad4ec6debeaa007e1d5e28653`；GitHub Actions `42158082173` SUCCESS（静态审查、编译、APK验包）。https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42158082173 。Artifact `13475213529`，下载页 https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42158082173/artifacts/13475213529 ；APK `BlueStar_CloudVision_DualCamera_Probe_v0.2.0_arm64.apk` 8,348,015 bytes，ZIP独立核对SHA256 `896a535f450fa0ed12fa81e1b40b6114cdef18c276118cca91e850c665830814` 与`SHA256SUMS.txt`一致，未发现本地OCR模型/库。
+- **边界**：此版仅双摄像头/任务/单帧/模拟TTS测试，没有INTERNET权限、无云端API、无实时AI读字能力；USB和手机内外切换及画面是否正常尚待vivo X200 Pro实机验收。蓝星1.0.9、1.0.10、2.0旧分支保持不动；云端分支独立applicationId。详细文件 `docs/cloud-dual-camera-no-local-ocr-v020-20261106.md` 在新实验分支。
