@@ -56,12 +56,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Android SDK and native toolchain
-        uses: android-actions/setup-android@v3
-      - name: Install pinned NDK and CMake
+      - name: Use GitHub runner Android SDK (as verified by earlier 1.0.10 CI)
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;28.1.13356709" "cmake;3.22.1"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          test -d "$ANDROID_HOME"
       - name: Gradle 8.11.1
         uses: gradle/actions/setup-gradle@v4
         with:
