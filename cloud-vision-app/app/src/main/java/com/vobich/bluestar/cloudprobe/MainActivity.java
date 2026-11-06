@@ -928,10 +928,30 @@ public final class MainActivity extends CameraActivity {
                 ttsTimingText()+"\n\n"+cloudResultText);
     }
 
-    private void speak(String message) {
+    private String filterForSpeech(String message,TaskCatalog.Task task){
+        if(message==null)return "";
+        SharedPreferences p=getSharedPreferences(PREFS,MODE_PRIVATE);
+        boolean all=p.getBoolean("speech_filter_all_tasks",false);
+        if(!all&&(task==null||!TaskCatalog.OCR.equals(task.engine)))return message;
+        return SpeechFilter.apply(message,
+            p.getBoolean("speech_skip_latin",false),
+            p.getBoolean("speech_skip_digits",false),
+            p.getBoolean("speech_skip_symbols",false));
+    }
+    private void speakUnfiltered(String message){
+        if(message==null||message.trim().isEmpty())return;
         if(tts!=null&&ttsReady)
-            tts.speak(message,TextToSpeech.QUEUE_FLUSH,null,"cloud-probe-"+System.nanoTime());
-        else Toast.makeText(this,"本机语音尚未就绪："+message,Toast.LENGTH_LONG).show();
+            tts.speak(message,TextToSpeech.QUEUE_FLUSH,null,
+                "bluestar-"+System.nanoTime());
+        else toastShort("本地语音引擎尚未就绪");
+    }
+    private void speak(String message){
+        String text=filterForSpeech(message,currentTask);
+        if(text.trim().isEmpty()){
+            toastShort("过滤后没有可朗读内容，请调整过滤开关");
+            return;
+        }
+        speakUnfiltered(text);
     }
 
     /** Preserve camera/source switching and attachment order from 2.0. */
@@ -1220,31 +1240,49 @@ public final class MainActivity extends CameraActivity {
         camera.openCamera(cameraTextureView,getCameraRequest());
     }
 
+    private void initMetalClick(){
+        try{
+            AudioAttributes attributes=new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build();
+            clickPool=new SoundPool.Builder().setMaxStreams(1)
+                .setAudioAttributes(attributes).build();
+            clickPool.setOnLoadCompleteListener((pool,id,status)->{
+                metalClickReady=(status==0&&id==metalClickSample);
+            });
+            metalClickSample=clickPool.load(this,R.raw.metal_lid_click,1);
+        }catch(RuntimeException ex){
+            metalClickReady=false;Log.w(TAG,"Unable to load capture click effect",ex);
+        }
+    }
+
     private void signalCapture(){
-        if(feedbackSound){
-            try{
-                ToneGenerator tone=new ToneGenerator(AudioManager.STREAM_NOTIFICATION,60);
-                tone.startTone(ToneGenerator.TONE_PROP_BEEP,75);
-                handler.postDelayed(()->{
-                    try{tone.startTone(ToneGenerator.TONE_PROP_BEEP,80);}
-                    finally{handler.postDelayed(tone::release,130);}
-                },135L);
-            }catch(RuntimeException error){Log.w(TAG,"Capture tone unavailable");}
+        SharedPreferences prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
+        feedbackSound=prefs.getBoolean(PREF_SOUND,true);
+        feedbackVibration=prefs.getBoolean(PREF_HAPTIC,true);
+        if(feedbackSound&&clickPool!=null&&metalClickReady){
+            clickPool.play(metalClickSample,.88f,.88f,1,0,1f);
         }
         if(feedbackVibration){
             try{
-                Vibrator vibrator=(Vibrator)getSystemService(VIBRATOR_SERVICE);
-                if(vibrator!=null&&vibrator.hasVibrator())
-                    vibrator.vibrate(VibrationEffect.createOneShot(45,VibrationEffect.DEFAULT_AMPLITUDE));
-            }catch(RuntimeException error){Log.w(TAG,"Capture vibration unavailable");}
+                Vibrator v=(Vibrator)getSystemService(VIBRATOR_SERVICE);
+                if(v!=null&&v.hasVibrator()){
+                    if(android.os.Build.VERSION.SDK_INT>=29)
+                        v.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK));
+                    else v.vibrate(VibrationEffect.createOneShot(13,210));
+                }
+            }catch(RuntimeException error){
+                Log.w(TAG,"Capture tactile click unavailable",error);
+            }
         }
     }
+    void previewCaptureFeedback(){signalCapture();}
 
     /** One tap initiates native Android ASR; microphone is never left listening. */
     private void startVoiceFollowup(){
         if(cloudBusy){Toast.makeText(this,"请等当前AI回答完成",Toast.LENGTH_SHORT).show();return;}
         if(lastSessionJpeg==null||lastSessionText.isEmpty()){
-            speak("请先点击画面拍摄并识别一张照片。");return;
+            speakUnfiltered("请先点击画面拍摄并识别一张照片。");return;
         }
         if(voiceListening){
             if(speechRecognizer!=null)speechRecognizer.cancel();
@@ -1355,8 +1393,10 @@ public final class MainActivity extends CameraActivity {
                 CloudVisionClient.Result result=CloudVisionClient.recognize(
                     jpeg,key,ask,visionModel,part->handler.post(()->{
                         if(token!=requestVersion.get()||!uiActive||tts==null||!ttsReady)return;
+                        String spoken=filterForSpeech(part,null);
+                        if(spoken.trim().isEmpty())return;
                         int partIndex=pieces.getAndIncrement();
-                        tts.speak(part,partIndex==0?TextToSpeech.QUEUE_FLUSH:
+                        tts.speak(spoken,partIndex==0?TextToSpeech.QUEUE_FLUSH:
                             TextToSpeech.QUEUE_ADD,null,"follow-"+token+"-"+partIndex);
                     }));
                 handler.post(()->{
@@ -1443,10 +1483,12 @@ public final class MainActivity extends CameraActivity {
                 CloudVisionClient.Result result=CloudVisionClient.recognize(jpeg,key,task,model,
                     part->handler.post(()->{
                         if(token!=requestVersion.get()||!uiActive||tts==null||!ttsReady)return;
+                        String spoken=filterForSpeech(part,task);
+                        if(spoken.trim().isEmpty())return;
                         int partIndex=segments.getAndIncrement();
                         int mode=partIndex==0?
                             TextToSpeech.QUEUE_FLUSH:TextToSpeech.QUEUE_ADD;
-                        tts.speak(part,mode,null,"vision-"+token+"-"+partIndex);
+                        tts.speak(spoken,mode,null,"vision-"+token+"-"+partIndex);
                     }));
                 long overallMs=SystemClock.elapsedRealtime()-takenAt;
                 handler.post(()->{
@@ -1521,6 +1563,7 @@ public final class MainActivity extends CameraActivity {
         if(speechRecognizer!=null){speechRecognizer.destroy();speechRecognizer=null;}
         lastSessionJpeg=null;
         if(tts!=null){tts.stop();tts.shutdown();tts=null;}
+        if(clickPool!=null){clickPool.release();clickPool=null;}
         super.onDestroy();
     }
 }
