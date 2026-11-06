@@ -1181,3 +1181,13 @@
 - **USB 真正息屏触发研究结论**：RC4 `onPause()` 主动 `uiActive=false`、`usbForeground=false`、`stopUsb()`，并使 USB `onPreviewData` 拒绝新帧与取消旧请求；当前无合适的显式 Foreground Service/锁屏全局按键方案，所以**目前并不支持真正息屏识别**。Android 官方文档允许在满足权限/前台服务类型规则的条件下探索后台设备持续使用，但 Android 14+ Camera while-in-use 权限、USB 权限、TextureView/Surface 生命周期、设备供电/省电策略、屏幕锁定后音量键是否投递均有实机风险；PARTIAL_WAKE_LOCK 仅维持 CPU，不保证 UVC/按键。Accessibility 过滤音量键需用户主动启用且系统可能拒绝，不可擅自申请。优先在新隔离诊断 APK 中验证真正熄屏后 UVC RAW 递增，再检验实体键与语音输出，二者过关后再接云端且控制费用、功耗和隐私；**本轮没有编码任何息屏/快捷键功能，也未做 vivo 真机验证**。
 - **完整技术/构建审计报告**：https://github.com/vobichngan285-collab/kanzi-assistant/blob/fix/bluestar-104-ocr-voice-empty-20261106/docs/bluestar-rc5-no-text-and-usb-screenoff-feasibility-20261106.md 。后续建议用户安装 RC5 分别测试无字、正常字、网络失败的提示行为；息屏原生探针须等待用户下一步指令，不能把系统理论能力描述为已经实现。
 
+
+
+### 2026-11-07 — RC5 原版安装包已发布 GitHub Release 公网 APK 直链
+
+- **用户要求**：不再使用聊天内部下载或 GitHub Actions Artifact ZIP，必须能复制到手机浏览器直接下载 `.apk` 的公网网址。
+- **已正式发布真实 Release 附件**：tag `blue-star-guide-cloud-rc5-20261107`，预发布页面 https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/blue-star-guide-cloud-rc5-20261107 ，APK 原始公网直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/blue-star-guide-cloud-rc5-20261107/BlueStar_Guide_1.0.4_RC5_arm64.apk ，不是 ZIP、不依赖 ChatGPT 内部附件；GitHub Release API 回读确认 `state=uploaded`、`draft=false`。
+- **源文件安全与签名一致性**：使用 Actions 成功 Run `42244749476` 的**同一份原始已测试 RC5 APK**，没有重新构建、重新签名或修改应用；通过 GitHub Actions Run https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42249241724 的 `completed/success`，在上载前核对原 Artifact SHA256SUMS、预期 SHA256、APK ZIP CRC、ARM64 USB 库及文件长度。发布附件大小 `8,551,588` 字节，GitHub 服务器返回 Digest `sha256:e4ff506069b0c0592774bccd2f54a1e2de88499930bb9f540e014f1b68bb0d17`，与原 RC5 完全一致；可直接安装的包名仍是 `com.vobich.bluestar.rc5`，和 RC4 共存。
+- **永久发布工作流**：只在 `fix/bluestar-104-ocr-voice-empty-20261106` 增加 `.github/workflows/bluestar-rc5-direct-apk-release.yml`，Run 下载原 Artifact、校验后上传 Release。此工作流仅用于一次性发布，若同 tag 已存在则拒绝覆盖。main 无 APK 代码修改，旧 RC4/离线 OCR 分支均未改变。
+- **真实验收边界不变**：发布成功≠在 vivo X200 Pro 真实设备上通过无字播报、USB 稳定性或真正息屏按键。RC5 仅修复无可读文字的语音提示；息屏 USB 功能仍未实施。
+
