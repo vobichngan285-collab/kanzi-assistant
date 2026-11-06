@@ -105,7 +105,8 @@ public final class MainActivity extends CameraActivity {
     private LargeSettingsScreen largeSettings;
     private SoundPool clickPool;
     private int metalClickSample,sendWhooshSample;
-    private volatile boolean metalClickReady,sendWhooshReady;
+    private final java.util.Set<Integer> soundLoaded=
+        java.util.Collections.synchronizedSet(new java.util.HashSet<Integer>());
     private String findingTarget="";
     private boolean fingerHoldingVoice,voiceSwipeCancelled;
     private byte[] lastSessionJpeg;
@@ -1259,44 +1260,68 @@ public final class MainActivity extends CameraActivity {
         camera.openCamera(cameraTextureView,getCameraRequest());
     }
 
+    /** Short, high-transient original PCM assets, on the normal media volume path. */
     private void initMetalClick(){
         try{
             AudioAttributes attributes=new AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                .setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build();
-            clickPool=new SoundPool.Builder().setMaxStreams(1)
+            clickPool=new SoundPool.Builder().setMaxStreams(2)
                 .setAudioAttributes(attributes).build();
             clickPool.setOnLoadCompleteListener((pool,id,status)->{
-                // Callback can occur before load() has returned its sample id.
-                metalClickReady=(status==0);
+                if(status==0)soundLoaded.add(id);
+                else Log.w(TAG,"Feedback sound loading failed: sampleId="+id);
             });
-            metalClickSample=clickPool.load(this,R.raw.metal_lid_click,1);
-        }catch(RuntimeException ex){
-            metalClickReady=false;Log.w(TAG,"Unable to load capture click effect",ex);
+            metalClickSample=clickPool.load(this,R.raw.metal_sharp_click,1);
+            sendWhooshSample=clickPool.load(this,R.raw.voice_send_whoosh,1);
+        }catch(RuntimeException error){
+            Log.w(TAG,"Feedback sound loading failed",error);
         }
     }
 
+    private void playSound(int sample){
+        if(clickPool!=null&&sample>0&&soundLoaded.contains(sample)){
+            int stream=clickPool.play(sample,1f,1f,2,0,1f);
+            if(stream==0)Log.w(TAG,"SoundPool declined sound sample "+sample);
+        }else Log.w(TAG,"Sound not yet loaded: sampleId="+sample);
+    }
     private void signalCapture(){
         SharedPreferences prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
         feedbackSound=prefs.getBoolean(PREF_SOUND,true);
         feedbackVibration=prefs.getBoolean(PREF_HAPTIC,true);
-        if(feedbackSound&&clickPool!=null&&metalClickReady){
-            clickPool.play(metalClickSample,.88f,.88f,1,0,1f);
-        }
-        if(feedbackVibration){
-            try{
-                Vibrator v=(Vibrator)getSystemService(VIBRATOR_SERVICE);
-                if(v!=null&&v.hasVibrator()){
-                    if(android.os.Build.VERSION.SDK_INT>=29)
-                        v.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK));
-                    else v.vibrate(VibrationEffect.createOneShot(13,210));
-                }
-            }catch(RuntimeException error){
-                Log.w(TAG,"Capture tactile click unavailable",error);
-            }
-        }
+        if(feedbackSound)playSound(metalClickSample);
+        if(feedbackVibration)vibrateClick(false);
     }
     void previewCaptureFeedback(){signalCapture();}
+
+    private void vibrateClick(boolean strong){
+        if(!getSharedPreferences(PREFS,MODE_PRIVATE).getBoolean(PREF_HAPTIC,true))return;
+        try{
+            Vibrator vib=(Vibrator)getSystemService(VIBRATOR_SERVICE);
+            if(vib==null||!vib.hasVibrator())return;
+            if(android.os.Build.VERSION.SDK_INT>=29)
+                vib.vibrate(VibrationEffect.createPredefined(strong?
+                    VibrationEffect.EFFECT_HEAVY_CLICK:VibrationEffect.EFFECT_CLICK));
+            else vib.vibrate(VibrationEffect.createOneShot(strong?24:12,
+                    strong?235:210));
+        }catch(RuntimeException error){
+            Log.w(TAG,"Haptic click unavailable",error);
+        }
+    }
+    private void vibrationForVoiceStart(){vibrateClick(true);}
+    private void vibrationForTargetFound(){
+        if(!getSharedPreferences(PREFS,MODE_PRIVATE).getBoolean(PREF_HAPTIC,true))return;
+        try{
+            Vibrator vib=(Vibrator)getSystemService(VIBRATOR_SERVICE);
+            if(vib!=null&&vib.hasVibrator())
+                vib.vibrate(VibrationEffect.createWaveform(new long[]{0,20,80,20},-1));
+        }catch(RuntimeException ignored){}
+    }
+    private void playVoiceSendSound(){
+        // Only called after a complete, valid user-released WAV has been captured.
+        if(getSharedPreferences(PREFS,MODE_PRIVATE).getBoolean(PREF_SOUND,true))
+            playSound(sendWhooshSample);
+    }
 
     /** One gesture for all intentions: press records, release sends, swipe up cancels. */
     private boolean handleVoiceButtonTouch(MotionEvent event){
