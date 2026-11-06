@@ -2,30 +2,41 @@ package com.vobich.bluestar.cloudprobe;
 
 import android.Manifest;
 import android.content.SharedPreferences;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
-import android.graphics.ColorMatrix;
-import android.graphics.ColorMatrixColorFilter;
+import android.graphics.drawable.GradientDrawable;
 import android.graphics.Matrix;
-import android.graphics.RenderEffect;
+import android.media.AudioManager;
+import android.media.ToneGenerator;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.os.Bundle;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.speech.RecognitionListener;
+import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.LayoutInflater;
+import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.TextureView;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageView;
+import android.widget.SeekBar;
+import android.widget.Switch;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -46,6 +57,7 @@ import com.jiangdg.ausbc.widget.AspectRatioTextureView;
 import com.jiangdg.ausbc.widget.IAspectRatio;
 
 import java.util.Locale;
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -68,13 +80,30 @@ public final class MainActivity extends CameraActivity {
     private static final String PREF_PREVIEW_MIRROR = "preview_mirror";
     private static final String PREF_PREVIEW_FLIP = "preview_flip";
     private static final String PREF_USB_PREVIEW_CORRECT_MIRROR = "usb_preview_correct_left_right";
-    private static final String PREF_USB_PREVIEW_VIVID = "usb_preview_vivid_experiment";
+    private static final String PREF_SOUND = "shutter_feedback_sound";
+    private static final String PREF_HAPTIC = "shutter_feedback_vibration";
+    private static final String PREF_SPEECH_RATE = "local_tts_rate";
+    private static final String PREF_SPEECH_DEFAULT = "local_tts_follow_default";
     private static final String PREF_TTS_ENGINE = "app_tts_engine_package";
     private static final String PREF_IMAGE_POLICY = "cloud_capture_quality";
     private static final String PREF_VISION_MODEL = "cloud_vision_model";
     private static final int REQUEST_PHONE_CAMERA = 4051;
+    private static final int REQUEST_VOICE_MIC = 4052;
 
-    private FrameLayout previewContainer;
+    private FrameLayout previewContainer,rootFrame;
+    private TextView currentTaskChip,zoomChip,resultChip;
+    private View tapOverlay;
+    private ScaleGestureDetector zoomDetector;
+    private boolean touchMulti;
+    private float downX,downY,zoom=1f;
+    private long downAtMs,lastPinchMs;
+    private boolean feedbackSound=true,feedbackVibration=true,followSystemSpeechRate=true;
+    private float speechRate=1f;
+    private SpeechRecognizer speechRecognizer;
+    private boolean voiceListening;
+    private byte[] lastSessionJpeg;
+    private String lastSessionText="",lastSessionTask="";
+    private final ArrayList<String> followupTurns=new ArrayList<>();
     private AspectRatioTextureView cameraTextureView;
     private TextureView phoneTexture;
     private TextView phonePreviewStatus;
@@ -86,7 +115,7 @@ public final class MainActivity extends CameraActivity {
     private int phoneSensorNaturalRotation=90, phoneOcrRotation;
     private int previewRotation;
     private boolean previewMirror, previewVerticalFlip, usbPreviewCorrectMirror=true;
-    private boolean usbPreviewVivid=true;
+
     private boolean previewCallbackAdded;
     private boolean usbForeground, usbStopPending, usbReopenWanted;
     private long usbOpenedAtMs, usbRecoveryAtMs;
@@ -138,79 +167,146 @@ public final class MainActivity extends CameraActivity {
         else { latestUsbFrame=frame; usbFrameCount.incrementAndGet(); }
     }
 
-    /**
-     * Exactly the 2.0 full-screen display scaffold: full bleed image,
-     * floating dark three-button dock, no separate scrolling camera UI.
-     */
-    @Override protected View getRootView(LayoutInflater inflater) {
-        FrameLayout root = new FrameLayout(this);
-        root.setPadding(0,0,0,0);
+    /** Full screen camera + one-tap capture/pinch + accessible dock. */
+    @Override protected View getRootView(LayoutInflater inflater){
+        FrameLayout root=new FrameLayout(this);
+        rootFrame=root;
         root.setBackgroundColor(Color.BLACK);
-
-        previewContainer = new FrameLayout(this);
+        previewContainer=new FrameLayout(this);
         previewContainer.setBackgroundColor(Color.BLACK);
         previewContainer.setClipChildren(true);
-        previewContainer.setClipToPadding(true);
-        root.addView(previewContainer,new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT));
+        root.addView(previewContainer,new FrameLayout.LayoutParams(-1,-1));
 
-        phoneTexture = new TextureView(this);
+        phoneTexture=new TextureView(this);
         phoneTexture.setOpaque(false);
-        phoneTexture.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->{
-            if(l!=ol||t!=ot||r!=or||b!=ob) applyPhonePreviewTransform();
+        phoneTexture.addOnLayoutChangeListener((v,l,t,r,bl,ol,ot,or,ob)->{
+            if(l!=ol||t!=ot||r!=or||bl!=ob)applyPhonePreviewTransform();
         });
         phoneTexture.setVisibility(View.GONE);
-        // Must attach only AFTER CameraActivity.initView() removeAllViews()!
-        phonePreviewStatus = new TextView(this);
+        phonePreviewStatus=new TextView(this);
         phonePreviewStatus.setTextColor(Color.WHITE);
         phonePreviewStatus.setTextSize(TypedValue.COMPLEX_UNIT_SP,17);
         phonePreviewStatus.setGravity(Gravity.CENTER);
-        phonePreviewStatus.setPadding(dp(20),dp(10),dp(20),dp(10));
-        phonePreviewStatus.setBackgroundColor(0xA9000000);
+        phonePreviewStatus.setPadding(dp(18),dp(12),dp(18),dp(12));
+        phonePreviewStatus.setBackgroundColor(0xB2101B31);
         phonePreviewStatus.setVisibility(View.GONE);
-        phonePreviewStatus.setClickable(false);
-        root.addView(phonePreviewStatus,new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,dp(104),Gravity.CENTER));
+        root.addView(phonePreviewStatus,new FrameLayout.LayoutParams(-1,dp(104),Gravity.CENTER));
 
-        // Original 2.0 overlay catches fullscreen taps while leaving video behind it.
-        View tapOverlay = new View(this);
-        tapOverlay.setContentDescription("点击取图，执行当前任务");
+        tapOverlay=new View(this);
+        tapOverlay.setContentDescription("点击拍照识别；双指缩放摄像头画面");
+        tapOverlay.setFocusable(true);
         tapOverlay.setOnClickListener(v->captureOneFrame());
-        root.addView(tapOverlay,new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT));
+        zoomDetector=new ScaleGestureDetector(this,new ScaleGestureDetector.SimpleOnScaleGestureListener(){
+            @Override public boolean onScaleBegin(ScaleGestureDetector d){
+                touchMulti=true;return true;
+            }
+            @Override public boolean onScale(ScaleGestureDetector d){
+                setCameraZoom(zoom*d.getScaleFactor());return true;
+            }
+            @Override public void onScaleEnd(ScaleGestureDetector d){
+                lastPinchMs=SystemClock.elapsedRealtime();
+            }
+        });
+        tapOverlay.setOnTouchListener((v,e)->{
+            if(e.getPointerCount()>1)touchMulti=true;
+            zoomDetector.onTouchEvent(e);
+            switch(e.getActionMasked()){
+                case MotionEvent.ACTION_DOWN:
+                    touchMulti=false;downX=e.getX();downY=e.getY();
+                    downAtMs=SystemClock.elapsedRealtime();return true;
+                case MotionEvent.ACTION_POINTER_DOWN:
+                    touchMulti=true;return true;
+                case MotionEvent.ACTION_UP:
+                    long now=SystemClock.elapsedRealtime();
+                    if(!touchMulti&&now-lastPinchMs>550L&&now-downAtMs<750L&&
+                       Math.abs(e.getX()-downX)<dp(20)&&Math.abs(e.getY()-downY)<dp(20))
+                        v.performClick();
+                    return true;
+                default:return true;
+            }
+        });
+        root.addView(tapOverlay,new FrameLayout.LayoutParams(-1,-1));
 
-        LinearLayout controls = new LinearLayout(this);
-        controls.setOrientation(LinearLayout.HORIZONTAL);
-        controls.setGravity(Gravity.CENTER);
-        controls.setPadding(dp(4),dp(4),dp(4),dp(4));
-        controls.setBackgroundColor(0xAA151515);
-        modeButton = createControlButton("任务：朗读文字");
-        controls.addView(modeButton,new LinearLayout.LayoutParams(0,dp(54),1f));
-        startButton = createControlButton("点击拍照");
-        controls.addView(startButton,new LinearLayout.LayoutParams(0,dp(54),1f));
-        settingsButton = createControlButton("设置");
-        controls.addView(settingsButton,new LinearLayout.LayoutParams(0,dp(54),1f));
-        root.addView(controls,new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,dp(62),Gravity.BOTTOM));
+        LinearLayout title=new LinearLayout(this);
+        title.setGravity(Gravity.CENTER_VERTICAL);
+        title.setPadding(dp(12),dp(5),dp(12),dp(5));
+        ImageView brand=new ImageView(this);
+        brand.setImageResource(R.drawable.bluestar_icon);
+        title.addView(brand,new LinearLayout.LayoutParams(dp(40),dp(40)));
+        TextView appTitle=new TextView(this);
+        appTitle.setText("蓝星向导");
+        appTitle.setTypeface(null,android.graphics.Typeface.BOLD);
+        appTitle.setTextColor(Color.WHITE);
+        appTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP,19);
+        appTitle.setPadding(dp(6),0,dp(6),0);
+        title.addView(appTitle,new LinearLayout.LayoutParams(0,dp(50),1f));
+        zoomChip=new TextView(this);
+        zoomChip.setText("1.0×");
+        zoomChip.setGravity(Gravity.CENTER);
+        zoomChip.setTextColor(Color.WHITE);
+        zoomChip.setBackground(roundRect(0xDD204365,15));
+        zoomChip.setPadding(dp(12),dp(9),dp(12),dp(9));
+        title.addView(zoomChip);
+        root.addView(title,new FrameLayout.LayoutParams(-1,dp(58),Gravity.TOP));
+
+        currentTaskChip=new TextView(this);
+        currentTaskChip.setTextColor(0xFFECF6FF);
+        currentTaskChip.setTextSize(TypedValue.COMPLEX_UNIT_SP,15);
+        currentTaskChip.setPadding(dp(14),dp(7),dp(14),dp(7));
+        currentTaskChip.setBackground(roundRect(0xC9153359,14));
+        FrameLayout.LayoutParams chip=new FrameLayout.LayoutParams(-2,dp(37),Gravity.TOP|Gravity.LEFT);
+        chip.topMargin=dp(64);chip.leftMargin=dp(12);
+        root.addView(currentTaskChip,chip);
+
+        resultChip=new TextView(this);
+        resultChip.setGravity(Gravity.CENTER);
+        resultChip.setTextColor(Color.WHITE);
+        resultChip.setTextSize(TypedValue.COMPLEX_UNIT_SP,13);
+        resultChip.setText("点击画面识别");
+        resultChip.setPadding(dp(10),dp(6),dp(10),dp(6));
+        resultChip.setBackground(roundRect(0xCE163758,13));
+        FrameLayout.LayoutParams stat=new FrameLayout.LayoutParams(-2,dp(36),Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);
+        stat.bottomMargin=dp(99);
+        root.addView(resultChip,stat);
+
+        LinearLayout dock=new LinearLayout(this);
+        dock.setOrientation(LinearLayout.HORIZONTAL);
+        dock.setGravity(Gravity.CENTER);
+        dock.setPadding(dp(7),dp(5),dp(7),dp(7));
+        dock.setBackground(roundRect(0xED091D36,20));
+        modeButton=createControlButton("▦\n任务",0xFF2C547D);
+        startButton=createControlButton("●\nAI对话",0xFF176BAC);
+        settingsButton=createControlButton("⚙\n设置",0xFF2C547D);
+        for(Button btt:new Button[]{modeButton,startButton,settingsButton}){
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(75),1f);
+            lp.setMargins(dp(3),0,dp(3),0);dock.addView(btt,lp);
+        }
+        root.addView(dock,new FrameLayout.LayoutParams(-1,dp(89),Gravity.BOTTOM));
+        modeButton.setContentDescription("任务选择");
+        startButton.setContentDescription("AI对话，追问刚才照片");
+        settingsButton.setContentDescription("设置");
         modeButton.setOnClickListener(v->showTaskSelector());
-        startButton.setOnClickListener(v->captureOneFrame());
+        startButton.setOnClickListener(v->startVoiceFollowup());
         settingsButton.setOnClickListener(v->showSettingsDialog());
         return root;
     }
 
-    private int dp(int d) {return Math.round(d*getResources().getDisplayMetrics().density);}
+    private GradientDrawable roundRect(int color,int radius){
+        GradientDrawable drawable=new GradientDrawable();
+        drawable.setColor(color);drawable.setCornerRadius(dp(radius));return drawable;
+    }
+    private int dp(int d){return Math.round(d*getResources().getDisplayMetrics().density);}
 
-    private Button createControlButton(String label) {
-        Button b=new Button(this);
-        b.setText(label);
-        b.setAllCaps(false);
-        b.setTextSize(TypedValue.COMPLEX_UNIT_SP,12);
-        b.setTextColor(Color.WHITE);
-        b.setMinHeight(0);
-        b.setMinimumHeight(dp(48));
-        b.setPadding(dp(2),0,dp(2),0);
-        b.setBackgroundTintList(ColorStateList.valueOf(0xFF303030));
-        return b;
+    private Button createControlButton(String label,int background){
+        Button button=new Button(this);
+        button.setAllCaps(false);
+        button.setText(label);
+        button.setTextSize(TypedValue.COMPLEX_UNIT_SP,17);
+        button.setTextColor(Color.WHITE);
+        button.setGravity(Gravity.CENTER);
+        button.setPadding(dp(4),0,dp(4),0);
+        button.setBackground(roundRect(background,15));
+        return button;
     }
 
     private void refreshTask(String id) {
