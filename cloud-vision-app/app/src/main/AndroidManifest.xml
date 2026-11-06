@@ -1,11 +1,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-feature android:name="android.hardware.usb.host" android:required="false"/>
     <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.INTERNET"/>
-    <queries><intent><action android:name="android.intent.action.TTS_SERVICE"/></intent></queries>
+    <queries>
+      <intent><action android:name="android.intent.action.TTS_SERVICE"/></intent>
+      <intent><action android:name="android.speech.RecognitionService"/></intent>
+    </queries>
     <application
         android:allowBackup="false"
-        android:label="蓝星向导 云端实验0.2"
+        android:label="蓝星向导"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/AppTheme"
