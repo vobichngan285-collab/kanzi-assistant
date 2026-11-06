@@ -17,3 +17,9 @@
 ## 交付状态
 - 此文档写入时v0.5正在GitHub Actions构建中；只有对应最终Commit的Actions显示SUCCESS且存在有效Artifact后方可向用户推荐APK。
 - 正式版保留之前冻结的六任务3×3界面、语音与语速和追加追问设计；本轮不涉及这些正式版功能。
+
+
+## 最终CI结果补记
+- GitHub Actions run 42180578988 成功；Java单元测试、Android ARM64 debug编译、APK文件校验与Artifact上传全部通过。
+- Artifact: blue-star-cloud-early-speech-050-arm64，ID 13485326194，下载地址 https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42180578988/artifacts/13485326194
+- 仍须用户在 vivo X200 Pro 真机验证视觉识别完整语音流程、720/1080选择、Plus/Flash同场景效果、TTS首段回调。不能将编译成功等同在线模型速度验证。
