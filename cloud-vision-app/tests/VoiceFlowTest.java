@@ -1,0 +1,69 @@
+package com.vobich.bluestar.cloudprobe;
+
+import java.nio.charset.StandardCharsets;
+
+public final class VoiceFlowTest {
+    private static void check(boolean yes,String why){
+        if(!yes)throw new AssertionError(why);
+    }
+    private static void assertIntent(String utterance,VoiceAction.Type type,String target){
+        VoiceAction action=VoiceAction.classify(utterance);
+        check(action.type==type,"Wrong intent for '"+utterance+"': "+action.type);
+        check(action.target.equals(target),"Wrong target for '"+utterance+"': '"+action.target+"'");
+    }
+    private static int u32(byte[] a,int offset){
+        return (a[offset]&255)|((a[offset+1]&255)<<8)|
+            ((a[offset+2]&255)<<16)|((a[offset+3]&255)<<24);
+    }
+    private static String ascii(byte[] a,int off,int length){
+        return new String(a,off,length,StandardCharsets.US_ASCII);
+    }
+    public static void main(String[] args)throws Exception{
+        assertIntent("帮我找超市。",VoiceAction.Type.START_FINDING,"超市");
+        assertIntent("帮我找附近的超市",VoiceAction.Type.START_FINDING,"超市");
+        assertIntent("帮我看超市",VoiceAction.Type.START_FINDING,"超市");
+        assertIntent("我想找药店",VoiceAction.Type.START_FINDING,"药店");
+        assertIntent("改找药店",VoiceAction.Type.START_FINDING,"药店");
+        assertIntent("不找超市了，改找药店",VoiceAction.Type.START_FINDING,"药店");
+        assertIntent("帮我找一家超市",VoiceAction.Type.START_FINDING,"超市");
+        assertIntent("停止寻找",VoiceAction.Type.STOP_FINDING,"");
+        assertIntent("不找超市了",VoiceAction.Type.STOP_FINDING,"");
+        assertIntent("这是什么",VoiceAction.Type.QUESTION,"");
+        assertIntent("帮我看这个是什么",VoiceAction.Type.QUESTION,"");
+        assertIntent("刚才那张照片里有什么",VoiceAction.Type.QUESTION,"");
+
+        VoicePressState m=new VoicePressState();
+        m.down(false);
+        check(m.up()==VoicePressState.Decision.NONE,
+            "permission denied must never send voice");
+        m.down(true);
+        check(m.isHeld(),"hold should be active");
+        check(m.up()==VoicePressState.Decision.SEND,"release must send");
+        check(m.up()==VoicePressState.Decision.NONE,"duplicate up must not send again");
+        m.down(true);
+        check(m.move(-110,-100),"swipe-to-cancel should activate");
+        check(m.up()==VoicePressState.Decision.CANCEL,"cancelled swipe cannot send");
+        m.down(true);
+        check(m.interrupt()==VoicePressState.Decision.CANCEL,
+            "Android ACTION_CANCEL must discard");
+        check(m.up()==VoicePressState.Decision.NONE,
+            "canceled voice must not send during late ACTION_UP");
+
+        byte[] pcm=new byte[16000*2];
+        for(int i=0;i<pcm.length;i++)pcm[i]=(byte)(i%223);
+        byte[] wav=VoiceWav.wrap(pcm);
+        check(wav.length==pcm.length+44,"RIFF size must be PCM+44 bytes");
+        check(ascii(wav,0,4).equals("RIFF"),"not a WAV RIFF header");
+        check(ascii(wav,8,4).equals("WAVE"),"not a WAVE header");
+        check(u32(wav,4)==pcm.length+36,"incorrect RIFF data length");
+        check(u32(wav,24)==16000&&u32(wav,28)==32000,
+            "WAV sample rate or byte rate incorrect");
+        check(u32(wav,40)==pcm.length,"WAV data chunk length incorrect");
+        for(int i=0;i<pcm.length;i++)
+            if(wav[i+44]!=pcm[i])throw new AssertionError("PCM byte mismatch "+i);
+        boolean threw=false;
+        try{VoiceWav.wrap(new byte[3]);}catch(Exception expected){threw=true;}
+        check(threw,"odd-size PCM must be rejected");
+        System.out.println("VOICE_PRESS_TARGET_AND_WAV_TESTS=PASS");
+    }
+}
