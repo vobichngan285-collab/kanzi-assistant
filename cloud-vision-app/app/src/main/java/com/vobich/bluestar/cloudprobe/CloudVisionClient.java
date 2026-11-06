@@ -35,9 +35,12 @@ final class CloudVisionClient {
         if(key==null||key.trim().isEmpty())
             throw new IllegalArgumentException("请先在设置中配置API Key");
         boolean isOcr=TaskCatalog.OCR.equals(task.engine);
-        boolean streaming=!isOcr;
-        String model=isOcr?"qwen-vl-ocr":
-            ("qwen3-vl-flash".equals(visionModel)?"qwen3-vl-flash":"qwen3-vl-plus");
+        boolean connectionTest="model-probe".equals(task.id);
+        boolean streaming=!isOcr&&!connectionTest;
+        // Respect the actual user-selected model: never silently spend Plus tokens.
+        if(!isOcr&&VisionModelCatalog.indexOf(visionModel)<0)
+            throw new IllegalArgumentException("所选视觉模型不支持，请重新选择");
+        String model=isOcr?"qwen-vl-ocr":visionModel;
         JSONObject image=new JSONObject().put("type","image_url").put("image_url",
             new JSONObject().put("url","data:image/jpeg;base64,"+
                 Base64.encodeToString(jpeg,Base64.NO_WRAP)));
@@ -60,10 +63,15 @@ final class CloudVisionClient {
         JSONArray content=new JSONArray()
             .put(new JSONObject().put("type","text").put("text",instruction))
             .put(image);
-        int maxOutput=isOcr?1200:("menu".equals(task.id)?550:((task.custom||customPreset)?650:350));
+        int maxOutput=isOcr?1200:(connectionTest?64:
+            ("menu".equals(task.id)?550:((task.custom||customPreset)?650:350)));
         JSONObject body=new JSONObject().put("model",model).put("stream",streaming)
             .put("max_tokens",maxOutput).put("messages",new JSONArray().put(
                 new JSONObject().put("role","user").put("content",content)));
+        // New Qwen 3.x hybrid models otherwise may spend time/tokens reasoning.
+        // This must not alter the verified qwen-vl-ocr or qwen3-vl-plus behavior.
+        if(!isOcr&&VisionModelCatalog.isBudgetFlash(model))
+            body.put("enable_thinking",false);
         if(streaming)body.put("stream_options",new JSONObject().put("include_usage",true));
 
         HttpURLConnection connection=(HttpURLConnection)new URL(ENDPOINT).openConnection();
