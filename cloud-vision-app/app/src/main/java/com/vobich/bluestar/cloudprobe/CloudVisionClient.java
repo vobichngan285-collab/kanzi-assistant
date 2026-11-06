@@ -108,8 +108,15 @@ final class CloudVisionClient {
                 if(choices==null||choices.length()==0)throw new Exception("云端没有返回识别内容");
                 String answer=choices.getJSONObject(0).getJSONObject("message").optString("content","");
                 // Empty success is not a server/transport failure: notify via voice, no modal.
-                String readable=OcrResponseGate.requireReadable(answer);
                 JSONObject usage=response.optJSONObject("usage");
+                int prompt=usage==null?-1:usage.optInt("prompt_tokens",-1);
+                int completion=usage==null?-1:usage.optInt("completion_tokens",-1);
+                String readable;
+                try{readable=OcrResponseGate.requireReadable(answer);}
+                catch(OcrResponseGate.NoReadableTextException empty){
+                    throw new OcrResponseGate.NoReadableTextException(
+                        response.optString("model",""),prompt,completion);
+                }
                 return new Result(readable,model,response.optString("model",""),
                     SystemClock.elapsedRealtime()-started,
                     uploadMs,headersMs,-1,usage==null?-1:usage.optInt("prompt_tokens",-1),
