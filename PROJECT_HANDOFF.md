@@ -1106,3 +1106,6 @@
 - **未改动**：已经验证的 qwen-vl-ocr调用/提示词/识别方案；手机前后Camera2 + USB原生 UVC 底层摄像头；当前实验任务列表（用户要求正式版统一精简）；原有Plus/Flash手动选择，默认Plus。Flash需用户确认单独免费额度和用完即停，不自动切换或重复请求。
 - **代码**：实验分支 exp/cloud-vision-usb-click-v1-20261106 提交 c3970b3de87a969eff8c34890b7db1f3073af11a；新增分句单元测试后发现测试语句短于分段门槛，已修正测试样例提交298403d333c00e3f21ac4a078d59124abbad3795。版本 v0.5.0-early-speech；新文档 docs/cloud-vision-early-speech-v050-20261106.md 提交84f2bbcf2155ffeccdc3c7fa8ce3543284c7ff6f。
 - **构建状态**：run 42180578988 在记录时仍编译中；必须以最终SUCCESS+Artifact为准，不可把CI当成真机提速证明。后续让用户对同一文字/菜单测试720p与1080p、Plus与Flash、首句生成/引擎onStart/音频回调与真实听到语音时间、准确率和延迟。保持用户自己的API Key隐私，正式版本仍需服务端密钥代理。
+
+
+- **v0.5.0构建最终验收补记**：GitHub Actions run [42180578988](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42180578988) 已 **SUCCESS**；单元测试、安卓 arm64 构建、APK验包及上传均完成。Artifact ID **13485326194**，名称 `blue-star-cloud-early-speech-050-arm64`；下载页 https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42180578988/artifacts/13485326194 。此为CI通过，**用户尚未真机实测 v0.5.0**；不可声称实测提速。
