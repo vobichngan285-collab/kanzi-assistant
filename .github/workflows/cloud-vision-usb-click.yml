@@ -6,6 +6,9 @@ on:
       - 'cloud-vision-app/**'
       - '.github/workflows/cloud-vision-usb-click.yml'
   workflow_dispatch:
+concurrency:
+  group: blue-star-cloud-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
