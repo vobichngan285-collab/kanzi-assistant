@@ -33,3 +33,14 @@
 - `TaskOrderTest` 覆盖首页六卡重排、创建入口置前、移动到任意格、拖动跨页的纯序列动作、新增自定义与删除遗留 ID 的稳定排序、重复 ID 清理、输入越界拒绝和原列表不变。
 - CI 脚本静态核查原生 `startDragAndDrop`、`ACTION_DROP`、`onPageArrowDrag`、SharedPreferences ID 保存以及 STOP → `setFindingTarget("")` 真正执行。还跑原 OCR 结果门控、四视觉模型及纯文字追问检查，以及原 UVC/Camera2/原声效/图标完整性；GitHub Android CI 不能代替用户手机触摸与口播实测。
 - **需要用户 vivo X200 Pro 验收**：①先说“帮我找门”，左上角标出寻找；再说“取消掉找门”，应立即恢复“任务：朗读文字”或当前任务而不是等待拍到门，且不增加额外图片调用；②在任务页按住“店铺招牌”约0.5秒并拖到左上，放手后留在第一格；关任务页重开、重启 APP 后顺序仍在；③短点任务仍正常选择、向左滑动只翻页；④若已增加自定义任务到超过九格，试底部箭头跨页拖动；⑤四模型选项、USB/手机画面、OCR/TTS 正常。
+
+## GitHub 实际编译、校验及发布（已完成）
+
+- 初版 Actions run **42331962973** 的语音回归测试发现“找门了吗”被重新当作寻找目标，此例错误在 `VoiceAction` 的旧宽泛寻找规则；已增加目标状态问句识别并重跑。随后的多次 run 由于改动后自动取消，被明确区分为 cancelled，**没有把其当成功**。
+- **最终真正构建 SHA**：`cfe016f87b9477f438216c83ac2ab0f9eb9d3b48`；GitHub Actions **[42332177046](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42332177046)** `completed/success`。原静态安全审计、更新后的 `VoiceFlowTest`、`TaskOrderTest`、`CloudOptimizationTest`、`FollowupPromptTest`、`VisionModelCatalogTest` 全通过；Android Gradle 8.11.1 / ARM64 固定原生 UVC 编译、原有提示音/桌面图标及 APK 包名核对均通过。
+- **真实 ZIP Artifact** id **13557264149**、名称 `blue-star-guide-1-0-10-rc11-arm64`；实际下载到容器 `/mnt/data/BlueStar_Guide_1.0.10_RC11_artifact.zip`。通过 Python zipfile **逐项校验 ZIP 完整性、归档内 `SHA256SUMS.txt`、APK ZIP CRC、`lib/arm64-v8a/libUVCCamera.so`、`res/raw/c_metal_clack_ding.mp3`、`res/raw/voice_send_whoosh.wav`**。原 APK `BlueStar_Guide_1.0.10_RC11_arm64.apk` **8,567,980 bytes**，SHA256 **`3801e557b140201f9ed7608777a3c7347e438be4b09a51b0773ce0e42f89a137`**。APK 原 `badging.txt` 首行 `package: name='com.vobich.bluestar.rc11' versionCode='20' versionName='1.0.10-rc11'`。
+- **发布成功**：GitHub Workflow **[42332556442](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42332556442)** `completed/success`。独立发布流程锁定成功 CI run、源 SHA、文件大小、SHA256、原 USB 库和两个声效，**直接上传 CI 原 APK 不重新编译/签名**。GitHub Release tag `blue-star-guide-cloud-rc11-20261107` API 实际回报 `draft=false`、`prerelease=true`，资产 `state=uploaded`、大小 **8,567,980 bytes**、服务端 digest 与本地计算完全一致。
+- **公网直链（非 ZIP，可复制手机浏览器）**：
+  https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/blue-star-guide-cloud-rc11-20261107/BlueStar_Guide_1.0.10_RC11_arm64.apk
+
+**实测边界**：JVM 纯逻辑、Android 编译及 ZIP 校验均已通过，仍不能宣称已在 vivo X200 Pro 真机完成长按/拖动、跨页 drop、麦克风 ASR 文本、系统 TTS 播放及 USB/Camera2 运行验证；需要用户安装操作反馈。与 RC10 分离意味着新包的本地 Keystore API Key 与自定义任务不自动继承，切勿误称可以无缝升级。
