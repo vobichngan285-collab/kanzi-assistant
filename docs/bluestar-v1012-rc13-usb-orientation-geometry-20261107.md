@@ -23,3 +23,19 @@
 - 原上传 JPEG 手动检查须由用户在 vivo X200 Pro 验证是否与屏幕预览方向、实际左右符合；同图再对照 USB 自动720与手动1080文字准确率。
 - USB 只有最新缓存帧快照，不是拍照时调用 UVC 获取全新帧；通过帧龄限制避免过时而不重写稳定 native UVC 数据链。真机无法从 CI 推定通过。
 - 此文在 CI 前建立，最终 build/release 的 run、SHA、APK 大小等在成功后追加，不能预设成功。
+
+
+## 最终 CI 与 APK 发版审计（2026-11-07 追加）
+
+- 原仓库独立分支 `fix/bluestar-112-usb-orientation-preview-jpeg-20261107`，**真正 Android 编译的源码 commit `339793a2ce4f1021dba889c38a1cb1653f9d674f`**。
+- 首轮 Android Actions **42338395119** 失败：静态检查仍要求旧值 `now-usbShot.atMs>1400L`，实际代码已换为新 `usbFrameAge>USB_MAX_FRAME_AGE_MS`。这属于过时的 CI 静态断言，不是 APK 编译测试；修订断言后重新完整构建。**首轮失败不得记为成功**。
+- 最终 Android Actions **[42338431417](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42338431417)** = `completed/success`；原始 runner 日志明确：`DUAL_CAMERA_CLOUD_AI_NO_LOCAL_OCR_AUDIT=PASS`、`RC13_USB_PREVIEW_JPEG_32_COMBINATIONS_AND_90_CORRECTION=PASS 32`、`CLOUD_OPTIMIZATION_UNIT_TESTS=PASS`、`TASK_ORDER_DRAG_RECONCILIATION_TESTS=PASS`、`RC12_MODEL_CATALOG_MIGRATION=PASS`、Android `BUILD SUCCESSFUL in 2m 31s`、APK 校验及图标/音效全部通过。
+- 真正原始 CI Artifact **13560202815**，名称 `blue-star-guide-1-0-12-rc13-arm64`；不是旧 RC12 工件。
+- GitHub Release 专用 Actions **[42338701342](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42338701342)** = `completed/success`；先核实精确源码 SHA 和构建成功，再下载原 CI Artifact，用 `sha256sum -c SHA256SUMS.txt`、APK ZIP CRC、UVC 原生 ARM64 `.so`、咔叮 MP3、嗖声 WAV、manifest 的包名 `com.vobich.bluestar.rc13` / versionCode22 / versionName `1.0.12-rc13`，确定无本地 OCR 模型，**只上传原成功 CI APK，无二次编译和重签名**。
+- 官方 GitHub Release tag `blue-star-guide-cloud-rc13-20261107` 已真实发布：`draft=false`、`prerelease=true`、Asset `state=uploaded`。APK `BlueStar_Guide_1.0.12_RC13_arm64.apk` **8,584,364 字节**，SHA256 **`b1007c21852ea40b75f3bfa58a949a35f7d26cbb55f275e8202d30e98b5bb2fc`**。
+- **APK 手机浏览器可直接复制下载链接**：
+  https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/blue-star-guide-cloud-rc13-20261107/BlueStar_Guide_1.0.12_RC13_arm64.apk
+
+### 真机交付建议
+
+在 vivo X200 Pro 上先插 USB 摄像头，确认设置 `画面旋转=90°`；按实际场景调整「垂直翻转」「USB 左右校正」「水平镜像」直到吉他确实位于右侧、字正立。由于 RC13 **是独立安装包**，不会继承 RC12 的设备方向设置、Key、自定义任务。首次进入「设置 → 运行诊断 → 查看上次发给 AI 的照片（仅本机）」检查真实 JPEG 与预览是否同向；有差异请同时反馈两张截图和匿名日志。再用固定文字在 USB 和手机、720/1080 设置对照。GitHub CI 能证明数学像素变换与打包检查，**不能代替具体 UVC 设备 Android TextureView 实际显示和真机文字识别准确率验证**。
