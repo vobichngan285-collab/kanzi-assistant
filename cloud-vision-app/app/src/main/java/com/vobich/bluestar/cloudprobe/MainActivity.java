@@ -152,13 +152,14 @@ public final class MainActivity extends CameraActivity {
     private TextureView phoneTexture;
     private TextView phonePreviewStatus;
     private Button modeButton, startButton, readingButton, settingsButton;
-    private ReadingScreen readingScreen;
+    private volatile ReadingScreen readingScreen;
     private ReadingLibrary readingLibrary;
     private ReadingNarrationQueue readingNarration;
     private final AtomicBoolean readingAwaitingFrame=new AtomicBoolean(false);
     private volatile boolean readingProcessing;
     private volatile long readingCaptureStartedAtMs;
-    private int readingCaptureToken,readingSpeechToken;
+    private volatile int readingCaptureToken;
+    private int readingSpeechToken;
     private String readingExportBookId="";
     private AlertDialog settingsDialog;
     private InternalCameraController phoneController;
