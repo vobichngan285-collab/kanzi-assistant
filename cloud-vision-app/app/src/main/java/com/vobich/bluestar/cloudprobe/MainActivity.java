@@ -1675,7 +1675,8 @@ public final class MainActivity extends CameraActivity {
         }
         if(action.type==VoiceAction.Type.OBSERVE_SCENE){
             TaskCatalog.Task observe=new TaskCatalog.Task("voice-scene","观察场景",
-                "请描述眼前真实可见的事物、位置与重要环境信息，"
+                "用户刚才说："+(transcript.length()>180?transcript.substring(0,180):transcript)
+                +"。请只根据眼前真实可见的画面直接回应，"
                 +"先说最重要的内容，尽量简短；看不清不要猜测。",
                 TaskCatalog.VISION,false,"◉");
             captureOneFrame(observe);
@@ -1786,6 +1787,7 @@ public final class MainActivity extends CameraActivity {
     private void invalidate(){
         requestVersion.incrementAndGet();
         pendingPhoneFrameToken=-1;
+        pendingPhoneCaptureTask=null;
         if(phoneController!=null)phoneController.cancelFreshFrame();
         cloudBusy=false;
         if(encodingTask!=null){encodingTask.cancel(true);encodingTask=null;}
@@ -1802,7 +1804,11 @@ public final class MainActivity extends CameraActivity {
         if(cloudBusy){toastShort("AI正在处理上一项操作");return;}
         long now=SystemClock.elapsedRealtime();
         if(now-lastPinchMs<550L||!uiActive)return;
-        if(now-lastTapMs<1500L){toastShort("已忽略连续误触");return;}
+        if(now-lastTapMs<1500L){
+            toastShort("已忽略连续误触");
+            if(fromVoice)speakUnfiltered("拍照间隔太短，请再说一次。");
+            return;
+        }
         Frame usbShot=usingPhoneCamera?null:latestUsbFrame;
         if(!usingPhoneCamera&&(usbShot==null||now-usbShot.atMs>1400L)){
             toastShort("USB没有最新画面，不会使用旧照片");
