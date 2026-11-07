@@ -130,7 +130,7 @@ patch(uvc,
             3 -> UVCCamera.PU_GAIN
             else -> return false
         }
-        return camera.checkSupportFlag(flag)
+        return camera.checkSupportFlag(flag.toLong())
     }""")
 patch(uvcbuild, "abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'",
       "abiFilters 'arm64-v8a'")
