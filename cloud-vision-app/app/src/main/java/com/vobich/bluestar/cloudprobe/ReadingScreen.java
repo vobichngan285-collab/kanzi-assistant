@@ -21,7 +21,8 @@ import java.util.List;
 /** Full-screen Blue Star reading shelf, camera transient, and white-text reading UI. */
 final class ReadingScreen {
     interface Listener {
-        void capture(String bookId);
+        void enterPreview(String bookId);
+        void takePhoto(String bookId);
         void cancelCapture();
         void closeReading();
         void stopReading();
@@ -121,6 +122,7 @@ final class ReadingScreen {
         return all;
     }
     private void render(){
+        if("preview".equals(phase)){renderPreview();return;}
         if("capturing".equals(phase)){renderCapturing();return;}
         LinearLayout all=layout(BG);
         ScrollView scroll=new ScrollView(activity);
@@ -168,6 +170,7 @@ final class ReadingScreen {
                 try{
                     ReadingLibrary.Book b=books.create(field.getText().toString());
                     openBook(b.id);
+                    listener.enterPreview(b.id);
                 }catch(Exception ex){message("创建失败："+ex.getMessage());}
             }).show();
     }
@@ -262,8 +265,43 @@ final class ReadingScreen {
     }
     private void requestCapture(){
         if(bookId.isEmpty()||working)return;
-        listener.capture(bookId);
+        listener.enterPreview(bookId);
     }
+    /** Transparent surface exposes the real live camera preview behind this screen.
+     * The preview is never a still image or a cached frame. ONLY the user tap takes a photo.
+     */
+    private void renderPreview(){
+        screen.removeAllViews();
+        screen.setBackgroundColor(Color.TRANSPARENT);
+        TextView tap=label("",21,WHITE,false);
+        tap.setContentDescription("实时摄像头预览。对准书页后双击拍照");
+        tap.setClickable(true);tap.setFocusable(true);
+        tap.setOnClickListener(v->listener.takePhoto(bookId));
+        screen.addView(tap,new FrameLayout.LayoutParams(-1,-1));
+        TextView banner=label("阅读 · 对准书页后点击屏幕拍照",19,WHITE,true);
+        banner.setGravity(Gravity.CENTER);
+        banner.setBackground(bg(0xED091B32,12));
+        FrameLayout.LayoutParams top=new FrameLayout.LayoutParams(-1,dp(64),Gravity.TOP);
+        top.setMargins(dp(10),dp(8),dp(10),0);screen.addView(banner,top);
+        LinearLayout bottom=new LinearLayout(activity);
+        bottom.setOrientation(LinearLayout.VERTICAL);
+        bottom.setPadding(dp(14),dp(5),dp(14),dp(14));
+        bottom.setBackground(bg(0xED091B32,16));
+        Button shutter=button("拍照 · 点击屏幕也可以",ACCENT,true);
+        addButton(bottom,shutter,2);
+        shutter.setOnClickListener(v->listener.takePhoto(bookId));
+        Button back=button("返回书页 / 取消拍照",PANEL,false);
+        addButton(bottom,back,8);
+        back.setOnClickListener(v->listener.cancelCapture());
+        FrameLayout.LayoutParams footer=new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM);
+        screen.addView(bottom,footer);
+    }
+    void showPreview(){
+        phase="preview";working=false;paused=false;
+        status="实时预览 · 请对准书页并点击屏幕拍照";
+        render();
+    }
+    boolean isPreview(){return "preview".equals(phase);}
     private void renderCapturing(){
         LinearLayout all=layout(0xB8091B32);
         TextView stage=label("正在唤醒摄像头\n自动获取下一张新照片…",24,WHITE,true);
