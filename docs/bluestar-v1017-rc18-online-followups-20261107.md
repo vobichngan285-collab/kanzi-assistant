@@ -17,3 +17,12 @@
 
 ## 交付核验
 本文件先记录实现与需要验收的边界；GitHub Actions CI、源码 SHA、发行workflow、原APK校验SHA256、正式 Release 及 main 交接文档追加必须在成功后再完成。不能把CI通过等同于三个模型实际 API Key 权限或每次确实联网。需真机逐一测试3档模型，问“今天的天气/最新营业时间”，观察是否以外部资料回答；再关闭联网确认不再请求搜索；再核查照片重检/直读 OCR 无网络检索、用量和USB 60Hz预览是否完好。
+
+
+## 实际 CI 与 APK 发行记录（2026-11-07）
+- 构建源码准确 commit：**`155668f30190ba770bb4ba58349246b5a6d24b20`**，GitHub Actions **[42365184277](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42365184277)** `completed/success`，原始 artifact **13571770034**，名称 `blue-star-guide-1-0-17-rc18-arm64`。
+- 真实日志确认为 `DUAL_CAMERA_CLOUD_AI_NO_LOCAL_OCR_AUDIT=PASS`、`RC18_SEARCH_ONLY_EXPLICIT_FOLLOWUP_THREE_MODELS=PASS`、`RC18_FOLLOWUP_WEB_AND_STANDALONE_PROMPTS=PASS`、`RC17_OCR_FOUR_CHOICES_INDEPENDENT_AND_PROMPT=PASS`、`RC13_USB_PREVIEW_JPEG_32_COMBINATIONS_AND_90_CORRECTION=PASS 32`、`RC14_USB_LIFECYCLE_FPS_4_STATES=PASS`、`RC14_USB_PICTURE_CONTROL_BOUNDS=PASS`、`RC15_AUTO_USB_SWITCH_MANUAL_OVERRIDE_AND_ATTACH=PASS`、`RC15_USB_ROLLING_10S_FPS_STALE_AND_FREEZE=PASS`、`CLOUD_OPTIMIZATION_UNIT_TESTS=PASS`、`TASK_ORDER_DRAG_RECONCILIATION_TESTS=PASS`、`BSG_UVC_FPS_61_FIRST=PASS`； Gradle **`BUILD SUCCESSFUL in 2m 29s`**、JNI原UVC/图标音效/独立包名检测PASS。aapt证实 `com.vobich.bluestar.rc18`、versionCode `27`、versionName `1.0.17-rc18`。
+- 发布 workflow **[42365514892](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42365514892)** `completed/success`；确认准确 CI run/source SHA 后下载官方产物，校验 `SHA256SUMS.txt`、ZIP CRC、原生UVC/金属咔叮+嗖声音效、图标和包名/版本，以原字节上传**没有重编译/重签**。
+- Release `blue-star-guide-cloud-rc18-20261107`，`draft=false`、`prerelease=true`；APK `BlueStar_Guide_1.0.17_RC18_arm64.apk` asset 已 `uploaded`，**8,601,318 bytes**，GitHub SHA256 **`087715a79a47852a5f5d42efcada6910de7792eab49400c76c6883738c96599e`**。
+- 直达手机浏览器 APK 链接：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/blue-star-guide-cloud-rc18-20261107/BlueStar_Guide_1.0.17_RC18_arm64.apk
+- **仍待真机验证**：有了 `enable_search:true` 不代表后台真的进行了联网搜索；不同问题、百炼账户权限、支持地域和接口可能影响行为；联网请求可能需要更久、增加费用，且此 OpenAI兼容 Chat Completions 不返回可验证的结构化来源链接。务必使用同一个问题分别测试 3 模型、在设置中关闭联网复测；检查之前图片的追问、没有照片直接语音聊天、截图 OCR 原样、USB画面方向和约60次/秒预览更新仍然正常。CI和GitHub原APK发布通过，不等于用户百炼服务端所有模型搜索真机通过。
