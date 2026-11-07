@@ -161,7 +161,7 @@ patch(activity,
 # The UVCPreview native implementation must refresh the probe even for the
 # SAME size/format if min/max FPS changed, otherwise fallback silently fails.
 patch(source,
-      """    if ((requestWidth != width) || (requestHeight != height) || (requestMode != mode)) {""",
+      """\tif ((requestWidth != width) || (requestHeight != height) || (requestMode != mode)) {""",
       """    // BSG_UVC_FPS_61_REPROBE: high-rate attempt can fall back on same format.
     if ((requestWidth != width) || (requestHeight != height)
         || (requestMode != mode) || (requestMinFps != min_fps)
