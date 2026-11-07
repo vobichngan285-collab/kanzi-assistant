@@ -1,53 +1,33 @@
 package com.vobich.bluestar.cloudprobe;
 
-/** JVM regression: low-cost visual mode and the three prior options coexist. */
+/** RC12 JVM regressions for three choices and migrated retired Plus. */
 public final class VisionModelCatalogTest {
-    private static void check(boolean okay,String label){
-        if(!okay)throw new AssertionError(label);
-    }
+    private static void check(boolean ok,String why){if(!ok)throw new AssertionError(why);}
     public static void main(String[] args){
-        check(VisionModelCatalog.IDS.length==4,"exactly four selectable visual models");
-        check(VisionModelCatalog.LABELS.length==4,"four short distinct UI labels");
-        check(VisionModelCatalog.FLASH_38.equals(VisionModelCatalog.DEFAULT),
-            "do not silently change the known-working daily default");
-        check(VisionModelCatalog.IDS[0].equals(VisionModelCatalog.FLASH_37),
-            "new low-cost 3.7 displayed first");
-        check(VisionModelCatalog.IDS[1].equals(VisionModelCatalog.FLASH_38),
-            "existing daily Flash retained");
-        check(VisionModelCatalog.IDS[2].equals(VisionModelCatalog.PLUS),
-            "tested stable Plus must NOT be removed in this version");
-        check(VisionModelCatalog.IDS[3].equals(VisionModelCatalog.MAX_38),
-            "manual expensive Max stays last");
-        check(VisionModelCatalog.LABELS[0].contains("超省"),
-            "low-cost model clearly labeled");
+        check(VisionModelCatalog.IDS.length==3,"exactly three selectable models");
+        check(VisionModelCatalog.LABELS.length==3,"three model labels");
+        check(VisionModelCatalog.FLASH_38.equals(VisionModelCatalog.DEFAULT),"daily default");
+        check(VisionModelCatalog.IDS[0].equals(VisionModelCatalog.FLASH_37),"budget first");
+        check(VisionModelCatalog.IDS[1].equals(VisionModelCatalog.FLASH_38),"daily second");
+        check(VisionModelCatalog.IDS[2].equals(VisionModelCatalog.MAX_38),"fast Max last");
+        check(VisionModelCatalog.LABELS[2].contains("高精度快速"),"fast label");
         for(int i=0;i<VisionModelCatalog.IDS.length;i++){
             String id=VisionModelCatalog.IDS[i];
-            check(VisionModelCatalog.indexOf(id)==i,"catalog index of "+id);
-            check(VisionModelCatalog.normalize(id).equals(id),
-                "preserve explicit selected model without network call: "+id);
+            check(VisionModelCatalog.indexOf(id)==i,"index "+id);
+            check(VisionModelCatalog.normalize(id).equals(id),"retain valid "+id);
             for(int j=i+1;j<VisionModelCatalog.IDS.length;j++)
-                check(!id.equals(VisionModelCatalog.IDS[j]),"duplicate visual model");
+                check(!id.equals(VisionModelCatalog.IDS[j]),"distinct model IDs");
         }
-        for(String removed:new String[]{"qwen3-vl-flash","qwen3.5-flash",
-                                        "other-model",null,""}){
-            check(VisionModelCatalog.indexOf(removed)==-1,"unsupported model disallowed");
-            check(VisionModelCatalog.DEFAULT.equals(VisionModelCatalog.normalize(removed)),
-                "migrate unsupported old choice locally to stable default");
+        for(String retired:new String[]{"qwen3-vl-plus","qwen3-vl-flash",
+                 "qwen3.5-flash","invalid",null,""}){
+            check(VisionModelCatalog.indexOf(retired)==-1,"retired "+retired);
+            check(VisionModelCatalog.DEFAULT.equals(VisionModelCatalog.normalize(retired)),
+                "locally migrate retired model "+retired);
         }
-        check(VisionModelCatalog.isBudgetFlash(VisionModelCatalog.FLASH_37),
-            "3.7-Flash disables optional thinking for cheaper image requests");
-        check(VisionModelCatalog.isBudgetFlash(VisionModelCatalog.FLASH_38),
-            "preserve 3.8-Flash direct request behavior");
-        check(!VisionModelCatalog.isBudgetFlash(VisionModelCatalog.PLUS),
-            "Plus keeps its existing request behavior");
-        check(!VisionModelCatalog.isBudgetFlash(VisionModelCatalog.MAX_38),
-            "expensive Max must never use Flash accounting/behavior");
-        check(VisionModelCatalog.isEmergencyMax(VisionModelCatalog.MAX_38),
-            "Max remains manual emergency mode");
-        for(String value:new String[]{VisionModelCatalog.FLASH_37,
-             VisionModelCatalog.FLASH_38,VisionModelCatalog.PLUS})
-            check(!VisionModelCatalog.isEmergencyMax(value),
-                "regular model must not trigger Max thinking budget: "+value);
-        System.out.println("RC10_FOUR_VISUAL_CHOICES_AND_CHEAP_FLASH_TESTS=PASS");
+        check(VisionModelCatalog.isBudgetFlash(VisionModelCatalog.FLASH_37),"Flash37");
+        check(VisionModelCatalog.isBudgetFlash(VisionModelCatalog.FLASH_38),"Flash38");
+        check(!VisionModelCatalog.isBudgetFlash(VisionModelCatalog.MAX_38),"Max not Flash");
+        check(VisionModelCatalog.isEmergencyMax(VisionModelCatalog.MAX_38),"Max detection");
+        System.out.println("RC12_MODEL_CATALOG_MIGRATION=PASS");
     }
 }

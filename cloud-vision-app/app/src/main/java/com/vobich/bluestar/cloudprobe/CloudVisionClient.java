@@ -54,7 +54,7 @@ final class CloudVisionClient {
         boolean isOcr=TaskCatalog.OCR.equals(task.engine);
         boolean connectionTest="model-probe".equals(task.id);
         boolean streaming=!isOcr&&!connectionTest;
-        // Respect the actual user-selected model: never silently spend Plus tokens.
+        // Respect only allowed models: deleted Plus must never be called.
         if(!isOcr&&VisionModelCatalog.indexOf(visionModel)<0)
             throw new IllegalArgumentException("所选视觉模型不支持，请重新选择");
         String model=isOcr?"qwen-vl-ocr":visionModel;
@@ -85,23 +85,17 @@ final class CloudVisionClient {
                     Base64.encodeToString(jpeg,Base64.NO_WRAP)));
             content.put(image);
         }
-        // The emergency Max may think briefly before answering. Keep a hard
-        // ceiling on reasoning + response tokens, rather than its unbounded default.
-        boolean emergency=VisionModelCatalog.isEmergencyMax(model);
-        int maxOutput=isOcr?1200:(connectionTest?64:(emergency?2048:
-            (textOnly?550:("menu".equals(task.id)?550:((task.custom||customPreset)?650:350)))));
+        // Fast Max follows the same concise token ceilings as Flash.
+        boolean fastMax=VisionModelCatalog.isEmergencyMax(model);
+        int maxOutput=isOcr?1200:(connectionTest?64:
+            (textOnly?550:("menu".equals(task.id)?550:((task.custom||customPreset)?650:350))));
         JSONObject body=new JSONObject().put("model",model).put("stream",streaming)
             .put("max_tokens",maxOutput).put("messages",new JSONArray().put(
                 new JSONObject().put("role","user").put("content",content)));
-        // Flash: responsive daily mode. Max: bounded reasoning for manual
-        // emergency use; short connection probes skip reasoning to save tokens.
-        // Verified Plus and OCR keep their original request behavior.
-        if(!isOcr&&VisionModelCatalog.isBudgetFlash(model))
+        // Three selectable vision models: do not delay speech for hidden thinking.
+        // Dedicated OCR remains unchanged; text-only followups stay on daily Flash.
+        if(!isOcr&&(VisionModelCatalog.isBudgetFlash(model)||fastMax))
             body.put("enable_thinking",false);
-        if(!isOcr&&emergency){
-            body.put("enable_thinking",!connectionTest);
-            if(!connectionTest)body.put("thinking_budget",512);
-        }
         if(streaming)body.put("stream_options",new JSONObject().put("include_usage",true));
 
         HttpURLConnection connection=(HttpURLConnection)new URL(ENDPOINT).openConnection();

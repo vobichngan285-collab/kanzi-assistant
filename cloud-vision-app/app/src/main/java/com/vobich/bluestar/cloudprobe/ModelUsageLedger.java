@@ -55,7 +55,8 @@ final class ModelUsageLedger {
     private static final String DATA="daily";
     private static final String[] SHOW = {
         VisionModelCatalog.FLASH_37, VisionModelCatalog.FLASH_38,
-        VisionModelCatalog.PLUS, VisionModelCatalog.MAX_38,
+        VisionModelCatalog.MAX_38,
+        "qwen3-vl-plus", // historical usage only, not selectable
         "qwen-vl-ocr", "qwen3-asr-flash"
     };
     private final SharedPreferences prefs;

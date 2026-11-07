@@ -6,7 +6,10 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /** Stable system routes and user-owned instructions, persisted independently. */
@@ -17,6 +20,7 @@ final class TaskCatalog {
     private static final String CUSTOM = "custom_tasks";
     private static final String SELECTED = "selected_task_id";
     private static final String ORDER = "task_grid_order_v1";
+    private static final String HIDDEN = "task_grid_hidden_presets_v1";
     private static final String OVERRIDE_PREFIX = "override_";
 
     static final class Task {
@@ -62,11 +66,48 @@ final class TaskCatalog {
         return out;
     }
 
+    /** System presets are hidden, not deleted; settings can restore them. */
+    private static Set<String> hiddenPresetIds(Context c){
+        return new HashSet<>(prefs(c).getStringSet(HIDDEN,Collections.emptySet()));
+    }
+    static boolean isPresetHidden(Context c,String id){
+        return !defaultInstruction(id).isEmpty()&&hiddenPresetIds(c).contains(id);
+    }
+    static void restoreHiddenPreset(Context c,String id){
+        if(defaultInstruction(id).isEmpty())return;
+        Set<String> hidden=hiddenPresetIds(c);
+        if(hidden.remove(id))prefs(c).edit().putStringSet(HIDDEN,hidden).apply();
+    }
+    private static String firstVisibleTaskId(Context c){
+        for(Task t:all(c))
+            if(!t.custom&&OCR.equals(t.id)&&!isPresetHidden(c,t.id))return t.id;
+        for(Task t:all(c))
+            if(t.custom||!isPresetHidden(c,t.id))return t.id;
+        return null;
+    }
+    static boolean hidePreset(Context c,String id){
+        if(defaultInstruction(id).isEmpty())return false;
+        Set<String> hidden=hiddenPresetIds(c);
+        if(hidden.contains(id))return true;
+        int visible=0;
+        for(Task t:all(c))if(t.custom||!hidden.contains(t.id))visible++;
+        if(visible<=1)return false;
+        String previous=selectedId(c);
+        hidden.add(id);
+        prefs(c).edit().putStringSet(HIDDEN,hidden).apply();
+        if(id.equals(previous)){
+            String next=firstVisibleTaskId(c);
+            if(next!=null)select(c,next);
+        }
+        return true;
+    }
+
     /** First launch: five stock tasks + creation tile + user-created tasks. */
     static List<String> displayOrder(Context c,List<Task> tasks){
         List<String> available=new ArrayList<>();
         boolean creationAdded=false;
         for(Task t:tasks){
+            if(!t.custom&&isPresetHidden(c,t.id))continue;
             if(t.custom&&!creationAdded){
                 available.add(TaskOrder.CREATE);
                 creationAdded=true;
@@ -88,7 +129,7 @@ final class TaskCatalog {
     /** Persist only stable IDs; never rewrite task names, prompts or selected task. */
     static void saveDisplayOrder(Context c,List<String> preferred,List<Task> tasks){
         List<String> available=new ArrayList<>();
-        for(Task t:tasks)available.add(t.id);
+        for(Task t:tasks)if(t.custom||!isPresetHidden(c,t.id))available.add(t.id);
         available.add(TaskOrder.CREATE);
         List<String> canonical=TaskOrder.reconcile(preferred,available);
         JSONArray arr=new JSONArray();
@@ -100,8 +141,12 @@ final class TaskCatalog {
         String id=prefs(c).getString(SELECTED,"ocr");
         // Migrate old experimental selections, never restore removed tasks.
         if("mall".equals(id))return "shop";
-        if("scene".equals(id))return "ocr";
-        return id==null?"ocr":id;
+        if("scene".equals(id))id=OCR;
+        if(id==null||isPresetHidden(c,id)){
+            String next=firstVisibleTaskId(c);
+            return next==null?OCR:next;
+        }
+        return id;
     }
     static void select(Context c,String id){prefs(c).edit().putString(SELECTED,id).apply();}
 
@@ -148,11 +193,20 @@ final class TaskCatalog {
 
     static void remove(Context c,String id){
         if(id==null||!id.startsWith("user-"))return;
+        boolean wasSelected=id.equals(selectedId(c));
         JSONArray next=new JSONArray();
         for(Task t:all(c)){
             if(t.custom&&!t.id.equals(id))next.put(customJson(t));
         }
-        prefs(c).edit().putString(CUSTOM,next.toString()).putString(SELECTED,OCR).apply();
+        prefs(c).edit().putString(CUSTOM,next.toString()).apply();
+        if(wasSelected){
+            String fallback=firstVisibleTaskId(c);
+            if(fallback==null){
+                restoreHiddenPreset(c,OCR);
+                fallback=OCR;
+            }
+            select(c,fallback);
+        }
     }
 
     private static JSONObject customJson(Task t){
