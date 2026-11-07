@@ -1,7 +1,7 @@
-name: Blue Star Guide 1.0.12 - RC13 USB Orientation/Uploaded JPEG Match
+name: Blue Star Guide 1.0.13 - RC14 USB Lifecycle Health and Hardware Picture Controls
 on:
   push:
-    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106, fix/bluestar-104-ocr-voice-empty-20261106, fix/bluestar-105-model-options-20261107, fix/bluestar-106-three-tier-models-20261107, fix/bluestar-107-compact-settings-20261107, fix/bluestar-108-voice-intent-text-followups-20261107, fix/bluestar-109-37flash-keep-plus-20261107, fix/bluestar-110-stop-finding-drag-grid-20261107, fix/bluestar-111-maxfast-remove-plus-drag-delete-20261107, fix/bluestar-112-usb-orientation-preview-jpeg-20261107]
+    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106, fix/bluestar-104-ocr-voice-empty-20261106, fix/bluestar-105-model-options-20261107, fix/bluestar-106-three-tier-models-20261107, fix/bluestar-107-compact-settings-20261107, fix/bluestar-108-voice-intent-text-followups-20261107, fix/bluestar-109-37flash-keep-plus-20261107, fix/bluestar-110-stop-finding-drag-grid-20261107, fix/bluestar-111-maxfast-remove-plus-drag-delete-20261107, fix/bluestar-112-usb-orientation-preview-jpeg-20261107, fix/bluestar-113-usb-lifecycle-trace-picture-controls-20261107]
     paths:
       - 'cloud-vision-app/**'
       - '.github/workflows/cloud-vision-usb-click.yml'
@@ -195,6 +195,44 @@ jobs:
           assert 'encoded.width' in activity and 'encoded.height' in activity
           assert 'diagnostics.event("camera","usb_frame_age_ms"' in activity
           assert 'USB_MAX_FRAME_AGE_MS=800L' in activity
+          # RC14: USB diagnostics use native texture buffer updates and 5Hz
+          # raw callbacks only; no Bitmap readbacks or extra AI calls.
+          health=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/UsbStreamHealth.java').read_text()
+          picture=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/UsbPictureLevels.java').read_text()
+          picture_hw=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/UsbPictureHardware.java').read_text()
+          native_patch=Path('cloud-vision-app/scripts/patch_pinned_uvc.py').read_text()
+          assert 'UsbStreamHealth.Sample sample=usbStreamHealth.sample(' in activity
+          assert 'onUsbTextureUpdatedForDiagnostics()' in activity
+          assert 'usbTextureCount.incrementAndGet()' in activity
+          assert 'diagnostics.begin("usb_resume")' in activity
+          assert 'diagnostics.event("usb","open_elapsed_ms"' in activity
+          assert 'diagnostics.event("usb","close_elapsed_ms"' in activity
+          assert 'diagnostics.event("usb","raw_fps_x10"' in activity
+          assert 'diagnostics.event("usb","view_fps_x10"' in activity
+          assert 'handler.removeCallbacks(usbHealthTicker)' in activity
+          assert 'UsbStreamHealth.HEALTHY' in activity and 'UsbStreamHealth.OPENING' in activity
+          assert 'RAW_STALLED' in health and 'PREVIEW_STALLED' in health
+          assert 'BSG_USB_HEALTH_114' in native_patch
+          assert 'onUsbTextureUpdatedForDiagnostics()' in native_patch
+          assert 'BSG_UVC_PICTURE_CONTROLS_114' in native_patch
+          assert 'supportsBlueStarPictureControl' in native_patch
+          assert 'PU_BRIGHTNESS' in native_patch and 'PU_SATURATION' in native_patch
+          assert 'return camera.checkSupportFlag(flag)' in native_patch
+          assert 'getCurrentCamera' in activity
+          assert 'UsbPictureHardware.write(cam,kind,requested)' in activity
+          assert 'UsbPictureHardware.reset(cam,kind)' in activity
+          assert 'picture_restore_count' in activity
+          assert 'queryUsbPictureControls' in activity
+          assert 'UsbPictureLevels.COUNT==4' not in picture
+          assert '亮度' in picture and '对比度' in picture and '饱和度' in picture and '增益' in picture
+          assert 'case "usb-picture":heading="USB 画质调节"' in settings
+          assert 'row("USB 画质调节"' in settings
+          assert 'action("恢复USB画质默认设置"' in settings
+          assert 'onStopTrackingTouch' in settings
+          assert 'getUsbDevice' in picture_hw or 'UsbPictureHardware' in picture_hw
+          assert 'BitmapFactory.decodeByteArray' in activity
+          assert 'UsbFrameOrientation.forSettings(' in activity
+          assert 'CloudVisionClient.recognize(jpeg,key,task,model,' in activity
           assert 'diagnostics.event("jpeg","rotation_deg"' in activity
           assert 'diagnostics.event("jpeg","mirror_x"' in activity
           assert 'diagnostics.event("jpeg","flip_y"' in activity
@@ -281,8 +319,8 @@ jobs:
           camera2=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/InternalCameraController.java').read_text()
           assert 'CameraManager' in camera2 and 'CameraCaptureSession' in camera2
           assert 'Nv21Rotation.rotate(' in camera2
-          assert "versionCode 22" in app and "versionName '1.0.12-rc13'" in app
-          assert "applicationIdSuffix '.rc13'" in app
+          assert "versionCode 23" in app and "versionName '1.0.13-rc14'" in app
+          assert "applicationIdSuffix '.rc14'" in app
           assert Path('cloud-vision-app/app/src/main/res/drawable-nodpi/bluestar_globe.png').is_file()
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('ic_launcher.webp'))
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('bluestar_icon.webp'))
@@ -303,6 +341,10 @@ jobs:
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/Nv21ImageOps.java \
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/UsbFrameOrientation.java \
             cloud-vision-app/tests/UsbFrameOrientationTest.java \
+            cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/UsbStreamHealth.java \
+            cloud-vision-app/tests/UsbStreamHealthTest.java \
+            cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/UsbPictureLevels.java \
+            cloud-vision-app/tests/UsbPictureLevelsTest.java \
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/SpeechFilter.java \
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/VoiceWav.java \
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/VoiceAction.java \
@@ -317,6 +359,8 @@ jobs:
             cloud-vision-app/tests/VoiceFlowTest.java \
             cloud-vision-app/tests/CloudOptimizationTest.java
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.UsbFrameOrientationTest
+          java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.UsbStreamHealthTest
+          java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.UsbPictureLevelsTest
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.CloudOptimizationTest
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.VoiceFlowTest
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.TaskOrderTest
@@ -329,6 +373,8 @@ jobs:
           python3 cloud-vision-app/scripts/patch_pinned_uvc.py
           grep -q BSG_CLOUD_RAW5_GATED cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/jni/UVCCamera/UVCPreview.cpp
           grep -q BSG_CLOUD_CLOSE_BARRIER cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
+          grep -q BSG_USB_HEALTH_114 cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/base/CameraActivity.kt
+          grep -q BSG_UVC_PICTURE_CONTROLS_114 cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
       - name: JDK 17
         uses: actions/setup-java@v4
         with:
@@ -359,28 +405,28 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p cloud-vision-artifact
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.12_RC13_arm64.apk
-          test -s cloud-vision-artifact/BlueStar_Guide_1.0.12_RC13_arm64.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.13_RC14_arm64.apk
+          test -s cloud-vision-artifact/BlueStar_Guide_1.0.13_RC14_arm64.apk
           (cd cloud-vision-artifact && sha256sum *.apk > SHA256SUMS.txt)
           unzip -Z1 cloud-vision-artifact/*.apk > cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' cloud-vision-artifact/apk-entries.txt
           cd cloud-vision-app
-          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.12_RC13_arm64.apk
-          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.12_RC13_arm64.apk
+          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.13_RC14_arm64.apk
+          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.13_RC14_arm64.apk
           cd ..
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           test -x "$AAPT"
-          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.12_RC13_arm64.apk > cloud-vision-artifact/badging.txt
+          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.13_RC14_arm64.apk > cloud-vision-artifact/badging.txt
           grep -F "application-label:'Blue Star Guide'" cloud-vision-artifact/badging.txt
-          grep -F "package: name='com.vobich.bluestar.rc13'" cloud-vision-artifact/badging.txt
+          grep -F "package: name='com.vobich.bluestar.rc14'" cloud-vision-artifact/badging.txt
           grep -q 'application-icon-' cloud-vision-artifact/badging.txt
           grep -Fxq 'res/raw/c_metal_clack_ding.mp3' cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'res/raw/voice_send_whoosh.wav' cloud-vision-artifact/apk-entries.txt
           ! grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx' cloud-vision-artifact/apk-entries.txt
-          echo 'Blue Star Guide 1.0.12 RC13 isolated test APK: USB orientation parity across all 32 setting combinations, true frame age and JPEG geometry diagnostics, in-memory actual sent JPEG inspector; prior camera/audio/AI behavior retained. Checked globe PNG densities, selected C clack MP3, voice whoosh, fresh Camera2, bounded diagnostics, target auto-exit. Real vivo tests still required.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Blue Star Guide 1.0.13 RC14 isolated test APK: USB foreground/background lifecycle traces, raw NV21 and TextureView live FPS with no frame copies; only supported hardware brightness/contrast/saturation/gain sliders and reset. Original RC13 USB geometry + AI JPEG untouched. Original icons, audio and UVC native pipeline checked. Real vivo tests required.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload 1.0 release candidate APK (debug-signed, device testing)
         uses: actions/upload-artifact@v4
         with:
-          name: blue-star-guide-1-0-12-rc13-arm64
+          name: blue-star-guide-1-0-13-rc14-arm64
           path: cloud-vision-artifact/*
           retention-days: 7
