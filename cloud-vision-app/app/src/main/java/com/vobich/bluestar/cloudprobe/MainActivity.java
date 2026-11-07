@@ -108,6 +108,7 @@ public final class MainActivity extends CameraActivity {
     private static final int REQUEST_PHONE_CAMERA = 4051;
     private static final int REQUEST_VOICE_MIC = 4052;
     private static final int REQUEST_DIAG_EXPORT = 4053;
+    private static final int REQUEST_READING_EXPORT = 4054;
     private static final long USB_MAX_FRAME_AGE_MS=800L; // UVC raw frames are capped near 5Hz
 
     private FrameLayout previewContainer,rootFrame;
@@ -150,7 +151,15 @@ public final class MainActivity extends CameraActivity {
     private AspectRatioTextureView cameraTextureView;
     private TextureView phoneTexture;
     private TextView phonePreviewStatus;
-    private Button modeButton, startButton, settingsButton;
+    private Button modeButton, startButton, readingButton, settingsButton;
+    private ReadingScreen readingScreen;
+    private ReadingLibrary readingLibrary;
+    private ReadingNarrationQueue readingNarration;
+    private final AtomicBoolean readingAwaitingFrame=new AtomicBoolean(false);
+    private volatile boolean readingProcessing;
+    private volatile long readingCaptureStartedAtMs;
+    private int readingCaptureToken,readingSpeechToken;
+    private String readingExportBookId="";
     private AlertDialog settingsDialog;
     private InternalCameraController phoneController;
     private boolean usingPhoneCamera, phoneFrontFacing, phonePreviewReceived;
@@ -241,10 +250,22 @@ public final class MainActivity extends CameraActivity {
                 pendingPhoneFrameToken=-1;
                 TaskCatalog.Task task=pendingPhoneCaptureTask;
                 pendingPhoneCaptureTask=null;
+                if(readingScreen!=null){
+                    pendingPhoneFrameToken=-1;
+                    if(readingAwaitingFrame.compareAndSet(true,false))
+                        beginReadingCapturedFrame(frame,token);
+                    return;
+                }
                 beginCapturedFrame(frame,phoneCaptureTapAtMs,token,task);
             });
         }else{
             latestUsbFrame=frame;
+            if(readingScreen!=null&&!usingPhoneCamera&&readingAwaitingFrame.get()&&
+                frame.atMs-readingCaptureStartedAtMs>=450L){
+                final int token=readingCaptureToken;
+                if(readingAwaitingFrame.compareAndSet(true,false))
+                    handler.post(()->beginReadingCapturedFrame(frame,token));
+            }
             usbFrameCount.incrementAndGet();
             if(!usbFirstFrameRecorded){
                 usbFirstFrameRecorded=true;
@@ -378,17 +399,20 @@ public final class MainActivity extends CameraActivity {
         dock.setBackground(roundRect(0xED091D36,20));
         modeButton=createControlButton("▦\n任务",0xFF2C547D);
         startButton=createControlButton("🎙\nAI对话",0xFF176BAC);
+        readingButton=createControlButton("▤\n阅读",0xFF286FCB);
         settingsButton=createControlButton("⚙\n设置",0xFF2C547D);
-        for(Button btt:new Button[]{modeButton,startButton,settingsButton}){
+        for(Button btt:new Button[]{modeButton,startButton,readingButton,settingsButton}){
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(75),1f);
             lp.setMargins(dp(3),0,dp(3),0);dock.addView(btt,lp);
         }
         root.addView(dock,new FrameLayout.LayoutParams(-1,dp(89),Gravity.BOTTOM));
         modeButton.setContentDescription("任务选择");
         startButton.setContentDescription("AI对话，按住说话，松开发送");
+        readingButton.setContentDescription("阅读，打开书架和整页拍照朗读");
         settingsButton.setContentDescription("设置");
         modeButton.setOnClickListener(v->showTaskSelector());
         startButton.setOnTouchListener((v,event)->handleVoiceButtonTouch(event));
+        readingButton.setOnClickListener(v->openReadingMode());
         settingsButton.setOnClickListener(v->openLargeSettings());
         return root;
     }
@@ -617,6 +641,7 @@ public final class MainActivity extends CameraActivity {
     void settingsPageClosed(){largeSettings=null;}
     @Override public void onBackPressed(){
         if(largeSettings!=null&&!largeSettings.isClosed()){largeSettings.back();return;}
+        if(readingScreen!=null){closeReadingMode();return;}
         super.onBackPressed();
     }
     void toastShort(String value){Toast.makeText(this,value,Toast.LENGTH_SHORT).show();}
@@ -768,6 +793,23 @@ public final class MainActivity extends CameraActivity {
     }
     @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){
         super.onActivityResult(requestCode,resultCode,data);
+        if(requestCode==REQUEST_READING_EXPORT){
+            if(resultCode==RESULT_OK&&data!=null&&data.getData()!=null){
+                final Uri target=data.getData();
+                final String id=readingExportBookId;
+                encoder.submit(()->{
+                    try(OutputStream out=getContentResolver().openOutputStream(target)){
+                        if(out==null)throw new Exception("无法创建文件");
+                        out.write(readingLibrary.export(id).getBytes(StandardCharsets.UTF_8));
+                        handler.post(()->toastShort("已导出书籍文字 TXT"));
+                    }catch(Exception ex){
+                        handler.post(()->toastShort("导出失败："+ex.getMessage()));
+                    }
+                });
+            }
+            readingExportBookId="";
+            return;
+        }
         if(requestCode!=REQUEST_DIAG_EXPORT||resultCode!=RESULT_OK||data==null)return;
         Uri uri=data.getData();
         if(uri==null)return;
@@ -859,7 +901,7 @@ public final class MainActivity extends CameraActivity {
         handler.postDelayed(usbAttachReconcile,180L);
     }
     private void reconcileAttachedUsb(){
-        if(!uiActive||!usbForeground)return;
+        if(!uiActive||!usbForeground||readingScreen!=null)return;
         UsbDevice device=attachedUsbVideoDevice();
         if(manualPhoneUntilUsbDetach&&!sameOverriddenUsbStillPresent()){
             manualPhoneUntilUsbDetach=false;
@@ -1247,7 +1289,8 @@ public final class MainActivity extends CameraActivity {
         phoneController=new InternalCameraController(this,phoneTexture,new InternalCameraController.Listener(){
             @Override public boolean shouldReceiveFrame() {
                 return uiActive && usingPhoneCamera &&
-                    pendingPhoneFrameToken==requestVersion.get();
+                    pendingPhoneFrameToken==requestVersion.get()&&
+                    (readingScreen==null||readingAwaitingFrame.get());
             }
             @Override public void onFrame(byte[] nv21,int w,int h){
                 if(usingPhoneCamera)updateFrame(nv21,w,h,true);
@@ -1262,6 +1305,16 @@ public final class MainActivity extends CameraActivity {
                 runOnUiThread(()->{
                     if(!usingPhoneCamera)return;
                     if(phoneController!=null)phoneController.setZoom(zoom);
+                    if(readingScreen!=null&&readingAwaitingFrame.get()){
+                        final int captureToken=readingCaptureToken;
+                        handler.postDelayed(()->{
+                            if(readingScreen!=null&&readingAwaitingFrame.get()&&
+                               captureToken==requestVersion.get()&&phoneController!=null){
+                                pendingPhoneFrameToken=captureToken;
+                                phoneController.requestFreshFrame();
+                            }
+                        },480L);
+                    }
                     phonePreviewReceived=true;
                     if(!phoneFirstFrameRecorded){
                         phoneFirstFrameRecorded=true;
@@ -1274,7 +1327,11 @@ public final class MainActivity extends CameraActivity {
             }
             @Override public void onError(String message){
                 runOnUiThread(()->{
-                    if(usingPhoneCamera)showPhonePreviewStatus("手机摄像头启动失败："+message,true);
+                    if(usingPhoneCamera){
+                        if(readingScreen!=null&&readingAwaitingFrame.get())
+                            failReadingCapture("手机相机启动失败："+message);
+                        else showPhonePreviewStatus("手机摄像头启动失败："+message,true);
+                    }
                 });
             }
         });
@@ -1291,7 +1348,7 @@ public final class MainActivity extends CameraActivity {
     @Override protected void onNewIntent(Intent intent){
         super.onNewIntent(intent);
         setIntent(intent);
-        if(intent!=null&&UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(intent.getAction())){
+        if(readingScreen==null&&intent!=null&&UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(intent.getAction())){
             if(diagnostics!=null)diagnostics.event("usb","intent_attach",1,"ok");
             queueUsbAttachReconcile();
         }
@@ -1371,7 +1428,16 @@ public final class MainActivity extends CameraActivity {
                 @Override public void onStart(String utteranceId){
                     recordTtsProgress(utteranceId,false);
                 }
-                @Override public void onDone(String utteranceId){}
+                @Override public void onDone(String utteranceId){
+                    handler.post(()->{
+                        if(readingScreen==null||readingNarration==null)return;
+                        String prefix="reading-"+readingSpeechToken+"-";
+                        if(utteranceId==null||!utteranceId.startsWith(prefix))return;
+                        try{readingNarration.onDone(Integer.parseInt(
+                            utteranceId.substring(prefix.length())));}
+                        catch(NumberFormatException ignored){}
+                    });
+                }
                 @Override public void onError(String utteranceId){
                     if(diagnostics!=null)diagnostics.event("tts","engine_error",0,"failed");
                 }
@@ -1529,7 +1595,8 @@ public final class MainActivity extends CameraActivity {
     }
 
     private void startPhoneCamera() {
-        if(!usingPhoneCamera||phoneController==null||phoneTexture==null||!uiActive)return;
+        if(!usingPhoneCamera||phoneController==null||phoneTexture==null||!uiActive||
+            (readingScreen!=null&&!readingAwaitingFrame.get()))return;
         if(!phoneController.hasPermission()){
             showPhonePreviewStatus("请允许蓝星向导使用手机摄像头",false);
             requestPermissions(new String[]{Manifest.permission.CAMERA},REQUEST_PHONE_CAMERA);
@@ -1581,6 +1648,7 @@ public final class MainActivity extends CameraActivity {
             return;
         }
         if(requestCode!=REQUEST_PHONE_CAMERA)return;
+        if(readingScreen!=null&&!readingAwaitingFrame.get())return;
         if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED) {
             if(usingPhoneCamera) startPhoneCamera();
             else {
@@ -1593,7 +1661,11 @@ public final class MainActivity extends CameraActivity {
                         device.openCamera(cameraTextureView,getCameraRequest());
                 }
             }
-        } else Toast.makeText(this,"请允许相机权限后使用摄像头",Toast.LENGTH_LONG).show();
+        } else {
+            if(readingScreen!=null&&readingAwaitingFrame.get())
+                failReadingCapture("未获得相机权限，本页未拍摄");
+            else Toast.makeText(this,"请允许相机权限后使用摄像头",Toast.LENGTH_LONG).show();
+        }
     }
 
     private void applyPhonePreviewTransform(){
@@ -1731,10 +1803,11 @@ public final class MainActivity extends CameraActivity {
         boolean video=isUsbVideoDevice(device);
         if(diagnostics!=null)diagnostics.event("usb","device_attached",
             video?1:0,"ok");
-        if(video)queueUsbAttachReconcile();
+        if(video&&readingScreen==null)queueUsbAttachReconcile();
     }
     @Override protected void onUsbDeviceConnectedForApp(UsbDevice device){
         if(!isUsbVideoDevice(device))return;
+        if(readingScreen!=null)return;
         if(diagnostics!=null)diagnostics.event("usb","device_connected",1,"ok");
         if(UsbAutoSwitchPolicy.useUsbOnConnect(isUsbAutoSwitch(),usbForeground,
            true,usingPhoneCamera,manualPhoneUntilUsbDetach)){
@@ -1756,6 +1829,11 @@ public final class MainActivity extends CameraActivity {
     }
     @Override protected void onUsbDeviceDetachedForApp(UsbDevice device){
         if(!isUsbVideoDevice(device))return;
+        if(readingScreen!=null){
+            if(!usingPhoneCamera&&readingAwaitingFrame.get())
+                handler.post(()->failReadingCapture("USB摄像头已断开，本页未拍摄"));
+            return;
+        }
         if(manualPhoneUntilUsbDetach&&device.getDeviceId()==manualPhoneUsbDeviceId){
             manualPhoneUntilUsbDetach=false;
             manualPhoneUsbDeviceId=-1;
@@ -1778,6 +1856,8 @@ public final class MainActivity extends CameraActivity {
     @Override public void onCameraState(MultiCameraClient.ICamera self,
                                         ICameraStateCallBack.State code,String msg){
         if(code==ICameraStateCallBack.State.OPENED){
+            if(readingScreen!=null&&!readingAwaitingFrame.get())
+                handler.post(this::suspendReadingCamera);
             usbOpenedAtMs=SystemClock.elapsedRealtime();
             usbKnownOpened=true;
             startUsbFpsMonitoring();
@@ -1816,6 +1896,8 @@ public final class MainActivity extends CameraActivity {
             usbPictureGeneration.incrementAndGet();
             if(diagnostics!=null)diagnostics.event("usb","state",0,"failed");
             Log.w(TAG,"UVC open error: "+msg);
+            if(readingScreen!=null&&readingAwaitingFrame.get()&&!usingPhoneCamera)
+                handler.post(()->failReadingCapture("USB摄像头启动失败，本页未拍摄"));
             runOnUiThread(()->Toast.makeText(this,"USB打开失败："+msg,Toast.LENGTH_LONG).show());
         }
     }
@@ -1832,6 +1914,7 @@ public final class MainActivity extends CameraActivity {
     }
     private void resumeUsb(){
         if(!usbForeground||!usbReopenWanted||usbStopPending||usingPhoneCamera||
+           (readingScreen!=null&&!readingAwaitingFrame.get())||
            cameraTextureView==null||!cameraTextureView.isAvailable()||isCameraOpened())return;
         MultiCameraClient.ICamera camera=getCurrentCamera();
         if(camera==null||camera.getUsbDevice()==null)return;
@@ -2322,6 +2405,223 @@ public final class MainActivity extends CameraActivity {
         });
     }
 
+    /** Reading operates independently from the short-text task grid; photos are never saved. */
+    private void openReadingMode(){
+        if(readingScreen!=null)return;
+        try{
+            if(readingLibrary==null)readingLibrary=new ReadingLibrary(this);
+            invalidate();
+            readingNarration=new ReadingNarrationQueue(new ReadingNarrationQueue.Sink(){
+                @Override public boolean speak(String text,int index,boolean flush){
+                    if(tts==null||!ttsReady)return false;
+                    return tts.speak(text,flush?TextToSpeech.QUEUE_FLUSH:
+                        TextToSpeech.QUEUE_ADD,null,"reading-"+readingSpeechToken+"-"+index)
+                        ==TextToSpeech.SUCCESS;
+                }
+                @Override public void stop(){if(tts!=null)tts.stop();}
+            });
+            readingScreen=new ReadingScreen(this,rootFrame,readingLibrary,
+                new ReadingScreen.Listener(){
+                    @Override public void capture(String id){captureReadingPage(id);}
+                    @Override public void cancelCapture(){cancelReadingCapture();}
+                    @Override public void closeReading(){closeReadingMode();}
+                    @Override public void stopReading(){stopReadingSession();}
+                    @Override public void replay(String text){replayReadingText(text);}
+                    @Override public void togglePause(){toggleReadingPause();}
+                    @Override public void exportBook(String id){exportReadingBook(id);}
+                });
+            readingScreen.open();
+            suspendReadingCamera();
+        }catch(Exception error){
+            Log.w(TAG,"Reader launch failed",error);
+            readingScreen=null;
+            toastShort("无法打开书架："+error.getMessage());
+        }
+    }
+    private void suspendReadingCamera(){
+        if(readingScreen==null)return;
+        // Stop the actual native UVC/Camera2 device, not merely hide a preview.
+        usbForeground=false;
+        usbReopenWanted=false;
+        phoneStartSequence++;
+        if(phoneController!=null)phoneController.stop();
+        latestPhoneFrame=null;
+        stopUsb();
+        usbReopenWanted=false;
+        latestUsbFrame=null;
+    }
+    private void stopReadingSession(){
+        readingAwaitingFrame.set(false);
+        readingProcessing=false;
+        pendingPhoneFrameToken=-1;
+        invalidate();
+        readingSpeechToken++;
+        if(readingNarration!=null)readingNarration.reset();
+        suspendReadingCamera();
+    }
+    private void closeReadingMode(){
+        if(readingScreen==null)return;
+        stopReadingSession();
+        readingScreen.dispose();
+        readingScreen=null;
+        readingNarration=null;
+        // Restore only the previously selected camera; do not switch sources.
+        if(!uiActive)return;
+        usbForeground=true;
+        if(usingPhoneCamera)startPhoneCamera();
+        else{
+            usbReopenWanted=true;
+            handler.post(this::resumeUsb);
+        }
+    }
+    private void exportReadingBook(String id){
+        if(readingLibrary==null)return;
+        try{
+            ReadingLibrary.Book b=readingLibrary.get(id);
+            if(b.pages.isEmpty()){toastShort("这本书还没有可导出的文字");return;}
+            readingExportBookId=id;
+            Intent save=new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            save.addCategory(Intent.CATEGORY_OPENABLE);
+            save.setType("text/plain");
+            String title=b.title.replaceAll("[\\\\/:*?\\\"<>|]","_");
+            save.putExtra(Intent.EXTRA_TITLE,title+".txt");
+            startActivityForResult(save,REQUEST_READING_EXPORT);
+        }catch(Exception e){toastShort("导出准备失败："+e.getMessage());}
+    }
+    private void replayReadingText(String text){
+        if(readingScreen==null||readingNarration==null||text==null||text.isEmpty())return;
+        readingSpeechToken++;
+        readingNarration.reset();
+        readingNarration.addText(text);
+        readingScreen.setPaused(false);
+        if(tts==null||!ttsReady)toastShort("语音引擎尚未就绪，文字已保存在书架");
+    }
+    private void toggleReadingPause(){
+        if(readingScreen==null||readingNarration==null)return;
+        if(readingNarration.isPaused())readingNarration.resume();
+        else readingNarration.pause();
+        readingScreen.setPaused(readingNarration.isPaused());
+    }
+    private void cancelReadingCapture(){
+        if(readingScreen==null)return;
+        stopReadingSession();
+        readingScreen.cancelled();
+    }
+    private void failReadingCapture(String message){
+        if(readingScreen==null||!readingAwaitingFrame.getAndSet(false))return;
+        readingProcessing=false;
+        pendingPhoneFrameToken=-1;
+        if(phoneController!=null)phoneController.cancelFreshFrame();
+        suspendReadingCamera();
+        readingScreen.failure(message);
+        if(diagnostics!=null)diagnostics.event("reader","fresh_frame",0,"failed");
+    }
+    private void captureReadingPage(String bookId){
+        if(readingScreen==null||readingAwaitingFrame.get()||readingProcessing)return;
+        try{
+            if(readingLibrary==null)throw new Exception("书架未就绪");
+            readingLibrary.get(bookId);
+            if(CloudKeyStore.load(this).isEmpty())
+                throw new Exception("请先在设置中配置百炼 API Key");
+            stopReadingSession();
+            final int token=requestVersion.get();
+            readingCaptureToken=token;
+            readingCaptureStartedAtMs=SystemClock.elapsedRealtime();
+            readingAwaitingFrame.set(true);
+            readingScreen.showCapturing();
+            if(diagnostics!=null){
+                diagnostics.begin(usingPhoneCamera?"reader_phone":"reader_usb");
+                diagnostics.event("reader","capture",1,"ok");
+            }
+            if(usingPhoneCamera){
+                startPhoneCamera();
+            }else{
+                usbForeground=true;
+                usbReopenWanted=true;
+                handler.post(this::resumeUsb);
+            }
+            handler.postDelayed(()->{
+                if(readingScreen!=null&&readingCaptureToken==token&&
+                    readingAwaitingFrame.get())failReadingCapture("相机未获取到新鲜画面，请重试");
+            },9000L);
+        }catch(Exception e){
+            if(readingScreen!=null)readingScreen.failure(e.getMessage());
+        }
+    }
+    private void beginReadingCapturedFrame(Frame frame,int token){
+        if(readingScreen==null||token!=requestVersion.get()||!uiActive)return;
+        readingAwaitingFrame.set(false);
+        pendingPhoneFrameToken=-1;
+        readingProcessing=true;
+        final String bookId=readingScreen.bookId();
+        final String model=OcrModelCatalog.normalize(ocrModel);
+        final TaskCatalog.Task bookTask=new TaskCatalog.Task(
+            ReadingRules.TASK_ID,"完整书页",ReadingRules.PROMPT,TaskCatalog.OCR,false,"▤");
+        final UsbFrameOrientation.Plan usb=usingPhoneCamera?null:
+            UsbFrameOrientation.forSettings(previewRotation,previewMirror,
+                previewVerticalFlip,usbPreviewCorrectMirror);
+        final int rotation=usingPhoneCamera?previewRotation:usb.rotation;
+        final boolean mirror=usingPhoneCamera?previewMirror:usb.displayMirror;
+        final boolean flip=usingPhoneCamera?previewVerticalFlip:usb.displayFlip;
+        final float photoZoom=usingPhoneCamera?1f:zoom;
+        if(diagnostics!=null){
+            diagnostics.event("reader","raw_width_px",frame.width,"ok");
+            diagnostics.event("reader","raw_height_px",frame.height,"ok");
+        }
+        suspendReadingCamera();
+        readingScreen.showRecognizing();
+        readingSpeechToken++;
+        if(readingNarration!=null)readingNarration.reset();
+        encodingTask=encoder.submit(()->{
+            try{
+                FrameCompressor.EncodedJpeg photo=FrameCompressor.encodeAdjusted(
+                    frame.pixels,frame.width,frame.height,1080,rotation,mirror,flip,photoZoom);
+                if(token!=requestVersion.get())return;
+                String key=CloudKeyStore.load(this);
+                if(key.isEmpty())throw new Exception("API Key 已清除，请重新配置");
+                CloudVisionClient.Result result=CloudVisionClient.recognize(
+                    photo.jpeg,key,bookTask,model,
+                    part->handler.post(()->{
+                        if(readingScreen==null||token!=requestVersion.get()||
+                            !bookId.equals(readingScreen.bookId()))return;
+                        if(readingNarration!=null)readingNarration.addLine(part);
+                        readingScreen.appendLine(part);
+                    }),OcrSpeedExperiment.C);
+                if(token!=requestVersion.get()||readingScreen==null||
+                    !bookId.equals(readingScreen.bookId()))return;
+                if(!ReadingRules.usable(result.text))
+                    throw new Exception("本页识别为空或过长，未保存");
+                ReadingLibrary.Page saved=readingLibrary.add(bookId,result.text);
+                if(modelUsage!=null)modelUsage.recordAsync(result.model,result.serverModel,
+                    result.promptTokens,result.completionTokens,true);
+                if(diagnostics!=null){
+                    diagnostics.event("reader","network_ms",result.networkMs,"ok");
+                    diagnostics.event("reader","first_line_ms",result.firstLineReadyMs,"ok");
+                    diagnostics.event("reader","saved_page",saved.number,"ok");
+                }
+                handler.post(()->{
+                    if(readingScreen==null||token!=requestVersion.get()||
+                        !bookId.equals(readingScreen.bookId()))return;
+                    readingProcessing=false;
+                    readingScreen.saved(saved);
+                    if(readingNarration!=null)
+                        readingScreen.setPaused(readingNarration.isPaused());
+                });
+            }catch(Exception ex){
+                if(modelUsage!=null)modelUsage.recordAsync(model,"",-1,-1,false);
+                handler.post(()->{
+                    if(readingScreen==null||token!=requestVersion.get())return;
+                    readingProcessing=false;
+                    readingSpeechToken++;
+                    if(readingNarration!=null)readingNarration.reset();
+                    readingScreen.failure("本页未保存："+(ex.getMessage()==null?
+                        ex.getClass().getSimpleName():ex.getMessage()));
+                    if(diagnostics!=null)diagnostics.event("reader","ocr",0,"failed");
+                });
+            }
+        });
+    }
+
     private void invalidate(){
         requestVersion.incrementAndGet();
         pendingPhoneFrameToken=-1;
@@ -2597,6 +2897,11 @@ public final class MainActivity extends CameraActivity {
     @Override protected void onResume(){
         super.onResume();
         uiActive=true;usbForeground=true;
+        if(readingScreen!=null){
+            readingAwaitingFrame.set(false);
+            suspendReadingCamera();
+            return;
+        }
         // Handles permission/connect having arrived before onResume on cold USB launch.
         if(!usingPhoneCamera)usbReopenWanted=true;
         usbResumeAtMs=SystemClock.elapsedRealtime();
@@ -2628,6 +2933,11 @@ public final class MainActivity extends CameraActivity {
             diagnostics.event("usb","view_age_ms",usbTextureLastAtMs<=0?-1:
                 Math.max(0,SystemClock.elapsedRealtime()-usbTextureLastAtMs),"ok");
         }
+        if(readingScreen!=null&&(readingAwaitingFrame.get()||readingProcessing)){
+            readingAwaitingFrame.set(false);
+            readingProcessing=false;
+            readingScreen.failure("应用切到后台，本页未保存，请重新拍照");
+        }
         handler.removeCallbacks(usbHealthTicker);
         handler.removeCallbacks(usbAttachReconcile);
         usbLastSample=null;usbLastSampleAtMs=0;usbRollingFps.reset();
@@ -2650,6 +2960,7 @@ public final class MainActivity extends CameraActivity {
     }
     @Override protected void onDestroy(){
         invalidate();
+        if(readingScreen!=null){readingScreen.dispose();readingScreen=null;}
         if(phoneController!=null)phoneController.stop();
         encoder.shutdownNow();
         modelTestExecutor.shutdownNow();
