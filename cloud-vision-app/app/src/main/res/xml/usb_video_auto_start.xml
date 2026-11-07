@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- UVC video interface class; no wildcard for unrelated USB devices. -->
+    <usb-device class="14" />
+    <!-- The proven user's camera: EBA4:6579, including composite-device variants. -->
+    <usb-device vendor-id="60324" product-id="25977" />
+</resources>

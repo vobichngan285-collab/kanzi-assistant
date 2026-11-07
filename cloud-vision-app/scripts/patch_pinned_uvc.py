@@ -79,7 +79,12 @@ patch(activity,
     // BSG_USB_HEALTH_114: no buffers/bitmaps, only cheap lifecycle signals.
     protected open fun onUsbSurfaceAvailableForDiagnostics() {}
     protected open fun onUsbSurfaceDestroyedForDiagnostics() {}
-    protected open fun onUsbTextureUpdatedForDiagnostics() {}""")
+    protected open fun onUsbTextureUpdatedForDiagnostics() {}
+    // RC15: use the EXISTING AUSBC monitor, never register a duplicate receiver.
+    protected open fun onUsbDeviceAttachedForApp(device: UsbDevice) {}
+    protected open fun onUsbDeviceDetachedForApp(device: UsbDevice) {}
+    protected open fun onUsbDeviceConnectedForApp(device: UsbDevice) {}
+    protected open fun shouldAutoOpenUsbCameraForApp(device: UsbDevice): Boolean = true""")
 patch(activity,
       """            ) {
                 registerMultiCamera()
@@ -109,6 +114,47 @@ patch(activity,
             override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {
                 onUsbTextureUpdatedForDiagnostics()
             }""")
+# RC15 USB attach/detach/connect hooks. Base cleanup and permission routing stay intact.
+patch(activity,
+      """                generateCamera(this@CameraActivity, device).apply {
+                    mCameraMap[device.deviceId] = this
+                }""",
+      """                generateCamera(this@CameraActivity, device).apply {
+                    mCameraMap[device.deviceId] = this
+                }
+                onUsbDeviceAttachedForApp(device)""")
+patch(activity,
+      """            override fun onDetachDec(device: UsbDevice?) {
+                mCameraMap.remove(device?.deviceId)?.apply {
+                    setUsbControlBlock(null)
+                }
+                mRequestPermission.set(false)
+                try {
+                    mCurrentCamera?.cancel(true)
+                    mCurrentCamera = null
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }""",
+      """            override fun onDetachDec(device: UsbDevice?) {
+                mCameraMap.remove(device?.deviceId)?.apply {
+                    setUsbControlBlock(null)
+                }
+                mRequestPermission.set(false)
+                try {
+                    mCurrentCamera?.cancel(true)
+                    mCurrentCamera = null
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+                if (device != null) onUsbDeviceDetachedForApp(device)
+            }""")
+patch(activity,
+      """                    mCurrentCamera?.set(camera)
+                    openCamera(mCameraView)""",
+      """                    mCurrentCamera?.set(camera)
+                    onUsbDeviceConnectedForApp(device)
+                    if (shouldAutoOpenUsbCameraForApp(device)) openCamera(mCameraView)""")
 # Access to hardware capabilities, not software color effects; UVC check occurs only
 # on the control executor after OPENED (the library warns that immediate queries fail).
 patch(uvc,
@@ -140,4 +186,5 @@ print("BSG_CLOUD_RAW5_GATED=PASS")
 print("BSG_CLOUD_CLOSE_BARRIER=PASS")
 print("BSG_USB_HEALTH_114=PASS")
 print("BSG_UVC_PICTURE_CONTROLS_114=PASS")
+print("BSG_USB_AUTOSWITCH_115=PASS")
 print("arm64-only native compilation=PASS")

@@ -18,11 +18,26 @@
         <activity
             android:name="com.vobich.bluestar.cloudprobe.MainActivity"
             android:screenOrientation="portrait"
+            android:launchMode="singleTop"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Disabled until the in-app USB auto-launch setting enables it.
+             Android's USB host resolver/chooser, not an implicit background launch. -->
+        <activity-alias
+            android:name="com.vobich.bluestar.cloudprobe.UsbAttachEntry"
+            android:targetActivity="com.vobich.bluestar.cloudprobe.MainActivity"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"/>
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                android:resource="@xml/usb_video_auto_start"/>
+        </activity-alias>
     </application>
 </manifest>
