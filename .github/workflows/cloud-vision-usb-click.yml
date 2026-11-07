@@ -219,7 +219,7 @@ jobs:
           for bad in ['ppocr-sdk', 'PaddleOCR', 'onnxruntime', 'sherpa-onnx']:
               assert bad.lower() not in app.lower()
           assert 'setRenderMode(CameraRequest.RenderMode.NORMAL)' in activity
-          assert 'now-usbShot.atMs>1400L' in activity
+          assert 'usbFrameAge>USB_MAX_FRAME_AGE_MS' in activity
           assert 'CloudVisionClient.recognize(jpeg,key,task,model,' in activity
           assert 'FrameCompressor.choose(' in activity
           assert 'recordTtsProgress(' in activity
