@@ -1,7 +1,7 @@
-name: Blue Star Guide 1.0.8 - RC9 Voice Capture and Text Followups
+name: Blue Star Guide 1.0.9 - RC10 Budget Visual Model Comparison
 on:
   push:
-    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106, fix/bluestar-104-ocr-voice-empty-20261106, fix/bluestar-105-model-options-20261107, fix/bluestar-106-three-tier-models-20261107, fix/bluestar-107-compact-settings-20261107, fix/bluestar-108-voice-intent-text-followups-20261107]
+    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106, fix/bluestar-104-ocr-voice-empty-20261106, fix/bluestar-105-model-options-20261107, fix/bluestar-106-three-tier-models-20261107, fix/bluestar-107-compact-settings-20261107, fix/bluestar-108-voice-intent-text-followups-20261107, fix/bluestar-109-37flash-keep-plus-20261107]
     paths:
       - 'cloud-vision-app/**'
       - '.github/workflows/cloud-vision-usb-click.yml'
@@ -78,10 +78,15 @@ jobs:
           cloud_client=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/CloudVisionClient.java').read_text()
           model_catalog=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/VisionModelCatalog.java').read_text()
           ids=model_catalog.split('static final String[] IDS =')[1].split(';')[0]
-          for allowed in ['FLASH_38', 'PLUS', 'MAX_38']:
+          for allowed in ['FLASH_37', 'FLASH_38', 'PLUS', 'MAX_38']:
               assert allowed in ids
-          for retired in ['FLASH_35', 'FLASH_37']:
-              assert retired not in ids
+          assert 'FLASH_35' not in ids
+          assert 'static final String FLASH_37 = "qwen3.7-flash";' in model_catalog
+          assert 'static final String[] IDS = {FLASH_37, FLASH_38, PLUS, MAX_38};' in model_catalog
+          assert '"超省 · Qwen3.7-Flash"' in model_catalog
+          assert '"稳定备用 · Qwen3-VL-Plus"' in model_catalog
+          assert 'return FLASH_37.equals(value)||FLASH_38.equals(value);' in model_catalog
+          assert 'return indexOf(value)<0 ? DEFAULT : value;' in model_catalog
           assert 'static final String DEFAULT = FLASH_38;' in model_catalog
           assert 'static boolean isEmergencyMax' in model_catalog
           assert 'VisionModelCatalog.isEmergencyMax(model)' in cloud_client
@@ -114,7 +119,10 @@ jobs:
           assert '不得编造' in follow
           assert 'if(!isOcr&&VisionModelCatalog.indexOf(visionModel)<0)' in cloud_client
           assert 'VisionModelCatalog.DEFAULT' in activity
-          assert 'qwen3.5-flash' not in settings and 'qwen3.7-flash' not in settings
+          assert 'qwen3.5-flash' not in settings
+          assert 'VisionModelCatalog.IDS.length' in settings
+          assert 'row((selected?"✓ ":"")+VisionModelCatalog.LABELS[i],""' in settings
+          assert 'VisionModelCatalog.FLASH_37' in ledger
           assert '高精度应急' in model_catalog
           assert 'Max 尚未通过你的百炼账户实测' not in settings
           assert 'block.setMinimumHeight(dp(66))' in settings
@@ -144,7 +152,10 @@ jobs:
           assert 'input>=0&&output>=0' in ledger
           assert 'VisionModelCatalog.MAX_38' in ledger
           assert 'VisionModelCatalog.FLASH_38' in ledger
-          assert 'FLASH_35' not in ledger and 'FLASH_37' not in ledger
+          assert 'FLASH_35' not in ledger
+          assert 'VisionModelCatalog.FLASH_37, VisionModelCatalog.FLASH_38,' in ledger
+          assert 'static final String DEFAULT = FLASH_38;' in model_catalog
+          assert 'return recognizeInternal(null,key,task,VisionModelCatalog.FLASH_38,listener,true);' in cloud_client
           assert 'qwen-vl-ocr' in ledger and 'qwen3-asr-flash' in ledger
           assert 'new OcrResponseGate.NoReadableTextException(' in cloud_client
           assert 'OcrResponseGate.requireReadable(answer)' in cloud_client
@@ -184,6 +195,12 @@ jobs:
           assert 'SpeechChunker' in Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/CloudVisionClient.java').read_text()
           assert 'showImagePolicySelector()' in activity
           assert 'showVisionModelSelector()' in activity
+          assert '四选一' in activity
+          assert 'final String chosen=visionModel;' in activity
+          assert 'CloudVisionClient.recognize(' in activity
+          assert 'VisionModelCatalog.isBudgetFlash(model)' in cloud_client
+          assert 'VisionModelCatalog.isBudgetFlash(model)' in Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/TargetVisionClient.java').read_text()
+          assert 'return recognizeInternal(null,key,task,VisionModelCatalog.FLASH_38,listener,true);' in cloud_client
           assert 'TextToSpeech.QUEUE_FLUSH' in activity
           assert 'final String OCR = "ocr"' not in tasks or 'static final String OCR = "ocr"' in tasks
           assert 'selected_task_id' in tasks and 'custom_tasks' in tasks
@@ -200,8 +217,8 @@ jobs:
           camera2=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/InternalCameraController.java').read_text()
           assert 'CameraManager' in camera2 and 'CameraCaptureSession' in camera2
           assert 'Nv21Rotation.rotate(' in camera2
-          assert "versionCode 18" in app and "versionName '1.0.8-rc9'" in app
-          assert "applicationIdSuffix '.rc9'" in app
+          assert "versionCode 19" in app and "versionName '1.0.9-rc10'" in app
+          assert "applicationIdSuffix '.rc10'" in app
           assert Path('cloud-vision-app/app/src/main/res/drawable-nodpi/bluestar_globe.png').is_file()
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('ic_launcher.webp'))
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('bluestar_icon.webp'))
@@ -272,28 +289,28 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p cloud-vision-artifact
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.8_RC9_arm64.apk
-          test -s cloud-vision-artifact/BlueStar_Guide_1.0.8_RC9_arm64.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.9_RC10_arm64.apk
+          test -s cloud-vision-artifact/BlueStar_Guide_1.0.9_RC10_arm64.apk
           (cd cloud-vision-artifact && sha256sum *.apk > SHA256SUMS.txt)
           unzip -Z1 cloud-vision-artifact/*.apk > cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' cloud-vision-artifact/apk-entries.txt
           cd cloud-vision-app
-          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.8_RC9_arm64.apk
-          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.8_RC9_arm64.apk
+          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.9_RC10_arm64.apk
+          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.9_RC10_arm64.apk
           cd ..
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           test -x "$AAPT"
-          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.8_RC9_arm64.apk > cloud-vision-artifact/badging.txt
+          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.9_RC10_arm64.apk > cloud-vision-artifact/badging.txt
           grep -F "application-label:'Blue Star Guide'" cloud-vision-artifact/badging.txt
-          grep -F "package: name='com.vobich.bluestar.rc9'" cloud-vision-artifact/badging.txt
+          grep -F "package: name='com.vobich.bluestar.rc10'" cloud-vision-artifact/badging.txt
           grep -q 'application-icon-' cloud-vision-artifact/badging.txt
           grep -Fxq 'res/raw/c_metal_clack_ding.mp3' cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'res/raw/voice_send_whoosh.wav' cloud-vision-artifact/apk-entries.txt
           ! grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx' cloud-vision-artifact/apk-entries.txt
-          echo 'Blue Star Guide 1.0.8 RC9 standalone test package: com.vobich.bluestar.rc9 avoids overwriting RC3 with different debug certificate. Checked globe PNG densities, selected C clack MP3, voice whoosh, fresh Camera2, bounded diagnostics, target auto-exit. Real vivo tests still required.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Blue Star Guide 1.0.9 RC10 standalone test package: com.vobich.bluestar.rc10 avoids overwriting RC3 with different debug certificate. Checked globe PNG densities, selected C clack MP3, voice whoosh, fresh Camera2, bounded diagnostics, target auto-exit. Real vivo tests still required.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload 1.0 release candidate APK (debug-signed, device testing)
         uses: actions/upload-artifact@v4
         with:
-          name: blue-star-guide-1-0-8-rc9-arm64
+          name: blue-star-guide-1-0-9-rc10-arm64
           path: cloud-vision-artifact/*
           retention-days: 7
