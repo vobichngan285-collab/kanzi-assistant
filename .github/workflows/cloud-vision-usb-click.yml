@@ -1,7 +1,7 @@
-name: Blue Star Guide 1.0.16 - RC17 Independent Text Recognition Model Selector
+name: Blue Star Guide 1.0.17 - RC18 Online Conversation in All Three Visual Models
 on:
   push:
-    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106, fix/bluestar-104-ocr-voice-empty-20261106, fix/bluestar-105-model-options-20261107, fix/bluestar-106-three-tier-models-20261107, fix/bluestar-107-compact-settings-20261107, fix/bluestar-108-voice-intent-text-followups-20261107, fix/bluestar-109-37flash-keep-plus-20261107, fix/bluestar-110-stop-finding-drag-grid-20261107, fix/bluestar-111-maxfast-remove-plus-drag-delete-20261107, fix/bluestar-112-usb-orientation-preview-jpeg-20261107, fix/bluestar-113-usb-lifecycle-trace-picture-controls-20261107, fix/bluestar-114-usb-auto-switch-launch-fps-20261107, fix/bluestar-115-cold-usb-auto-select-20261107, feat/bluestar-116-independent-ocr-model-choice-20261107]
+    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106, fix/bluestar-104-ocr-voice-empty-20261106, fix/bluestar-105-model-options-20261107, fix/bluestar-106-three-tier-models-20261107, fix/bluestar-107-compact-settings-20261107, fix/bluestar-108-voice-intent-text-followups-20261107, fix/bluestar-109-37flash-keep-plus-20261107, fix/bluestar-110-stop-finding-drag-grid-20261107, fix/bluestar-111-maxfast-remove-plus-drag-delete-20261107, fix/bluestar-112-usb-orientation-preview-jpeg-20261107, fix/bluestar-113-usb-lifecycle-trace-picture-controls-20261107, fix/bluestar-114-usb-auto-switch-launch-fps-20261107, fix/bluestar-115-cold-usb-auto-select-20261107, feat/bluestar-116-independent-ocr-model-choice-20261107, feat/bluestar-117-web-search-followup-20261107]
     paths:
       - 'cloud-vision-app/**'
       - '.github/workflows/cloud-vision-usb-click.yml'
@@ -113,14 +113,17 @@ jobs:
           assert 'TaskCatalog.Task task=pendingPhoneCaptureTask;' in activity
           assert 'TaskCatalog.defaultInstruction(TaskCatalog.OCR)' in activity
           assert 'private void askAboutCurrentImage(String question,boolean recheckImage)' in activity
-          assert 'CloudVisionClient.recognizeText(prompt,key,speaker)' in activity
-          assert 'CloudVisionClient.recognize(jpeg,key,ask,selectedModel,speaker)' in activity
+          assert 'CloudVisionClient.recognizeText(prompt,key,selectedModel,speaker,search)' in activity
+          assert 'CloudVisionClient.recognize(jpeg,key,ask,selectedModel,speaker,search)' in activity
           assert 'final byte[] jpeg=recheckImage?lastSessionJpeg:null;' in activity
-          assert 'VisionModelCatalog.FLASH_38' in activity
-          assert 'return recognizeInternal(null,key,task,VisionModelCatalog.FLASH_38,listener,true);' in cloud_client
+          assert 'final String selectedModel=visionModel;' in activity
+          assert 'FollowupPrompt.buildStandalone(followupTurns,question,search)' in activity
+          assert 'VoiceAction.Type.REVIEW_IMAGE&&lastSessionJpeg==null' in activity
+          assert 'return recognizeInternal(null,key,task,model,listener,true,allowSearch);' in cloud_client
           assert 'if(!textOnly)' in cloud_client and 'content.put(image);' in cloud_client
           assert cloud_client.count('Base64.encodeToString')==1
           assert 'modelUsage.recordAsync(selectedModel,result.serverModel' in activity
+          assert 'SearchRoutePolicy.allow(task.id,task.engine,model,allowSearch)' in cloud_client
           assert '没有重新查看照片的权限' in follow
           assert '不得编造' in follow
           assert 'if(!isOcr&&VisionModelCatalog.indexOf(visionModel)<0)' in cloud_client
@@ -163,7 +166,7 @@ jobs:
           assert 'FLASH_35' not in ledger
           assert 'VisionModelCatalog.FLASH_37, VisionModelCatalog.FLASH_38,' in ledger
           assert 'static final String DEFAULT = FLASH_38;' in model_catalog
-          assert 'return recognizeInternal(null,key,task,VisionModelCatalog.FLASH_38,listener,true);' in cloud_client
+          assert 'return recognizeInternal(null,key,task,model,listener,true,allowSearch);' in cloud_client
           assert 'qwen-vl-ocr' in ledger and 'qwen3-asr-flash' in ledger
           assert 'new OcrResponseGate.NoReadableTextException(' in cloud_client
           assert 'OcrResponseGate.requireReadable(answer)' in cloud_client
@@ -292,7 +295,29 @@ jobs:
           assert 'app.selectOcrModel(id);' in settings
           assert 'heading("当前文字识别模型")' in settings
           assert 'CloudVisionClient.recognize(jpeg,key,task,model,' in activity
-          assert 'CloudVisionClient.recognizeText(prompt,key,speaker)' in activity
+          assert 'CloudVisionClient.recognizeText(prompt,key,selectedModel,speaker,search)' in activity
+          # RC18: official Bailian Chat Completions enables search only on
+          # allowed conversation routes, not OCR, model tests or camera tasks.
+          search_policy=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/SearchRoutePolicy.java').read_text()
+          assert 'static final boolean DEFAULT_ENABLED=true;' in search_policy
+          assert 'cloud_smart_web_search_v1' in search_policy
+          for model in ('"text-followup"', '"user-followup"'):
+              assert model in search_policy
+          assert '&& VisionModelCatalog.indexOf(model)>=0' in search_policy
+          assert '&& !"ocr".equals(taskEngine)' in search_policy
+          assert 'body.put("enable_search",true)' in cloud_client
+          assert 'connection.setReadTimeout(web?90000:45000)' in cloud_client
+          assert 'if(web)body.put("enable_search",true)' in cloud_client
+          assert 'final String selectedModel=visionModel;' in activity
+          assert 'CloudVisionClient.recognizeText(prompt,key,selectedModel,speaker,search)' in activity
+          assert 'CloudVisionClient.recognize(jpeg,key,ask,selectedModel,speaker,search)' in activity
+          assert 'isWebSearchEnabled()' in settings
+          assert 'setWebSearchEnabled(!app.isWebSearchEnabled())' in settings
+          assert '没有照片供你查看' in follow
+          assert '不得编造来源' in follow
+          assert 'askAboutCurrentImage(transcript,action.type==VoiceAction.Type.REVIEW_IMAGE)' in activity
+          assert 'TaskCatalog.OCR.equals(task.engine)' in cloud_client
+          assert 'TargetVisionClient.inspect(' in activity
           # RC14: USB diagnostics use native texture buffer updates and 5Hz
           # raw callbacks only; no Bitmap readbacks or extra AI calls.
           health=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/UsbStreamHealth.java').read_text()
@@ -368,7 +393,7 @@ jobs:
           assert 'CloudVisionClient.recognize(' in activity
           assert 'VisionModelCatalog.isBudgetFlash(model)' in cloud_client
           assert 'VisionModelCatalog.isBudgetFlash(model)' in Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/TargetVisionClient.java').read_text()
-          assert 'return recognizeInternal(null,key,task,VisionModelCatalog.FLASH_38,listener,true);' in cloud_client
+          assert 'return recognizeInternal(null,key,task,model,listener,true,allowSearch);' in cloud_client
           assert 'TextToSpeech.QUEUE_FLUSH' in activity
           assert 'final String OCR = "ocr"' not in tasks or 'static final String OCR = "ocr"' in tasks
           assert 'selected_task_id' in tasks and 'custom_tasks' in tasks
@@ -417,8 +442,8 @@ jobs:
           camera2=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/InternalCameraController.java').read_text()
           assert 'CameraManager' in camera2 and 'CameraCaptureSession' in camera2
           assert 'Nv21Rotation.rotate(' in camera2
-          assert "versionCode 26" in app and "versionName '1.0.16-rc17'" in app
-          assert "applicationIdSuffix '.rc17'" in app
+          assert "versionCode 27" in app and "versionName '1.0.17-rc18'" in app
+          assert "applicationIdSuffix '.rc18'" in app
           assert Path('cloud-vision-app/app/src/main/res/drawable-nodpi/bluestar_globe.png').is_file()
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('ic_launcher.webp'))
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('bluestar_icon.webp'))
@@ -458,6 +483,8 @@ jobs:
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/OcrResponseGate.java \
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/VisionModelCatalog.java \
             cloud-vision-app/tests/VisionModelCatalogTest.java \
+            cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/SearchRoutePolicy.java \
+            cloud-vision-app/tests/SearchRoutePolicyTest.java \
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/OcrModelCatalog.java \
             cloud-vision-app/tests/OcrModelCatalogTest.java \
             cloud-vision-app/tests/VoiceFlowTest.java \
@@ -473,6 +500,7 @@ jobs:
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.FollowupPromptTest
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.VisionModelCatalogTest
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.OcrModelCatalogTest
+          java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.SearchRoutePolicyTest
       - name: Patch pinned Android 16 USB permission and native sampling safely
         run: |
           set -euo pipefail
@@ -516,28 +544,28 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p cloud-vision-artifact
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.16_RC17_arm64.apk
-          test -s cloud-vision-artifact/BlueStar_Guide_1.0.16_RC17_arm64.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.17_RC18_arm64.apk
+          test -s cloud-vision-artifact/BlueStar_Guide_1.0.17_RC18_arm64.apk
           (cd cloud-vision-artifact && sha256sum *.apk > SHA256SUMS.txt)
           unzip -Z1 cloud-vision-artifact/*.apk > cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' cloud-vision-artifact/apk-entries.txt
           cd cloud-vision-app
-          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.16_RC17_arm64.apk
-          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.16_RC17_arm64.apk
+          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.17_RC18_arm64.apk
+          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.17_RC18_arm64.apk
           cd ..
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           test -x "$AAPT"
-          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.16_RC17_arm64.apk > cloud-vision-artifact/badging.txt
+          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.17_RC18_arm64.apk > cloud-vision-artifact/badging.txt
           grep -F "application-label:'Blue Star Guide'" cloud-vision-artifact/badging.txt
-          grep -F "package: name='com.vobich.bluestar.rc17'" cloud-vision-artifact/badging.txt
+          grep -F "package: name='com.vobich.bluestar.rc18'" cloud-vision-artifact/badging.txt
           grep -q 'application-icon-' cloud-vision-artifact/badging.txt
           grep -Fxq 'res/raw/c_metal_clack_ding.mp3' cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'res/raw/voice_send_whoosh.wav' cloud-vision-artifact/apk-entries.txt
           ! grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx' cloud-vision-artifact/apk-entries.txt
-          echo 'Blue Star Guide 1.0.16 RC17 isolated APK: add independent OCR model selection: dedicated qwen-vl-ocr default or three Flash/Max visual models, exact user-approved short text prompt, a single user-triggered OCR request, appropriate model-usage accounting and voice READ_TEXT. Visual/target tasks and text-only followups retain their models, native USB high FPS and RC13 orientation plus RC14 UVC hardware controls, TTS, tasks, sounds and icons remain unchanged. Requires vivo and model accuracy testing.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Blue Star Guide 1.0.17 RC18: three selectable visual models gain optional online web search for explicitly initiated AI follow-up conversations, using a single official enable_search Chat Completions call (no forced search, no duplicate requests). Text-only follow-up now honors user-chosen visual model instead of always Flash38, and general voice chat works without previously photographed image. Photo recheck preserves single old JPEG. Preset OCR, initial photos, target location/finding, model self-test and audio ASR never web-search. Optional web-search toggle defaults enabled; disabled reverts conversations to normal no-search. Official OpenAI-compatible Chat Completions does not provide verified structured source citations. Keep RC17 OCR four-choice short user prompt, RC16 USB native high fps, RC13 original 32-case upload orientation, RC14 hardware controls, voice/TTS, task controls, icons/sounds; all via native arm64. Offline runtime and account access require vivo tests.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload 1.0 release candidate APK (debug-signed, device testing)
         uses: actions/upload-artifact@v4
         with:
-          name: blue-star-guide-1-0-16-rc17-arm64
+          name: blue-star-guide-1-0-17-rc18-arm64
           path: cloud-vision-artifact/*
           retention-days: 7
