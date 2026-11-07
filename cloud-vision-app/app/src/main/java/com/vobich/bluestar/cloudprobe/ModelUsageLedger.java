@@ -54,8 +54,9 @@ final class ModelUsageLedger {
     private static final String PREFS="bluestar_model_usage_v1";
     private static final String DATA="daily";
     private static final String[] SHOW = {
-        VisionModelCatalog.FLASH_38, VisionModelCatalog.PLUS,
-        VisionModelCatalog.MAX_38, "qwen-vl-ocr", "qwen3-asr-flash"
+        VisionModelCatalog.FLASH_37, VisionModelCatalog.FLASH_38,
+        VisionModelCatalog.PLUS, VisionModelCatalog.MAX_38,
+        "qwen-vl-ocr", "qwen3-asr-flash"
     };
     private final SharedPreferences prefs;
     private final ExecutorService disk=Executors.newSingleThreadExecutor();
