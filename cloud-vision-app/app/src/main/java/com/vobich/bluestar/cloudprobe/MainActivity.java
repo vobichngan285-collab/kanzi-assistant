@@ -2578,6 +2578,7 @@ public final class MainActivity extends CameraActivity {
         readingSpeechToken++;
         if(readingNarration!=null)readingNarration.reset();
         encodingTask=encoder.submit(()->{
+            boolean cloudCallRecorded=false;
             try{
                 FrameCompressor.EncodedJpeg photo=FrameCompressor.encodeAdjusted(
                     frame.pixels,frame.width,frame.height,1080,rotation,mirror,flip,photoZoom);
@@ -2592,13 +2593,16 @@ public final class MainActivity extends CameraActivity {
                         if(readingNarration!=null)readingNarration.addLine(part);
                         readingScreen.appendLine(part);
                     }),OcrSpeedExperiment.C);
+                if(modelUsage!=null){
+                    modelUsage.recordAsync(result.model,result.serverModel,
+                        result.promptTokens,result.completionTokens,true);
+                    cloudCallRecorded=true;
+                }
                 if(token!=requestVersion.get()||readingScreen==null||
                     !bookId.equals(readingScreen.bookId()))return;
                 if(!ReadingRules.usable(result.text))
                     throw new Exception("本页识别为空或过长，未保存");
                 ReadingLibrary.Page saved=readingLibrary.add(bookId,result.text);
-                if(modelUsage!=null)modelUsage.recordAsync(result.model,result.serverModel,
-                    result.promptTokens,result.completionTokens,true);
                 if(diagnostics!=null){
                     diagnostics.event("reader","network_ms",result.networkMs,"ok");
                     diagnostics.event("reader","first_line_ms",result.firstLineReadyMs,"ok");
@@ -2613,7 +2617,10 @@ public final class MainActivity extends CameraActivity {
                         readingScreen.setPaused(readingNarration.isPaused());
                 });
             }catch(Exception ex){
-                if(modelUsage!=null)modelUsage.recordAsync(model,"",-1,-1,false);
+                // A successful billed cloud call must not be misreported as a failed
+                // request merely because local storage subsequently failed.
+                if(!cloudCallRecorded&&modelUsage!=null)
+                    modelUsage.recordAsync(model,"",-1,-1,false);
                 handler.post(()->{
                     if(readingScreen==null||token!=requestVersion.get())return;
                     readingProcessing=false;
