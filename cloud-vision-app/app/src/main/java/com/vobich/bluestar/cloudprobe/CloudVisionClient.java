@@ -63,15 +63,23 @@ final class CloudVisionClient {
         JSONArray content=new JSONArray()
             .put(new JSONObject().put("type","text").put("text",instruction))
             .put(image);
-        int maxOutput=isOcr?1200:(connectionTest?64:
-            ("menu".equals(task.id)?550:((task.custom||customPreset)?650:350)));
+        // The emergency Max may think briefly before answering. Keep a hard
+        // ceiling on reasoning + response tokens, rather than its unbounded default.
+        boolean emergency=VisionModelCatalog.isEmergencyMax(model);
+        int maxOutput=isOcr?1200:(connectionTest?64:(emergency?2048:
+            ("menu".equals(task.id)?550:((task.custom||customPreset)?650:350))));
         JSONObject body=new JSONObject().put("model",model).put("stream",streaming)
             .put("max_tokens",maxOutput).put("messages",new JSONArray().put(
                 new JSONObject().put("role","user").put("content",content)));
-        // New Qwen 3.x hybrid models otherwise may spend time/tokens reasoning.
-        // This must not alter the verified qwen-vl-ocr or qwen3-vl-plus behavior.
+        // Flash: responsive daily mode. Max: bounded reasoning for manual
+        // emergency use; short connection probes skip reasoning to save tokens.
+        // Verified Plus and OCR keep their original request behavior.
         if(!isOcr&&VisionModelCatalog.isBudgetFlash(model))
             body.put("enable_thinking",false);
+        if(!isOcr&&emergency){
+            body.put("enable_thinking",!connectionTest);
+            if(!connectionTest)body.put("thinking_budget",512);
+        }
         if(streaming)body.put("stream_options",new JSONObject().put("include_usage",true));
 
         HttpURLConnection connection=(HttpURLConnection)new URL(ENDPOINT).openConnection();
@@ -112,10 +120,15 @@ final class CloudVisionClient {
                 int prompt=usage==null?-1:usage.optInt("prompt_tokens",-1);
                 int completion=usage==null?-1:usage.optInt("completion_tokens",-1);
                 String readable;
-                try{readable=OcrResponseGate.requireReadable(answer);}
-                catch(OcrResponseGate.NoReadableTextException empty){
-                    throw new OcrResponseGate.NoReadableTextException(
-                        response.optString("model",""),prompt,completion);
+                if(isOcr){
+                    try{readable=OcrResponseGate.requireReadable(answer);}
+                    catch(OcrResponseGate.NoReadableTextException empty){
+                        throw new OcrResponseGate.NoReadableTextException(
+                            response.optString("model",""),prompt,completion);
+                    }
+                }else{
+                    readable=answer==null?"":answer.trim();
+                    if(readable.isEmpty())throw new Exception("模型连接测试没有返回文字");
                 }
                 return new Result(readable,model,response.optString("model",""),
                     SystemClock.elapsedRealtime()-started,
