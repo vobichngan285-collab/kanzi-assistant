@@ -132,6 +132,8 @@ public final class MainActivity extends CameraActivity {
     private final VoicePressState voicePress=new VoicePressState();
     private byte[] lastSessionJpeg;
     private String lastSessionText="",lastSessionTask="";
+    // A voice capture is one-shot; never mutate or persist the selected task.
+    private TaskCatalog.Task pendingPhoneCaptureTask;
     private final ArrayList<String> followupTurns=new ArrayList<>();
     private AspectRatioTextureView cameraTextureView;
     private TextureView phoneTexture;
@@ -200,7 +202,9 @@ public final class MainActivity extends CameraActivity {
                 int token=pendingPhoneFrameToken;
                 if(token<0||token!=requestVersion.get()||!usingPhoneCamera||!uiActive)return;
                 pendingPhoneFrameToken=-1;
-                beginCapturedFrame(frame,phoneCaptureTapAtMs,token);
+                TaskCatalog.Task task=pendingPhoneCaptureTask;
+                pendingPhoneCaptureTask=null;
+                beginCapturedFrame(frame,phoneCaptureTapAtMs,token,task);
             });
         }else{
             latestUsbFrame=frame;
@@ -1669,12 +1673,28 @@ public final class MainActivity extends CameraActivity {
             speakUnfiltered("好的，正在帮你找"+findingTarget+"。继续走路时，点击画面拍照，我会逐张检查。");
             return;
         }
-        if(lastSessionJpeg==null||lastSessionText.isEmpty()){
-            setResultStatus("还没有照片，请先拍照或说帮我找超市");
-            speakUnfiltered("请先拍照，或者按住说出你要寻找的目标。");
+        if(action.type==VoiceAction.Type.OBSERVE_SCENE){
+            TaskCatalog.Task observe=new TaskCatalog.Task("voice-scene","观察场景",
+                "请描述眼前真实可见的事物、位置与重要环境信息，"
+                +"先说最重要的内容，尽量简短；看不清不要猜测。",
+                TaskCatalog.VISION,false,"◉");
+            captureOneFrame(observe);
             return;
         }
-        askAboutCurrentImage(transcript);
+        if(action.type==VoiceAction.Type.READ_TEXT){
+            TaskCatalog.Task read=new TaskCatalog.Task("voice-read","朗读文字",
+                TaskCatalog.defaultInstruction(TaskCatalog.OCR),
+                TaskCatalog.OCR,false,"▤");
+            captureOneFrame(read);
+            return;
+        }
+        if(lastSessionText==null||lastSessionText.isEmpty()||
+           (action.type==VoiceAction.Type.REVIEW_IMAGE&&lastSessionJpeg==null)){
+            setResultStatus("没有可追问的照片；可说「看看眼前有什么」自动拍照");
+            speakUnfiltered("还没有照片。你可以说，帮我看看眼前有什么，我会自动拍照。");
+            return;
+        }
+        askAboutCurrentImage(transcript,action.type==VoiceAction.Type.REVIEW_IMAGE);
     }
 
     private void showTextQuestionFallback(String reason){
@@ -1689,27 +1709,21 @@ public final class MainActivity extends CameraActivity {
             .setMessage(reason).setView(content).setNegativeButton("取消",null)
             .setPositiveButton("发送",(d,w)->{
                 String text=question.getText().toString().trim();
-                if(!text.isEmpty())askAboutCurrentImage(text);
+                if(!text.isEmpty())routeSpokenRequest(text);
             }).show();
     }
 
-    private void askAboutCurrentImage(String question){
-        if(cloudBusy||lastSessionJpeg==null||lastSessionText.isEmpty())return;
-        // Always include the actual image: earlier short summary may omit the
-        // details needed for follow-up. The cloud does not remember prior calls.
-        final byte[] jpeg=lastSessionJpeg;
+    private void askAboutCurrentImage(String question,boolean recheckImage){
+        if(cloudBusy||lastSessionText==null||lastSessionText.isEmpty()||
+            (recheckImage&&lastSessionJpeg==null))return;
+        final byte[] jpeg=recheckImage?lastSessionJpeg:null;
         final String observed=lastSessionText;
         final String taskName=lastSessionTask;
-        final StringBuilder prompt=new StringBuilder();
-        prompt.append("你正在回答用户对上一张照片的追问。照片之前的任务：")
-            .append(taskName).append("。此前识别结果：")
-            .append(observed.length()>2500?observed.substring(0,2500):observed)
-            .append("。只依据照片中的真实内容回答，不猜测看不清的信息。");
-        for(String prior:followupTurns)prompt.append("此前对话：").append(prior).append("。");
-        prompt.append("用户最新问题：").append(question)
-            .append("。请直接给出清晰的中文回答，不要Markdown。");
-        final TaskCatalog.Task ask=new TaskCatalog.Task(
-            "user-followup","图片追问",prompt.toString(),TaskCatalog.VISION,true,"✦");
+        final String prompt=FollowupPrompt.build(taskName,observed,followupTurns,question);
+        final TaskCatalog.Task ask=recheckImage?new TaskCatalog.Task(
+            "user-followup","重新看图",
+            prompt+"\n本次用户明确要求重新检查上一张图片，请结合图片回答；"
+                +"不能根据模糊部分编造。",TaskCatalog.VISION,true,"✦"):null;
         invalidate();
         final int token=requestVersion.get();
         cloudBusy=true;
@@ -1717,28 +1731,32 @@ public final class MainActivity extends CameraActivity {
         speechCaptureAtMs=SystemClock.elapsedRealtime();
         ttsEngineStartMs=-1;
         ttsAudioCallbackMs=-1;
-        setResultStatus("AI正在回答图片追问…");
-        final String selectedModel=visionModel;
+        setResultStatus(recheckImage?"正在重新看图…":"正在分析已有文字…");
+        // Text analysis always uses the user's confirmed inexpensive Flash.
+        // It cannot silently switch to Plus/Max, or upload an image.
+        final String selectedModel=recheckImage?visionModel:VisionModelCatalog.FLASH_38;
         final java.util.concurrent.atomic.AtomicInteger pieces=new java.util.concurrent.atomic.AtomicInteger();
         encodingTask=encoder.submit(()->{
             try{
                 String key=CloudKeyStore.load(this);
                 if(key.isEmpty())throw new Exception("请先在设置中配置API Key");
-                CloudVisionClient.Result result=CloudVisionClient.recognize(
-                    jpeg,key,ask,selectedModel,part->handler.post(()->{
+                CloudVisionClient.PartListener speaker=part->handler.post(()->{
                         if(token!=requestVersion.get()||!uiActive||tts==null||!ttsReady)return;
                         String spoken=filterForSpeech(part,null);
                         if(spoken.trim().isEmpty())return;
                         int partIndex=pieces.getAndIncrement();
                         tts.speak(spoken,partIndex==0?TextToSpeech.QUEUE_FLUSH:
                             TextToSpeech.QUEUE_ADD,null,"follow-"+token+"-"+partIndex);
-                    }));
+                    });
+                CloudVisionClient.Result result=recheckImage?
+                    CloudVisionClient.recognize(jpeg,key,ask,selectedModel,speaker):
+                    CloudVisionClient.recognizeText(prompt,key,speaker);
                 if(modelUsage!=null)modelUsage.recordAsync(selectedModel,result.serverModel,
                     result.promptTokens,result.completionTokens,true);
                 handler.post(()->{
                     if(!uiActive||token!=requestVersion.get())return;
                     cloudBusy=false;
-                    setResultStatus("AI追问已回答 · 再点可继续提问");
+                    setResultStatus(recheckImage?"重新看图已完成":"文字分析已完成");
                     lastCloudResult=result.text;
                     if(pieces.get()==0)speakForCapture(result.text,token,false);
                     if(diagnostics!=null){
@@ -1775,7 +1793,9 @@ public final class MainActivity extends CameraActivity {
     }
 
     /** USB retains its last owned NV21; Camera2 only converts a new frame after tap. */
-    private void captureOneFrame(){
+    private void captureOneFrame(){captureOneFrame(null);}
+    private void captureOneFrame(TaskCatalog.Task oneShotTask){
+        boolean fromVoice=oneShotTask!=null;
         if(voiceListening||voiceRecorder.isBusy()){
             toastShort("正在录音，请松手后再拍照");return;
         }
@@ -1786,11 +1806,14 @@ public final class MainActivity extends CameraActivity {
         Frame usbShot=usingPhoneCamera?null:latestUsbFrame;
         if(!usingPhoneCamera&&(usbShot==null||now-usbShot.atMs>1400L)){
             toastShort("USB没有最新画面，不会使用旧照片");
+            if(fromVoice)speakUnfiltered("外接摄像头还没有新画面，请稍后再试。");
             if(diagnostics!=null)diagnostics.event("camera","usb_stale_frame",0,"failed");
             return;
         }
         if(usingPhoneCamera&&phoneController==null){
-            toastShort("手机摄像头尚未就绪");return;
+            toastShort("手机摄像头尚未就绪");
+            if(fromVoice)speakUnfiltered("手机摄像头还没有准备好。");
+            return;
         }
         lastTapMs=now;
         invalidate();
@@ -1807,6 +1830,7 @@ public final class MainActivity extends CameraActivity {
         }
         if(usingPhoneCamera){
             pendingPhoneFrameToken=token;
+            pendingPhoneCaptureTask=oneShotTask;
             phoneCaptureTapAtMs=now;
             setResultStatus("正在获取最新手机画面…");
             phoneController.requestFreshFrame();
@@ -1814,16 +1838,19 @@ public final class MainActivity extends CameraActivity {
                 if(!uiActive||token!=requestVersion.get()||
                     pendingPhoneFrameToken!=token)return;
                 pendingPhoneFrameToken=-1;
+                pendingPhoneCaptureTask=null;
                 phoneController.cancelFreshFrame();
                 cloudBusy=false;
                 if(diagnostics!=null)diagnostics.event("camera","fresh_frame_ms",
                     SystemClock.elapsedRealtime()-now,"timeout");
                 setResultStatus("手机摄像头未提供新照片，请检查预览后重试");
+                if(fromVoice)speakUnfiltered("手机摄像头没有获取到新照片，请稍后再试。");
             },3000L);
-        }else beginCapturedFrame(usbShot,now,token);
+        }else beginCapturedFrame(usbShot,now,token,oneShotTask);
     }
 
-    private void beginCapturedFrame(Frame current,long tapAtMs,int token){
+    private void beginCapturedFrame(Frame current,long tapAtMs,int token,
+                                    TaskCatalog.Task oneShotTask){
         if(!uiActive||token!=requestVersion.get())return;
         // Do not reuse prior image as the new frame; only clear the previous
         // image session once a genuinely new frame is acquired.
@@ -1837,8 +1864,9 @@ public final class MainActivity extends CameraActivity {
         setResultStatus("已拍照 · 正在云端识别…");
         if(diagnostics!=null)diagnostics.event("camera","fresh_frame_ms",
             Math.max(0,current.atMs-tapAtMs),"ok");
-        final TaskCatalog.Task task=currentTask;
-        final String targetToFind=findingTarget;
+        final TaskCatalog.Task task=oneShotTask==null?currentTask:oneShotTask;
+        // A one-shot voice observation should not be hijacked by an ongoing search.
+        final String targetToFind=oneShotTask==null?findingTarget:"";
         final String source=usingPhoneCamera?
             (phoneFrontFacing?"手机前置":"手机后置"):"USB 外接";
         final String policy=imagePolicy;
@@ -1996,6 +2024,7 @@ public final class MainActivity extends CameraActivity {
         voiceSequence.incrementAndGet();voiceRecorder.cancel();
         voiceListening=false;voicePress.interrupt();
         pendingPhoneFrameToken=-1;
+        pendingPhoneCaptureTask=null;
         if(phoneController!=null)phoneController.cancelFreshFrame();
         invalidate();
         cloudBusy=false;
