@@ -217,7 +217,7 @@ jobs:
           assert 'BSG_UVC_PICTURE_CONTROLS_114' in native_patch
           assert 'supportsBlueStarPictureControl' in native_patch
           assert 'PU_BRIGHTNESS' in native_patch and 'PU_SATURATION' in native_patch
-          assert 'return camera.checkSupportFlag(flag)' in native_patch
+          assert 'return camera.checkSupportFlag(flag.toLong())' in native_patch
           assert 'getCurrentCamera' in activity
           assert 'UsbPictureHardware.write(cam,kind,requested)' in activity
           assert 'UsbPictureHardware.reset(cam,kind)' in activity
