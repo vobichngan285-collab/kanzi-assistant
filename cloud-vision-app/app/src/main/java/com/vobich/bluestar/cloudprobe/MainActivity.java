@@ -1803,8 +1803,9 @@ public final class MainActivity extends CameraActivity {
     @Override protected void onUsbDeviceConnectedForApp(UsbDevice device){
         if(!isUsbVideoDevice(device))return;
         if(readingScreen!=null){
-            // Native AUSBC onConnect owns its initial open; prevent double UVC open.
-            if(!usingPhoneCamera&&readingAwaitingFrame.get())usbReopenWanted=false;
+            // During manual reading preview, AUSBC onConnect owns the initial
+            // USB open. Never let the queued resumeUsb race a second native open.
+            if(!usingPhoneCamera&&readingPreviewActive)usbReopenWanted=false;
             return;
         }
         if(diagnostics!=null)diagnostics.event("usb","device_connected",1,"ok");
