@@ -212,7 +212,7 @@ final class LargeSettingsScreen {
     }
     private void speech(){
         SharedPreferences prefs=app.getSharedPreferences("kanzi_settings",Context.MODE_PRIVATE);
-        row("选择语音引擎",app.currentSpeechEngineDescription(),()->navigate("engines",""));
+        row("选择语音引擎","",()->navigate("engines",""));
         heading("朗读速度");
         float rate=prefs.getFloat("local_tts_rate",1f);
         TextView value=text(String.format(Locale.CHINA,"%.2f×",rate),23,TEXT,true);
@@ -241,12 +241,13 @@ final class LargeSettingsScreen {
     }
     private void engines(){
         List<TextToSpeech.EngineInfo> engines=app.availableTtsEngines();
-        row("跟随手机系统默认","自动使用手机当前已配置的语音引擎",()->{
+        row(("手机系统默认语音引擎".equals(app.currentSpeechEngineDescription())?"✓ ":"")
+            +"跟随系统默认","",()->{
             app.changeSpeechEngine("");back();
         });
         for(TextToSpeech.EngineInfo engine:engines){
             String id=engine.name,label=engine.label==null?id:engine.label;
-            row(label,"选择此语音引擎",()->{
+            row((id.equals(app.currentSpeechEngineDescription())?"✓ ":"")+label,"",()->{
                 app.changeSpeechEngine(id);back();
             });
         }
@@ -335,11 +336,11 @@ final class LargeSettingsScreen {
         });
     }
     private void camera(){
-        row("选择摄像头",app.sourceDescription(),()->navigate("sources",""));
-        row("画面旋转90°","当前："+app.rotationDescription(),()->{app.adjustCamera(1);render(history.get(history.size()-1));});
-        row("水平镜像",app.mirrorDescription(),()->{app.adjustCamera(2);render(history.get(history.size()-1));});
-        row("垂直翻转",app.flipDescription(),()->{app.adjustCamera(3);render(history.get(history.size()-1));});
-        row("USB 左右校正",app.usbCorrectionDescription(),()->{app.adjustCamera(4);render(history.get(history.size()-1));});
+        row("摄像头 · "+app.sourceDescription(),"",()->navigate("sources",""));
+        row("画面旋转 · "+app.rotationDescription(),"",()->{app.adjustCamera(1);render(history.get(history.size()-1));});
+        row("水平镜像 · "+app.mirrorDescription(),"",()->{app.adjustCamera(2);render(history.get(history.size()-1));});
+        row("垂直翻转 · "+app.flipDescription(),"",()->{app.adjustCamera(3);render(history.get(history.size()-1));});
+        row("USB 左右校正 · "+app.usbCorrectionDescription(),"",()->{app.adjustCamera(4);render(history.get(history.size()-1));});
         row("缩放恢复1×","双指捏合和张开缩放画面",()->{app.adjustCamera(5);render(history.get(history.size()-1));});
     }
     private void sources(){
@@ -357,12 +358,12 @@ final class LargeSettingsScreen {
         note(app.lastMicDiagnostic());
     }
     private void cloud(){
-        row("视觉模型",app.visionModelDescription(),()->navigate("models",""));
+        row("视觉模型","",()->navigate("models",""));
         row("模型用量统计","查看当前模型、今日真实Token及各模型列表",()->navigate("usage",""));
-        row("图片分辨率",app.imagePolicyDescription(),()->{
+        row("图片分辨率 · "+app.imagePolicyDescription(),"",()->{
             app.cycleImagePolicy();render(history.get(history.size()-1));
         });
-        row("API Key","本机加密保存，点击进入",()->navigate("key",""));
+        row("API Key","",()->navigate("key",""));
     }
     private void models(){
         for(int i=0;i<VisionModelCatalog.IDS.length;i++){
