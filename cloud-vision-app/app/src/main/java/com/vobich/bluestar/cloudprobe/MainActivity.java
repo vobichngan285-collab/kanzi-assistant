@@ -1724,11 +1724,11 @@ public final class MainActivity extends CameraActivity {
         final byte[] jpeg=recheckImage?lastSessionJpeg:null;
         final String observed=lastSessionText;
         final String taskName=lastSessionTask;
-        final String prompt=FollowupPrompt.build(taskName,observed,followupTurns,question);
+        final String prompt=recheckImage?
+            FollowupPrompt.buildForImage(taskName,observed,followupTurns,question):
+            FollowupPrompt.build(taskName,observed,followupTurns,question);
         final TaskCatalog.Task ask=recheckImage?new TaskCatalog.Task(
-            "user-followup","重新看图",
-            prompt+"\n本次用户明确要求重新检查上一张图片，请结合图片回答；"
-                +"不能根据模糊部分编造。",TaskCatalog.VISION,true,"✦"):null;
+            "user-followup","重新看图",prompt,TaskCatalog.VISION,true,"✦"):null;
         invalidate();
         final int token=requestVersion.get();
         cloudBusy=true;
