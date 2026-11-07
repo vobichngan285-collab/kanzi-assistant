@@ -169,7 +169,7 @@ public final class MainActivity extends CameraActivity {
     private String cloudResultInfo="",cloudResultText="";
     private int cloudResultToken=-1;
     private String imagePolicy="auto";
-    private String visionModel="qwen3-vl-plus";
+    private String visionModel=VisionModelCatalog.DEFAULT;
     private String lastCloudResult="";
 
     private static final class Frame {
@@ -935,7 +935,7 @@ public final class MainActivity extends CameraActivity {
         followSystemSpeechRate=prefs.getBoolean(PREF_SPEECH_DEFAULT,true);
         loadCameraProfile();
         imagePolicy=prefs.getString(PREF_IMAGE_POLICY,"auto");
-        String storedModel=prefs.getString(PREF_VISION_MODEL,VisionModelCatalog.PLUS);
+        String storedModel=prefs.getString(PREF_VISION_MODEL,VisionModelCatalog.DEFAULT);
         visionModel=VisionModelCatalog.normalize(storedModel);
         if(!visionModel.equals(storedModel))
             prefs.edit().putString(PREF_VISION_MODEL,visionModel).apply();
@@ -1008,7 +1008,7 @@ public final class MainActivity extends CameraActivity {
         // Legacy selector: the primary large-text settings page uses a solid dark panel.
         int selected=Math.max(0,VisionModelCatalog.indexOf(visionModel));
         new AlertDialog.Builder(this).setTitle("视觉模型")
-            .setMessage("新模型需要先测试可用性；选中失败不自动切换Plus。OCR仍固定使用qwen-vl-ocr。")
+            .setMessage("日常Flash、稳定Plus、高精度应急Max三选一。Max仅在手动选择后使用，费用较高；失败不自动切换。文字朗读仍固定用qwen-vl-ocr。")
             .setSingleChoiceItems(VisionModelCatalog.LABELS,selected,(d,i)->{
                 selectVisionModel(VisionModelCatalog.IDS[i]);
                 d.dismiss();
