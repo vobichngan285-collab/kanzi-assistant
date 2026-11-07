@@ -16,6 +16,7 @@ final class TaskCatalog {
     private static final String PREFS = "cloud_vision_tasks";
     private static final String CUSTOM = "custom_tasks";
     private static final String SELECTED = "selected_task_id";
+    private static final String ORDER = "task_grid_order_v1";
     private static final String OVERRIDE_PREFIX = "override_";
 
     static final class Task {
@@ -59,6 +60,40 @@ final class TaskCatalog {
             }
         }catch(JSONException ignored){}
         return out;
+    }
+
+    /** First launch: five stock tasks + creation tile + user-created tasks. */
+    static List<String> displayOrder(Context c,List<Task> tasks){
+        List<String> available=new ArrayList<>();
+        boolean creationAdded=false;
+        for(Task t:tasks){
+            if(t.custom&&!creationAdded){
+                available.add(TaskOrder.CREATE);
+                creationAdded=true;
+            }
+            available.add(t.id);
+        }
+        if(!creationAdded)available.add(TaskOrder.CREATE);
+        List<String> saved=new ArrayList<>();
+        try{
+            JSONArray arr=new JSONArray(prefs(c).getString(ORDER,"[]"));
+            for(int i=0;i<Math.min(arr.length(),200);i++){
+                String id=arr.optString(i,"");
+                if(!id.isEmpty())saved.add(id);
+            }
+        }catch(JSONException ignored){}
+        return TaskOrder.reconcile(saved,available);
+    }
+
+    /** Persist only stable IDs; never rewrite task names, prompts or selected task. */
+    static void saveDisplayOrder(Context c,List<String> preferred,List<Task> tasks){
+        List<String> available=new ArrayList<>();
+        for(Task t:tasks)available.add(t.id);
+        available.add(TaskOrder.CREATE);
+        List<String> canonical=TaskOrder.reconcile(preferred,available);
+        JSONArray arr=new JSONArray();
+        for(String id:canonical)arr.put(id);
+        prefs(c).edit().putString(ORDER,arr.toString()).apply();
     }
 
     static String selectedId(Context c){
