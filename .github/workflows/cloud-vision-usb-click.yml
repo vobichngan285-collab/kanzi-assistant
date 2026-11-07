@@ -1,7 +1,7 @@
-name: Blue Star Guide 1.0.14 - RC15 USB Auto Selection, Android Attach Launch and Live FPS
+name: Blue Star Guide 1.0.15 - RC16 Cold USB Attach Reconciliation and FPS
 on:
   push:
-    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106, fix/bluestar-104-ocr-voice-empty-20261106, fix/bluestar-105-model-options-20261107, fix/bluestar-106-three-tier-models-20261107, fix/bluestar-107-compact-settings-20261107, fix/bluestar-108-voice-intent-text-followups-20261107, fix/bluestar-109-37flash-keep-plus-20261107, fix/bluestar-110-stop-finding-drag-grid-20261107, fix/bluestar-111-maxfast-remove-plus-drag-delete-20261107, fix/bluestar-112-usb-orientation-preview-jpeg-20261107, fix/bluestar-113-usb-lifecycle-trace-picture-controls-20261107, fix/bluestar-114-usb-auto-switch-launch-fps-20261107]
+    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106, fix/bluestar-104-ocr-voice-empty-20261106, fix/bluestar-105-model-options-20261107, fix/bluestar-106-three-tier-models-20261107, fix/bluestar-107-compact-settings-20261107, fix/bluestar-108-voice-intent-text-followups-20261107, fix/bluestar-109-37flash-keep-plus-20261107, fix/bluestar-110-stop-finding-drag-grid-20261107, fix/bluestar-111-maxfast-remove-plus-drag-delete-20261107, fix/bluestar-112-usb-orientation-preview-jpeg-20261107, fix/bluestar-113-usb-lifecycle-trace-picture-controls-20261107, fix/bluestar-114-usb-auto-switch-launch-fps-20261107, fix/bluestar-115-cold-usb-auto-select-20261107]
     paths:
       - 'cloud-vision-app/**'
       - '.github/workflows/cloud-vision-usb-click.yml'
@@ -220,6 +220,23 @@ jobs:
           assert 'shouldAutoOpenUsbCameraForApp(device)' in native_patch
           assert 'BSG_USB_AUTOSWITCH_115' in native_patch
           assert 'UsbAutoSwitchPolicy.useUsbOnConnect(' in activity
+          # RC16: process/intent and permission event ordering on vivo Android 16.
+          assert 'private void reconcileAttachedUsb()' in activity
+          assert 'private void queueUsbAttachReconcile()' in activity
+          assert 'private final Runnable usbAttachReconcile=this::reconcileAttachedUsb;' in activity
+          assert 'handler.postDelayed(usbAttachReconcile,180L)' in activity
+          assert 'if(usingPhoneCamera&&hasConnectedUsbVideoDevice())queueUsbAttachReconcile();' in activity
+          assert 'queueUsbAttachReconcile();' in activity.split('protected void onNewIntent(')[1].split('private void showImagePolicySelector()')[0]
+          assert 'onUsbDeviceAttachedForApp(UsbDevice device)' in activity
+          assert 'if(video)queueUsbAttachReconcile();' in activity
+          assert 'manualPhoneUsbDeviceId' in activity
+          assert 'UsbAutoSwitchPolicy.keepManualOverrideForPhysicalDevice(' in activity
+          assert 'attachedUsbVideoDevice()' in activity
+          assert 'handler.removeCallbacks(usbAttachReconcile)' in activity
+          assert 'android:launchMode="singleTop"' in manifest
+          assert 'UsbManager.ACTION_USB_DEVICE_ATTACHED' in activity
+          assert 'getSharedPreferences(PREFS,MODE_PRIVATE)' in activity
+          assert 'UsbFrameOrientation.forSettings(' in activity
           assert 'UsbAutoSwitchPolicy.usePhoneOnDetach(' in activity
           assert 'startUsbFpsMonitoring();' in activity
           assert 'resetUsbFpsState();' in activity
@@ -358,8 +375,8 @@ jobs:
           camera2=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/InternalCameraController.java').read_text()
           assert 'CameraManager' in camera2 and 'CameraCaptureSession' in camera2
           assert 'Nv21Rotation.rotate(' in camera2
-          assert "versionCode 24" in app and "versionName '1.0.14-rc15'" in app
-          assert "applicationIdSuffix '.rc15'" in app
+          assert "versionCode 25" in app and "versionName '1.0.15-rc16'" in app
+          assert "applicationIdSuffix '.rc16'" in app
           assert Path('cloud-vision-app/app/src/main/res/drawable-nodpi/bluestar_globe.png').is_file()
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('ic_launcher.webp'))
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('bluestar_icon.webp'))
@@ -452,28 +469,28 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p cloud-vision-artifact
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.14_RC15_arm64.apk
-          test -s cloud-vision-artifact/BlueStar_Guide_1.0.14_RC15_arm64.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.15_RC16_arm64.apk
+          test -s cloud-vision-artifact/BlueStar_Guide_1.0.15_RC16_arm64.apk
           (cd cloud-vision-artifact && sha256sum *.apk > SHA256SUMS.txt)
           unzip -Z1 cloud-vision-artifact/*.apk > cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' cloud-vision-artifact/apk-entries.txt
           cd cloud-vision-app
-          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.14_RC15_arm64.apk
-          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.14_RC15_arm64.apk
+          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.15_RC16_arm64.apk
+          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.15_RC16_arm64.apk
           cd ..
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           test -x "$AAPT"
-          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.14_RC15_arm64.apk > cloud-vision-artifact/badging.txt
+          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.15_RC16_arm64.apk > cloud-vision-artifact/badging.txt
           grep -F "application-label:'Blue Star Guide'" cloud-vision-artifact/badging.txt
-          grep -F "package: name='com.vobich.bluestar.rc15'" cloud-vision-artifact/badging.txt
+          grep -F "package: name='com.vobich.bluestar.rc16'" cloud-vision-artifact/badging.txt
           grep -q 'application-icon-' cloud-vision-artifact/badging.txt
           grep -Fxq 'res/raw/c_metal_clack_ding.mp3' cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'res/raw/voice_send_whoosh.wav' cloud-vision-artifact/apk-entries.txt
           ! grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx' cloud-vision-artifact/apk-entries.txt
-          echo 'Blue Star Guide 1.0.14 RC15 isolated APK: USB connect automatically selects the UVC camera when enabled, unplug returns to rear Camera2, and system USB host association is user-controlled; manual phone choice suppresses new auto-selection until actual detach. Diagnosis now starts on source switch, discards stale samples and displays 10s rolling preview buffer-update mean/min plus USB first NV21 frame delay. RC13 image geometry, RC14 native picture controls, icons, TTS and AI routing retained. Real vivo/Android USB chooser tests required.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Blue Star Guide 1.0.15 RC16 isolated APK: fixes RC15 cold Android USB chooser auto-opened Activity staying on phone preview, by debounced onNewIntent/onResume/physical UVC attach reconciliation; preserves manual phone override while its particular USB device remains attached. Prior RC15 ~30Hz TextureView update evidence remains a separate FPS investigation; no unsupported 60fps override. RC13 32-direction geometry, RC14 hardware picture sliders, TTS/AI/sounds/icons unchanged. CI tests and real vivo device tests required.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload 1.0 release candidate APK (debug-signed, device testing)
         uses: actions/upload-artifact@v4
         with:
-          name: blue-star-guide-1-0-14-rc15-arm64
+          name: blue-star-guide-1-0-15-rc16-arm64
           path: cloud-vision-artifact/*
           retention-days: 7
