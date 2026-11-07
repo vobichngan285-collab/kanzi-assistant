@@ -1318,3 +1318,11 @@
 - **清晰度因素**：`ImageQualityPolicy.pick` 在 `auto` 状态默认按 1280 长边（720p）发送，只有软纹理特定条件保留 1920 长边；UI 上 USB 即便显示 1920x1080 原画面，也可能给 AI 发送缩小后的照片。当前匿名日志只给 JPEG 字节大小，**没记录实际原图/上传图尺寸**，不能从 11~12 万字节直接推断分辨率，需新增数值尺寸诊断且 A/B 720/1080。
 - **新测试包兼容**：RC12 debug 包名 `com.vobich.bluestar.rc12` 与 RC11 独立沙盒，RC11 USB 的旋转、镜像、flip、zoom、分辨率设置不会自动继承。USB profile 对 EBA4:6579 默认旋转90°，其他摄像头默认0°，可能解释用户见到“预览正、识别乱”或首次插入与旧版本差异。是否为该型号仍待确认。
 - **下一轮建议与范围**：先让用户将 USB 缩放归 1×、垂直翻转关闭，确认预览正立，再把图片分辨率手动切 1080p，用固定清晰大字对比手机/USB 同场景；若仍不一致，以可选仅本机暂时显示/保存**真实上传前 JPEG**进行同帧预览-输入 A/B，回归四方向、镜像/翻转各组合，修正单一统一变换函数，新增 `usb.frame_age_ms` 与 JPEG 实际宽高匿名数值记录。禁止静默保存或上传额外照片、改变 API 次数、重构 USB 预览底层，未经用户下一步授权不修代码或启动构建。
+
+
+### 2026-11-07 — RC12 USB 90° 左右校正方向错误：用户截图和屏幕/上传矩阵推导（只读审查，无代码构建）
+
+- **用户截图证据（实测反馈）**：USB 摄像头设置页明确显示 `画面旋转=90度`、`水平镜像=关闭`、`垂直翻转=关闭`、`USB左右校正=开启`、缩放1×。同一时段 APP 预览中的吉他在画面左侧，用户指出实物相对其方位应在右侧；尝试切换「USB左右校正」感觉只能让画面颠倒、无法调左右。此前当用户打开「垂直翻转」以获得自认为正确的预览方向时，云端 OCR 读得乱。这些是截图和用户观察，不是已经抓取的 JPEG。
+- **源码严格定位：USB 校正应用在旋转前的 TextureView 局部坐标**：`MainActivity.applyPreviewTransform()` 先设置 `cameraTextureView.setRotation(previewRotation)`，以 view-local `setScaleY(zoom*(previewVerticalFlip?-1:1))` 翻转，随后 `if(usbPreviewCorrectMirror^previewMirror) matrix.setScale(-1,1,...)` 再交给 `cameraTextureView.setTransform(matrix)`。TextureView 内容变换发生在 View 旋转之前，因此 90°/270° 时，名叫 USB 左右校正的 **local X 镜像在最终显示屏坐标变成上下翻转**。当前 90°+USB校正开启+水平镜像关闭+垂直翻转关闭的配置，开关对最终左右方向没有有效校正，与用户报告完全吻合。
+- **上传 JPEG 对应另一个错误**：`beginCapturedFrame()` 中 `localUsbMirror=usbPreviewCorrectMirror^previewMirror`; 在 `quarterTurn` 为真时设置 `photoMirror=false`,`photoFlip=previewVerticalFlip^localUsbMirror`。然后 `Nv21ImageOps.orient` 先旋转，再把 `photoFlip` 当成 **旋转后的 Y 轴翻转**。对当前截图 90°/水平镜像关/垂直翻转关/USB校正开，预览和 JPEG 的方向变换在数学上均是旋转后上下翻转：**不是它们彼此不一致，而是两者一起错用“左右校正”为上下翻转**。但若同角度开启垂直翻转，显示端 `setScaleY` 位于旋转前，相当于屏幕后坐标水平镜像；JPEG 端却计算 `photoFlip = 1 xor localUsbMirror` 而仍只改变垂直方向：**预览与上传 JPEG 之间也产生明显矩阵不一致**。要根据具体旋转、镜像、翻转组合检查，不应一概声称所有 USB 照片都和预览相反。
+- **修复提案（未授权、尚未实施）**：确定用户 UI「USB 左右校正」「水平镜像」「垂直翻转」的语义都是**最终屏幕坐标**下的水平/垂直变换；用一个集中定义的坐标变换表达式计算 view-local 预览矩阵和 post-rotation NV21/JPEG 变换，保持变换顺序严格一致，解决横竖旋转时镜像轴互换问题。编写 0°/90°/180°/270° × 三个开关组合的非对称四角文字/色块单测，确保左右位置、上下位置、文字方向和 RGB/UV 几何一致；添加用户手动检查上次**实际上传 JPEG**的只读预览，绝不默认保存照片到诊断日志、绝不重新上传；图片方向、尺寸和帧龄可用匿名数字诊断；先验证方向，再另测720p/1080p OCR 质量。现阶段只做源码审查和交接追加，**没有修改 App 代码，没有启动 RC13 构建**。
