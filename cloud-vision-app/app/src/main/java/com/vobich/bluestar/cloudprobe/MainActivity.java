@@ -1659,7 +1659,7 @@ public final class MainActivity extends CameraActivity {
 
     /** One conversation button: intent determines photo question vs ongoing target search. */
     private void routeSpokenRequest(String transcript){
-        VoiceAction action=VoiceAction.classify(transcript);
+        VoiceAction action=VoiceAction.classify(transcript,findingTarget);
         if(action.type==VoiceAction.Type.STOP_FINDING){
             if(findingTarget.isEmpty()){
                 setResultStatus("目前没有正在寻找的目标");
