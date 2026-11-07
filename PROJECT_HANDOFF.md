@@ -1204,3 +1204,18 @@
   https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/blue-star-guide-cloud-rc6-20261107/BlueStar_Guide_1.0.5_RC6_arm64.apk
 - **详细逐项审计交接**：https://github.com/vobichngan285-collab/kanzi-assistant/blob/fix/bluestar-105-model-options-20261107/docs/bluestar-v105-rc6-model-usage-build-audit-20261107.md 。下一步请用户真实安装 RC6、独立输入 Key、先对新 Flash 做一次明确的连接测试（确认百炼模型权限/地域/额度），再实测 OCR、语音追问、找目标和日 Token 统计；未通过的模型不做隐藏重试。没有真机对新增模型成功调用、真实 TTS 出声、USB 长时间运行、真正息屏按钮进行证实。必须区分已通过的 CI 与待验收项。
 
+
+
+### 2026-11-07 — 蓝星向导 RC7 三档视觉模型精简、高精度 Max 手动应急、完整验包并提供直链
+
+- **用户确定的方案**：在刚发布的 RC6 基础上精简模型列表，**只留3个视觉选择**：`qwen3.8-flash`（日常默认；用户此前 RC6 截图确认该模型连接测试成功）、`qwen3-vl-plus`（稳定备用；用户过去已能正常语音问答）、`qwen3.8-max`（高精度应急；仅手动启用）。从视觉可选列表删去 `qwen3.5-flash` 和 `qwen3.7-flash`，旧 `qwen3-vl-flash` 保持废弃。独立 OCR `qwen-vl-ocr` 与 ASR `qwen3-asr-flash` 不变。要求逐项排查逻辑、保留原设置深蓝不透明外观、保留 Token 统计和原有相机/音效，构建并发布可复制浏览器直下的 APK。
+- **原仓库核验 + 单独分支**：先读取原 `main:PROJECT_HANDOFF.md`、RC6 HEAD 和 CI/Release 成功记录，再从实际 RC6 HEAD `cd316e7447801bbd9f7ae86d199a823958a70665` 创建同仓库独立分支 **`fix/bluestar-106-three-tier-models-20261107`**。没有新建仓库，没有覆盖 RC6 或任何离线 OCR、USB 研发分支。最终用于构建的源码提交 **`8756eba92d4feb5db52dc1a6ab4127a73123b098`**，后续只添加发布 Workflow 和详细审计文档。
+- **模型与安全路由**：`VisionModelCatalog.IDS` 恰好 `FLASH_38/PLUS/MAX_38` 三个，`DEFAULT=FLASH_38`。废弃型号/非法配置只在读取设置时迁移至 Flash，迁移本身不发送请求；用户选中的 Plus/Max 不被偷偷替换。普通视觉云端识别、图片语音追问、寻找目标均发送**选定真实模型**，失败**不自动加价回退 Plus/Max、不重试**。**Max 手动使用**时普通图片理解开 `enable_thinking=true`、`thinking_budget=512`、`max_tokens=2048` 限制无边界思考；64×64连接测试是明确点击才触发，Max 测试关闭思考且最多64输出 Token；寻找目标接口需要 `response_format=json_object`，为避免官方文档提示的 JSON+思考冲突，Max 的目标判断路径关闭思考。Flash 常规关闭思考，Plus/OCR 原请求处理保留。修正模型连接测试若没有文字，不再错误归类为 OCR 空结果。
+- **外观/统计保持**：`LargeSettingsScreen` 原 `BG=0xFF091B32`、`PANEL=0xFF183553` 及字体颜色原封未改，没有白底或半透明新设置。三个选项用「日常／稳定备用／高精度应急」清楚区分，Max 提醒较贵且尚待账号 Key 测试；`ModelUsageLedger` 主列表改为三视觉模型+独立 OCR/ASR，照旧仅记录百炼响应中真实 `usage`，单独后台工作线程写入、不阻塞拍照、网络或朗读、不因统计增加 API 调用。
+- **CI 测试及代码检查均成功**：GitHub Actions run **[42324116996](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42324116996)** 为 `completed/success`，包含三模型纯 JVM 回归（列表仅3项、移除旧型号、Plus/Max显式选择、不能把 Max 认作 Flash）、此前语音/图像单元测试、静态安全/路由核查、原 USB ARM64 原生库编译、Android Gradle 打包、图标与音效校验、独立 APK 文件核查。相对 RC6 基线代码仅修改9个文件（配置/模型白名单/相关视觉HTTP与统计/UI/纯 Java测试/CI），没有修改录音器、UVC/Camera2 底层或 APP 资源文件。
+- **已下载并独立检查真实安装包**：原 Artifact `13554661615`（临时 ZIP，仅审计/验包，不供最终下载）。已核对 Artifact ZIP CRC、`SHA256SUMS.txt`、APK CRC，`lib/arm64-v8a/libUVCCamera.so`、`res/raw/c_metal_clack_ding.mp3`、`res/raw/voice_send_whoosh.wav` 存在，badging `com.vobich.bluestar.rc7` / versionCode `16` / versionName `1.0.6-rc7` / `Blue Star Guide`。APK `BlueStar_Guide_1.0.6_RC7_arm64.apk` **8,567,972 bytes**，SHA256 **`956de9483da4cd0b8c49087384b4d4d997d3d609228409d56e213bfb4b078152`**。
+- **公开 GitHub Release APK 已成功发布并 API 回读验证**：独立发布 workflow run **[42324453496](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42324453496)** 为 `completed/success`，对原 CI 成功产物逐字节核验，再原样上传 GitHub Release，**未重新编译/重签名**。tag `blue-star-guide-cloud-rc7-20261107`，非草稿、预发布，附件 `uploaded`、大小和服务器 SHA256 digest与上文一致。**用户手机浏览器可复制的直接安装 APK 公网地址（不是ZIP）**：
+  https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/blue-star-guide-cloud-rc7-20261107/BlueStar_Guide_1.0.6_RC7_arm64.apk
+- **详细完整审计报告**：https://github.com/vobichngan285-collab/kanzi-assistant/blob/fix/bluestar-106-three-tier-models-20261107/docs/bluestar-v106-rc7-three-tier-model-audit-20261107.md
+- **实测边界不能混淆**：新 Max 虽然官方文档已确认北京地域支持视觉模型 ID，但用户本人 API Key 对它的权限、实际错误/费用、真图精度、vivo X200 Pro USB长时间稳定与TTS/Token性能均尚未真机证实；用户需先独立输入百炼 Key、确认额度/用完即停，再手动点一次「测试当前模型能否看图」并用真实照片/问答验收。RC7 包名独立，**可与 RC6 并存，不迁移 RC6 私有 API Key 或 RC6 本机历史 Token 统计**，不要误称无损覆盖升级。真正息屏 USB 音量键仍未开发。
+
