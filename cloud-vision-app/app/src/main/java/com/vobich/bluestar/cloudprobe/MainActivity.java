@@ -827,8 +827,9 @@ public final class MainActivity extends CameraActivity {
     void setCameraSourceFromSettings(int index){
         if(index<0||index>2)return;
         boolean phone=index!=0,front=index==2;
+        if(phone)manualPhoneUntilUsbDetach=hasConnectedUsbVideoDevice();
+        else manualPhoneUntilUsbDetach=false;
         if(phone==usingPhoneCamera&&(!phone||front==phoneFrontFacing))return;
-        manualPhoneUntilUsbDetach=phone&&hasConnectedUsbVideoDevice();
         saveCameraProfile();
         if(phone){
             phoneFrontFacing=front;
@@ -1067,9 +1068,10 @@ public final class MainActivity extends CameraActivity {
                 dialog.dismiss();
                 boolean phone=which!=0;
                 boolean front=which==2;
+                if(phone)manualPhoneUntilUsbDetach=hasConnectedUsbVideoDevice();
+                else manualPhoneUntilUsbDetach=false;
                 if(phone==usingPhoneCamera&&(!phone||front==phoneFrontFacing))return;
                 if(settingsDialog!=null)settingsDialog.dismiss();
-                manualPhoneUntilUsbDetach=phone&&hasConnectedUsbVideoDevice();
                 saveCameraProfile();
                 if(phone){
                     phoneFrontFacing=front;
@@ -1190,9 +1192,6 @@ public final class MainActivity extends CameraActivity {
         setResultStatus("");
         // A USB-started activity may be created before AUSBC grants permission;
         // wait for its actual onConnect hook instead of opening blindly.
-        if(isUsbAutoSwitch()&&!usingPhoneCamera&&!hasConnectedUsbVideoDevice())
-            handler.post(()->{if(!usingPhoneCamera||!hasConnectedUsbVideoDevice())
-                if(!usingPhoneCamera)switchCameraSource(true);});
     }
 
     @Override protected void onNewIntent(Intent intent){
@@ -1643,6 +1642,9 @@ public final class MainActivity extends CameraActivity {
             saveCameraProfile();
             activeUsbDeviceName=device.getDeviceName();
             switchCameraSource(false);
+            // The AUSBC onConnect below owns this initial openCamera().
+            // Suppress our queued resumeUsb(): duplicate native open is unsafe.
+            usbReopenWanted=false;
         }else if(!usingPhoneCamera){
             activeUsbDeviceName=device.getDeviceName();
         }
@@ -2471,13 +2473,15 @@ public final class MainActivity extends CameraActivity {
             diagnostics.begin("usb_resume");
             diagnostics.event("usb","resume",0,"ok");
         }
+        boolean fallback=false;
         if(isUsbAutoSwitch()&&!usingPhoneCamera&&!hasConnectedUsbVideoDevice()){
             saveCameraProfile();
             switchCameraSource(true);
+            fallback=true;
         }else handler.post(this::resumeUsb);
         if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED)
             requestPermissions(new String[]{Manifest.permission.CAMERA},REQUEST_PHONE_CAMERA);
-        else if(usingPhoneCamera)startPhoneCamera();
+        else if(usingPhoneCamera&&!fallback)startPhoneCamera();
     }
     @Override protected void onPause(){
         if(!usingPhoneCamera&&diagnostics!=null){
