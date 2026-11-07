@@ -1136,7 +1136,11 @@ public final class MainActivity extends CameraActivity {
     }
     /** Photo-related speech always uses a traceable first utterance ID, including OCR. */
     private void speakForCapture(String message,int token,boolean filtered){
-        String text=filtered?filterForSpeech(message,currentTask):message;
+        speakForCapture(message,token,filtered,currentTask);
+    }
+    private void speakForCapture(String message,int token,boolean filtered,
+                                 TaskCatalog.Task actualTask){
+        String text=filtered?filterForSpeech(message,actualTask):message;
         if(text==null||text.trim().isEmpty()){
             if(filtered)toastShort("没有可朗读内容，请调整过滤设置");
             return;
@@ -1974,7 +1978,7 @@ public final class MainActivity extends CameraActivity {
                         " firstSpeakableMs="+result.firstSpeakableMs);
                     setResultStatus("已识别："+task.name+" · 可按住AI对话追问");
                     if(TaskCatalog.OCR.equals(task.engine)||delivered.get()==0)
-                        speakForCapture(result.text,token,true);
+                        speakForCapture(result.text,token,true,task);
                 });
             }catch(OcrResponseGate.NoReadableTextException noText){
                 if(modelUsage!=null)modelUsage.recordAsync(
