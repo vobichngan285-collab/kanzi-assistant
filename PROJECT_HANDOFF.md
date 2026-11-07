@@ -1286,3 +1286,14 @@
   https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/blue-star-guide-cloud-rc11-20261107/BlueStar_Guide_1.0.10_RC11_arm64.apk
 - **完整审计报告**：https://github.com/vobichngan285-collab/kanzi-assistant/blob/fix/bluestar-110-stop-finding-drag-grid-20261107/docs/bluestar-v1010-rc11-stop-search-task-drag-audit-20261107.md
 - **真实手机验收尚需用户进行**：在 vivo X200 Pro 安装 RC11（**新包需重新设置北京百炼普通 Key、自定义任务需重新添加**）。测试①语音“帮我找门”→左上角“寻找：门”，再说“取消掉找门”→立即消失恢复原任务；②任务页长按“店铺招牌”约半秒移至左上→松手生效，关闭重开/退出重进顺序仍不变；③短按正确选任务，左右翻页不被长按误触；④存在超过九卡时拖到箭头跨页；⑤图标、声效、USB/手机摄像头、四视觉模型和文字追问不受影响。**GitHub 编译通过不能冒充真机物理拖放、ASR、TTS、USB 的实际测试结果。**
+
+
+### 2026-11-07 — 蓝星向导 1.0.11 RC12：Max 快速、移除 Plus、拖动删除任务（实现提交，CI 验证中）
+
+- **授权与依据**：用户真机 11:18—11:45 匿名运行诊断发现若干云端识别耗时 13.85～16.88 秒，首段文字也需 12.82～16.69 秒；拍照与 JPEG 编码一般只约 0.1～0.2 秒，故主要问题在云端生成阶段。诊断没有逐次模型 ID，不能直接声称慢请求全为 Max，但 RC11 实际代码对正常视觉 Max 设置 `enable_thinking=true`、`thinking_budget=512`、`max_tokens=2048`，属于明确可以优化的时延参数。用户确认授权本轮改为 **Max 关闭思考快速模式、从 UI/模型白名单移除 qwen3-vl-plus、增加任务卡长按拖入删除目标并确认**。
+- **仓库安全与版本**：从原 RC11 分支 `fix/bluestar-110-stop-finding-drag-grid-20261107` HEAD `e7042f97dbdde677024f97e7fa55fc5094ff8973` 新建同仓库隔离分支 `fix/bluestar-111-maxfast-remove-plus-drag-delete-20261107`，没有覆盖 RC11、原离线 OCR 或 main 应用代码。RC12 测试包 Gradle `versionCode 21`、`versionName 1.0.11-rc12`、独立 `applicationId com.vobich.bluestar.rc12`，避免与旧 RC11 相互覆盖；旧 API Key/自定义任务不会自动从另一个独立包迁移。
+- **实现一：Max 快速**：`CloudVisionClient.java` 视觉 Max 改 `enable_thinking=false`，删除 `thinking_budget`，取消 2048 Token 特殊超长输出额度，改按原任务类别控制回答上限；继续用 SSE 分句回调进行本地 TTS。独立 OCR `qwen-vl-ocr`、ASR `qwen3-asr-flash`、文字追问 `qwen3.8-flash`、专用寻找目标 JSON 路径保持原有功能；不新增自动重试或额外收费调用。**不能预先保证手机实测 Max 延迟/准确性**。
+- **实现二：Plus 移除**：`VisionModelCatalog.IDS` 只保留 `qwen3.7-flash`、`qwen3.8-flash`、`qwen3.8-max`，高精度改名为“高精度快速”，旧选中的 `qwen3-vl-plus` 由原 `normalize` 逻辑迁移至默认 `qwen3.8-flash`。模型使用历史保留 Plus 只读统计行，不允许从视觉菜单再次选用。
+- **实现三：任务拖动删除**：延续 RC11 真正 Android `startDragAndDrop` 与跨页排序。长按 480ms 后显出红色“拖到这里删除任务”目标，释放时还会弹二次确认；取消不删除。自定义任务确认后永久删除；五个系统预设仅持久隐藏，设置→任务管理里可恢复而不丢原提示词；“＋新建任务”不可删除；阻止隐藏最后一个可运行任务；删除选中任务时切到有效任务，避免保存无效选中 ID。保留顺序 key `task_grid_order_v1`，隐藏使用独立 key `task_grid_hidden_presets_v1`。
+- **版本源码与检查**：RC12 代码和 GitHub CI workflow 已提交至该分支，触发源码 SHA `c9fec2edfc881098fe896d2cf3c669cf5cbafbfd`；GitHub Actions **[42336813720](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42336813720)** 已确认静态/隐私检查和纯 Java 回归测试通过，Android ARM64 Gradle APK 构建尚在运行，**当前不可声称已构建成功或已发布 APK**。专门的 RC12 源审计文档：https://github.com/vobichngan285-collab/kanzi-assistant/blob/fix/bluestar-111-maxfast-remove-plus-drag-delete-20261107/docs/bluestar-v1011-rc12-maxfast-no-plus-drag-delete-20261107.md
+- **后续必须核实**：等待 CI 实际完成后核对 run/source commit、APK 真正工件 SHA256、尺寸、包名、资源，若通过再创建不重新签名/编译的 GitHub Release；追加最终构建/发布结果。vivo X200 Pro 真机仍需 A/B Max 首段朗读、模型旧选择迁移、删除取消/确认、预设恢复、跨页排序、摄像头和 TTS 回归。报告不能将 CI 成功当成真机验收。
