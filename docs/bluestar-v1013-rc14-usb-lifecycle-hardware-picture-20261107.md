@@ -11,3 +11,20 @@
 - 版本 `com.vobich.bluestar.rc14`，`versionCode 23`，`versionName 1.0.13-rc14`，debug ARM64 独立包；保留 RC13 安装不覆盖。需要在 RC14 重新配置北京百炼 Key/任务。
 - **测试计划**：Java `UsbStreamHealthTest` 合成健康、原始帧停、预览停、双路停、预热；`UsbPictureLevelsTest` 检查 0..100 边界；原32组 USB 方向测试原封不动；静态权限/隐私审计；AUSBC 3.6.0原生补丁唯一锚点；完整 arm64 Gradle 编译、图标与音效、APK包名和散列。运行诊断在真机上通过 10 次前后台切换及持续前台 5 分钟比对，按两路计数定位延迟再决定是否修复重连状态机或确认线材/供电问题。
 - **CI与真机边界**：此文在 CI 前编写，不冒充已经构建成功。硬件相机是否支持不同画质项必须实际查询，且值可能受自动曝光算法影响。现阶段不修改 USB 开关相机时序、不自动周期重连，避免以前那种越补越复杂的故障链。
+
+
+## RC14 GitHub Actions 原始日志和发布结果（2026-11-07 完成）
+
+- **原 CI 源码 SHA `98d6996d0c6dd72347b1e763c23922d3d6a8ec2c`**。GitHub Actions **[42340452858](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42340452858)** 已确认 `completed/success`。同一 Job 日志逐条验证：
+  - `DUAL_CAMERA_CLOUD_AI_NO_LOCAL_OCR_AUDIT=PASS`，无密钥或本地 OCR 引擎；
+  - `RC13_USB_PREVIEW_JPEG_32_COMBINATIONS_AND_90_CORRECTION=PASS 32`，保持上一版方向修复；
+  - `RC14_USB_LIFECYCLE_FPS_4_STATES=PASS`，含启动预热、两路健康、两路停帧与单侧停帧；
+  - `RC14_USB_PICTURE_CONTROL_BOUNDS=PASS`，百分比和可用控制类型边界；
+  - `CLOUD_OPTIMIZATION_UNIT_TESTS=PASS`、`TASK_ORDER_DRAG_RECONCILIATION_TESTS=PASS`，原有行为未被替换；
+  - `BSG_USB_HEALTH_114=PASS`、`BSG_UVC_PICTURE_CONTROLS_114=PASS`，钉住的 AUSBC 3.6.0 原生 hook 与硬件支持探测补丁成功；
+  - Android ARM64 `BUILD SUCCESSFUL in 2m 26s`，APK 压缩包结构、图标、咔叮和嗖声资源、原生 UVC `.so` 以及 `aapt` 包信息通过。
+- **真实 CI Artifact** ID `13561895586`，工件名 `blue-star-guide-1-0-13-rc14-arm64`，包含 APK 与原始 SHA256SUMS、APK 文件列表及包信息。前两个中间 workflow `42340411341`、`42340443811` 因提交补上 Kotlin `Int.toLong()` 原生支持位转换及同步静态测试而被并发机制**取消**，不将其记录为编译失败/成功。
+- **Release 独立原件发布**：workflow **[42340716193](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42340716193)** 确认 `completed/success`。发布前严格校验成功的原 CI run 与精确 SHA、`sha256sum -c SHA256SUMS.txt`、完整 APK ZIP CRC、UVC arm64 so、两音效、图标、无本地OCR模型及 Android package `com.vobich.bluestar.rc14` / versionCode23 / versionName`1.0.13-rc14`；**只上传编译通过的原始 APK，没有再次编译、签名或替换**。
+- **公开 GitHub Release tag** `blue-star-guide-cloud-rc14-20261107`：`draft=false`、`prerelease=true`、APK asset `state=uploaded`。APK `BlueStar_Guide_1.0.13_RC14_arm64.apk` 大小 **8,584,364 bytes**，GitHub asset digest SHA256 **`0f90ff2e13cb3a0a87fa218e1c5be3a3fb3ff53207c62d53a4f4e2e36c94a44e`**。
+- **可直接在手机浏览器下载安装的官方 APK 链接**：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/blue-star-guide-cloud-rc14-20261107/BlueStar_Guide_1.0.13_RC14_arm64.apk
+- **未完成/不能冒称**：GitHub 合成测试与 CI 不能证明 vivo X200 Pro 真机 USB 切后台再返回不卡顿，RC14 仅加入必要观测，尚无经确认的底层根因修复；硬件亮度/对比度/饱和度/增益是否支持、是否能降低过曝必须以用户所接 USB 摄像头的实际能力与视效为准。新包不继承 RC13 沙盒的 API Key、自定义任务、摄像头方向设置。
