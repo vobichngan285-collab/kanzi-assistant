@@ -32,6 +32,25 @@ public final class VoiceFlowTest {
         assertIntent("帮我看这个是什么",VoiceAction.Type.QUESTION,"");
         assertIntent("刚才那张照片里有什么",VoiceAction.Type.QUESTION,"");
 
+        // No saved image: voice should directly trigger fresh-scene capture.
+        assertIntent("帮我看看眼前的事物",VoiceAction.Type.OBSERVE_SCENE,"");
+        assertIntent("帮我看看眼前有什么",VoiceAction.Type.OBSERVE_SCENE,"");
+        assertIntent("看看前面有什么",VoiceAction.Type.OBSERVE_SCENE,"");
+        assertIntent("帮我观察一下周围环境",VoiceAction.Type.OBSERVE_SCENE,"");
+        assertIntent("再看看左边有什么",VoiceAction.Type.OBSERVE_SCENE,"");
+        assertIntent("眼前的场景是什么样的",VoiceAction.Type.OBSERVE_SCENE,"");
+        assertIntent("请读一下眼前的文字",VoiceAction.Type.READ_TEXT,"");
+        assertIntent("帮我读一下文字",VoiceAction.Type.READ_TEXT,"");
+        assertIntent("念一下这张标签",VoiceAction.Type.READ_TEXT,"");
+        // Explicit old-photo recheck is the ONLY follow-up that re-uploads image.
+        assertIntent("重新看一下刚才那张照片",VoiceAction.Type.REVIEW_IMAGE,"");
+        assertIntent("再仔细看这张照片",VoiceAction.Type.REVIEW_IMAGE,"");
+        // Preserve existing target-finding behavior; no broad "帮我看" hijack.
+        assertIntent("看看有没有超市",VoiceAction.Type.START_FINDING,"超市");
+        assertIntent("帮我找附近的超市",VoiceAction.Type.START_FINDING,"超市");
+        assertIntent("刚才的菜单一共多少钱",VoiceAction.Type.QUESTION,"");
+        assertIntent("哪道菜最便宜",VoiceAction.Type.QUESTION,"");
+
         VoicePressState m=new VoicePressState();
         m.down(false);
         check(m.up()==VoicePressState.Decision.NONE,
