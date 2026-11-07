@@ -11,6 +11,10 @@ public final class FollowupPromptTest {
         ok(txt.contains("不得编造"),"no image hallucination");
         ok(txt.contains("此前问答："),"use dialogue context");
         ok(txt.contains("没有重新查看照片的权限"),"image-free guard");
+        String review=FollowupPrompt.buildForImage("店铺招牌","一家超市",
+            Arrays.asList("问：哪里？答：前方"),"再仔细看旧照片左边");
+        ok(review.contains("明确要求重新查看旧照片"),"explicit image review permitted");
+        ok(!review.contains("没有重新查看照片的权限"),"no contradictory image-review context");
         String huge="示".repeat(9000);
         String bounded=FollowupPrompt.build("task",huge,Arrays.asList(huge,huge,huge,huge),huge);
         ok(bounded.length()<5900,"strict prompt cap");
