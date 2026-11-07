@@ -27,6 +27,32 @@ public final class VoiceFlowTest {
         assertIntent("不找超市了，改找药店",VoiceAction.Type.START_FINDING,"药店");
         assertIntent("帮我找一家超市",VoiceAction.Type.START_FINDING,"超市");
         assertIntent("停止寻找",VoiceAction.Type.STOP_FINDING,"");
+        assertIntent("取消找门",VoiceAction.Type.STOP_FINDING,"");
+        assertIntent("取消掉找门",VoiceAction.Type.STOP_FINDING,"");
+        assertIntent("停止找门",VoiceAction.Type.STOP_FINDING,"");
+        assertIntent("结束找门任务",VoiceAction.Type.STOP_FINDING,"");
+        assertIntent("把找门任务取消",VoiceAction.Type.STOP_FINDING,"");
+        assertIntent("不要再找门了",VoiceAction.Type.STOP_FINDING,"");
+        assertIntent("不找门了",VoiceAction.Type.STOP_FINDING,"");
+        assertIntent("取消当前寻找任务",VoiceAction.Type.STOP_FINDING,"");
+        assertIntent("取消找门，改找超市",VoiceAction.Type.START_FINDING,"超市");
+        assertIntent("不找超市了，改找药店",VoiceAction.Type.START_FINDING,"药店");
+        assertIntent("不要取消寻找",VoiceAction.Type.QUESTION,"");
+        assertIntent("别停止寻找",VoiceAction.Type.QUESTION,"");
+        assertIntent("停止寻找是什么意思",VoiceAction.Type.QUESTION,"");
+        // Active target assists short cancellation, without extra AI calls.
+        check(VoiceAction.classify("取消这个任务","门").type==VoiceAction.Type.STOP_FINDING,
+            "cancel this task if a search is active");
+        check(VoiceAction.classify("取消掉掌门","门").type==VoiceAction.Type.STOP_FINDING,
+            "conservative correction when 找门 ASR is misheard as 掌门");
+        check(VoiceAction.classify("取消掉掌门","").type==VoiceAction.Type.QUESTION,
+            "do not infer a target if no finding is active");
+        check(VoiceAction.classify("不要取消寻找","门").type==VoiceAction.Type.QUESTION,
+            "negative cancellation must not clear target");
+        check(VoiceAction.classify("取消订单","门").type==VoiceAction.Type.QUESTION,
+            "unrelated cancellation must not stop navigation");
+        check(VoiceAction.classify("找门了吗","门").type==VoiceAction.Type.QUESTION,
+            "target-status questions are not cancellations");
         assertIntent("不找超市了",VoiceAction.Type.STOP_FINDING,"");
         assertIntent("这是什么",VoiceAction.Type.QUESTION,"");
         assertIntent("帮我看这个是什么",VoiceAction.Type.QUESTION,"");
