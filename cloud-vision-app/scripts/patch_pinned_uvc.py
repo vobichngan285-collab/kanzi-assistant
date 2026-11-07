@@ -80,7 +80,7 @@ patch(activity,
     protected open fun onUsbSurfaceAvailableForDiagnostics() {}
     protected open fun onUsbSurfaceDestroyedForDiagnostics() {}
     protected open fun onUsbTextureUpdatedForDiagnostics() {}
-    // RC15: use the EXISTING AUSBC monitor, never register a duplicate receiver.
+    // BSG_USB_AUTOSWITCH_115: use existing AUSBC monitor, never duplicate receivers.
     protected open fun onUsbDeviceAttachedForApp(device: UsbDevice) {}
     protected open fun onUsbDeviceDetachedForApp(device: UsbDevice) {}
     protected open fun onUsbDeviceConnectedForApp(device: UsbDevice) {}
