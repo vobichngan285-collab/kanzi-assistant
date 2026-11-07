@@ -16,3 +16,13 @@
 - 新纯JVM `OcrModelCatalogTest` 校验4项ID、独立路由、非法值专用OCR默认和提示词逐字一致；保留原30余项回归和Android arm64构建。
 - 新隔离包 `com.vobich.bluestar.rc17`, `versionCode26`, `versionName1.0.16-rc17`, 不覆盖 RC16；独立数据需重新填API Key、偏好任务和USB配置。
 - 本文先记录范围；CI成功源码SHA、原APK SHA256/Release、构建与真机剩余验证待完成后补录。未经实际CI不得声称成功。
+
+
+## GitHub CI / 发布后的最终审计（2026-11-07 追加）
+
+- **正式 Android arm64 构建**：用户批准分支 `feat/bluestar-116-independent-ocr-model-choice-20261107` 的准确应用源码 SHA **`c6c00aa170b8a081d8260b500fb184f6df11755f`**。GitHub Actions **[42362900151](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42362900151)** = `completed/success`；原始 CI artifact **13569623900**，名称 `blue-star-guide-1-0-16-rc17-arm64`。
+- **逐项真实日志通过**：`DUAL_CAMERA_CLOUD_AI_NO_LOCAL_OCR_AUDIT=PASS`、`RC17_OCR_FOUR_CHOICES_INDEPENDENT_AND_PROMPT=PASS`、`RC12_MODEL_CATALOG_MIGRATION=PASS`、`RC13_USB_PREVIEW_JPEG_32_COMBINATIONS_AND_90_CORRECTION=PASS 32`、`RC14_USB_LIFECYCLE_FPS_4_STATES=PASS`、`RC14_USB_PICTURE_CONTROL_BOUNDS=PASS`、`RC15_AUTO_USB_SWITCH_MANUAL_OVERRIDE_AND_ATTACH=PASS`、`RC15_USB_ROLLING_10S_FPS_STALE_AND_FREEZE=PASS`、`CLOUD_OPTIMIZATION_UNIT_TESTS=PASS`、`TASK_ORDER_DRAG_RECONCILIATION_TESTS=PASS`、`BSG_UVC_FPS_61_FIRST=PASS`，所有原Native UVC打补丁成功，Android/ARM64 Gradle `BUILD SUCCESSFUL in 2m 14s`。原 APK aapt 包信息已确认 `package: name='com.vobich.bluestar.rc17' versionCode='26' versionName='1.0.16-rc17'`，原图标/两音效和arm64 JNI检查通过。
+- **发行仓库**：发布 workflow **[42363173778](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42363173778)** = `completed/success`。严查原CI成功及源码SHA、官方 artifact内 SHA256SUMS、ZIP CRC、包名/版本、UVC arm64 .so、图标、金属咔叮和嗖声音效、无意外嵌入本地 OCR 模型，**只上传原CI APK，不重编译或重签**。
+- **真实 GitHub Release** `blue-star-guide-cloud-rc17-20261107`，`draft=false`、`prerelease=true`，APK资产 `state=uploaded`，文件名 `BlueStar_Guide_1.0.16_RC17_arm64.apk`，**8,601,318 bytes**，服务器 SHA256 **`8ffa04c4c74932b67b8bc0bd1e80051d65eefe9e1cb8cb92c08fc443d9ad9c24`**，手机浏览器直链：
+  https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/blue-star-guide-cloud-rc17-20261107/BlueStar_Guide_1.0.16_RC17_arm64.apk
+- **尚未真机云端验收**：vivo X200 Pro 上选「设置→云端AI→文字识别模型」，依次专用OCR / Qwen3.7-Flash / Qwen3.8-Flash / Qwen3.8-Max，点击同一个「朗读文字」无需语音指令；核查实际输出是否只读照片原文、读序正确、能直接TTS、仅一次请求、耗时与token计费；还应验证语音“朗读文字”复用OCR选择、其他视觉任务不受影响，USB预览仍稳定接近此前60次缓冲更新/秒。模型在用户账号上是否可用、识别准确性均不能仅以本地CI证明。
