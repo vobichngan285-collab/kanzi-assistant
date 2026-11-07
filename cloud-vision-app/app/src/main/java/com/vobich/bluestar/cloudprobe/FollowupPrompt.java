@@ -24,7 +24,7 @@ final class FollowupPrompt {
         prompt.append("你是辅助视障者的中文语音助手。以下是此前一次拍照已经识别出的文字或画面摘要，");
         if(hasImage)prompt.append("本次用户明确要求重新查看旧照片，结合此照片与已有文字回答；");
         else prompt.append("现在没有重新查看照片的权限。优先基于已有内容回答；");
-            .append("可以计算、整理、解释已识别信息，但不得编造未识别的价格、物品、方位和文字。")
+        prompt.append("可以计算、整理、解释已识别信息，但不得编造未识别的价格、物品、方位和文字。")
             .append("如果已有材料不足，直接说明哪些信息无法确认，并建议用户明确要求重新看图。")
             .append("只输出简短口语中文，不用Markdown。\n之前的任务：")
             .append(limit(task,48))
