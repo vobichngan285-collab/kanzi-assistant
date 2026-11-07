@@ -1,7 +1,7 @@
-name: Blue Star Guide 1.0.7 - RC8 Compact Settings
+name: Blue Star Guide 1.0.8 - RC9 Voice Capture and Text Followups
 on:
   push:
-    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106, fix/bluestar-104-ocr-voice-empty-20261106, fix/bluestar-105-model-options-20261107, fix/bluestar-106-three-tier-models-20261107, fix/bluestar-107-compact-settings-20261107]
+    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106, fix/bluestar-104-ocr-voice-empty-20261106, fix/bluestar-105-model-options-20261107, fix/bluestar-106-three-tier-models-20261107, fix/bluestar-107-compact-settings-20261107, fix/bluestar-108-voice-intent-text-followups-20261107]
     paths:
       - 'cloud-vision-app/**'
       - '.github/workflows/cloud-vision-usb-click.yml'
@@ -89,6 +89,29 @@ jobs:
           assert 'connectionTest?64' in cloud_client
           assert 'VisionModelCatalog.isEmergencyMax(model)' in Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/TargetVisionClient.java').read_text()
           assert 'String model=isOcr?"qwen-vl-ocr":visionModel;' in cloud_client
+          # Text-only follow-up never builds a JPEG or triggers another vision image upload.
+          voice=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/VoiceAction.java').read_text()
+          follow=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/FollowupPrompt.java').read_text()
+          for kind in ['OBSERVE_SCENE', 'READ_TEXT', 'REVIEW_IMAGE']:
+              assert kind in voice and 'VoiceAction.Type.'+kind in activity
+          assert 'captureOneFrame(observe);' in activity and 'captureOneFrame(read);' in activity
+          assert 'private void captureOneFrame(TaskCatalog.Task oneShotTask)' in activity
+          assert 'TaskCatalog.Task task=oneShotTask==null?currentTask:oneShotTask;' in activity
+          assert 'pendingPhoneCaptureTask=oneShotTask;' in activity
+          assert 'pendingPhoneCaptureTask=null;' in activity
+          assert 'TaskCatalog.Task task=pendingPhoneCaptureTask;' in activity
+          assert 'TaskCatalog.defaultInstruction(TaskCatalog.OCR)' in activity
+          assert 'private void askAboutCurrentImage(String question,boolean recheckImage)' in activity
+          assert 'CloudVisionClient.recognizeText(prompt,key,speaker)' in activity
+          assert 'CloudVisionClient.recognize(jpeg,key,ask,selectedModel,speaker)' in activity
+          assert 'final byte[] jpeg=recheckImage?lastSessionJpeg:null;' in activity
+          assert 'VisionModelCatalog.FLASH_38' in activity
+          assert 'return recognizeInternal(null,key,task,VisionModelCatalog.FLASH_38,listener,true);' in cloud_client
+          assert 'if(!textOnly)' in cloud_client and 'content.put(image);' in cloud_client
+          assert cloud_client.count('Base64.encodeToString')==1
+          assert 'modelUsage.recordAsync(selectedModel,result.serverModel' in activity
+          assert '没有重新查看照片的权限' in follow
+          assert '不得编造' in follow
           assert 'if(!isOcr&&VisionModelCatalog.indexOf(visionModel)<0)' in cloud_client
           assert 'VisionModelCatalog.DEFAULT' in activity
           assert 'qwen3.5-flash' not in settings and 'qwen3.7-flash' not in settings
@@ -177,8 +200,8 @@ jobs:
           camera2=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/InternalCameraController.java').read_text()
           assert 'CameraManager' in camera2 and 'CameraCaptureSession' in camera2
           assert 'Nv21Rotation.rotate(' in camera2
-          assert "versionCode 17" in app and "versionName '1.0.7-rc8'" in app
-          assert "applicationIdSuffix '.rc8'" in app
+          assert "versionCode 18" in app and "versionName '1.0.8-rc9'" in app
+          assert "applicationIdSuffix '.rc9'" in app
           assert Path('cloud-vision-app/app/src/main/res/drawable-nodpi/bluestar_globe.png').is_file()
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('ic_launcher.webp'))
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('bluestar_icon.webp'))
@@ -200,6 +223,8 @@ jobs:
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/SpeechFilter.java \
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/VoiceWav.java \
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/VoiceAction.java \
+            cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/FollowupPrompt.java \
+            cloud-vision-app/tests/FollowupPromptTest.java \
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/VoicePressState.java \
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/OcrResponseGate.java \
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/VisionModelCatalog.java \
@@ -208,6 +233,7 @@ jobs:
             cloud-vision-app/tests/CloudOptimizationTest.java
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.CloudOptimizationTest
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.VoiceFlowTest
+          java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.FollowupPromptTest
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.VisionModelCatalogTest
       - name: Patch pinned Android 16 USB permission and native sampling safely
         run: |
@@ -246,28 +272,28 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p cloud-vision-artifact
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.7_RC8_arm64.apk
-          test -s cloud-vision-artifact/BlueStar_Guide_1.0.7_RC8_arm64.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.8_RC9_arm64.apk
+          test -s cloud-vision-artifact/BlueStar_Guide_1.0.8_RC9_arm64.apk
           (cd cloud-vision-artifact && sha256sum *.apk > SHA256SUMS.txt)
           unzip -Z1 cloud-vision-artifact/*.apk > cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' cloud-vision-artifact/apk-entries.txt
           cd cloud-vision-app
-          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.7_RC8_arm64.apk
-          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.7_RC8_arm64.apk
+          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.8_RC9_arm64.apk
+          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.8_RC9_arm64.apk
           cd ..
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           test -x "$AAPT"
-          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.7_RC8_arm64.apk > cloud-vision-artifact/badging.txt
+          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.8_RC9_arm64.apk > cloud-vision-artifact/badging.txt
           grep -F "application-label:'Blue Star Guide'" cloud-vision-artifact/badging.txt
-          grep -F "package: name='com.vobich.bluestar.rc8'" cloud-vision-artifact/badging.txt
+          grep -F "package: name='com.vobich.bluestar.rc9'" cloud-vision-artifact/badging.txt
           grep -q 'application-icon-' cloud-vision-artifact/badging.txt
           grep -Fxq 'res/raw/c_metal_clack_ding.mp3' cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'res/raw/voice_send_whoosh.wav' cloud-vision-artifact/apk-entries.txt
           ! grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx' cloud-vision-artifact/apk-entries.txt
-          echo 'Blue Star Guide 1.0.7 RC8 standalone test package: com.vobich.bluestar.rc8 avoids overwriting RC3 with different debug certificate. Checked globe PNG densities, selected C clack MP3, voice whoosh, fresh Camera2, bounded diagnostics, target auto-exit. Real vivo tests still required.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Blue Star Guide 1.0.8 RC9 standalone test package: com.vobich.bluestar.rc9 avoids overwriting RC3 with different debug certificate. Checked globe PNG densities, selected C clack MP3, voice whoosh, fresh Camera2, bounded diagnostics, target auto-exit. Real vivo tests still required.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload 1.0 release candidate APK (debug-signed, device testing)
         uses: actions/upload-artifact@v4
         with:
-          name: blue-star-guide-1-0-7-rc8-arm64
+          name: blue-star-guide-1-0-8-rc9-arm64
           path: cloud-vision-artifact/*
           retention-days: 7
