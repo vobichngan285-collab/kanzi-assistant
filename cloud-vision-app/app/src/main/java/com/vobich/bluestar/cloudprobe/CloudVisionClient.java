@@ -54,17 +54,21 @@ final class CloudVisionClient {
         boolean isOcr=TaskCatalog.OCR.equals(task.engine);
         boolean connectionTest="model-probe".equals(task.id);
         boolean streaming=!isOcr&&!connectionTest;
-        // Respect only allowed models: deleted Plus must never be called.
+        // Text recognition permits dedicated OCR plus the three visual models.
+        // Other visual tasks retain their separate three-choice selector.
+        if(isOcr&&OcrModelCatalog.indexOf(visionModel)<0)
+            throw new IllegalArgumentException("所选文字识别模型不支持，请重新选择");
         if(!isOcr&&VisionModelCatalog.indexOf(visionModel)<0)
             throw new IllegalArgumentException("所选视觉模型不支持，请重新选择");
-        String model=isOcr?"qwen-vl-ocr":visionModel;
+        String model=visionModel;
         boolean customPreset=!task.custom&&!task.instruction.equals(
             TaskCatalog.defaultInstruction(task.id));
         String instruction;
         if(textOnly){
             instruction=task.instruction;
         }else if(isOcr){
-            instruction="只依据照片中真实可见的信息完成任务；不猜测模糊文字。任务："+task.instruction;
+            // The approved concise OCR preset is sent automatically on tap.
+            instruction=task.instruction;
         }else if("menu".equals(task.id)){
             instruction="只根据照片可见信息完成用户当前任务："+task.instruction+
                 "。不猜测看不清的信息，不使用Markdown格式。";
@@ -92,9 +96,9 @@ final class CloudVisionClient {
         JSONObject body=new JSONObject().put("model",model).put("stream",streaming)
             .put("max_tokens",maxOutput).put("messages",new JSONArray().put(
                 new JSONObject().put("role","user").put("content",content)));
-        // Three selectable vision models: do not delay speech for hidden thinking.
-        // Dedicated OCR remains unchanged; text-only followups stay on daily Flash.
-        if(!isOcr&&(VisionModelCatalog.isBudgetFlash(model)||fastMax))
+        // Flash/Max OCR uses the same fast non-thinking path as visual tasks.
+        // Dedicated qwen-vl-ocr is unchanged; text-only followups remain Flash.
+        if(VisionModelCatalog.isBudgetFlash(model)||fastMax)
             body.put("enable_thinking",false);
         if(streaming)body.put("stream_options",new JSONObject().put("include_usage",true));
 

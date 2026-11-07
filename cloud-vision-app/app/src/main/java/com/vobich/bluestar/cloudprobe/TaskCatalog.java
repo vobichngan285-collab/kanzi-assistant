@@ -35,7 +35,7 @@ final class TaskCatalog {
 
     static Task[] defaults(){
         return new Task[]{
-            new Task("ocr","朗读文字","识别清晰文字，按正确顺序原样朗读，不解释、不分类",OCR,false,"▤"),
+            new Task("ocr","朗读文字",OcrModelCatalog.PROMPT,OCR,false,"▤"),
             new Task("menu","餐厅菜单","识别菜名、价格、菜品类别，找出明确标注的招牌菜和推荐菜",VISION,false,"♨"),
             new Task("hospital","医院科室","识别科室名称、楼层、诊室编号、方向指示",VISION,false,"✚"),
             new Task("shop","店铺招牌","重点识别店名、经营项目、招牌文字和明确显示的特色",VISION,false,"▣"),

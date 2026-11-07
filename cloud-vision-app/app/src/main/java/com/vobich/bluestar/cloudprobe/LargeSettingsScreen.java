@@ -104,6 +104,7 @@ final class LargeSettingsScreen {
             case "feedback":heading="提示音与振动";break;
             case "cloud":heading="云端 AI";break;
             case "models":heading="视觉模型选择";break;
+            case "ocr-models":heading="文字识别模型选择";break;
             case "usage":heading="模型用量统计";break;
             case "usage-clear":heading="清空用量记录";break;
             case "key":heading="API Key";break;
@@ -134,6 +135,7 @@ final class LargeSettingsScreen {
         else if(p.name.equals("feedback"))feedback();
         else if(p.name.equals("cloud"))cloud();
         else if(p.name.equals("models"))models();
+        else if(p.name.equals("ocr-models"))ocrModels();
         else if(p.name.equals("usage"))usage();
         else if(p.name.equals("usage-clear"))usageClear();
         else if(p.name.equals("key"))apiKey();
@@ -451,6 +453,8 @@ final class LargeSettingsScreen {
     }
     private void cloud(){
         row("视觉模型","",()->navigate("models",""));
+        row("文字识别模型 · "+OcrModelCatalog.label(app.ocrModelDescription()),
+            "",()->navigate("ocr-models",""));
         row("模型用量统计","查看当前模型、今日真实Token及各模型列表",()->navigate("usage",""));
         row("图片分辨率 · "+app.imagePolicyDescription(),"",()->{
             app.cycleImagePolicy();render(history.get(history.size()-1));
@@ -474,6 +478,20 @@ final class LargeSettingsScreen {
                     .show();
             }else app.testSelectedVisionModel();
         });
+    }
+
+    private void ocrModels(){
+        note("点击「朗读文字」后自动拍照、识别、朗读，无需另发指令。");
+        for(int i=0;i<OcrModelCatalog.IDS.length;i++){
+            final String id=OcrModelCatalog.IDS[i];
+            final boolean selected=id.equals(app.ocrModelDescription());
+            row((selected?"✓ ":"")+OcrModelCatalog.LABELS[i],"",()->{
+                app.selectOcrModel(id);
+                render(history.get(history.size()-1));
+            });
+        }
+        note("内置提示词："+OcrModelCatalog.PROMPT+
+            "\n不会自动切换模型或重复上传。Max 的实际费用以云端计费为准。");
     }
 
     /** Uses exactly the existing opaque BG/PANEL/TEXT/SUB settings palette. */
@@ -502,6 +520,8 @@ final class LargeSettingsScreen {
         if(snapshot==null){note("模型统计暂未初始化");return;}
         heading("当前选择的视觉模型");
         note(app.visionModelDescription());
+        heading("当前文字识别模型");
+        note(app.ocrModelDescription());
         heading("今日统计 · "+snapshot.day);
         note("已报告 Token 合计："+(snapshot.input+snapshot.output)
             +"\n输入："+snapshot.input+"  输出："+snapshot.output

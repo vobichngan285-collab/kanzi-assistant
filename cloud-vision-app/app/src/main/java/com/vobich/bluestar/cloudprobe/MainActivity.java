@@ -103,6 +103,7 @@ public final class MainActivity extends CameraActivity {
     private static final String PREF_TTS_ENGINE = "app_tts_engine_package";
     private static final String PREF_IMAGE_POLICY = "cloud_capture_quality";
     private static final String PREF_VISION_MODEL = "cloud_vision_model";
+    private static final String PREF_OCR_MODEL = "cloud_ocr_model_v1";
     private static final String PREF_FINDING_TARGET = "continuous_find_target";
     private static final int REQUEST_PHONE_CAMERA = 4051;
     private static final int REQUEST_VOICE_MIC = 4052;
@@ -203,6 +204,7 @@ public final class MainActivity extends CameraActivity {
     private int cloudResultToken=-1;
     private String imagePolicy="auto";
     private String visionModel=VisionModelCatalog.DEFAULT;
+    private String ocrModel=OcrModelCatalog.DEFAULT;
     private String lastCloudResult="";
 
     private static final class Frame {
@@ -899,6 +901,14 @@ public final class MainActivity extends CameraActivity {
         switchCameraSource(phone);
     }
     String visionModelDescription(){return visionModel;}
+    String ocrModelDescription(){return ocrModel;}
+    boolean selectOcrModel(String id){
+        if(OcrModelCatalog.indexOf(id)<0)return false;
+        ocrModel=id;
+        getSharedPreferences(PREFS,MODE_PRIVATE).edit()
+            .putString(PREF_OCR_MODEL,id).apply();
+        return true;
+    }
     boolean selectVisionModel(String id){
         if(VisionModelCatalog.indexOf(id)<0)return false;
         visionModel=id;
@@ -1202,6 +1212,10 @@ public final class MainActivity extends CameraActivity {
         visionModel=VisionModelCatalog.normalize(storedModel);
         if(!visionModel.equals(storedModel))
             prefs.edit().putString(PREF_VISION_MODEL,visionModel).apply();
+        String storedOcrModel=prefs.getString(PREF_OCR_MODEL,OcrModelCatalog.DEFAULT);
+        ocrModel=OcrModelCatalog.normalize(storedOcrModel);
+        if(!ocrModel.equals(storedOcrModel))
+            prefs.edit().putString(PREF_OCR_MODEL,ocrModel).apply();
         findingTarget=prefs.getString(PREF_FINDING_TARGET,"");
         if(findingTarget==null)findingTarget="";
         ttsEngine=prefs.getString(PREF_TTS_ENGINE,"");
@@ -1284,7 +1298,7 @@ public final class MainActivity extends CameraActivity {
         // Legacy selector: the primary large-text settings page uses a solid dark panel.
         int selected=Math.max(0,VisionModelCatalog.indexOf(visionModel));
         new AlertDialog.Builder(this).setTitle("视觉模型")
-            .setMessage("超省3.7、日常3.8、稳定Plus、应急Max三选一。Max仅手动使用，费用较高；失败不自动切换。文字朗读固定使用qwen-vl-ocr。")
+            .setMessage("视觉分析三选一；文字识别模型在「云端 AI → 文字识别模型」单独设置。")
             .setSingleChoiceItems(VisionModelCatalog.LABELS,selected,(d,i)->{
                 selectVisionModel(VisionModelCatalog.IDS[i]);
                 d.dismiss();
@@ -2383,7 +2397,8 @@ public final class MainActivity extends CameraActivity {
         final String source=usingPhoneCamera?
             (phoneFrontFacing?"手机前置":"手机后置"):"USB 外接";
         final String policy=imagePolicy;
-        final String model=visionModel;
+        final String model=OcrModelCatalog.forTask(
+            TaskCatalog.OCR.equals(task.engine),visionModel,ocrModel);
         final UsbFrameOrientation.Plan usbOrientation=usingPhoneCamera?null:
             UsbFrameOrientation.forSettings(previewRotation,previewMirror,
                 previewVerticalFlip,usbPreviewCorrectMirror);
@@ -2494,7 +2509,7 @@ public final class MainActivity extends CameraActivity {
                 });
             }catch(OcrResponseGate.NoReadableTextException noText){
                 if(modelUsage!=null)modelUsage.recordAsync(
-                    "qwen-vl-ocr",noText.serverModel,
+                    model,noText.serverModel,
                     noText.inputTokens,noText.outputTokens,true);
                 // Valid HTTP response with no readable characters. Do not block the camera
                 // behind an "error" dialog; give one brief accessible spoken outcome.
@@ -2510,8 +2525,7 @@ public final class MainActivity extends CameraActivity {
                     speakForCapture("未识别到文字，请调整拍摄角度再试。",token,false);
                 });
             }catch(Exception error){
-                String attempted=targetToFind.isEmpty()&&TaskCatalog.OCR.equals(task.engine)?
-                    "qwen-vl-ocr":model;
+                String attempted=model;
                 if(modelUsage!=null)modelUsage.recordAsync(attempted,"",-1,-1,false);
                 handler.post(()->{
                     if(token!=requestVersion.get()||!uiActive)return;
