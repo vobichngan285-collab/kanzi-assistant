@@ -1,7 +1,7 @@
-name: Blue Star Guide 1.0.6 - RC7 Three-Tier Vision Models
+name: Blue Star Guide 1.0.7 - RC8 Compact Settings
 on:
   push:
-    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106, fix/bluestar-104-ocr-voice-empty-20261106, fix/bluestar-105-model-options-20261107, fix/bluestar-106-three-tier-models-20261107]
+    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106, fix/bluestar-104-ocr-voice-empty-20261106, fix/bluestar-105-model-options-20261107, fix/bluestar-106-three-tier-models-20261107, fix/bluestar-107-compact-settings-20261107]
     paths:
       - 'cloud-vision-app/**'
       - '.github/workflows/cloud-vision-usb-click.yml'
@@ -93,7 +93,18 @@ jobs:
           assert 'VisionModelCatalog.DEFAULT' in activity
           assert 'qwen3.5-flash' not in settings and 'qwen3.7-flash' not in settings
           assert '高精度应急' in model_catalog
-          assert 'Max 尚未通过你的百炼账户实测' in settings
+          assert 'Max 尚未通过你的百炼账户实测' not in settings
+          assert 'block.setMinimumHeight(dp(66))' in settings
+          assert 'if(description!=null&&!description.isEmpty())' not in settings
+          assert 'TextView subtitle=text(description' not in settings
+          assert 'TextView hint=text(desc' not in settings
+          assert 'row((selected?"✓ ":"")+VisionModelCatalog.LABELS[i],""' in settings
+          assert 'if(VisionModelCatalog.isEmergencyMax(app.visionModelDescription()))' in settings
+          assert '.setMessage("测试将发送一张小图，可能产生费用。")' in settings
+          assert 'note("选择的视觉模型对场景分析' not in settings
+          assert 'note("诊断只在本机轻量记录性能事件' not in settings
+          assert 'BG=0xFF091B32, PANEL=0xFF183553' in settings
+          assert 'overlay.setBackgroundColor(BG)' in settings
           assert "BG=0xFF091B32, PANEL=0xFF183553" in settings
           assert 'VisionModelCatalog.normalize(storedModel)' in activity
           assert 'modelUsage.recordAsync(' in activity
@@ -166,8 +177,8 @@ jobs:
           camera2=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/InternalCameraController.java').read_text()
           assert 'CameraManager' in camera2 and 'CameraCaptureSession' in camera2
           assert 'Nv21Rotation.rotate(' in camera2
-          assert "versionCode 16" in app and "versionName '1.0.6-rc7'" in app
-          assert "applicationIdSuffix '.rc7'" in app
+          assert "versionCode 17" in app and "versionName '1.0.7-rc8'" in app
+          assert "applicationIdSuffix '.rc8'" in app
           assert Path('cloud-vision-app/app/src/main/res/drawable-nodpi/bluestar_globe.png').is_file()
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('ic_launcher.webp'))
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('bluestar_icon.webp'))
@@ -235,28 +246,28 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p cloud-vision-artifact
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.6_RC7_arm64.apk
-          test -s cloud-vision-artifact/BlueStar_Guide_1.0.6_RC7_arm64.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.7_RC8_arm64.apk
+          test -s cloud-vision-artifact/BlueStar_Guide_1.0.7_RC8_arm64.apk
           (cd cloud-vision-artifact && sha256sum *.apk > SHA256SUMS.txt)
           unzip -Z1 cloud-vision-artifact/*.apk > cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' cloud-vision-artifact/apk-entries.txt
           cd cloud-vision-app
-          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.6_RC7_arm64.apk
-          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.6_RC7_arm64.apk
+          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.7_RC8_arm64.apk
+          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.7_RC8_arm64.apk
           cd ..
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           test -x "$AAPT"
-          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.6_RC7_arm64.apk > cloud-vision-artifact/badging.txt
+          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.7_RC8_arm64.apk > cloud-vision-artifact/badging.txt
           grep -F "application-label:'Blue Star Guide'" cloud-vision-artifact/badging.txt
-          grep -F "package: name='com.vobich.bluestar.rc7'" cloud-vision-artifact/badging.txt
+          grep -F "package: name='com.vobich.bluestar.rc8'" cloud-vision-artifact/badging.txt
           grep -q 'application-icon-' cloud-vision-artifact/badging.txt
           grep -Fxq 'res/raw/c_metal_clack_ding.mp3' cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'res/raw/voice_send_whoosh.wav' cloud-vision-artifact/apk-entries.txt
           ! grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx' cloud-vision-artifact/apk-entries.txt
-          echo 'Blue Star Guide 1.0.6 RC7 standalone test package: com.vobich.bluestar.rc7 avoids overwriting RC3 with different debug certificate. Checked globe PNG densities, selected C clack MP3, voice whoosh, fresh Camera2, bounded diagnostics, target auto-exit. Real vivo tests still required.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Blue Star Guide 1.0.7 RC8 standalone test package: com.vobich.bluestar.rc8 avoids overwriting RC3 with different debug certificate. Checked globe PNG densities, selected C clack MP3, voice whoosh, fresh Camera2, bounded diagnostics, target auto-exit. Real vivo tests still required.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload 1.0 release candidate APK (debug-signed, device testing)
         uses: actions/upload-artifact@v4
         with:
-          name: blue-star-guide-1-0-6-rc7-arm64
+          name: blue-star-guide-1-0-7-rc8-arm64
           path: cloud-vision-artifact/*
           retention-days: 7
