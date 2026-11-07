@@ -20,26 +20,39 @@ final class CloudVisionClient {
     static final class Result {
         final String text, model, serverModel;
         final long networkMs, uploadMs, firstTextMs, firstSpeakableMs;
+        final long firstLineReadyMs, responseHeadersMs;
         final int promptTokens, completionTokens;
         Result(String text,String model,String serverModel,long networkMs,long uploadMs,
-               long firstTextMs,long firstSpeakableMs,int promptTokens,int completionTokens){
+               long firstTextMs,long firstSpeakableMs,long firstLineReadyMs,
+               long responseHeadersMs,int promptTokens,int completionTokens){
             this.text=text;this.model=model;this.serverModel=serverModel;this.networkMs=networkMs;
             this.uploadMs=uploadMs;
             this.firstTextMs=firstTextMs;this.firstSpeakableMs=firstSpeakableMs;
+            this.firstLineReadyMs=firstLineReadyMs;this.responseHeadersMs=responseHeadersMs;
             this.promptTokens=promptTokens;this.completionTokens=completionTokens;
         }
     }
 
     static Result recognize(byte[] jpeg,String key,TaskCatalog.Task task,
                             String visionModel,PartListener listener) throws Exception {
-        return recognizeInternal(jpeg,key,task,visionModel,listener,false,false);
+        return recognizeInternal(jpeg,key,task,visionModel,listener,false,false,
+            OcrSpeedExperiment.A);
     }
 
     /** One optional web-enabled recheck of an existing photographed image. */
     static Result recognize(byte[] jpeg,String key,TaskCatalog.Task task,
                             String visionModel,PartListener listener,
                             boolean allowSearch) throws Exception {
-        return recognizeInternal(jpeg,key,task,visionModel,listener,false,allowSearch);
+        return recognizeInternal(jpeg,key,task,visionModel,listener,false,allowSearch,
+            OcrSpeedExperiment.A);
+    }
+
+    /** Exactly one image request, with the OCR experiment mode captured at tap time. */
+    static Result recognize(byte[] jpeg,String key,TaskCatalog.Task task,
+                            String model,PartListener listener,String ocrSpeedMode)
+                            throws Exception {
+        return recognizeInternal(jpeg,key,task,model,listener,false,false,
+            OcrSpeedExperiment.normalize(ocrSpeedMode));
     }
 
     /** One text-only Chat Completions request; strictly NO JPEG/image_url. */
@@ -49,17 +62,20 @@ final class CloudVisionClient {
             throw new IllegalArgumentException("文字智能分析缺少上下文");
         TaskCatalog.Task task=new TaskCatalog.Task(
             "text-followup","文字智能分析",textPrompt,TaskCatalog.VISION,true,"✦");
-        return recognizeInternal(null,key,task,model,listener,true,allowSearch);
+        return recognizeInternal(null,key,task,model,listener,true,allowSearch,
+            OcrSpeedExperiment.A);
     }
 
     private static Result recognizeInternal(byte[] jpeg,String key,TaskCatalog.Task task,
                                String visionModel,PartListener listener,
-                               boolean textOnly,boolean allowSearch) throws Exception {
+                               boolean textOnly,boolean allowSearch,String ocrSpeedMode)
+                               throws Exception {
         if(key==null||key.trim().isEmpty())
             throw new IllegalArgumentException("请先在设置中配置API Key");
         boolean isOcr=TaskCatalog.OCR.equals(task.engine);
         boolean connectionTest="model-probe".equals(task.id);
-        boolean streaming=!isOcr&&!connectionTest;
+        boolean streaming=(!isOcr&&!connectionTest)||
+            (isOcr&&OcrSpeedExperiment.streaming(ocrSpeedMode));
         // Text recognition permits dedicated OCR plus the three visual models.
         // Other visual tasks retain their separate three-choice selector.
         if(isOcr&&OcrModelCatalog.indexOf(visionModel)<0)
@@ -162,19 +178,30 @@ final class CloudVisionClient {
                 }
                 return new Result(readable,model,response.optString("model",""),
                     SystemClock.elapsedRealtime()-started,
-                    uploadMs,headersMs,-1,usage==null?-1:usage.optInt("prompt_tokens",-1),
+                    uploadMs,-1,-1,-1,headersMs,
+                    usage==null?-1:usage.optInt("prompt_tokens",-1),
                     usage==null?-1:usage.optInt("completion_tokens",-1));
             }
 
             StringBuilder all=new StringBuilder();
             SpeechChunker speechChunks=new SpeechChunker();
+            OcrLineChunks ocrLines=isOcr?new OcrLineChunks():null;
             long firstText=-1;
             String serverModel="";
             final long[] firstSpeakable={-1};
+            final long[] firstLineReady={-1};
             java.util.function.Consumer<String> speakPart=part->{
                 if(firstSpeakable[0]<0)
                     firstSpeakable[0]=SystemClock.elapsedRealtime()-started;
                 if(listener!=null)listener.onSpeakablePart(part);
+            };
+            // B tracks first completed line without speaking. C delivers each
+            // completed line once. An unbroken text is held until the end.
+            java.util.function.Consumer<String> ocrLine=line->{
+                if(firstLineReady[0]<0)
+                    firstLineReady[0]=SystemClock.elapsedRealtime()-started;
+                if(OcrSpeedExperiment.earlySpeak(ocrSpeedMode))
+                    speakPart.accept(line);
             };
             int promptTokens=-1,completionTokens=-1;
             try(BufferedReader reader=new BufferedReader(
@@ -204,14 +231,19 @@ final class CloudVisionClient {
                     charBudget+=part.length();
                     if(charBudget>6000)throw new Exception("云端响应超过安全长度");
                     all.append(part);
-                    speechChunks.append(part,speakPart);
+                    if(isOcr)ocrLines.append(part,ocrLine);
+                    else speechChunks.append(part,speakPart);
                 }
             }
-            speechChunks.finish(speakPart);
             String answer=all.toString().trim();
-            if(answer.isEmpty())throw new Exception("云端没有返回有效内容");
+            // Validate completed OCR before queuing the final incomplete line.
+            if(isOcr)answer=OcrResponseGate.requireReadable(answer);
+            else if(answer.isEmpty())throw new Exception("云端没有返回有效内容");
+            if(isOcr)ocrLines.finish(ocrLine);
+            else speechChunks.finish(speakPart);
             return new Result(answer,model,serverModel,SystemClock.elapsedRealtime()-started,
-                uploadMs,firstText,firstSpeakable[0],promptTokens,completionTokens);
+                uploadMs,firstText,firstSpeakable[0],firstLineReady[0],headersMs,
+                promptTokens,completionTokens);
         }finally{connection.disconnect();}
     }
 
