@@ -50,7 +50,7 @@ final class TaskDesktopOverlay {
     private Runnable pendingHold;
     private View holdTarget;
     private boolean dragging;
-    private int dragFrom=-1, highlighted=-1;
+    private int dragFrom=-1, highlighted=-1, arrowTarget=-1;
 
     static void show(Activity a,List<TaskCatalog.Task> tasks,String selectedId,Listener listener){
         new TaskDesktopOverlay(a,tasks,selectedId,listener).display();
@@ -261,16 +261,24 @@ final class TaskDesktopOverlay {
                 return dragging&&event.getLocalState() instanceof Integer;
             case DragEvent.ACTION_DRAG_ENTERED:
                 clearHighlight();
-                render(page+direction);
+                arrowTarget=-1;
+                int nextPage=page+direction;
+                if(nextPage<0||nextPage>=pages)return true;
+                render(nextPage);
+                // Releasing on the arrow itself moves into that adjacent page.
+                arrowTarget=direction>0?Math.min(items.size()-1,page*9):
+                    Math.min(items.size()-1,page*9+8);
+                return true;
+            case DragEvent.ACTION_DRAG_EXITED:
+                arrowTarget=-1;
                 return true;
             case DragEvent.ACTION_DROP:
-                if(!dragging)return false;
-                int destination=Math.min(items.size()-1,Math.max(0,
-                    (page+(direction>0?0:1))*9-(direction>0?0:1)));
-                moveAndSave(dragFrom,destination);
+                if(!dragging||arrowTarget<0)return false;
+                moveAndSave(dragFrom,arrowTarget);
+                arrowTarget=-1;
                 return true;
             case DragEvent.ACTION_DRAG_ENDED:
-                clearHighlight();dragging=false;dragFrom=-1;
+                clearHighlight();dragging=false;dragFrom=-1;arrowTarget=-1;
                 return true;
             default:return true;
         }
