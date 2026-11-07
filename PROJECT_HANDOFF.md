@@ -1219,3 +1219,16 @@
 - **详细完整审计报告**：https://github.com/vobichngan285-collab/kanzi-assistant/blob/fix/bluestar-106-three-tier-models-20261107/docs/bluestar-v106-rc7-three-tier-model-audit-20261107.md
 - **实测边界不能混淆**：新 Max 虽然官方文档已确认北京地域支持视觉模型 ID，但用户本人 API Key 对它的权限、实际错误/费用、真图精度、vivo X200 Pro USB长时间稳定与TTS/Token性能均尚未真机证实；用户需先独立输入百炼 Key、确认额度/用完即停，再手动点一次「测试当前模型能否看图」并用真实照片/问答验收。RC7 包名独立，**可与 RC6 并存，不迁移 RC6 私有 API Key 或 RC6 本机历史 Token 统计**，不要误称无损覆盖升级。真正息屏 USB 音量键仍未开发。
 
+
+
+### 2026-11-07 — 蓝星向导 RC8 设置页去掉所有冗余副说明、保留深蓝、大字和3个视觉模型（已验包发布）
+
+- **来自用户截图的最新需求**：RC7「蓝星向导 · 设置」主页各项目和「视觉模型选择」页标题下方大段重复说明明显冗余，要求全部简化或去掉；要让设置页面像菜单，一眼找到选项，不要把模型功能长篇解释堆在选项下面。
+- **实际源代码起点**：先读取原仓库 `main:PROJECT_HANDOFF.md` 和 RC7 真 HEAD `319041204a071b58a4a75bb82e0e32e6ac670fd8`；从该 SHA 新建同仓库隔离分支 `fix/bluestar-107-compact-settings-20261107`，**不覆盖 RC7、RC6、离线 OCR 或 USB 分支**。最终实际构建源码 SHA **`acae013fe90b54a8afcfc52eeab0eb0852b71dd2`**。
+- **只调整深蓝大字设置界面 `LargeSettingsScreen.java`**：设置卡片 `row()` 只渲染原22sp名称与箭头，不再渲染第二段 description；卡片最低高度 78→66dp，垂直留白 15→11dp，点击处理逻辑不变。Switch 只保留开关名称与控件，不渲染 subtitle。主页、视觉模型、云端 AI、相机、声音、语音引擎、提示音、统计和诊断页面的静态重复说明移除。三个视觉模型卡片显示 **`日常 · Qwen3.8-Flash`、`稳定备用 · Qwen3-VL-Plus`、`高精度应急 · Qwen3.8-Max`**，当前只加一个 `✓`；不再显示整段模型原理与资费说明。**Max 按钮连接测试**改为实际点击才弹出简短收费提示，确认后只调用一次测试；不会因为删掉文字而悄悄增加收费。相机摄像头/方向/镜像/图片清晰度的**当前值直接显示在名称同一块**，语音引擎当前项也加 `✓`，避免删掉副说明后无法辨认状态。
+- **视觉和统计核心零改动**：`CloudVisionClient.java`、`TargetVisionClient.java`、`MainActivity.java`、`ModelUsageLedger.java`、UVC/Camera2/USB native、OCR、ASR、TTS、音效和图标与 RC7 相同。继续使用日常 Flash、备用 Plus、手动 Max 三模型，Token 实际用量统计异步不增加 API 请求。色彩仍为不透明 `BG=#091B32`、`PANEL=#183553`，绝无白底或透明新页面。
+- **自动化和实包检查**：CI run **[42325680471](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42325680471)** `completed/success`，静态安全/外观核查、原 Java 单测、ARM64 Gradle 构建、五密度图标、两种原音效、USB本地库及APK badging均通过。原临时 Actions Artifact **13554529621**，从 ZIP 实际提取真实 `BlueStar_Guide_1.0.7_RC8_arm64.apk` 并核实 `SHA256SUMS.txt`、ZIP CRC 与 APK CRC，无错。APK **8,567,976 bytes**，SHA256 **`848b6eac3e581761779b8c47f1303808ca5a191e67d4939c28da883f05178278`**，独立包名 `com.vobich.bluestar.rc8`、versionCode `17`、versionName `1.0.7-rc8`。
+- **公网直链 APK 已实发且回读确认**：发布 run **[42326045851](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42326045851)** `completed/success`，对同一个原 CI APK 核对 SHA/大小/CRC/音效与UVC后上传**不重签/不重编译**；Release tag `blue-star-guide-cloud-rc8-20261107`、非草稿、附件 state `uploaded`，API 回报大小和 SHA256 digest 匹配。**给用户的浏览器可复制直接 APK 下载链接（不是 ZIP）**：
+  https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/blue-star-guide-cloud-rc8-20261107/BlueStar_Guide_1.0.7_RC8_arm64.apk
+- **详细审计**：https://github.com/vobichngan285-collab/kanzi-assistant/blob/fix/bluestar-107-compact-settings-20261107/docs/bluestar-v107-rc8-compact-settings-audit-20261107.md
+- **真机待验收**：CI 通过≠在用户 vivo X200 Pro 上逐页确认文字大小、紧凑排版、设置按钮点击、真正拍照USB/TTS稳定性。RC8 与 RC7 **并存**但各自沙盒与调试签名独立，需在 RC8 重新输入百炼 Key；RC7 原来的 Token 统计不能自动转移，切勿误称无损原地覆盖更新。保留 RC7 做对照直至确认新设置符合预期。
