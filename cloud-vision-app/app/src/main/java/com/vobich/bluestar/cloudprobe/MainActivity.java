@@ -156,6 +156,8 @@ public final class MainActivity extends CameraActivity {
     private ReadingLibrary readingLibrary;
     private ReadingNarrationQueue readingNarration;
     private final AtomicBoolean readingAwaitingFrame=new AtomicBoolean(false);
+    // True only while a user-visible camera preview is active; shutter stays manual.
+    private volatile boolean readingPreviewActive;
     private volatile boolean readingProcessing;
     private volatile long readingCaptureStartedAtMs;
     private volatile int readingCaptureToken;
@@ -261,8 +263,8 @@ public final class MainActivity extends CameraActivity {
             });
         }else{
             latestUsbFrame=frame;
-            if(readingScreen!=null&&!usingPhoneCamera&&readingAwaitingFrame.get()&&
-                frame.atMs-readingCaptureStartedAtMs>=450L){
+            if(readingScreen!=null&&!usingPhoneCamera&&readingPreviewActive&&
+                readingAwaitingFrame.get()&&frame.atMs>=readingCaptureStartedAtMs){
                 final int token=readingCaptureToken;
                 if(readingAwaitingFrame.compareAndSet(true,false))
                     handler.post(()->beginReadingCapturedFrame(frame,token));
@@ -1306,16 +1308,8 @@ public final class MainActivity extends CameraActivity {
                 runOnUiThread(()->{
                     if(!usingPhoneCamera)return;
                     if(phoneController!=null)phoneController.setZoom(zoom);
-                    if(readingScreen!=null&&readingAwaitingFrame.get()){
-                        final int captureToken=readingCaptureToken;
-                        handler.postDelayed(()->{
-                            if(readingScreen!=null&&readingAwaitingFrame.get()&&
-                               captureToken==requestVersion.get()&&phoneController!=null){
-                                pendingPhoneFrameToken=captureToken;
-                                phoneController.requestFreshFrame();
-                            }
-                        },480L);
-                    }
+                    // Starting the camera only starts a preview. Never capture from this
+                    // callback: the book reader must wait for the user's tap.
                     phonePreviewReceived=true;
                     if(!phoneFirstFrameRecorded){
                         phoneFirstFrameRecorded=true;
@@ -1329,7 +1323,7 @@ public final class MainActivity extends CameraActivity {
             @Override public void onError(String message){
                 runOnUiThread(()->{
                     if(usingPhoneCamera){
-                        if(readingScreen!=null&&readingAwaitingFrame.get())
+                        if(readingScreen!=null&&readingPreviewActive)
                             failReadingCapture("手机相机启动失败："+message);
                         else showPhonePreviewStatus("手机摄像头启动失败："+message,true);
                     }
@@ -1597,7 +1591,7 @@ public final class MainActivity extends CameraActivity {
 
     private void startPhoneCamera() {
         if(!usingPhoneCamera||phoneController==null||phoneTexture==null||!uiActive||
-            (readingScreen!=null&&!readingAwaitingFrame.get()))return;
+            (readingScreen!=null&&!readingPreviewActive))return;
         if(!phoneController.hasPermission()){
             showPhonePreviewStatus("请允许蓝星向导使用手机摄像头",false);
             requestPermissions(new String[]{Manifest.permission.CAMERA},REQUEST_PHONE_CAMERA);
@@ -1861,7 +1855,7 @@ public final class MainActivity extends CameraActivity {
     @Override public void onCameraState(MultiCameraClient.ICamera self,
                                         ICameraStateCallBack.State code,String msg){
         if(code==ICameraStateCallBack.State.OPENED){
-            if(readingScreen!=null&&!readingAwaitingFrame.get())
+            if(readingScreen!=null&&!readingPreviewActive&&!readingAwaitingFrame.get())
                 handler.post(this::suspendReadingCamera);
             usbOpenedAtMs=SystemClock.elapsedRealtime();
             usbKnownOpened=true;
@@ -1901,7 +1895,7 @@ public final class MainActivity extends CameraActivity {
             usbPictureGeneration.incrementAndGet();
             if(diagnostics!=null)diagnostics.event("usb","state",0,"failed");
             Log.w(TAG,"UVC open error: "+msg);
-            if(readingScreen!=null&&readingAwaitingFrame.get()&&!usingPhoneCamera)
+            if(readingScreen!=null&&readingPreviewActive&&!usingPhoneCamera)
                 handler.post(()->failReadingCapture("USB摄像头启动失败，本页未拍摄"));
             runOnUiThread(()->Toast.makeText(this,"USB打开失败："+msg,Toast.LENGTH_LONG).show());
         }
@@ -1919,7 +1913,7 @@ public final class MainActivity extends CameraActivity {
     }
     private void resumeUsb(){
         if(!usbForeground||!usbReopenWanted||usbStopPending||usingPhoneCamera||
-           (readingScreen!=null&&!readingAwaitingFrame.get())||
+           (readingScreen!=null&&!readingPreviewActive&&!readingAwaitingFrame.get())||
            cameraTextureView==null||!cameraTextureView.isAvailable()||isCameraOpened())return;
         MultiCameraClient.ICamera camera=getCurrentCamera();
         if(camera==null||camera.getUsbDevice()==null)return;
@@ -2427,7 +2421,8 @@ public final class MainActivity extends CameraActivity {
             });
             readingScreen=new ReadingScreen(this,rootFrame,readingLibrary,
                 new ReadingScreen.Listener(){
-                    @Override public void capture(String id){captureReadingPage(id);}
+                    @Override public void enterPreview(String id){enterReadingPreview(id);}
+                    @Override public void takePhoto(String id){takeReadingPhoto(id);}
                     @Override public void cancelCapture(){cancelReadingCapture();}
                     @Override public void closeReading(){closeReadingMode();}
                     @Override public void stopReading(){stopReadingSession();}
@@ -2437,6 +2432,21 @@ public final class MainActivity extends CameraActivity {
                 });
             readingScreen.open();
             suspendReadingCamera();
+            // Open directly to a live preview. Pick the last book silently;
+            // first use creates a local default book. Shelf remains accessible.
+            String bookId=getSharedPreferences(PREFS,MODE_PRIVATE)
+                .getString("reader_last_book_v1","");
+            ReadingLibrary.Book book=null;
+            if(bookId!=null&&!bookId.isEmpty()){
+                try{book=readingLibrary.get(bookId);}
+                catch(Exception ignored){book=null;}
+            }
+            if(book==null){
+                List<ReadingLibrary.Book> existing=readingLibrary.list();
+                book=existing.isEmpty()?readingLibrary.create("我的第一本书"):existing.get(0);
+            }
+            readingScreen.openBook(book.id);
+            enterReadingPreview(book.id);
         }catch(Exception error){
             Log.w(TAG,"Reader launch failed",error);
             readingScreen=null;
@@ -2445,6 +2455,7 @@ public final class MainActivity extends CameraActivity {
     }
     private void suspendReadingCamera(){
         if(readingScreen==null)return;
+        readingPreviewActive=false;
         // Stop the actual native UVC/Camera2 device, not merely hide a preview.
         usbForeground=false;
         usbReopenWanted=false;
@@ -2457,6 +2468,7 @@ public final class MainActivity extends CameraActivity {
     }
     private void stopReadingSession(){
         readingAwaitingFrame.set(false);
+        readingPreviewActive=false;
         readingProcessing=false;
         pendingPhoneFrameToken=-1;
         invalidate();
@@ -2521,23 +2533,16 @@ public final class MainActivity extends CameraActivity {
         readingScreen.failure(message);
         if(diagnostics!=null)diagnostics.event("reader","fresh_frame",0,"failed");
     }
-    private void captureReadingPage(String bookId){
+    /** Next Page opens only the live view; no capture or model request here. */
+    private void enterReadingPreview(String bookId){
         if(readingScreen==null||readingAwaitingFrame.get()||readingProcessing)return;
         try{
-            if(readingLibrary==null)throw new Exception("书架未就绪");
             readingLibrary.get(bookId);
-            if(CloudKeyStore.load(this).isEmpty())
-                throw new Exception("请先在设置中配置百炼 API Key");
             stopReadingSession();
-            final int token=requestVersion.get();
-            readingCaptureToken=token;
-            readingCaptureStartedAtMs=SystemClock.elapsedRealtime();
-            readingAwaitingFrame.set(true);
-            readingScreen.showCapturing();
-            if(diagnostics!=null){
-                diagnostics.begin(usingPhoneCamera?"reader_phone":"reader_usb");
-                diagnostics.event("reader","capture",1,"ok");
-            }
+            getSharedPreferences(PREFS,MODE_PRIVATE).edit()
+                .putString("reader_last_book_v1",bookId).apply();
+            readingPreviewActive=true;
+            readingScreen.showPreview();
             if(usingPhoneCamera){
                 startPhoneCamera();
             }else{
@@ -2545,18 +2550,65 @@ public final class MainActivity extends CameraActivity {
                 usbReopenWanted=true;
                 handler.post(this::resumeUsb);
             }
-            handler.postDelayed(()->{
-                if(readingScreen!=null&&readingCaptureToken==token&&
-                    readingAwaitingFrame.get())failReadingCapture("相机未获取到新鲜画面，请重试");
-            },9000L);
+            if(diagnostics!=null)
+                diagnostics.event("reader","preview_started",1,"ok");
         }catch(Exception e){
-            if(readingScreen!=null)readingScreen.failure(e.getMessage());
+            suspendReadingCamera();
+            if(readingScreen!=null)readingScreen.failure("摄像头预览无法启动："+e.getMessage());
         }
     }
+    /** A real user click on the preview, NEVER an automatic timeout or onOpened. */
+    private void takeReadingPhoto(String bookId){
+        if(readingScreen==null||!readingScreen.isPreview()||
+            !readingPreviewActive||readingAwaitingFrame.get()||readingProcessing)return;
+        if(usingPhoneCamera){
+            if(phoneController==null||!phonePreviewReceived){
+                toastShort("手机摄像头尚未准备好，请对准画面后重试");return;
+            }
+        }else if(!usbKnownOpened||!isCameraOpened()){
+            toastShort("USB预览尚未准备好，请对准画面后重试");return;
+        }
+        long at=SystemClock.elapsedRealtime();
+        final int token=requestVersion.get();
+        readingCaptureToken=token;
+        readingCaptureStartedAtMs=at;
+        readingAwaitingFrame.set(true);
+        readingScreen.showCapturing();
+        if(diagnostics!=null){
+            diagnostics.begin(usingPhoneCamera?"reader_phone":"reader_usb");
+            diagnostics.event("reader","manual_shutter",1,"ok");
+        }
+        if(usingPhoneCamera){
+            pendingPhoneFrameToken=token;
+            phoneController.requestFreshFrame();
+        }
+        // USB acquires the next native NV21 callback AFTER the user's click.
+        handler.postDelayed(()->{
+            if(readingScreen!=null&&readingCaptureToken==token&&
+                token==requestVersion.get()&&readingAwaitingFrame.get())
+                failReadingCapture("拍照超时，未取得新画面，请再试一次");
+        },4500L);
+    }
+    /** Reader shutter acknowledgement: always a tangible vibration on a valid frame. */
+    private void readerShutterFeedback(){
+        try{
+            Vibrator vib=(Vibrator)getSystemService(VIBRATOR_SERVICE);
+            if(vib!=null&&vib.hasVibrator()){
+                if(android.os.Build.VERSION.SDK_INT>=26)
+                    vib.vibrate(VibrationEffect.createOneShot(50,
+                        VibrationEffect.DEFAULT_AMPLITUDE));
+                else vib.vibrate(50);
+            }
+        }catch(RuntimeException e){Log.w(TAG,"Reader shutter vibration unavailable",e);}
+        if(getSharedPreferences(PREFS,MODE_PRIVATE).getBoolean(PREF_SOUND,true))
+            playSound(metalClickSample);
+    }
     private void beginReadingCapturedFrame(Frame frame,int token){
-        if(readingScreen==null||token!=requestVersion.get()||!uiActive)return;
+        if(readingScreen==null||token!=requestVersion.get()||!uiActive||
+            !readingPreviewActive)return;
         readingAwaitingFrame.set(false);
         pendingPhoneFrameToken=-1;
+        readerShutterFeedback();
         readingProcessing=true;
         final String bookId=readingScreen.bookId();
         final String model=OcrModelCatalog.normalize(ocrModel);
@@ -2590,6 +2642,9 @@ public final class MainActivity extends CameraActivity {
                     part->handler.post(()->{
                         if(readingScreen==null||token!=requestVersion.get()||
                             !bookId.equals(readingScreen.bookId()))return;
+                        // The OCR model can return (x,y,w,h,angle) instead of words.
+                        // Never read or show pure bounding-box coordinate rows.
+                        if(ReadingRules.coordinateLine(part))return;
                         if(readingNarration!=null)readingNarration.addLine(part);
                         readingScreen.appendLine(part);
                     }),OcrSpeedExperiment.C);
@@ -2600,8 +2655,9 @@ public final class MainActivity extends CameraActivity {
                 }
                 if(token!=requestVersion.get()||readingScreen==null||
                     !bookId.equals(readingScreen.bookId()))return;
-                if(!ReadingRules.usable(result.text))
-                    throw new Exception("本页识别为空或过长，未保存");
+                if(!ReadingRules.usable(result.text)||
+                    ReadingRules.coordinatesOnly(result.text))
+                    throw new Exception("模型返回了坐标或无效书页文字，本页未保存");
                 ReadingLibrary.Page saved=readingLibrary.add(bookId,result.text);
                 if(diagnostics!=null){
                     diagnostics.event("reader","network_ms",result.networkMs,"ok");
@@ -2945,8 +3001,12 @@ public final class MainActivity extends CameraActivity {
             diagnostics.event("usb","view_age_ms",usbTextureLastAtMs<=0?-1:
                 Math.max(0,SystemClock.elapsedRealtime()-usbTextureLastAtMs),"ok");
         }
-        if(readingScreen!=null&&(readingAwaitingFrame.get()||readingProcessing)){
+        if(readingScreen!=null&&readingScreen.isPreview()){
+            readingPreviewActive=false;
+            readingScreen.cancelled();
+        }else if(readingScreen!=null&&(readingAwaitingFrame.get()||readingProcessing)){
             readingAwaitingFrame.set(false);
+            readingPreviewActive=false;
             readingProcessing=false;
             readingScreen.failure("应用切到后台，本页未保存，请重新拍照");
         }
