@@ -152,16 +152,12 @@ final class LargeSettingsScreen {
     private void row(String label,String description,Runnable clicked){
         LinearLayout block=new LinearLayout(app);
         block.setOrientation(LinearLayout.VERTICAL);
-        block.setPadding(dp(18),dp(15),dp(18),dp(15));
+        block.setPadding(dp(18),dp(11),dp(18),dp(11));
         block.setBackground(bg(PANEL,15));
+        // Single-line setting title. Descriptions are intentionally not rendered.
         TextView title=text(label+"  ›",22,TEXT,true);
         block.addView(title);
-        if(description!=null&&!description.isEmpty()){
-            TextView subtitle=text(description,17,SUB,false);
-            subtitle.setPadding(0,dp(5),0,0);
-            block.addView(subtitle);
-        }
-        block.setMinimumHeight(dp(78));
+        block.setMinimumHeight(dp(66));
         block.setClickable(true);block.setFocusable(true);
         block.setOnClickListener(v->clicked.run());
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
@@ -193,7 +189,7 @@ final class LargeSettingsScreen {
         LinearLayout labels=new LinearLayout(app);
         labels.setOrientation(LinearLayout.VERTICAL);
         TextView title=text(label,21,TEXT,true);labels.addView(title);
-        TextView hint=text(desc,16,SUB,false);labels.addView(hint);
+        // Keep toggles concise; the switch state is already visible.
         line.addView(labels,new LinearLayout.LayoutParams(0,-2,1f));
         Switch control=new Switch(app);
         control.setChecked(prefs.getBoolean(key,defaultValue));
@@ -213,7 +209,6 @@ final class LargeSettingsScreen {
         row("云端 AI","识别模型、图片清晰度、API Key",()->navigate("cloud",""));
         row("上次识别结果","查看完整内容与再次朗读",()->navigate("result",""));
         row("运行诊断","仅排障时查看本机匿名耗时与错误记录",()->navigate("diagnostics",""));
-        note("诊断只在本机轻量记录性能事件，平时相机页面不显示。");
     }
     private void speech(){
         SharedPreferences prefs=app.getSharedPreferences("kanzi_settings",Context.MODE_PRIVATE);
@@ -237,13 +232,11 @@ final class LargeSettingsScreen {
             @Override public void onStartTrackingTouch(SeekBar v){}
             @Override public void onStopTrackingTouch(SeekBar v){}
         });
-        note("0.50× 慢　　　　　　　　　3.00× 快");
         heading("朗读内容过滤");
         toggle("过滤英文","朗读时跳过英文单词和字母","speech_skip_latin",false);
         toggle("过滤数字","朗读时跳过阿拉伯数字","speech_skip_digits",false);
         toggle("过滤符号","跳过特殊符号，保留停顿","speech_skip_symbols",false);
         toggle("对所有任务生效","默认只过滤「朗读文字」任务","speech_filter_all_tasks",false);
-        note("过滤只改变听到的内容，原始识别文字和 AI 追问仍保留全部信息。");
         action("▶ 试听当前语音",()->app.previewSpeech());
     }
     private void engines(){
@@ -313,7 +306,6 @@ final class LargeSettingsScreen {
                 iconButton.setContentDescription("选择任务图标，当前"+icon[0]);
             });
         }
-        note("只修改指令，不改变 OCR 与视觉 AI 的模型分工。");
         action("保存修改",()->{
             try{
                 if(custom){
@@ -349,7 +341,6 @@ final class LargeSettingsScreen {
         row("垂直翻转",app.flipDescription(),()->{app.adjustCamera(3);render(history.get(history.size()-1));});
         row("USB 左右校正",app.usbCorrectionDescription(),()->{app.adjustCamera(4);render(history.get(history.size()-1));});
         row("缩放恢复1×","双指捏合和张开缩放画面",()->{app.adjustCamera(5);render(history.get(history.size()-1));});
-        note("不同手机镜头和 USB 摄像头分别记住方向。相机预览与上传给AI的图片必须一致。");
     }
     private void sources(){
         row("USB 外接摄像头","保留原生UVC直接预览",()->{app.setCameraSourceFromSettings(0);back();});
@@ -364,7 +355,6 @@ final class LargeSettingsScreen {
         action("▶ 体验按住说话振动",()->app.previewVoiceStartHaptic());
         heading("最近一次录音诊断");
         note(app.lastMicDiagnostic());
-        note("提示音与振动分别控制。录音取消或太短时，不播放发送成功提示。");
     }
     private void cloud(){
         row("视觉模型",app.visionModelDescription(),()->navigate("models",""));
@@ -373,27 +363,24 @@ final class LargeSettingsScreen {
             app.cycleImagePolicy();render(history.get(history.size()-1));
         });
         row("API Key","本机加密保存，点击进入",()->navigate("key",""));
-        note("视觉AI和语音识别会上传照片或语音到百炼服务器并可能消耗Token。使用前请在百炼确认用完即停。");
     }
     private void models(){
-        heading("视觉任务与语音追问");
-        note("选择的视觉模型对场景分析、寻找目标和按住AI后的图片追问生效。"
-            +"朗读文字仍固定使用 qwen-vl-ocr；语音转文字固定使用 qwen3-asr-flash。");
         for(int i=0;i<VisionModelCatalog.IDS.length;i++){
             final String id=VisionModelCatalog.IDS[i];
             final boolean selected=id.equals(app.visionModelDescription());
-            String detail=i==0?"已通过手机连接测试，适合日常拍照及语音追问":
-                (i==1?"已验证可用，费用较高，必要时手动备用":
-                    "旗舰高精度模型，费用明显更高，待用你的 API Key 验证；绝不自动启用");
-            row((selected?"✓ 当前  ":"")+VisionModelCatalog.LABELS[i],detail,
+            row((selected?"✓ ":"")+VisionModelCatalog.LABELS[i],"",
                 ()->{app.selectVisionModel(id);render(history.get(history.size()-1));});
         }
-        heading("验证当前所选模型");
-        note("点击一次将上传一张程序临时生成的64×64测试图，可能消耗少量Token。"
-            +"只有成功响应才显示连接成功；失败不会自动退回付费更高的Plus，也不会重试收费请求。");
-        action("▶ 测试当前模型能否看图",()->app.testSelectedVisionModel());
-        note("Max 尚未通过你的百炼账户实测，只有主动选中后才会调用；"
-            +"使用前请确认百炼额度与「用完即停」，测试请求也可能收费。");
+        // Only show important cost warning when someone actually tests Max.
+        action("▶ 测试当前模型",()->{
+            if(VisionModelCatalog.isEmergencyMax(app.visionModelDescription())){
+                new AlertDialog.Builder(app).setTitle("测试高精度 Max")
+                    .setMessage("测试将发送一张小图，可能产生费用。")
+                    .setNegativeButton("取消",null)
+                    .setPositiveButton("确认测试",(dialog,which)->app.testSelectedVisionModel())
+                    .show();
+            }else app.testSelectedVisionModel();
+        });
     }
 
     /** Uses exactly the existing opaque BG/PANEL/TEXT/SUB settings palette. */
@@ -435,17 +422,12 @@ final class LargeSettingsScreen {
             +"\n调用结果："+("success".equals(snapshot.lastOutcome)?"成功":"失败"));
         heading("各模型今日用量");
         for(ModelUsageLedger.Line line:snapshot.lines)usageLine(line);
-        note("仅统计本 APP 从现在起在本机产生的请求，不能读取百炼其他软件/历史账户用量。"
-            +"数值以 API 返回的 usage 为准；失败或服务器未提供 usage 时显示「未知」，不估算也不填零。"
-            +"ASR 另列调用次数，当前未提供可靠 Token，不计入视觉 Token 合计。"
-            +"本机保留近30天记录，独立工作线程写入，不阻塞拍照上传和 TTS。");
         action("刷新统计",()->render(history.get(history.size()-1)));
         row("清空本机模型统计","仅删除本机记录，不影响百炼账户计费",()->navigate("usage-clear",""));
     }
     private void usageClear(){
         heading("请确认是否清空统计记录");
-        note("将删除蓝星向导本机保存的模型调用与Token统计，不会删除百炼服务器记录。"
-            +"不会清除API Key、设置、运行诊断和此前的照片识别结果。");
+        note("只清空本机统计，不影响百炼账单。");
         action("确认清空本机统计",()->{
             app.clearModelUsage();
             app.toastShort("已请求清空本机模型用量数据");
@@ -462,7 +444,6 @@ final class LargeSettingsScreen {
         key.setHintTextColor(SUB);
         key.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
         content.addView(key,new LinearLayout.LayoutParams(-1,dp(72)));
-        note("密钥只加密保存在此手机的 Android Keystore 中，不会写进安装包。");
         action("加密保存 API Key",()->{
             try{
                 CloudKeyStore.save(app,key.getText().toString());
@@ -476,7 +457,6 @@ final class LargeSettingsScreen {
         });
     }
     private void diagnostics(){
-        note("自动保留最近50次操作或7天的数值事件，固定容量覆盖旧记录。不会保存照片、识别文字、语音内容、API Key或完整请求。");
         action("复制诊断摘要",()->app.copyRuntimeDiagnostics());
         action("导出匿名诊断日志",()->app.exportRuntimeDiagnostics());
         action("刷新诊断记录",()->render(history.get(history.size()-1)));
