@@ -21,3 +21,12 @@
 ## 真机仍需做的验收
 
 用户提供百炼北京地域 API Key，手动选择 `qwen3.7-flash`，点击“测试当前模型”：只有 HTTP 请求得到有效文字返回后才可确认该 Key 下可用。用相同的菜单、商品招牌、医院科室、超市寻找场景对比 3.7 与 3.8 的正确率、首次朗读时间和统计中的实际 input/output Token。单纯连接成功不等于场景识别准确或真实成本一定更低。上一轮「取消寻找」和「长按拖动排序」未做修改，仍属下一轮工作。
+
+## 构建和正式公网发布结果
+
+- 原始源码版本 `1362d7f7e48effd31c55034e3813828e73ec0a39`，CI run **[42330421372](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42330421372)** `completed/success`。所有源代码静态安全审核、JVM `CloudOptimizationTest`/`VoiceFlowTest`/`FollowupPromptTest`/`VisionModelCatalogTest`、固定 AUSBC UVC 本地库补丁、Gradle ARM64 APK 构建、原图标/两音效和包名 badging 验证通过。较早 run [42330388476](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42330388476) 的 CI 静态审核由于新断言读取 `ledger` 变量时该变量尚未初始化而失败；已调整断言顺序并成功重跑，旧失败不得冒充通过。
+- CI GitHub Artifact **13556618908**（`blue-star-guide-1-0-9-rc10-arm64`）。已下载完整 ZIP，对照里面 `SHA256SUMS.txt` 校验原 APK，并验证 APK ZIP CRC、ARM64 `libUVCCamera.so`、金属咔叮 `c_metal_clack_ding.mp3`、发送音 `voice_send_whoosh.wav`、包信息。原始 APK `BlueStar_Guide_1.0.9_RC10_arm64.apk` **8,567,984 bytes**，**SHA256 `cd2e063f504b57ebfe0aa4bcc18287e2c0aa4d2acb478a1232527f7f4f27c814`**，`applicationId=com.vobich.bluestar.rc10`，versionCode 19，versionName `1.0.9-rc10`。
+- 仅一次发布原 APK 的 release workflow `.github/workflows/bluestar-rc10-direct-apk-release.yml` run **[42330743857](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42330743857)** `completed/success`：对构建源 SHA、CI run success、APK 真实 bytes + SHA256 + CRC + 资源做二次校验后发 GitHub Release，**不重新编译、不重新签名**。API 回读 tag `blue-star-guide-cloud-rc10-20261107`，`draft=false`、`prerelease=true`、asset `state=uploaded`，服务器 SHA256 digest/大小与原 APK 一致。
+- **真实 APK 公网浏览器直链**：
+  https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/blue-star-guide-cloud-rc10-20261107/BlueStar_Guide_1.0.9_RC10_arm64.apk
+- **测试边界**：完成的是 GitHub Android 编译、静态逻辑和部分 JVM 测试，**不是**用户账号下 3.7-Flash 的真实云端请求测试，也非手机镜头、TTS、USB 路线真机全部验收。只有用户打开 RC10 → 模型选择 → 3.7-Flash → 手动连接测试，收到服务端 `连接成功` 并实拍多场景后才能确认该 Key 下可用及视觉质量。用户真机确认之前**不要删除已验证的 Plus，也不要自动改变 3.8 默认**。上一轮口头“取消找门”后状态不变及任务卡片长按拖动仍仅记录，下版再实施。
