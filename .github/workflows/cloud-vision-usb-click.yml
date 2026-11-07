@@ -244,7 +244,7 @@ jobs:
           assert 'if(usingPhoneCamera&&hasConnectedUsbVideoDevice())queueUsbAttachReconcile();' in activity
           assert 'queueUsbAttachReconcile();' in activity.split('protected void onNewIntent(')[1].split('private void showImagePolicySelector()')[0]
           assert 'onUsbDeviceAttachedForApp(UsbDevice device)' in activity
-          assert 'if(video)queueUsbAttachReconcile();' in activity
+          assert 'if(video&&readingScreen==null)queueUsbAttachReconcile();' in activity
           assert 'manualPhoneUsbDeviceId' in activity
           assert 'UsbAutoSwitchPolicy.keepManualOverrideForPhysicalDevice(' in activity
           assert 'attachedUsbVideoDevice()' in activity
