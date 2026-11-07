@@ -13,6 +13,11 @@ final class VoiceAction {
     final String target;
     private VoiceAction(Type type,String target){this.type=type;this.target=target;}
     static VoiceAction classify(String utterance){
+        return classify(utterance,"");
+    }
+
+    /** Active target lets short cancel commands execute locally, never via LLM. */
+    static VoiceAction classify(String utterance,String activeTarget){
         String v=utterance==null?"":utterance.trim()
             .replaceAll("[。？！!?,，；;\\s]+$","");
         v=v.replace("帮我寻找","帮我找").replace("找一下","找")
@@ -23,7 +28,7 @@ final class VoiceAction {
         int change=v.lastIndexOf("改找");
         if(change<0)change=v.lastIndexOf("换成找");
         if(change>=0)v=v.substring(change);
-        if(v.matches(".*(停止寻找|取消寻找|结束寻找|暂停寻找|不找了|不用找了|别找了|停止找|不需要找了|不找.{1,16}了).*"))
+        if(isStopFinding(v,activeTarget))
             return new VoiceAction(Type.STOP_FINDING,"");
         // Explicit intent must take precedence over the broad historical
         // "帮我看..." target-search grammar. These commands capture a NEW frame.
@@ -45,6 +50,40 @@ final class VoiceAction {
             target.contains("这张")||target.contains("这个")||target.contains("那张")||target.contains("刚才")||target.contains("是什么")||target.contains("那是什么"))
             return new VoiceAction(Type.QUESTION,"");
         return new VoiceAction(Type.START_FINDING,target);
+    }
+
+    private static boolean isStopFinding(String v,String activeTarget){
+        // A negative instruction must not accidentally cancel an active search.
+        if(v.matches(".*(不要|不许|别|暂时别)(取消|停止|结束|关掉|撤销).*"))
+            return false;
+        // Questions about the meaning of a command are not actions.
+        if(v.matches(".*(取消寻找|停止寻找|结束寻找).*(什么意思|怎么理解|是什么意思).*"))
+            return false;
+        if(v.matches(".*(停止寻找|取消寻找|结束寻找|暂停寻找|不找了|不用找了|别找了|停止找|不需要找了|不找.{1,16}了).*"))
+            return true;
+        // Conversational target commands: "取消掉找门", "停止找门", etc.
+        if(v.matches(".*(取消|停止|结束|暂停|撤销|关闭|关掉)(掉|一下|了|这个|那个|当前|现在|正在|刚才|之前|前面的|那次|这次|正在进行的|所有|全部|的|把)?"+
+                "(找|寻找|查找|搜寻|寻路|搜索)(.{0,16})?"))
+            return true;
+        if(v.matches(".*(把|将)?(刚才|之前|当前|正在|现在|这个|那个|找|寻找|查找|搜索).{0,20}"+
+                "(找|寻找|查找|搜索|任务|目标).{0,12}(取消|停止|结束|撤销|关闭|关掉).*"))
+            return true;
+        if(v.matches(".*(别再|不要再|不用再|别继续|不要继续|不用继续)(找|寻找|查找|搜索).*"))
+            return true;
+
+        if(activeTarget==null||activeTarget.trim().isEmpty())return false;
+        // Explicit short local task commands are meaningful only during a search.
+        if(v.matches(".*(取消|停止|结束|撤销|关闭|关掉)(掉|一下|了)?"+
+                "(这个|那个|这项|当前|目前|刚才|之前|所有|全部)?"+
+                "(寻找任务|找目标任务|寻找目标|搜索任务|搜索|任务|找东西|目标).*"))
+            return true;
+        String safe=Pattern.quote(activeTarget.trim());
+        if(v.matches(".*(取消|停止|结束|撤销|关闭|关掉)(掉|一下|了)?.{0,12}"+safe+".*"))
+            return true;
+        // Conservative ASR correction for the observed "找门" -> "掌门":
+        // only while actively searching for 门 and with an explicit cancel verb.
+        return "门".equals(activeTarget.trim())&&
+            v.matches(".*(取消|停止|结束|撤销|关闭|关掉)(掉|一下|了)?.*掌门.*");
     }
 
     private static boolean isReadTextRequest(String v){
