@@ -1,0 +1,75 @@
+name: Publish verified RC18 online web-search AI dialogue APK
+on:
+  push:
+    branches: [feat/bluestar-117-web-search-followup-20261107]
+    paths: ['.github/workflows/bluestar-rc18-direct-apk-release.yml']
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish-verified-rc18:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Require exact successful RC18 Android CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RUN=42365184277
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN" --jq '.conclusion')" = success
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN" --jq '.head_sha')" = 155668f30190ba770bb4ba58349246b5a6d24b20
+      - name: Download official original CI APK artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p verified
+          gh run download 42365184277 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name blue-star-guide-1-0-17-rc18-arm64 --dir verified
+          test -s verified/BlueStar_Guide_1.0.17_RC18_arm64.apk
+          test -s verified/SHA256SUMS.txt
+          test -s verified/badging.txt
+          test -s verified/apk-entries.txt
+      - name: Verify unchanged APK bytes native UVC audio app ID and version
+        run: |
+          set -euo pipefail
+          cd verified
+          sha256sum -c SHA256SUMS.txt
+          unzip -tq BlueStar_Guide_1.0.17_RC18_arm64.apk >/dev/null
+          unzip -Z1 BlueStar_Guide_1.0.17_RC18_arm64.apk | grep -Fxq 'lib/arm64-v8a/libUVCCamera.so'
+          unzip -Z1 BlueStar_Guide_1.0.17_RC18_arm64.apk | grep -Fxq 'res/raw/c_metal_clack_ding.mp3'
+          unzip -Z1 BlueStar_Guide_1.0.17_RC18_arm64.apk | grep -Fxq 'res/raw/voice_send_whoosh.wav'
+          grep -Fq "package: name='com.vobich.bluestar.rc18'" badging.txt
+          grep -Fq "versionCode='27'" badging.txt
+          grep -Fq "versionName='1.0.17-rc18'" badging.txt
+          grep -Fq "application-label:'Blue Star Guide'" badging.txt
+          grep -q 'application-icon-' badging.txt
+          if grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx' apk-entries.txt; then
+            echo "Unexpected on-device OCR model found" >&2
+            exit 1
+          fi
+          echo "APK_SIZE_BYTES=$(stat -c%s BlueStar_Guide_1.0.17_RC18_arm64.apk)" >> "$GITHUB_STEP_SUMMARY"
+          echo "APK_SHA256=$(sha256sum BlueStar_Guide_1.0.17_RC18_arm64.apk | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish only verified CI APK without rebuilding or resigning
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=blue-star-guide-cloud-rc18-20261107
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Existing RC18 Release; refuse overwrite." >&2
+            exit 1
+          fi
+          gh release create "$TAG" \
+            "verified/BlueStar_Guide_1.0.17_RC18_arm64.apk" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target 155668f30190ba770bb4ba58349246b5a6d24b20 \
+            --title "Blue Star Guide 1.0.17 RC18 - Web-search AI conversations" \
+            --notes "Blue Star Guide RC18 (1.0.17) independent Android arm64 debug-signed test APK adds optional web search for conversations using the three existing selected Qwen visual models qwen3.7-flash, qwen3.8-flash and qwen3.8-max. Settings > Cloud AI > 联网智能追问 is enabled by default and can be turned off. When enabled, explicit one-shot text followups and deliberate revisit-photo conversations pass enable_search:true to the EXISTING Bailian OpenAI-compatible Chat Completions call; server decides whether a search is needed, without forced_search and without a second request. General press-to-talk conversations now work even before taking a photo (model explicitly told there is no image). Crucial routing correction: old text followups ALWAYS called Flash38 even if user selected Max or Flash37; both text-only and image revisits now call the ACTUAL selected visual model, with actual-model usage accounting and existing TTS streaming path. Prompts distinguish photos from external web facts and never invent citations. Ordinary photo recognition, independent four-option OCR, model probe, target-search safety route and ASR never invoke web search, and user's concise OCR default prompt is preserved. Official Chat Completions does not provide verified structured source URLs; the app does not claim it does. Optional web search may add latency or provider charges, and enabling web search cannot guarantee a web search on every question. This release preserves native UVC 60..61fps negotiation and USB/Camera2 direct preview, original 32-case photo orientation, hardware picture control, auto USB attach, independent OCR model choice, voice effects, TTS and existing tasks. Build source SHA 155668f30190ba770bb4ba58349246b5a6d24b20, GitHub Actions 42365184277 completed/success; static cloud privacy, search-policy/standalone prompt tests, model choices, USB and OCR regression checks, Gradle arm64 build and APK icon/audio/native verifications all passed. Publishing uploads the unchanged sha256-verified GitHub CI artifact without recompiling or resigning. Separate app ID com.vobich.bluestar.rc18, versionCode27 and versionName1.0.17-rc18; new sandbox does not migrate API key or USB settings. Actual remote model search eligibility and responses must be tested with the user's BaiLian API key on vivo X200 Pro." \
+            --prerelease
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -Fx 'BlueStar_Guide_1.0.17_RC18_arm64.apk'
+          echo "Direct browser URL: https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/BlueStar_Guide_1.0.17_RC18_arm64.apk" >> "$GITHUB_STEP_SUMMARY"
