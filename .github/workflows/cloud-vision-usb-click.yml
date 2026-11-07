@@ -126,7 +126,7 @@ jobs:
           assert '"(有什么|有些什么|有哪些|什么东西|是什么|是啥|' in voice
           assert 'v.contains("刚才")||v.contains("上一张")' in voice
           assert 'if(isObserveRequest(v))return new VoiceAction(Type.OBSERVE_SCENE,"");' in voice
-          assert 'return recognizeInternal(null,key,task,model,listener,true,allowSearch);' in cloud_client
+          assert 'return recognizeInternal(null,key,task,model,listener,true,allowSearch,' in cloud_client
           assert 'if(!textOnly)' in cloud_client and 'content.put(image);' in cloud_client
           assert cloud_client.count('Base64.encodeToString')==1
           assert 'modelUsage.recordAsync(selectedModel,result.serverModel' in activity
@@ -173,7 +173,7 @@ jobs:
           assert 'FLASH_35' not in ledger
           assert 'VisionModelCatalog.FLASH_37, VisionModelCatalog.FLASH_38,' in ledger
           assert 'static final String DEFAULT = FLASH_38;' in model_catalog
-          assert 'return recognizeInternal(null,key,task,model,listener,true,allowSearch);' in cloud_client
+          assert 'return recognizeInternal(null,key,task,model,listener,true,allowSearch,' in cloud_client
           assert 'qwen-vl-ocr' in ledger and 'qwen3-asr-flash' in ledger
           assert 'new OcrResponseGate.NoReadableTextException(' in cloud_client
           assert 'OcrResponseGate.requireReadable(answer)' in cloud_client
@@ -426,7 +426,7 @@ jobs:
           assert 'CloudVisionClient.recognize(' in activity
           assert 'VisionModelCatalog.isBudgetFlash(model)' in cloud_client
           assert 'VisionModelCatalog.isBudgetFlash(model)' in Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/TargetVisionClient.java').read_text()
-          assert 'return recognizeInternal(null,key,task,model,listener,true,allowSearch);' in cloud_client
+          assert 'return recognizeInternal(null,key,task,model,listener,true,allowSearch,' in cloud_client
           assert 'TextToSpeech.QUEUE_FLUSH' in activity
           assert 'final String OCR = "ocr"' not in tasks or 'static final String OCR = "ocr"' in tasks
           assert 'selected_task_id' in tasks and 'custom_tasks' in tasks
