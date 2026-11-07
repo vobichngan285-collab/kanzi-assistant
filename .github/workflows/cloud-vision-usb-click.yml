@@ -197,6 +197,7 @@ jobs:
           assert 'USB_MAX_FRAME_AGE_MS=800L' in activity
           # RC15 native attach/detach and dynamic Android USB association:
           from xml.etree import ElementTree as ET
+          native_patch=Path('cloud-vision-app/scripts/patch_pinned_uvc.py').read_text()
           device_xml=Path('cloud-vision-app/app/src/main/res/xml/usb_video_auto_start.xml').read_text()
           auto_policy=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/UsbAutoSwitchPolicy.java').read_text()
           window=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/UsbRollingFps.java').read_text()
