@@ -1647,6 +1647,8 @@ public final class MainActivity extends CameraActivity {
             usbReopenWanted=false;
         }else if(!usingPhoneCamera){
             activeUsbDeviceName=device.getDeviceName();
+            // AUSBC onConnect will open this camera; pending onResume must not.
+            usbReopenWanted=false;
         }
     }
     @Override protected boolean shouldAutoOpenUsbCameraForApp(UsbDevice device){
@@ -2467,6 +2469,8 @@ public final class MainActivity extends CameraActivity {
     @Override protected void onResume(){
         super.onResume();
         uiActive=true;usbForeground=true;
+        // Handles permission/connect having arrived before onResume on cold USB launch.
+        if(!usingPhoneCamera)usbReopenWanted=true;
         usbResumeAtMs=SystemClock.elapsedRealtime();
         startUsbFpsMonitoring();
         if(!usingPhoneCamera&&diagnostics!=null){
