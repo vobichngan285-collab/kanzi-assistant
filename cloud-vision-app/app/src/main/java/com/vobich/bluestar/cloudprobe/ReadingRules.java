@@ -20,13 +20,13 @@ final class ReadingRules {
     // Screenshot RC22 returned row-after-row of x,y,width,height,angle values.
     // Do not feed those bounding boxes into TTS or store them as page text.
     private static final Pattern COORDINATE_ROW=Pattern.compile(
-        "^\\\\s*[\\\\[\\\\(]?\\\\d{1,5}(?:\\\\s*[,，]\\\\s*\\\\d{1,5}){4}[\\\\]\\\\)]?\\\\s*$");
+        "^\\s*[\\[\\(]?\\d{1,5}(?:\\s*[,，]\\s*\\d{1,5}){4}[\\]\\)]?\\s*$");
     static boolean coordinateLine(String text){
         return text!=null&&COORDINATE_ROW.matcher(text.trim()).matches();
     }
     static boolean coordinatesOnly(String text){
         if(text==null||text.trim().isEmpty())return false;
-        String[] lines=text.trim().split("\\\\r?\\\\n");
+        String[] lines=text.trim().split("\\r?\\n");
         int coords=0,other=0;
         for(String line:lines){
             if(line.trim().isEmpty())continue;
