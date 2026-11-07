@@ -1,0 +1,75 @@
+name: Publish verified RC16 USB cold-attach/61 FPS direct-preview APK
+on:
+  push:
+    branches: [fix/bluestar-115-cold-usb-auto-select-20261107]
+    paths: ['.github/workflows/bluestar-rc16-direct-apk-release.yml']
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish-verified-rc16:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Require exact successful RC16 Android CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RUN=42358079498
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN" --jq '.conclusion')" = success
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN" --jq '.head_sha')" = e06d39b40f6f90d30752a9d86900ec6fb24c1e03
+      - name: Download official original CI APK artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p verified
+          gh run download 42358079498 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name blue-star-guide-1-0-15-rc16-arm64 --dir verified
+          test -s verified/BlueStar_Guide_1.0.15_RC16_arm64.apk
+          test -s verified/SHA256SUMS.txt
+          test -s verified/badging.txt
+          test -s verified/apk-entries.txt
+      - name: Verify unchanged APK bytes native UVC audio app ID and version
+        run: |
+          set -euo pipefail
+          cd verified
+          sha256sum -c SHA256SUMS.txt
+          unzip -tq BlueStar_Guide_1.0.15_RC16_arm64.apk >/dev/null
+          unzip -Z1 BlueStar_Guide_1.0.15_RC16_arm64.apk | grep -Fxq 'lib/arm64-v8a/libUVCCamera.so'
+          unzip -Z1 BlueStar_Guide_1.0.15_RC16_arm64.apk | grep -Fxq 'res/raw/c_metal_clack_ding.mp3'
+          unzip -Z1 BlueStar_Guide_1.0.15_RC16_arm64.apk | grep -Fxq 'res/raw/voice_send_whoosh.wav'
+          grep -Fq "package: name='com.vobich.bluestar.rc16'" badging.txt
+          grep -Fq "versionCode='25'" badging.txt
+          grep -Fq "versionName='1.0.15-rc16'" badging.txt
+          grep -Fq "application-label:'Blue Star Guide'" badging.txt
+          grep -q 'application-icon-' badging.txt
+          if grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx' apk-entries.txt; then
+            echo "Unexpected on-device OCR model found" >&2
+            exit 1
+          fi
+          echo "APK_SIZE_BYTES=$(stat -c%s BlueStar_Guide_1.0.15_RC16_arm64.apk)" >> "$GITHUB_STEP_SUMMARY"
+          echo "APK_SHA256=$(sha256sum BlueStar_Guide_1.0.15_RC16_arm64.apk | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish only verified CI APK without rebuilding or resigning
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=blue-star-guide-cloud-rc16-20261107
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Existing RC16 Release; refuse overwrite." >&2
+            exit 1
+          fi
+          gh release create "$TAG" \
+            "verified/BlueStar_Guide_1.0.15_RC16_arm64.apk" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target e06d39b40f6f90d30752a9d86900ec6fb24c1e03 \
+            --title "Blue Star Guide 1.0.15 RC16 - Cold USB Auto Switch and Native 61 FPS Preference" \
+            --notes "RC16 standalone Android ARM64 test APK follows confirmed RC15 vivo bug: Android USB device auto-launch opened Blue Star Guide but did not select connected USB camera when onNewIntent or UVC permission callback arrived before Activity onResume. New 180ms one-shot reconciliation in onNewIntent, onResume and UVC attach checks actual UsbManager connected video device and in-app auto switch setting; preserves manual phone override until old USB device is physically gone. The previous user RC15 log recorded ~29.9-30.3 TextureView buffer updates per second with native snapshot callback ~4.4-4.9Hz; the user requested simple/direct rendering and a 61fps target. The existing direct native TextureView MJPEG 1920x1080 preview is retained with no OpenGL intermediate. Updated pinned UVC CameraUVC prefers 60..61fps native mode first; if unsupported, retries original 1..61fps in the SAME MJPEG format, then original YUYV fallback. Fixed UVCPreview.cpp native re-probe when only fps min/max changes so fallback works. Removed duplicate full NV21 byte-array copy in MainActivity, retaining the per-callback new buffer allocated in pinned CameraUVC. Existing phone Camera2 direct preview, 32-way RC13 upload orientation, RC14 picture sliders, RC15 rolling FPS diagnostics, OCR and cloud AI, TTS, task controls, icons and original click/swoosh remain unchanged. This requests a high fps mode, not a claim of actual 61fps: the USB camera, bandwidth, and Android hardware determine negotiated/observed rate. Build source exact SHA e06d39b40f6f90d30752a9d86900ec6fb24c1e03, GitHub Actions 42358079498 SUCCESS, with static privacy checks, legacy 32 orientation tests, new auto-switch tests, rolling FPS and native 60..61 and fallback check, complete arm64 native + Android build and APK assets. Release publishes unchanged SHA256-verified original CI APK without rebuilding or resigning. Separate app ID com.vobich.bluestar.rc16 versionCode25 versionName1.0.15-rc16; must reconfigure API key and camera settings. Vivo hardware real auto-source switch and high preview FPS require device testing. Do not claim this eliminates all prior USB frame stalls." \
+            --prerelease
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -Fx 'BlueStar_Guide_1.0.15_RC16_arm64.apk'
+          echo "Direct browser URL: https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/BlueStar_Guide_1.0.15_RC16_arm64.apk" >> "$GITHUB_STEP_SUMMARY"
