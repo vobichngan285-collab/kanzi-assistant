@@ -304,7 +304,7 @@ final class ReadingScreen {
     boolean isPreview(){return "preview".equals(phase);}
     private void renderCapturing(){
         LinearLayout all=layout(0xB8091B32);
-        TextView stage=label("正在唤醒摄像头\n自动获取下一张新照片…",24,WHITE,true);
+        TextView stage=label("已点击拍照\n正在获取当前画面，完成后会震动并关闭摄像头…",24,WHITE,true);
         stage.setGravity(Gravity.CENTER);
         all.addView(stage,new LinearLayout.LayoutParams(-1,0,1f));
         Button cancel=button("取消拍照",PANEL,true);
