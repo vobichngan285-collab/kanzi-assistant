@@ -73,6 +73,7 @@ final class CloudVisionClient {
         if(key==null||key.trim().isEmpty())
             throw new IllegalArgumentException("请先在设置中配置API Key");
         boolean isOcr=TaskCatalog.OCR.equals(task.engine);
+        boolean isBook=isOcr&&ReadingRules.TASK_ID.equals(task.id);
         boolean connectionTest="model-probe".equals(task.id);
         boolean streaming=(!isOcr&&!connectionTest)||
             (isOcr&&OcrSpeedExperiment.streaming(ocrSpeedMode));
@@ -113,7 +114,7 @@ final class CloudVisionClient {
         }
         // Fast Max follows the same concise token ceilings as Flash.
         boolean fastMax=VisionModelCatalog.isEmergencyMax(model);
-        int maxOutput=isOcr?1200:(connectionTest?64:
+        int maxOutput=isOcr?(isBook?3800:1200):(connectionTest?64:
             (textOnly?550:("menu".equals(task.id)?550:((task.custom||customPreset)?650:350))));
         JSONObject body=new JSONObject().put("model",model).put("stream",streaming)
             .put("max_tokens",maxOutput).put("messages",new JSONArray().put(
@@ -204,6 +205,7 @@ final class CloudVisionClient {
                     speakPart.accept(line);
             };
             int promptTokens=-1,completionTokens=-1;
+            boolean outputTruncated=false;
             try(BufferedReader reader=new BufferedReader(
                     new InputStreamReader(connection.getInputStream(),StandardCharsets.UTF_8))){
                 String line;
@@ -224,18 +226,26 @@ final class CloudVisionClient {
                     }
                     JSONArray choices=chunk.optJSONArray("choices");
                     if(choices==null||choices.length()==0)continue;
-                    JSONObject delta=choices.getJSONObject(0).optJSONObject("delta");
+                    JSONObject choice=choices.getJSONObject(0);
+                    if(isBook&&ReadingRules.truncated(choice.optString("finish_reason","")))
+                        outputTruncated=true;
+                    JSONObject delta=choice.optJSONObject("delta");
                     String part=delta==null?"":delta.optString("content","");
                     if(part.isEmpty())continue;
                     if(firstText<0)firstText=SystemClock.elapsedRealtime()-started;
                     charBudget+=part.length();
-                    if(charBudget>6000)throw new Exception("云端响应超过安全长度");
+                    if(charBudget>(isBook?ReadingRules.MAX_PAGE_CHARS:6000))
+                        throw new Exception("云端响应超过安全长度");
                     all.append(part);
                     if(isOcr)ocrLines.append(part,ocrLine);
                     else speechChunks.append(part,speakPart);
                 }
             }
             String answer=all.toString().trim();
+            if(isBook&&outputTruncated)
+                throw new Exception("书页输出达到模型长度限制，文字可能不完整，本页未保存");
+            if(isBook&&!ReadingRules.usable(answer))
+                throw new Exception("书页识别结果为空或超过本机安全长度，本页未保存");
             // Validate completed OCR before queuing the final incomplete line.
             if(isOcr)answer=OcrResponseGate.requireReadable(answer);
             else if(answer.isEmpty())throw new Exception("云端没有返回有效内容");
