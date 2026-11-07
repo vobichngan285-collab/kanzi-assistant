@@ -1643,7 +1643,7 @@ public final class MainActivity extends CameraActivity {
             return;
         }
         if(requestCode!=REQUEST_PHONE_CAMERA)return;
-        if(readingScreen!=null&&!readingAwaitingFrame.get())return;
+        if(readingScreen!=null&&!readingPreviewActive)return;
         if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED) {
             if(usingPhoneCamera) startPhoneCamera();
             else {
@@ -1657,8 +1657,8 @@ public final class MainActivity extends CameraActivity {
                 }
             }
         } else {
-            if(readingScreen!=null&&readingAwaitingFrame.get())
-                failReadingCapture("未获得相机权限，本页未拍摄");
+            if(readingScreen!=null&&readingPreviewActive)
+                failReadingCapture("未获得相机权限，无法显示预览");
             else Toast.makeText(this,"请允许相机权限后使用摄像头",Toast.LENGTH_LONG).show();
         }
     }
@@ -1829,8 +1829,8 @@ public final class MainActivity extends CameraActivity {
     @Override protected void onUsbDeviceDetachedForApp(UsbDevice device){
         if(!isUsbVideoDevice(device))return;
         if(readingScreen!=null){
-            if(!usingPhoneCamera&&readingAwaitingFrame.get())
-                handler.post(()->failReadingCapture("USB摄像头已断开，本页未拍摄"));
+            if(!usingPhoneCamera&&readingPreviewActive)
+                handler.post(()->failReadingCapture("USB摄像头已断开，请重新连接"));
             return;
         }
         if(manualPhoneUntilUsbDetach&&device.getDeviceId()==manualPhoneUsbDeviceId){
@@ -1896,7 +1896,7 @@ public final class MainActivity extends CameraActivity {
             if(diagnostics!=null)diagnostics.event("usb","state",0,"failed");
             Log.w(TAG,"UVC open error: "+msg);
             if(readingScreen!=null&&readingPreviewActive&&!usingPhoneCamera)
-                handler.post(()->failReadingCapture("USB摄像头启动失败，本页未拍摄"));
+                handler.post(()->failReadingCapture("USB摄像头启动失败，请重新预览"));
             runOnUiThread(()->Toast.makeText(this,"USB打开失败："+msg,Toast.LENGTH_LONG).show());
         }
     }
@@ -2525,7 +2525,8 @@ public final class MainActivity extends CameraActivity {
         readingScreen.cancelled();
     }
     private void failReadingCapture(String message){
-        if(readingScreen==null||!readingAwaitingFrame.getAndSet(false))return;
+        if(readingScreen==null||
+            (!readingAwaitingFrame.getAndSet(false)&&!readingPreviewActive))return;
         readingProcessing=false;
         pendingPhoneFrameToken=-1;
         if(phoneController!=null)phoneController.cancelFreshFrame();
