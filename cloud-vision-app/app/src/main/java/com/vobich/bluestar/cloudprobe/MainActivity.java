@@ -205,6 +205,8 @@ public final class MainActivity extends CameraActivity {
     private String imagePolicy="auto";
     private String visionModel=VisionModelCatalog.DEFAULT;
     private String ocrModel=OcrModelCatalog.DEFAULT;
+    // A is the unchanged production OCR path; B/C are user-selected experiments.
+    private volatile String ocrSpeedMode=OcrSpeedExperiment.DEFAULT;
     private volatile boolean webSearchEnabled=SearchRoutePolicy.DEFAULT_ENABLED;
     private String lastCloudResult="";
 
@@ -903,6 +905,14 @@ public final class MainActivity extends CameraActivity {
     }
     String visionModelDescription(){return visionModel;}
     String ocrModelDescription(){return ocrModel;}
+    String ocrSpeedDescription(){return ocrSpeedMode;}
+    boolean selectOcrSpeedMode(String mode){
+        if(OcrSpeedExperiment.index(mode)<0)return false;
+        ocrSpeedMode=mode;
+        getSharedPreferences(PREFS,MODE_PRIVATE).edit()
+            .putString(OcrSpeedExperiment.PREF,mode).apply();
+        return true;
+    }
     boolean selectOcrModel(String id){
         if(OcrModelCatalog.indexOf(id)<0)return false;
         ocrModel=id;
@@ -1223,6 +1233,8 @@ public final class MainActivity extends CameraActivity {
         ocrModel=OcrModelCatalog.normalize(storedOcrModel);
         if(!ocrModel.equals(storedOcrModel))
             prefs.edit().putString(PREF_OCR_MODEL,ocrModel).apply();
+        ocrSpeedMode=OcrSpeedExperiment.normalize(
+            prefs.getString(OcrSpeedExperiment.PREF,OcrSpeedExperiment.DEFAULT));
         webSearchEnabled=prefs.getBoolean(SearchRoutePolicy.PREF,
             SearchRoutePolicy.DEFAULT_ENABLED);
         findingTarget=prefs.getString(PREF_FINDING_TARGET,"");
@@ -2417,6 +2429,13 @@ public final class MainActivity extends CameraActivity {
         final String model=OcrModelCatalog.forTask(
             targetToFind.isEmpty()&&TaskCatalog.OCR.equals(task.engine),
             visionModel,ocrModel);
+        // Snapshot mode at capture time; menu/scene/target/photo-followups
+        // are NEVER affected by the OCR playback experiment.
+        final String thisOcrMode=TaskCatalog.OCR.equals(task.engine)?
+            ocrSpeedMode:OcrSpeedExperiment.A;
+        if(diagnostics!=null&&TaskCatalog.OCR.equals(task.engine))
+            diagnostics.event("ocr","speed_mode",
+                OcrSpeedExperiment.diagnosticValue(thisOcrMode),"ok");
         final UsbFrameOrientation.Plan usbOrientation=usingPhoneCamera?null:
             UsbFrameOrientation.forSettings(previewRotation,previewMirror,
                 previewVerticalFlip,usbPreviewCorrectMirror);
@@ -2495,7 +2514,7 @@ public final class MainActivity extends CameraActivity {
                         int mode=index==0?TextToSpeech.QUEUE_FLUSH:TextToSpeech.QUEUE_ADD;
                         if(tts.speak(spoken,mode,null,"vision-"+token+"-"+index)
                             ==TextToSpeech.SUCCESS)delivered.incrementAndGet();
-                    }));
+                    }),thisOcrMode);
                 if(modelUsage!=null)modelUsage.recordAsync(result.model,result.serverModel,
                     result.promptTokens,result.completionTokens,true);
                 long overallMs=SystemClock.elapsedRealtime()-tapAtMs;
@@ -2509,8 +2528,13 @@ public final class MainActivity extends CameraActivity {
                     if(diagnostics!=null){
                         diagnostics.event("cloud","upload_ms",result.uploadMs,"ok");
                         diagnostics.event("cloud","network_ms",result.networkMs,"ok");
-                        diagnostics.event("cloud",TaskCatalog.OCR.equals(task.engine)?
-                            "response_headers_ms":"first_text_ms",result.firstTextMs,"ok");
+                        if(TaskCatalog.OCR.equals(task.engine)){
+                            diagnostics.event("cloud","response_headers_ms",
+                                result.responseHeadersMs,"ok");
+                            diagnostics.event("cloud","first_text_ms",result.firstTextMs,"ok");
+                            diagnostics.event("cloud","first_line_ready_ms",
+                                result.firstLineReadyMs,"ok");
+                        }else diagnostics.event("cloud","first_text_ms",result.firstTextMs,"ok");
                         diagnostics.event("cloud","first_speakable_ms",result.firstSpeakableMs,"ok");
                         diagnostics.event("capture","total_ms",overallMs,"ok");
                     }
@@ -2522,7 +2546,12 @@ public final class MainActivity extends CameraActivity {
                         " firstTextMs="+result.firstTextMs+
                         " firstSpeakableMs="+result.firstSpeakableMs);
                     setResultStatus("已识别："+task.name+" · 可按住AI对话追问");
-                    if(TaskCatalog.OCR.equals(task.engine)||delivered.get()==0)
+                    // C may already have enqueued completed lines. Do not
+                    // replay the whole OCR answer, which would duplicate speech.
+                    // A/B always speak the entire returned text exactly once.
+                    if((TaskCatalog.OCR.equals(task.engine)&&
+                            !OcrSpeedExperiment.earlySpeak(thisOcrMode))||
+                        delivered.get()==0)
                         speakForCapture(result.text,token,true,task);
                 });
             }catch(OcrResponseGate.NoReadableTextException noText){
