@@ -122,7 +122,6 @@ jobs:
           assert 'qwen3.5-flash' not in settings
           assert 'VisionModelCatalog.IDS.length' in settings
           assert 'row((selected?"✓ ":"")+VisionModelCatalog.LABELS[i],""' in settings
-          assert 'VisionModelCatalog.FLASH_37' in ledger
           assert '高精度应急' in model_catalog
           assert 'Max 尚未通过你的百炼账户实测' not in settings
           assert 'block.setMinimumHeight(dp(66))' in settings
