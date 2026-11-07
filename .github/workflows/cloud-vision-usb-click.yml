@@ -1,7 +1,7 @@
-name: Blue Star Guide 1.0.19 - RC20 OCR Three-Mode Speed Experiment
+name: Blue Star Guide 1.0.20 - RC21 Default Fast Line OCR Speech
 on:
   push:
-    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106, fix/bluestar-104-ocr-voice-empty-20261106, fix/bluestar-105-model-options-20261107, fix/bluestar-106-three-tier-models-20261107, fix/bluestar-107-compact-settings-20261107, fix/bluestar-108-voice-intent-text-followups-20261107, fix/bluestar-109-37flash-keep-plus-20261107, fix/bluestar-110-stop-finding-drag-grid-20261107, fix/bluestar-111-maxfast-remove-plus-drag-delete-20261107, fix/bluestar-112-usb-orientation-preview-jpeg-20261107, fix/bluestar-113-usb-lifecycle-trace-picture-controls-20261107, fix/bluestar-114-usb-auto-switch-launch-fps-20261107, fix/bluestar-115-cold-usb-auto-select-20261107, feat/bluestar-116-independent-ocr-model-choice-20261107, feat/bluestar-117-web-search-followup-20261107, fix/bluestar-118-voice-eye-scene-auto-capture-20261107, exp/bluestar-120-ocr-abc-stream-speed-20261107]
+    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106, fix/bluestar-104-ocr-voice-empty-20261106, fix/bluestar-105-model-options-20261107, fix/bluestar-106-three-tier-models-20261107, fix/bluestar-107-compact-settings-20261107, fix/bluestar-108-voice-intent-text-followups-20261107, fix/bluestar-109-37flash-keep-plus-20261107, fix/bluestar-110-stop-finding-drag-grid-20261107, fix/bluestar-111-maxfast-remove-plus-drag-delete-20261107, fix/bluestar-112-usb-orientation-preview-jpeg-20261107, fix/bluestar-113-usb-lifecycle-trace-picture-controls-20261107, fix/bluestar-114-usb-auto-switch-launch-fps-20261107, fix/bluestar-115-cold-usb-auto-select-20261107, feat/bluestar-116-independent-ocr-model-choice-20261107, feat/bluestar-117-web-search-followup-20261107, fix/bluestar-118-voice-eye-scene-auto-capture-20261107, exp/bluestar-120-ocr-abc-stream-speed-20261107, feat/bluestar-121-default-line-ocr-20261107]
     paths:
       - 'cloud-vision-app/**'
       - '.github/workflows/cloud-vision-usb-click.yml'
@@ -325,10 +325,10 @@ jobs:
           assert 'askAboutCurrentImage(transcript,action.type==VoiceAction.Type.REVIEW_IMAGE)' in activity
           assert 'TaskCatalog.OCR.equals(task.engine)' in cloud_client
           assert 'TargetVisionClient.inspect(' in activity
-          # RC20: OCR-only A/B/C test cannot affect general vision or USB.
+          # RC21: only OCR playback is changed; general vision, voice and USB must remain unchanged.
           speed=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/OcrSpeedExperiment.java').read_text()
           lines=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/OcrLineChunks.java').read_text()
-          assert 'static final String DEFAULT=A;' in speed
+          assert 'static final String DEFAULT=C;' in speed
           assert 'cloud_ocr_speed_experiment_v1' in speed
           assert 'OcrSpeedExperiment.normalize(' in activity
           assert 'OcrSpeedExperiment.PREF' in activity
@@ -346,9 +346,12 @@ jobs:
           assert 'if(OcrSpeedExperiment.earlySpeak(ocrSpeedMode))' in cloud_client
           assert "if(ch=='\\n'||ch=='\\r')" in lines
           assert 'private void ocrSpeed()' in settings
-          assert 'case "ocr-speed":heading="文字识别速度实验"' in settings
-          assert 'row("文字识别速度实验 · "+app.ocrSpeedDescription()' in settings
+          assert 'case "ocr-speed":heading="文字朗读方式"' in settings
+          assert 'row("文字朗读方式 · "+(OcrSpeedExperiment.C.equals(app.ocrSpeedDescription())' in settings
           assert 'app.selectOcrSpeedMode(id);' in settings
+          assert 'OcrSpeedExperiment.C,OcrSpeedExperiment.A' in settings
+          assert 'OcrSpeedExperiment.B' not in settings
+          assert 'if(!(OcrSpeedExperiment.A.equals(mode)||OcrSpeedExperiment.C.equals(mode)))return false;' in activity
           assert 'OcrModelCatalog.PROMPT' in tasks
           assert 'SearchRoutePolicy.allow(task.id,task.engine,model,allowSearch)' in cloud_client
           # RC14: USB diagnostics use native texture buffer updates and 5Hz
@@ -475,8 +478,8 @@ jobs:
           camera2=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/InternalCameraController.java').read_text()
           assert 'CameraManager' in camera2 and 'CameraCaptureSession' in camera2
           assert 'Nv21Rotation.rotate(' in camera2
-          assert "versionCode 29" in app and "versionName '1.0.19-rc20'" in app
-          assert "applicationIdSuffix '.rc20'" in app
+          assert "versionCode 30" in app and "versionName '1.0.20-rc21'" in app
+          assert "applicationIdSuffix '.rc21'" in app
           assert Path('cloud-vision-app/app/src/main/res/drawable-nodpi/bluestar_globe.png').is_file()
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('ic_launcher.webp'))
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('bluestar_icon.webp'))
@@ -538,7 +541,7 @@ jobs:
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.VisionModelCatalogTest
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.OcrModelCatalogTest
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.OcrSpeedExperimentTest
-          echo 'RC20_OCR_A_B_C_DEFAULT_A_NO_DUPLICATE=PASS'
+          echo 'RC21_OCR_C_DEFAULT_A_FALLBACK_NO_DUPLICATE=PASS'
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.SearchRoutePolicyTest
       - name: Patch pinned Android 16 USB permission and native sampling safely
         run: |
@@ -583,28 +586,28 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p cloud-vision-artifact
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.19_RC20_arm64.apk
-          test -s cloud-vision-artifact/BlueStar_Guide_1.0.19_RC20_arm64.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.20_RC21_arm64.apk
+          test -s cloud-vision-artifact/BlueStar_Guide_1.0.20_RC21_arm64.apk
           (cd cloud-vision-artifact && sha256sum *.apk > SHA256SUMS.txt)
           unzip -Z1 cloud-vision-artifact/*.apk > cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' cloud-vision-artifact/apk-entries.txt
           cd cloud-vision-app
-          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.19_RC20_arm64.apk
-          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.19_RC20_arm64.apk
+          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.20_RC21_arm64.apk
+          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.20_RC21_arm64.apk
           cd ..
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           test -x "$AAPT"
-          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.19_RC20_arm64.apk > cloud-vision-artifact/badging.txt
+          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.20_RC21_arm64.apk > cloud-vision-artifact/badging.txt
           grep -F "application-label:'Blue Star Guide'" cloud-vision-artifact/badging.txt
-          grep -F "package: name='com.vobich.bluestar.rc20'" cloud-vision-artifact/badging.txt
+          grep -F "package: name='com.vobich.bluestar.rc21'" cloud-vision-artifact/badging.txt
           grep -q 'application-icon-' cloud-vision-artifact/badging.txt
           grep -Fxq 'res/raw/c_metal_clack_ding.mp3' cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'res/raw/voice_send_whoosh.wav' cloud-vision-artifact/apk-entries.txt
           ! grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx' cloud-vision-artifact/apk-entries.txt
-          echo 'RC20 A/B/C optical character reading speed experiment: A original full response (default), B OCR SSE streamed receive but final-only speech, C line-delimited OCR SSE reads each complete line once, never full duplicate. One photo one cloud request per test, no OCR prompt/model/resolution changes. New numeric anonymous event timings: OCR mode, first stream content, first completed line, final cloud duration and TTS callback. All RC19 voice auto-scene capture, RC18 web-chat, RC17 four OCR models, native UVC FPS/JPEG rotations and original voice/TTS/icon preserved; real device timing and quality checks still required.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'RC21 promotion of user-tested RC20 mode C into RC19 baseline: default OCR SSE streams one complete line at a time to TTS, original full-result A remains an optional fallback, no B option in UI. Same single JPEG single cloud request, selected OCR model/prompt, no changes to native UVC, camera orientation, voice actions, search or audio assets. RC20 real phone first TTS callback 1650ms versus A 5210ms in one 720p comparison; user reports satisfaction across more repetitions, true loudspeaker and new package device acceptance pending.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload 1.0 release candidate APK (debug-signed, device testing)
         uses: actions/upload-artifact@v4
         with:
-          name: blue-star-guide-1-0-19-rc20-arm64
+          name: blue-star-guide-1-0-20-rc21-arm64
           path: cloud-vision-artifact/*
           retention-days: 7

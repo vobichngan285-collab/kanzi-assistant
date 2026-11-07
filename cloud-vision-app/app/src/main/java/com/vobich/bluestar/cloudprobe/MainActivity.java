@@ -205,7 +205,7 @@ public final class MainActivity extends CameraActivity {
     private String imagePolicy="auto";
     private String visionModel=VisionModelCatalog.DEFAULT;
     private String ocrModel=OcrModelCatalog.DEFAULT;
-    // A is the unchanged production OCR path; B/C are user-selected experiments.
+    // RC21: verified C is default OCR playback; A remains the user-selectable compatibility fallback.
     private volatile String ocrSpeedMode=OcrSpeedExperiment.DEFAULT;
     private volatile boolean webSearchEnabled=SearchRoutePolicy.DEFAULT_ENABLED;
     private String lastCloudResult="";
@@ -907,7 +907,7 @@ public final class MainActivity extends CameraActivity {
     String ocrModelDescription(){return ocrModel;}
     String ocrSpeedDescription(){return ocrSpeedMode;}
     boolean selectOcrSpeedMode(String mode){
-        if(OcrSpeedExperiment.index(mode)<0)return false;
+        if(!(OcrSpeedExperiment.A.equals(mode)||OcrSpeedExperiment.C.equals(mode)))return false;
         ocrSpeedMode=mode;
         getSharedPreferences(PREFS,MODE_PRIVATE).edit()
             .putString(OcrSpeedExperiment.PREF,mode).apply();
@@ -2429,8 +2429,8 @@ public final class MainActivity extends CameraActivity {
         final String model=OcrModelCatalog.forTask(
             targetToFind.isEmpty()&&TaskCatalog.OCR.equals(task.engine),
             visionModel,ocrModel);
-        // Snapshot mode at capture time; menu/scene/target/photo-followups
-        // are NEVER affected by the OCR playback experiment.
+        // Snapshot OCR playback policy at capture time; menu/scene/target/photo-followups
+        // are NEVER affected by OCR line streaming.
         final String thisOcrMode=TaskCatalog.OCR.equals(task.engine)?
             ocrSpeedMode:OcrSpeedExperiment.A;
         if(diagnostics!=null&&TaskCatalog.OCR.equals(task.engine))
@@ -2546,7 +2546,7 @@ public final class MainActivity extends CameraActivity {
                         " firstTextMs="+result.firstTextMs+
                         " firstSpeakableMs="+result.firstSpeakableMs);
                     setResultStatus("已识别："+task.name+" · 可按住AI对话追问");
-                    // C may already have enqueued completed lines. Do not
+                    // C already enqueues completed OCR lines. Do not
                     // replay the whole OCR answer, which would duplicate speech.
                     // A/B always speak the entire returned text exactly once.
                     if((TaskCatalog.OCR.equals(task.engine)&&

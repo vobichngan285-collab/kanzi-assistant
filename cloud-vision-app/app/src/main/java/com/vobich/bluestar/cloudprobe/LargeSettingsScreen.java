@@ -105,7 +105,7 @@ final class LargeSettingsScreen {
             case "cloud":heading="云端 AI";break;
             case "models":heading="视觉模型选择";break;
             case "ocr-models":heading="文字识别模型选择";break;
-            case "ocr-speed":heading="文字识别速度实验";break;
+            case "ocr-speed":heading="文字朗读方式";break;
             case "usage":heading="模型用量统计";break;
             case "usage-clear":heading="清空用量记录";break;
             case "key":heading="API Key";break;
@@ -460,8 +460,8 @@ final class LargeSettingsScreen {
                  render(history.get(history.size()-1));});
         row("文字识别模型 · "+OcrModelCatalog.label(app.ocrModelDescription()),
             "",()->navigate("ocr-models",""));
-        row("文字识别速度实验 · "+app.ocrSpeedDescription(),
-            "",()->navigate("ocr-speed",""));
+        row("文字朗读方式 · "+(OcrSpeedExperiment.C.equals(app.ocrSpeedDescription())?
+                "快速逐行":"兼容全文"),"",()->navigate("ocr-speed",""));
         note("允许三个视觉模型在语音聊天和照片追问中按需搜索网络，" +
             "不会强制搜索；朗读文字、普通拍照识别及寻找目标不联网。" +
             "可能增加等待时间和使用费用。");
@@ -491,22 +491,13 @@ final class LargeSettingsScreen {
     }
 
     private void ocrSpeed(){
-        note("仅测试「朗读文字」。默认 A 是原来的完整结果朗读。");
-        for(int i=0;i<OcrSpeedExperiment.IDS.length;i++){
-            final String id=OcrSpeedExperiment.IDS[i];
+        note("默认快速逐行：识别到完整一行就开始朗读。");
+        for(String id:new String[]{OcrSpeedExperiment.C,OcrSpeedExperiment.A}){
             final boolean selected=id.equals(app.ocrSpeedDescription());
-            row((selected?"✓ ":"")+OcrSpeedExperiment.LABELS[i],"",()->{
-                app.selectOcrSpeedMode(id);
-                render(history.get(history.size()-1));
-            });
+            row((selected?"✓ ":"")+OcrSpeedExperiment.LABELS[OcrSpeedExperiment.index(id)],"",
+                ()->{app.selectOcrSpeedMode(id);render(history.get(history.size()-1));});
         }
-        note("A：完整返回才朗读。\nB：流式接收、完整返回后朗读。"+
-            "\nC：收到完整一行便朗读；模型不分行时仍等到最后。"+
-            "\n同一模型、同一分辨率、同一场景，各模式至少3次。"+
-            "\n运行诊断看：ocr.speed_mode（0=A，1=B，2=C）；"+
-            "cloud.first_text_ms；cloud.first_line_ready_ms；"+
-            "cloud.network_ms；tts.first_audio_callback_ms。"+
-            "\nTTS回调不等于扬声器真实发声。");
+        note("兼容全文：等待识别全部结束才朗读。两种方式每次都仅发送一张照片、调用一次OCR模型；无换行时快速逐行也会等到末尾。");
     }
 
     private void ocrModels(){

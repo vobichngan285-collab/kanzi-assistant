@@ -47,7 +47,7 @@ final class CloudVisionClient {
             OcrSpeedExperiment.A);
     }
 
-    /** Exactly one image request, with the OCR experiment mode captured at tap time. */
+    /** Exactly one image request, with OCR playback policy captured at tap time. */
     static Result recognize(byte[] jpeg,String key,TaskCatalog.Task task,
                             String model,PartListener listener,String ocrSpeedMode)
                             throws Exception {

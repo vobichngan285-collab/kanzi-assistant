@@ -11,18 +11,18 @@ public final class OcrSpeedExperimentTest {
     }
     public static void main(String[] args){
         ok(OcrSpeedExperiment.IDS.length==3,"exactly three modes");
-        ok(OcrSpeedExperiment.DEFAULT.equals(OcrSpeedExperiment.A),"A default");
+        ok(OcrSpeedExperiment.DEFAULT.equals(OcrSpeedExperiment.C),"C default for RC21");
         ok(!OcrSpeedExperiment.streaming("A"),"A synchronous");
         ok(OcrSpeedExperiment.streaming("B")&&!OcrSpeedExperiment.earlySpeak("B"),"B no early playback");
         ok(OcrSpeedExperiment.streaming("C")&&OcrSpeedExperiment.earlySpeak("C"),"C early playback");
         for(int i=0;i<3;i++){
             String x=OcrSpeedExperiment.IDS[i];
-            ok(OcrSpeedExperiment.normalize(x).equals(x),"valid "+x);
+            ok(OcrSpeedExperiment.normalize(x).equals(OcrSpeedExperiment.B.equals(x)?OcrSpeedExperiment.C:x),"public normalization "+x);
             ok(OcrSpeedExperiment.index(x)==i,"index "+x);
             ok(OcrSpeedExperiment.diagnosticValue(x)==i,"numeric diagnostic "+x);
         }
         for(String invalid:new String[]{null,"","D","a","qwen-vl-ocr"})
-            ok(OcrSpeedExperiment.normalize(invalid).equals("A"),"invalid -> A");
+            ok(OcrSpeedExperiment.normalize(invalid).equals("C"),"invalid -> C");
         OcrLineChunks chunks=new OcrLineChunks();
         List<String> got=new ArrayList<>();
         chunks.append("门诊",got::add);same(got);
@@ -41,6 +41,6 @@ public final class OcrSpeedExperimentTest {
         blanks.append("\n\r \n\n  第一行  \n第二",only::add);same(only,"第一行");
         blanks.append("行\r\n",only::add);same(only,"第一行","第二行");
         blanks.finish(only::add);same(only,"第一行","第二行");
-        System.out.println("RC20_OCR_ABC_STREAM_LINE_ORDER_NO_DUPLICATION=PASS");
+        System.out.println("RC21_OCR_DEFAULT_C_COMPAT_A_LINE_ORDER_NO_DUPLICATION=PASS");
     }
 }
