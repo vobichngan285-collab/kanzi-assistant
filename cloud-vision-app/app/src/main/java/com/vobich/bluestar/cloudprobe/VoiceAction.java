@@ -85,8 +85,8 @@ final class VoiceAction {
             return true;
         // Conservative ASR correction for the observed "找门" -> "掌门":
         // only while actively searching for 门 and with an explicit cancel verb.
-        return "门".equals(activeTarget.trim())&&
-            v.matches(".*(取消|停止|结束|撤销|关闭|关掉)(掉|一下|了)?.*掌门.*");
+        return "门".equals(activeTarget.trim())&&v.contains("掌门")&&
+            v.matches(".*(取消|停止|结束|撤销|关闭|关掉).*");
     }
 
     private static boolean isReadTextRequest(String v){
