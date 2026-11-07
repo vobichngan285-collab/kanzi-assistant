@@ -1297,3 +1297,13 @@
 - **实现三：任务拖动删除**：延续 RC11 真正 Android `startDragAndDrop` 与跨页排序。长按 480ms 后显出红色“拖到这里删除任务”目标，释放时还会弹二次确认；取消不删除。自定义任务确认后永久删除；五个系统预设仅持久隐藏，设置→任务管理里可恢复而不丢原提示词；“＋新建任务”不可删除；阻止隐藏最后一个可运行任务；删除选中任务时切到有效任务，避免保存无效选中 ID。保留顺序 key `task_grid_order_v1`，隐藏使用独立 key `task_grid_hidden_presets_v1`。
 - **版本源码与检查**：RC12 代码和 GitHub CI workflow 已提交至该分支，触发源码 SHA `c9fec2edfc881098fe896d2cf3c669cf5cbafbfd`；GitHub Actions **[42336813720](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42336813720)** 已确认静态/隐私检查和纯 Java 回归测试通过，Android ARM64 Gradle APK 构建尚在运行，**当前不可声称已构建成功或已发布 APK**。专门的 RC12 源审计文档：https://github.com/vobichngan285-collab/kanzi-assistant/blob/fix/bluestar-111-maxfast-remove-plus-drag-delete-20261107/docs/bluestar-v1011-rc12-maxfast-no-plus-drag-delete-20261107.md
 - **后续必须核实**：等待 CI 实际完成后核对 run/source commit、APK 真正工件 SHA256、尺寸、包名、资源，若通过再创建不重新签名/编译的 GitHub Release；追加最终构建/发布结果。vivo X200 Pro 真机仍需 A/B Max 首段朗读、模型旧选择迁移、删除取消/确认、预设恢复、跨页排序、摄像头和 TTS 回归。报告不能将 CI 成功当成真机验收。
+
+
+### 2026-11-07 — 蓝星向导 1.0.11 RC12 最终构建与公开 APK 发行核实（接上文，本轮完成）
+
+- **真实构建结论**：原仓库独立分支 `fix/bluestar-111-maxfast-remove-plus-drag-delete-20261107`，源代码 SHA **`c9fec2edfc881098fe896d2cf3c669cf5cbafbfd`**；Actions **[42336813720](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42336813720)** = **completed/success**，涵盖 RC12 模型菜单与 Max 非思考参数静态审查、任务拖放/隐藏恢复代码审查、JVM 语音/图片/模型/任务排序回归、Gradle Android ARM64/原生 UVC 构建、应用图标和两种音效、APK 包信息。CI Artifact **13559851670**，名称 `blue-star-guide-1-0-11-rc12-arm64`。
+- **真实 APK 安全发布**：新增仅发布已成功 CI 原 APK 的独立 GitHub workflow；Actions **[42337102034](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42337102034)** = **completed/success**，核实原 CI 运行状态/源码 SHA、`sha256sum -c SHA256SUMS.txt`、APK ZIP CRC、原生 ARM64 UVC 库、金属咔叮和嗖声音效、`com.vobich.bluestar.rc12` / versionCode21 / versionName `1.0.11-rc12`，**没有重新编译或签名**，只上传成功 CI 原 APK。
+- **Release 确认**：tag `blue-star-guide-cloud-rc12-20261107` 已公开，`draft=false`、`prerelease=true`，APK Asset `state=uploaded`；APK `BlueStar_Guide_1.0.11_RC12_arm64.apk` 实际大小 **8,567,980 bytes**，GitHub SHA256 **`a602d31a540fb00b6ddd2512ed614aef065dacb32fb5321ab20fc1acb1bcddb3`**。
+- **可复制给用户浏览器的直链（APK 非 ZIP）**：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/blue-star-guide-cloud-rc12-20261107/BlueStar_Guide_1.0.11_RC12_arm64.apk
+- **审计文档已补充最终结果**：https://github.com/vobichngan285-collab/kanzi-assistant/blob/fix/bluestar-111-maxfast-remove-plus-drag-delete-20261107/docs/bluestar-v1011-rc12-maxfast-no-plus-drag-delete-20261107.md
+- **真机待测**：在 vivo X200 Pro 比较同图 Max 快速与 Flash 的首句声音、准确性、云端时延；检查 Plus 不在菜单内、RC12 旧 Plus 设置迁移策略；长按任务拖动删除（取消不删、确认删自定义、隐藏预设、设置恢复、跨页排序、当前任务删除切换、最后可用任务保护）。CI 不能代替真机测试，不能声称用户实际设备已验收。RC12 为独立调试包，不会继承 RC11 沙盒的 API Key、自定义任务数据。
