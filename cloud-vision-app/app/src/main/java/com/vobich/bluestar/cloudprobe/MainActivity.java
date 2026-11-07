@@ -2397,8 +2397,11 @@ public final class MainActivity extends CameraActivity {
         final String source=usingPhoneCamera?
             (phoneFrontFacing?"手机前置":"手机后置"):"USB 外接";
         final String policy=imagePolicy;
+        // A "find target" voice intent remains a visual task even if the
+        // currently selected desktop preset happens to be 朗读文字.
         final String model=OcrModelCatalog.forTask(
-            TaskCatalog.OCR.equals(task.engine),visionModel,ocrModel);
+            targetToFind.isEmpty()&&TaskCatalog.OCR.equals(task.engine),
+            visionModel,ocrModel);
         final UsbFrameOrientation.Plan usbOrientation=usingPhoneCamera?null:
             UsbFrameOrientation.forSettings(previewRotation,previewMirror,
                 previewVerticalFlip,usbPreviewCorrectMirror);
