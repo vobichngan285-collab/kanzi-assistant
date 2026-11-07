@@ -2,6 +2,8 @@ package com.vobich.bluestar.cloudprobe;
 
 import android.app.Activity;
 import android.app.Dialog;
+import androidx.appcompat.app.AlertDialog;
+import android.widget.Toast;
 import android.content.ClipData;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
@@ -27,13 +29,14 @@ import java.util.Map;
 
 /**
  * Frameless 3x3 task launcher. Tap selects, swipe flips pages, and holding a
- * tile starts native Android drag-and-drop. Dragging only changes task IDs'
- * screen order, never the selected task, its prompt, its engine or camera state.
+ * tile starts native Android drag-and-drop. Grid drop reorders; explicit red
+ * target drop prompts before deleting custom tasks or hiding presets.
  */
 final class TaskDesktopOverlay {
     interface Listener{
         void selected(TaskCatalog.Task task);
         void createTask();
+        void removed(TaskCatalog.Task task);
     }
     private static final long HOLD_MS=480L;
     private final Activity activity;
@@ -44,9 +47,9 @@ final class TaskDesktopOverlay {
     private final Listener listener;
     private LinearLayout center;
     private GridLayout grid;
-    private TextView pageLabel;
+    private TextView pageLabel,deleteZone;
     private int page;
-    private final int pages;
+    private int pages;
     private Runnable pendingHold;
     private View holdTarget;
     private boolean dragging;
@@ -148,6 +151,14 @@ final class TaskDesktopOverlay {
         next.setOnDragListener((view,event)->onPageArrowDrag(event,1));
         center.addView(pager);
         pager.setVisibility(pages>1?View.VISIBLE:View.GONE);
+        deleteZone=label("拖到这里删除任务",18,Color.WHITE);
+        deleteZone.setBackground(bg(0xFF713044,0));
+        deleteZone.setContentDescription("拖到这里删除任务，松手后确认");
+        deleteZone.setVisibility(View.GONE);
+        deleteZone.setOnDragListener((view,event)->onDeleteDrag(event));
+        LinearLayout.LayoutParams deleteLp=new LinearLayout.LayoutParams(-1,dp(64));
+        deleteLp.topMargin=dp(8);
+        center.addView(deleteZone,deleteLp);
         overlay.addView(center,new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -233,6 +244,51 @@ final class TaskDesktopOverlay {
         render(page);
     }
 
+    private boolean onDeleteDrag(DragEvent event){
+        Object state=event.getLocalState();
+        int source=state instanceof Integer?((Integer)state).intValue():-1;
+        boolean valid=source>=0&&source<items.size()&&items.get(source)!=null;
+        switch(event.getAction()){
+            case DragEvent.ACTION_DRAG_STARTED:
+                return dragging&&valid;
+            case DragEvent.ACTION_DRAG_ENTERED:
+            case DragEvent.ACTION_DRAG_LOCATION:
+                if(valid)deleteZone.setBackground(bg(0xFFAD3547,0));
+                return true;
+            case DragEvent.ACTION_DRAG_EXITED:
+                deleteZone.setBackground(bg(0xFF713044,0));
+                return true;
+            case DragEvent.ACTION_DROP:
+                if(!valid)return false;
+                confirmRemoval(items.get(source));
+                return true;
+            case DragEvent.ACTION_DRAG_ENDED:
+                deleteZone.setBackground(bg(0xFF713044,0));
+                deleteZone.setVisibility(View.GONE);
+                return true;
+            default:return true;
+        }
+    }
+
+    private void confirmRemoval(TaskCatalog.Task task){
+        if(task==null)return; // Never delete the new-task entry.
+        new AlertDialog.Builder(activity).setTitle(
+            task.custom?"删除自定义任务："+task.name:"隐藏预设任务："+task.name)
+            .setMessage(task.custom?
+                "删除后无法恢复这个自定义任务。确认删除吗？":
+                "只从任务宫格隐藏，预设提示词保留，可在设置 > 任务管理恢复。")
+            .setNegativeButton("取消",null)
+            .setPositiveButton(task.custom?"确认删除":"确认隐藏",(d,which)->{
+                if(task.custom)TaskCatalog.remove(activity,task.id);
+                else if(!TaskCatalog.hidePreset(activity,task.id)){
+                    Toast.makeText(activity,"至少保留一个可用任务",Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                listener.removed(task);
+                dialog.dismiss();
+            }).show();
+    }
+
     private boolean onGridDrag(DragEvent event){
         switch(event.getAction()){
             case DragEvent.ACTION_DRAG_STARTED:
@@ -297,13 +353,18 @@ final class TaskDesktopOverlay {
                             if(!dialog.isShowing()||dragging)return;
                             dragFrom=index;
                             dragging=true;
+                            if(deleteZone!=null)deleteZone.setVisibility(
+                                items.get(index)==null?View.GONE:View.VISIBLE);
                             ClipData data=ClipData.newPlainText("bluestar-task",String.valueOf(index));
                             boolean launched=v.startDragAndDrop(data,
                                 new View.DragShadowBuilder(icon),Integer.valueOf(index),0);
                             if(launched){
                                 longStarted[0]=true;
                                 v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
-                            }else{dragging=false;dragFrom=-1;}
+                            }else{
+                                dragging=false;dragFrom=-1;
+                                if(deleteZone!=null)deleteZone.setVisibility(View.GONE);
+                            }
                         };
                         pendingHold=hold;holdTarget=v;
                         v.postDelayed(hold,HOLD_MS);
@@ -358,7 +419,7 @@ final class TaskDesktopOverlay {
             name.setMaxLines(2);name.setPadding(dp(2),dp(7),dp(2),0);
             slot.addView(name);
             slot.setContentDescription((creation?"新建自定义任务":task.name)+
-                (active?"，当前任务":"")+"；短按选择，长按拖动调整顺序");
+                (active?"，当前任务":"")+"；短按选择，长按拖动排序或删除");
             slot.setFocusable(true);slot.setClickable(true);
             slot.setOnClickListener(v->{
                 if(dragging)return;

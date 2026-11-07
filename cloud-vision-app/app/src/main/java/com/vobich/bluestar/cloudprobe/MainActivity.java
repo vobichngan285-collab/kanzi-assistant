@@ -409,6 +409,14 @@ public final class MainActivity extends CameraActivity {
                     setResultStatus("已选择："+task.name);
                 }
                 @Override public void createTask(){editTask(null);}
+                @Override public void removed(TaskCatalog.Task task){
+                    if(currentTask!=null&&task.id.equals(currentTask.id)){
+                        invalidate();
+                        if(!findingTarget.isEmpty())setFindingTarget("");
+                        refreshTask(TaskCatalog.selectedId(MainActivity.this));
+                    }
+                    setResultStatus((task.custom?"已删除：":"已隐藏：")+task.name);
+                }
             });
     }
 
@@ -456,13 +464,23 @@ public final class MainActivity extends CameraActivity {
         List<TaskCatalog.Task> tasks=TaskCatalog.all(this);
         String[] names=new String[tasks.size()+1];
         for(int i=0;i<tasks.size();i++)
-            names[i]=(tasks.get(i).custom?"✦ ":"预设 · ")+tasks.get(i).name;
+            names[i]=(TaskCatalog.isPresetHidden(this,tasks.get(i).id)?"已隐藏 · ":"")+
+                (tasks.get(i).custom?"✦ ":"预设 · ")+tasks.get(i).name;
         names[tasks.size()]="＋ 新建自定义任务";
         new AlertDialog.Builder(this).setTitle("任务管理 · 编辑AI提示词")
             .setItems(names,(d,index)->{
                 if(index==tasks.size()){editTask(null);return;}
                 TaskCatalog.Task task=tasks.get(index);
                 if(task.custom)showCustomTaskEditActions(task);
+                else if(TaskCatalog.isPresetHidden(this,task.id))
+                    new AlertDialog.Builder(this).setTitle(task.name)
+                        .setItems(new String[]{"恢复显示到任务宫格","编辑提示词"},
+                            (d2,option)->{
+                                if(option==0){
+                                    TaskCatalog.restoreHiddenPreset(this,task.id);
+                                    toastShort("已恢复："+task.name);
+                                }else editPresetTask(task);
+                            }).show();
                 else editPresetTask(task);
             }).setNegativeButton("关闭",null).show();
     }
@@ -1012,7 +1030,7 @@ public final class MainActivity extends CameraActivity {
         // Legacy selector: the primary large-text settings page uses a solid dark panel.
         int selected=Math.max(0,VisionModelCatalog.indexOf(visionModel));
         new AlertDialog.Builder(this).setTitle("视觉模型")
-            .setMessage("超省3.7、日常3.8、稳定Plus、应急Max四选一。Max仅手动使用，费用较高；失败不自动切换。文字朗读固定使用qwen-vl-ocr。")
+            .setMessage("超省3.7、日常3.8、稳定Plus、应急Max三选一。Max仅手动使用，费用较高；失败不自动切换。文字朗读固定使用qwen-vl-ocr。")
             .setSingleChoiceItems(VisionModelCatalog.LABELS,selected,(d,i)->{
                 selectVisionModel(VisionModelCatalog.IDS[i]);
                 d.dismiss();

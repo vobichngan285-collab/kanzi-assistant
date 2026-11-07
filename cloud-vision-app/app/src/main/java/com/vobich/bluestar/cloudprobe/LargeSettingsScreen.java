@@ -255,7 +255,8 @@ final class LargeSettingsScreen {
     }
     private void tasks(){
         for(TaskCatalog.Task task:TaskCatalog.all(app)){
-            String label=(task.custom?"★ ":"")+" "+task.name;
+            String label=(TaskCatalog.isPresetHidden(app,task.id)?"已隐藏 · ":"")+
+                (task.custom?"★ ":"")+" "+task.name;
             row(label,task.custom?"自定义任务 · 可编辑名称、图标、提示词":
                 "系统预设 · 可修改AI提示词、恢复默认",
                 ()->navigate(task.custom?"custom":"preset",task.id));
@@ -322,6 +323,12 @@ final class LargeSettingsScreen {
                 back();
             }catch(IllegalArgumentException e){prompt.setError(e.getMessage());}
         });
+        if(!custom&&TaskCatalog.isPresetHidden(app,task.id))
+            action("恢复显示到任务宫格",()->{
+                TaskCatalog.restoreHiddenPreset(app,task.id);
+                app.toastShort("已恢复："+task.name);
+                back();
+            });
         if(!custom)action("恢复系统默认提示词",()->{
             TaskCatalog.restorePreset(app,task.id);
             app.refreshSelectedTask(TaskCatalog.selectedId(app));

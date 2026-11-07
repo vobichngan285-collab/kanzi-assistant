@@ -31,6 +31,12 @@ public final class TaskOrderTest {
         check(shifted.get(12).equals("user-0")&&shifted.get(0).equals("user-1"),
             "drag across pages");
         check(TaskOrder.move(shifted,12,0).equals(many),"return across pages");
+        // Hidden presets do not reappear through stale saved task ordering.
+        equal(TaskOrder.reconcile(ids("shop","ocr",CREATE,"hospital"),
+            ids("ocr",CREATE,"hospital")),"ocr",CREATE,"hospital");
+        // Restored presets reuse their original IDs and persisted order.
+        equal(TaskOrder.reconcile(ids("shop","ocr",CREATE),
+            ids("ocr","shop",CREATE)),"shop","ocr",CREATE);
         // Moves do not mutate the catalog or its definitions.
         equal(base,"ocr","menu","hospital","shop","product",CREATE);
         boolean rejected=false;
