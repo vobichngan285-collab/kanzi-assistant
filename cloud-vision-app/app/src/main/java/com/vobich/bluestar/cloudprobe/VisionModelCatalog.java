@@ -1,17 +1,20 @@
 package com.vobich.bluestar.cloudprobe;
 
-/** Whitelist of user-selectable image-question models (OCR stays qwen-vl-ocr). */
+/**
+ * Exactly three user-visible visual modes. OCR and ASR have their own fixed
+ * engines and must never appear as interchangeable visual providers.
+ */
 final class VisionModelCatalog {
-    static final String PLUS = "qwen3-vl-plus";
-    static final String FLASH_37 = "qwen3.7-flash";
-    static final String FLASH_35 = "qwen3.5-flash";
     static final String FLASH_38 = "qwen3.8-flash";
-    static final String[] IDS = {PLUS, FLASH_37, FLASH_35, FLASH_38};
+    static final String PLUS = "qwen3-vl-plus";
+    static final String MAX_38 = "qwen3.8-max";
+    static final String DEFAULT = FLASH_38;
+
+    static final String[] IDS = {FLASH_38, PLUS, MAX_38};
     static final String[] LABELS = {
-        "qwen3-vl-plus（已验证可用 · 稳定备用）",
-        "qwen3.7-flash（低成本 · 待连接测试）",
-        "qwen3.5-flash（低成本 · 待连接测试）",
-        "qwen3.8-flash（较新的 Flash · 待连接测试）"
+        "日常 · Qwen3.8-Flash",
+        "稳定备用 · Qwen3-VL-Plus",
+        "高精度应急 · Qwen3.8-Max"
     };
 
     private VisionModelCatalog() {}
@@ -20,11 +23,20 @@ final class VisionModelCatalog {
         for (int i=0; i<IDS.length; i++) if (IDS[i].equals(value)) return i;
         return -1;
     }
-    /** Broken historical qwen3-vl-flash preference is deliberately never retried. */
+
+    /**
+     * Never retain removed models: qwen3-vl-flash, qwen3.5-flash,
+     * qwen3.7-flash. Migrating a stored choice does NOT issue an API request.
+     */
     static String normalize(String value) {
-        return indexOf(value)<0 ? PLUS : value;
+        return indexOf(value)<0 ? DEFAULT : value;
     }
+
     static boolean isBudgetFlash(String value) {
-        return !PLUS.equals(normalize(value));
+        return FLASH_38.equals(value);
+    }
+
+    static boolean isEmergencyMax(String value) {
+        return MAX_38.equals(value);
     }
 }
