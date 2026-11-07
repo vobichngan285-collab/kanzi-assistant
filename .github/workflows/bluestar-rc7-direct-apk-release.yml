@@ -1,0 +1,74 @@
+name: Publish Verified RC7 Three-Tier APK to GitHub Release
+on:
+  push:
+    branches: [fix/bluestar-106-three-tier-models-20261107]
+    paths: ['.github/workflows/bluestar-rc7-direct-apk-release.yml']
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish-byte-verified-apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Check successful original RC7 build and exact source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_id=42324116996
+          conclusion="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '.conclusion')"
+          commit="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '.head_sha')"
+          test "$conclusion" = success
+          test "$commit" = 8756eba92d4feb5db52dc1a6ab4127a73123b098
+          echo 'Original RC7 test/build workflow passed'
+
+      - name: Download immutable original RC7 artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p downloaded
+          gh run download 42324116996 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name blue-star-guide-1-0-6-rc7-arm64 \
+            --dir downloaded
+          test -s downloaded/BlueStar_Guide_1.0.6_RC7_arm64.apk
+          test -s downloaded/SHA256SUMS.txt
+
+      - name: Inspect original APK without rebuilding or re-signing
+        run: |
+          set -euo pipefail
+          cd downloaded
+          sha256sum -c SHA256SUMS.txt
+          echo "956de9483da4cd0b8c49087384b4d4d997d3d609228409d56e213bfb4b078152  BlueStar_Guide_1.0.6_RC7_arm64.apk" | sha256sum -c -
+          test "$(stat -c%s BlueStar_Guide_1.0.6_RC7_arm64.apk)" = 8567972
+          unzip -tq BlueStar_Guide_1.0.6_RC7_arm64.apk >/dev/null
+          unzip -Z1 BlueStar_Guide_1.0.6_RC7_arm64.apk | grep -Fx 'lib/arm64-v8a/libUVCCamera.so'
+          unzip -Z1 BlueStar_Guide_1.0.6_RC7_arm64.apk | grep -Fx 'res/raw/c_metal_clack_ding.mp3'
+          unzip -Z1 BlueStar_Guide_1.0.6_RC7_arm64.apk | grep -Fx 'res/raw/voice_send_whoosh.wav'
+          grep -Fq "package: name='com.vobich.bluestar.rc7'" badging.txt
+          grep -Fq "versionName='1.0.6-rc7'" badging.txt
+          grep -Fq "application-label:'Blue Star Guide'" badging.txt
+
+      - name: Publish public direct-download APK pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=blue-star-guide-cloud-rc7-20261107
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release already exists: do not overwrite verified APK" >&2
+            exit 1
+          fi
+          gh release create "$TAG" \
+            downloaded/BlueStar_Guide_1.0.6_RC7_arm64.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target 8756eba92d4feb5db52dc1a6ab4127a73123b098 \
+            --title "Blue Star Guide 1.0.6 RC7 - Flash / Plus / Max (arm64)" \
+            --notes "Direct-install arm64 APK. Three visual choices only: qwen3.8-flash (daily default, user API connection previously confirmed), qwen3-vl-plus (stable backup), and qwen3.8-max (premium emergency manual choice, not yet validated with user's key). Removed qwen3.5-flash and qwen3.7-flash from selectable list. OCR still qwen-vl-ocr, ASR qwen3-asr-flash. Emergency Max reasoning is capped; structured target JSON uses non-thinking for API compatibility. No silent model fallback, no extra stats request. Dark settings and async daily Token ledger retained. Independent package com.vobich.bluestar.rc7 preserves prior RC6; API Key needs re-entry. Exact original successful CI build run 42324116996, SHA256 956de9483da4cd0b8c49087384b4d4d997d3d609228409d56e213bfb4b078152, size 8,567,972 bytes, no re-signing. Device tests of Max with real user key still pending." \
+            --prerelease
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -Fx 'BlueStar_Guide_1.0.6_RC7_arm64.apk'
+          echo "Direct APK: https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/BlueStar_Guide_1.0.6_RC7_arm64.apk" >> "$GITHUB_STEP_SUMMARY"
