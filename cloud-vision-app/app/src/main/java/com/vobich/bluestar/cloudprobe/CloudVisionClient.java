@@ -90,8 +90,11 @@ final class CloudVisionClient {
         if(textOnly){
             instruction=task.instruction;
         }else if(isOcr){
-            // The approved concise OCR preset is sent automatically on tap.
-            instruction=task.instruction;
+            // For the dedicated qwen-vl-ocr book task use its documented
+            // text_recognition prompt, not the bounding-box localization prompt.
+            // Other OCR model choices keep the existing concise text-first task.
+            instruction=isBook&&OcrModelCatalog.DEDICATED.equals(model)?
+                ReadingRules.DEDICATED_TEXT_PROMPT:task.instruction;
         }else if("menu".equals(task.id)){
             instruction="只根据照片可见信息完成用户当前任务："+task.instruction+
                 "。不猜测看不清的信息，不使用Markdown格式。";
@@ -246,6 +249,8 @@ final class CloudVisionClient {
                 throw new Exception("书页输出达到模型长度限制，文字可能不完整，本页未保存");
             if(isBook&&!ReadingRules.usable(answer))
                 throw new Exception("书页识别结果为空或超过本机安全长度，本页未保存");
+            if(isBook&&ReadingRules.coordinatesOnly(answer))
+                throw new Exception("OCR返回了文字定位坐标而不是书页原文，请检查模型和拍摄画面，本页未保存");
             // Validate completed OCR before queuing the final incomplete line.
             if(isOcr)answer=OcrResponseGate.requireReadable(answer);
             else if(answer.isEmpty())throw new Exception("云端没有返回有效内容");
