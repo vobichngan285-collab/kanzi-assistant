@@ -43,6 +43,9 @@ final class VoiceAction {
         if(!command.matches())
             return new VoiceAction(Type.QUESTION,"");
         String target=command.group(1);
+        // "找门了吗/找到了吗" asks about current progress; never start a new search.
+        if(target.matches(".*(了吗|了没|了没有|找到了吗|找到了没)$"))
+            return new VoiceAction(Type.QUESTION,"");
         target=target.replaceAll("^(?:有没有|一[家个处]?(?:卖|叫)|的|到|个|家|一个|一家|附近的|周围的)+","");
         target=target.replaceAll("(?:在哪里|在哪儿|在哪|的位置|有没有|在什么地方|的招牌|招牌|吧|呀|好吗|可以吗|谢谢|一下)+$","");
         target=target.trim();
