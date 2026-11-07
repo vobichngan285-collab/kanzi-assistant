@@ -6,12 +6,12 @@ android {
         applicationId 'com.vobich.bluestar'
         minSdk 26
         targetSdk 35
-        versionCode 21
-        versionName '1.0.11-rc12'
+        versionCode 22
+        versionName '1.0.12-rc13'
         ndk { abiFilters 'arm64-v8a' }
     }
     buildTypes {
-        debug { minifyEnabled false; applicationIdSuffix '.rc12' }
+        debug { minifyEnabled false; applicationIdSuffix '.rc13' }
         release { minifyEnabled false }
     }
     compileOptions {
