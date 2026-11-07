@@ -69,15 +69,27 @@ final class FrameCompressor {
         return compress(resized);
     }
 
-    /** One capture, one JPEG encode, matching USB display geometry. */
-    static byte[] encodeAdjustedJpeg(byte[] nv21,int width,int height,int longEdge,
+    /** The returned JPEG bytes and dimensions come from the same final NV21 image. */
+    static final class EncodedJpeg {
+        final byte[] jpeg;
+        final int width,height;
+        EncodedJpeg(byte[] jpeg,int width,int height){
+            this.jpeg=jpeg;this.width=width;this.height=height;
+        }
+    }
+    static EncodedJpeg encodeAdjusted(byte[] nv21,int width,int height,int longEdge,
                                      int degrees,boolean mirror,boolean flip,float zoom){
         validate(nv21,width,height);
         Nv21ImageOps.Image adjusted=Nv21ImageOps.orient(
             nv21,width,height,degrees,mirror,flip);
         adjusted=Nv21ImageOps.centerCrop(adjusted,zoom);
         adjusted=Nv21ImageOps.resizeLimit(adjusted,clampLimit(longEdge));
-        return compress(adjusted);
+        return new EncodedJpeg(compress(adjusted),adjusted.width,adjusted.height);
+    }
+    /** Backwards-compatible path used by any independent capture callers. */
+    static byte[] encodeAdjustedJpeg(byte[] nv21,int width,int height,int longEdge,
+                                     int degrees,boolean mirror,boolean flip,float zoom){
+        return encodeAdjusted(nv21,width,height,longEdge,degrees,mirror,flip,zoom).jpeg;
     }
 
     private static byte[] compress(Nv21ImageOps.Image img){

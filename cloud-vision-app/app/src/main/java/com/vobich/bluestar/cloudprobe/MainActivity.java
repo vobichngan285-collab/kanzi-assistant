@@ -3,6 +3,7 @@ package com.vobich.bluestar.cloudprobe;
 import android.Manifest;
 import android.content.ClipData;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import java.io.ByteArrayOutputStream;
@@ -100,6 +101,7 @@ public final class MainActivity extends CameraActivity {
     private static final int REQUEST_PHONE_CAMERA = 4051;
     private static final int REQUEST_VOICE_MIC = 4052;
     private static final int REQUEST_DIAG_EXPORT = 4053;
+    private static final long USB_MAX_FRAME_AGE_MS=800L; // UVC raw frames are capped near 5Hz
 
     private FrameLayout previewContainer,rootFrame;
     private TextView currentTaskChip,zoomChip,resultChip;
@@ -131,6 +133,9 @@ public final class MainActivity extends CameraActivity {
     private String lastMicDiagnostic="尚未完成录音";
     private final VoicePressState voicePress=new VoicePressState();
     private byte[] lastSessionJpeg;
+    // Only the exact JPEG used for the most recent cloud call, kept in RAM.
+    // Never written to RuntimeDiagnostics, preferences, storage or extra upload.
+    private volatile byte[] lastSubmittedJpeg;
     private String lastSessionText="",lastSessionTask="";
     // A voice capture is one-shot; never mutate or persist the selected task.
     private TaskCatalog.Task pendingPhoneCaptureTask;
@@ -605,6 +610,36 @@ public final class MainActivity extends CameraActivity {
     String lastRecognizedText(){return lastCloudResult;}
     void refreshSelectedTask(String id){refreshTask(id);}
     String runtimeDiagnosticSummary(){return diagnostics==null?"暂无记录":diagnostics.summary();}
+    void previewLastUploadedJpeg(){
+        byte[] jpeg=lastSubmittedJpeg;
+        if(jpeg==null||jpeg.length==0){
+            toastShort("暂无本次运行已提交的照片，请先拍照识别");
+            return;
+        }
+        Bitmap bitmap;
+        try{
+            bitmap=BitmapFactory.decodeByteArray(jpeg,0,jpeg.length);
+        }catch(RuntimeException error){
+            toastShort("无法解码上次发送的照片");return;
+        }
+        if(bitmap==null){toastShort("无法解码上次发送的照片");return;}
+        ImageView view=new ImageView(this);
+        view.setBackgroundColor(Color.BLACK);
+        view.setAdjustViewBounds(true);
+        view.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        view.setMaxHeight(getResources().getDisplayMetrics().heightPixels*3/4);
+        view.setImageBitmap(bitmap);
+        AlertDialog dialog=new AlertDialog.Builder(this)
+            .setTitle("上次实际发送给 AI 的 JPEG")
+            .setMessage("仅本机临时查看；不保存、不再上传、不计入匿名日志。可核对方向、镜像和文字。")
+            .setView(view)
+            .setPositiveButton("关闭",null).create();
+        dialog.setOnDismissListener(d->{
+            view.setImageDrawable(null);
+            bitmap.recycle();
+        });
+        dialog.show();
+    }
     void copyRuntimeDiagnostics(){
         ClipboardManager clipboard=(ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
         if(clipboard==null){toastShort("剪贴板暂不可用");return;}
@@ -1312,7 +1347,9 @@ public final class MainActivity extends CameraActivity {
         if(cameraTextureView==null||previewContainer==null)return;
         int cw=previewContainer.getWidth(),ch=previewContainer.getHeight();
         if(cw<=0||ch<=0)return;
-        boolean quarterTurn=previewRotation==90||previewRotation==270;
+        UsbFrameOrientation.Plan orientation=UsbFrameOrientation.forSettings(
+            previewRotation,previewMirror,previewVerticalFlip,usbPreviewCorrectMirror);
+        boolean quarterTurn=orientation.quarterTurn;
         PreviewSize actual=previewCallbackAdded?getCurrentPreviewSize():null;
         float aspect=actual!=null&&actual.getHeight()>0?
             actual.getWidth()/(float)actual.getHeight():16f/9f;
@@ -1329,14 +1366,15 @@ public final class MainActivity extends CameraActivity {
                 cameraTextureView.setLayoutParams(lp);
             }
         }
-        cameraTextureView.setRotation(previewRotation);
+        cameraTextureView.setRotation(orientation.rotation);
         int vw=cameraTextureView.getWidth(),vh=cameraTextureView.getHeight();
         cameraTextureView.setPivotX(vw/2f);cameraTextureView.setPivotY(vh/2f);
         cameraTextureView.setScaleX(zoom);
-        cameraTextureView.setScaleY(zoom*(previewVerticalFlip?-1f:1f));
+        // Android view-local Y becomes display X after a 90/270 turn.
+        cameraTextureView.setScaleY(zoom*(orientation.previewLocalFlip?-1f:1f));
         if(vw>0&&vh>0){
             Matrix matrix=new Matrix();
-            if(usbPreviewCorrectMirror^previewMirror)
+            if(orientation.previewLocalMirror)
                 matrix.setScale(-1f,1f,vw*.5f,vh*.5f);
             cameraTextureView.setTransform(matrix);
         }
@@ -1832,10 +1870,12 @@ public final class MainActivity extends CameraActivity {
             return;
         }
         Frame usbShot=usingPhoneCamera?null:latestUsbFrame;
-        if(!usingPhoneCamera&&(usbShot==null||now-usbShot.atMs>1400L)){
+        long usbFrameAge=usbShot==null?-1L:Math.max(0L,now-usbShot.atMs);
+        if(!usingPhoneCamera&&(usbShot==null||usbFrameAge>USB_MAX_FRAME_AGE_MS)){
             toastShort("USB没有最新画面，不会使用旧照片");
             if(fromVoice)speakUnfiltered("外接摄像头还没有新画面，请稍后再试。");
-            if(diagnostics!=null)diagnostics.event("camera","usb_stale_frame",0,"failed");
+            if(diagnostics!=null)diagnostics.event("camera","usb_stale_frame",
+                usbFrameAge,"failed");
             return;
         }
         if(usingPhoneCamera&&phoneController==null){
@@ -1883,6 +1923,7 @@ public final class MainActivity extends CameraActivity {
         // Do not reuse prior image as the new frame; only clear the previous
         // image session once a genuinely new frame is acquired.
         lastSessionJpeg=null;
+        lastSubmittedJpeg=null;
         lastSessionText="";
         lastSessionTask="";
         lastCloudResult="";
@@ -1890,8 +1931,15 @@ public final class MainActivity extends CameraActivity {
         signalCapture();
         cloudBusy=true;
         setResultStatus("已拍照 · 正在云端识别…");
-        if(diagnostics!=null)diagnostics.event("camera","fresh_frame_ms",
-            Math.max(0,current.atMs-tapAtMs),"ok");
+        if(diagnostics!=null){
+            if(usingPhoneCamera)
+                diagnostics.event("camera","fresh_frame_ms",
+                    Math.max(0,current.atMs-tapAtMs),"ok");
+            else diagnostics.event("camera","usb_frame_age_ms",
+                Math.max(0,tapAtMs-current.atMs),"ok");
+            diagnostics.event("camera","raw_width_px",current.width,"ok");
+            diagnostics.event("camera","raw_height_px",current.height,"ok");
+        }
         final TaskCatalog.Task task=oneShotTask==null?currentTask:oneShotTask;
         // A one-shot voice observation should not be hijacked by an ongoing search.
         final String targetToFind=oneShotTask==null?findingTarget:"";
@@ -1899,28 +1947,34 @@ public final class MainActivity extends CameraActivity {
             (phoneFrontFacing?"手机前置":"手机后置"):"USB 外接";
         final String policy=imagePolicy;
         final String model=visionModel;
-        final int photoRotation=previewRotation;
-        // Match USB TextureView-local mirror before 90/270-degree rotation.
-        boolean localUsbMirror=usbPreviewCorrectMirror^previewMirror;
-        boolean quarterTurn=previewRotation==90||previewRotation==270;
-        final boolean photoMirror=usingPhoneCamera?previewMirror:
-            (quarterTurn?false:localUsbMirror);
-        final boolean photoFlip=usingPhoneCamera?previewVerticalFlip:
-            (previewVerticalFlip^(quarterTurn&&localUsbMirror));
+        final UsbFrameOrientation.Plan usbOrientation=usingPhoneCamera?null:
+            UsbFrameOrientation.forSettings(previewRotation,previewMirror,
+                previewVerticalFlip,usbPreviewCorrectMirror);
+        final int photoRotation=usingPhoneCamera?previewRotation:usbOrientation.rotation;
+        // USB controls are in FINAL display coordinates; preview maps them back
+        // to local TextureView axes, NV21/JPEG applies them AFTER rotation.
+        final boolean photoMirror=usingPhoneCamera?previewMirror:usbOrientation.displayMirror;
+        final boolean photoFlip=usingPhoneCamera?previewVerticalFlip:usbOrientation.displayFlip;
         final float photoZoom=usingPhoneCamera?1f:zoom;
         encodingTask=encoder.submit(()->{
             long takenAt=SystemClock.elapsedRealtime();
             try{
                 FrameCompressor.Plan plan=FrameCompressor.choose(
                     current.pixels,current.width,current.height,policy);
-                byte[] jpeg=FrameCompressor.encodeAdjustedJpeg(
+                FrameCompressor.EncodedJpeg encoded=FrameCompressor.encodeAdjusted(
                     current.pixels,current.width,current.height,plan.limit,
                     photoRotation,photoMirror,photoFlip,photoZoom);
+                byte[] jpeg=encoded.jpeg;
                 long encodingMs=SystemClock.elapsedRealtime()-takenAt;
                 if(token!=requestVersion.get())return;
                 if(diagnostics!=null){
                     diagnostics.event("jpeg","encode_ms",encodingMs,"ok");
                     diagnostics.event("jpeg","bytes",jpeg.length,"ok");
+                    diagnostics.event("jpeg","width_px",encoded.width,"ok");
+                    diagnostics.event("jpeg","height_px",encoded.height,"ok");
+                    diagnostics.event("jpeg","rotation_deg",photoRotation,"ok");
+                    diagnostics.event("jpeg","mirror_x",photoMirror?1:0,"ok");
+                    diagnostics.event("jpeg","flip_y",photoFlip?1:0,"ok");
                 }
                 String key=CloudKeyStore.load(this);
                 if(key.isEmpty()){
@@ -1933,6 +1987,9 @@ public final class MainActivity extends CameraActivity {
                     });
                     return;
                 }
+                // Store only the original byte[] being submitted, in volatile memory.
+                // Diagnostic export remains numeric and never exports the photo.
+                lastSubmittedJpeg=jpeg;
                 if(!targetToFind.isEmpty()){
                     long cloudAt=SystemClock.elapsedRealtime();
                     TargetVisionClient.Result inspection=TargetVisionClient.inspect(
@@ -2072,6 +2129,7 @@ public final class MainActivity extends CameraActivity {
         if(modelUsage!=null)modelUsage.shutdown();
         voiceSequence.incrementAndGet();voiceRecorder.cancel();
         lastSessionJpeg=null;
+        lastSubmittedJpeg=null;
         if(tts!=null){tts.stop();tts.shutdown();tts=null;}
         if(clickPool!=null){clickPool.release();clickPool=null;}
         handler.removeCallbacks(hideStatus);

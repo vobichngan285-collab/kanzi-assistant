@@ -465,6 +465,8 @@ final class LargeSettingsScreen {
         });
     }
     private void diagnostics(){
+        action("查看上次发给 AI 的照片（仅本机）",()->app.previewLastUploadedJpeg());
+        note("仅在点击后显示本次运行内存中的真实 JPEG；不保存文件、不添加照片到日志、不额外上传。");
         action("复制诊断摘要",()->app.copyRuntimeDiagnostics());
         action("导出匿名诊断日志",()->app.exportRuntimeDiagnostics());
         action("刷新诊断记录",()->render(history.get(history.size()-1)));
