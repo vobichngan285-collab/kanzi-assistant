@@ -65,6 +65,20 @@ public final class VoiceFlowTest {
         assertIntent("帮我观察一下周围环境",VoiceAction.Type.OBSERVE_SCENE,"");
         assertIntent("再看看左边有什么",VoiceAction.Type.OBSERVE_SCENE,"");
         assertIntent("眼前的场景是什么样的",VoiceAction.Type.OBSERVE_SCENE,"");
+        // RC18 reported regression: "我眼前是什么" fell through to text-only
+        // web chat, so the model said it cannot see and asked for a photo.
+        for(String spoken:new String[]{
+            "我眼前是什么","我眼前是什么？","眼前是什么","眼前是什么呀",
+            "现在我眼前是什么","前面是什么","我前面是什么东西",
+            "我眼前是啥","帮我看看眼前是什么","看看眼前是什么"}) {
+            assertIntent(spoken,VoiceAction.Type.OBSERVE_SCENE,"");
+        }
+        // Do not turn historical-image discussion or live web Q&A into a
+        // new photo or override the existing user's explicit task type.
+        assertIntent("刚才我眼前是什么",VoiceAction.Type.QUESTION,"");
+        assertIntent("上一张照片眼前是什么",VoiceAction.Type.QUESTION,"");
+        assertIntent("今天有什么最新新闻",VoiceAction.Type.QUESTION,"");
+        assertIntent("这家店的营业时间是什么",VoiceAction.Type.QUESTION,"");
         assertIntent("请读一下眼前的文字",VoiceAction.Type.READ_TEXT,"");
         assertIntent("帮我读一下文字",VoiceAction.Type.READ_TEXT,"");
         assertIntent("念一下这张标签",VoiceAction.Type.READ_TEXT,"");

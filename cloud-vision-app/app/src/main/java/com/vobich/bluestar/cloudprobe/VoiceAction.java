@@ -104,10 +104,13 @@ final class VoiceAction {
     }
 
     private static boolean isObserveRequest(String v){
+        // Previous-photo and old-scene questions are NOT requests for a new shot.
+        if(v.contains("刚才")||v.contains("上一张")||v.contains("上张")||
+           v.contains("之前那张")||v.contains("之前拍的"))return false;
         if(v.contains("有没有")||v.contains("帮我找")||v.contains("寻找")||
            v.contains("改找")||v.contains("换找"))return false;
         if(v.matches(".*(眼前|前面|周围|身边|四周|环境|场景|这里|这儿).*"+
-            "(有什么|有些什么|有哪些|什么东西|是什么样|什么情况|什么事物|事物|景象|物体|场景).*"))
+            "(有什么|有些什么|有哪些|什么东西|是什么|是啥|是什么样|什么情况|什么事物|事物|景象|物体|场景).*"))
             return true;
         if(v.matches(".*(看|观察|描述|分析|识别).*"+
             "(眼前|前面|周围|身边|四周|环境|场景|周边|这里|这儿).*"))
