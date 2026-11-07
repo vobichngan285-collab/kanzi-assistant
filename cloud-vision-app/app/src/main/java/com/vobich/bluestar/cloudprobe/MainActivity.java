@@ -162,7 +162,11 @@ public final class MainActivity extends CameraActivity {
     private volatile boolean usbForeground;
     private boolean usbStopPending, usbReopenWanted;
     private boolean manualPhoneUntilUsbDetach;
+    private int manualPhoneUsbDeviceId=-1;
     private String activeUsbDeviceName;
+    // RC16: system USB attach intent and AUSBC permission callback can arrive
+    // before onResume; debounce a one-shot physical-device reconciliation.
+    private final Runnable usbAttachReconcile=this::reconcileAttachedUsb;
     private final UsbRollingFps usbRollingFps=new UsbRollingFps();
     private long usbLastSampleAtMs,lastUsbFirstFrameMs=-1;
     // RC14: all observation is counter-only. No snapshots, text or extra USB frames.
@@ -809,12 +813,68 @@ public final class MainActivity extends CameraActivity {
                 return true;
         return device.getDeviceClass()==UsbConstants.USB_CLASS_VIDEO;
     }
+    private UsbDevice attachedUsbVideoDevice(){
+        UsbManager manager=(UsbManager)getSystemService(USB_SERVICE);
+        if(manager==null)return null;
+        UsbDevice first=null;
+        for(UsbDevice dev:manager.getDeviceList().values()){
+            if(!isUsbVideoDevice(dev))continue;
+            // Reuse the existing known camera when more than one USB device exists.
+            if(activeUsbDeviceName!=null&&activeUsbDeviceName.equals(dev.getDeviceName()))
+                return dev;
+            if(dev.getVendorId()==0xEBA4&&dev.getProductId()==0x6579)
+                return dev;
+            if(first==null)first=dev;
+        }
+        return first;
+    }
     private boolean hasConnectedUsbVideoDevice(){
+        return attachedUsbVideoDevice()!=null;
+    }
+    private void selectManualPhoneOverride(boolean phone){
+        UsbDevice present=phone?attachedUsbVideoDevice():null;
+        manualPhoneUntilUsbDetach=present!=null;
+        manualPhoneUsbDeviceId=present==null?-1:present.getDeviceId();
+    }
+    private boolean sameOverriddenUsbStillPresent(){
+        if(!manualPhoneUntilUsbDetach)return false;
         UsbManager manager=(UsbManager)getSystemService(USB_SERVICE);
         if(manager==null)return false;
+        java.util.ArrayList<Integer> ids=new java.util.ArrayList<>();
         for(UsbDevice dev:manager.getDeviceList().values())
-            if(isUsbVideoDevice(dev))return true;
-        return false;
+            if(isUsbVideoDevice(dev))ids.add(dev.getDeviceId());
+        int[] connected=new int[ids.size()];
+        for(int i=0;i<ids.size();i++)connected[i]=ids.get(i);
+        return UsbAutoSwitchPolicy.keepManualOverrideForPhysicalDevice(
+            manualPhoneUntilUsbDetach,manualPhoneUsbDeviceId,connected);
+    }
+    private void queueUsbAttachReconcile(){
+        handler.removeCallbacks(usbAttachReconcile);
+        handler.postDelayed(usbAttachReconcile,180L);
+    }
+    private void reconcileAttachedUsb(){
+        if(!uiActive||!usbForeground)return;
+        UsbDevice device=attachedUsbVideoDevice();
+        if(manualPhoneUntilUsbDetach&&!sameOverriddenUsbStillPresent()){
+            manualPhoneUntilUsbDetach=false;
+            manualPhoneUsbDeviceId=-1;
+        }
+        boolean shouldSwitch=UsbAutoSwitchPolicy.useUsbOnConnect(
+            isUsbAutoSwitch(),usbForeground,device!=null,usingPhoneCamera,
+            manualPhoneUntilUsbDetach);
+        if(diagnostics!=null)diagnostics.event("usb","attach_reconcile",
+            shouldSwitch?1:0,device==null?"no_device":
+            manualPhoneUntilUsbDetach?"manual":"checked");
+        if(!shouldSwitch)return;
+        // This covers initial Activity auto-launch and repeated onNewIntent, where
+        // AUSBC onConnect may have completed before onResume or never fired while
+        // the hidden TextureView was inactive. Making USB visible lets the
+        // EXISTING AUSBC TextureView listener register and request UVC permission.
+        saveCameraProfile();
+        activeUsbDeviceName=device.getDeviceName();
+        switchCameraSource(false);
+        // switchCameraSource queues one normal resumeUsb; onConnect will handle
+        // USB permission later if AUSBC's currentCamera is not yet available.
     }
     void adjustCamera(int index){
         if(index==1)previewRotation=(previewRotation+90)%360;
@@ -827,8 +887,7 @@ public final class MainActivity extends CameraActivity {
     void setCameraSourceFromSettings(int index){
         if(index<0||index>2)return;
         boolean phone=index!=0,front=index==2;
-        if(phone)manualPhoneUntilUsbDetach=hasConnectedUsbVideoDevice();
-        else manualPhoneUntilUsbDetach=false;
+        selectManualPhoneOverride(phone);
         if(phone==usingPhoneCamera&&(!phone||front==phoneFrontFacing))return;
         saveCameraProfile();
         if(phone){
@@ -1068,8 +1127,7 @@ public final class MainActivity extends CameraActivity {
                 dialog.dismiss();
                 boolean phone=which!=0;
                 boolean front=which==2;
-                if(phone)manualPhoneUntilUsbDetach=hasConnectedUsbVideoDevice();
-                else manualPhoneUntilUsbDetach=false;
+                selectManualPhoneOverride(phone);
                 if(phone==usingPhoneCamera&&(!phone||front==phoneFrontFacing))return;
                 if(settingsDialog!=null)settingsDialog.dismiss();
                 saveCameraProfile();
@@ -1197,9 +1255,12 @@ public final class MainActivity extends CameraActivity {
     @Override protected void onNewIntent(Intent intent){
         super.onNewIntent(intent);
         setIntent(intent);
-        if(intent!=null&&UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(intent.getAction())
-            &&diagnostics!=null)diagnostics.event("usb","intent_attach",1,"ok");
-        // Existing AUSBC USBMonitor owns permission + onConnect; do not duplicate it.
+        if(intent!=null&&UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(intent.getAction())){
+            if(diagnostics!=null)diagnostics.event("usb","intent_attach",1,"ok");
+            queueUsbAttachReconcile();
+        }
+        // USBMonitor still owns permission, UVC opening and physical detach.
+        // The system intent only schedules a check; no second receiver is added.
     }
 
     private void showImagePolicySelector(){
@@ -1631,8 +1692,10 @@ public final class MainActivity extends CameraActivity {
     }
 
     @Override protected void onUsbDeviceAttachedForApp(UsbDevice device){
+        boolean video=isUsbVideoDevice(device);
         if(diagnostics!=null)diagnostics.event("usb","device_attached",
-            isUsbVideoDevice(device)?1:0,"ok");
+            video?1:0,"ok");
+        if(video)queueUsbAttachReconcile();
     }
     @Override protected void onUsbDeviceConnectedForApp(UsbDevice device){
         if(!isUsbVideoDevice(device))return;
@@ -1657,7 +1720,10 @@ public final class MainActivity extends CameraActivity {
     }
     @Override protected void onUsbDeviceDetachedForApp(UsbDevice device){
         if(!isUsbVideoDevice(device))return;
-        manualPhoneUntilUsbDetach=false;
+        if(manualPhoneUntilUsbDetach&&device.getDeviceId()==manualPhoneUsbDeviceId){
+            manualPhoneUntilUsbDetach=false;
+            manualPhoneUsbDeviceId=-1;
+        }
         boolean same=activeUsbDeviceName==null||
             activeUsbDeviceName.equals(device.getDeviceName());
         if(diagnostics!=null)diagnostics.event("usb","device_detached",same?1:0,"ok");
@@ -2483,6 +2549,10 @@ public final class MainActivity extends CameraActivity {
             switchCameraSource(true);
             fallback=true;
         }else handler.post(this::resumeUsb);
+        // Cold USB launch often dispatches onConnect before onResume while
+        // usbForeground=false. A later onResume must reconcile the already
+        // attached physical device, even when no fresh onConnect arrives.
+        if(usingPhoneCamera&&hasConnectedUsbVideoDevice())queueUsbAttachReconcile();
         if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED)
             requestPermissions(new String[]{Manifest.permission.CAMERA},REQUEST_PHONE_CAMERA);
         else if(usingPhoneCamera&&!fallback)startPhoneCamera();
@@ -2497,6 +2567,7 @@ public final class MainActivity extends CameraActivity {
                 Math.max(0,SystemClock.elapsedRealtime()-usbTextureLastAtMs),"ok");
         }
         handler.removeCallbacks(usbHealthTicker);
+        handler.removeCallbacks(usbAttachReconcile);
         usbLastSample=null;usbLastSampleAtMs=0;usbRollingFps.reset();
         usbPictureGeneration.incrementAndGet();
         uiActive=false;usbForeground=false;
@@ -2522,6 +2593,7 @@ public final class MainActivity extends CameraActivity {
         modelTestExecutor.shutdownNow();
         usbPictureExecutor.shutdownNow();
         handler.removeCallbacks(usbHealthTicker);
+        handler.removeCallbacks(usbAttachReconcile);
         if(modelUsage!=null)modelUsage.shutdown();
         voiceSequence.incrementAndGet();voiceRecorder.cancel();
         lastSessionJpeg=null;
