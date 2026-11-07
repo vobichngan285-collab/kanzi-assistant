@@ -23,3 +23,13 @@
 
 ## 发行记录
 等待 GitHub CI、ARM64 APK真实构建、SHA256、release和用户真机后追加，不可在此之前宣称验证成功。
+
+## 真实 GitHub 构建、测试和发布记录（2026-11-07）
+
+- **最终编译源码 SHA：`7a29d563ab79d94739ab9568dd6e6988270483fb`**。正式 ARM64 GitHub Actions **[42384203882](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42384203882)** = `completed/success`。原 CI Artifact **13578677455**，名称 `blue-star-guide-1-0-19-rc20-arm64`。
+- **真实测试日志通过**：`RC20_OCR_ABC_STREAM_LINE_ORDER_NO_DUPLICATION=PASS`、`RC20_OCR_A_B_C_DEFAULT_A_NO_DUPLICATE=PASS`、`RC19_EYE_SCENE_SPEECH_CLASSIFIED_TO_FRESH_CAMERA=PASS`、`RC17_OCR_FOUR_CHOICES_INDEPENDENT_AND_PROMPT=PASS`、`RC18_SEARCH_ONLY_EXPLICIT_FOLLOWUP_THREE_MODELS=PASS`、`VOICE_PRESS_TARGET_AND_WAV_TESTS=PASS`、`RC13_USB_PREVIEW_JPEG_32_COMBINATIONS_AND_90_CORRECTION=PASS 32`、`RC14_USB_LIFECYCLE_FPS_4_STATES=PASS`、`RC14_USB_PICTURE_CONTROL_BOUNDS=PASS`、`RC15_AUTO_USB_SWITCH_MANUAL_OVERRIDE_AND_ATTACH=PASS`、`BSG_UVC_FPS_61_FIRST=PASS` 等。Android native arm64 Gradle **`BUILD SUCCESSFUL in 2m 30s`**，aapt 确认 `com.vobich.bluestar.rc20`、versionCode29、versionName1.0.19-rc20，USB .so/原图标和两音效核验通过。
+- **初次静态审计失败及纠正**：较早 run **[42384112465](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42384112465)** = `failure`，原因是工作流还断言旧的`return recognizeInternal(...,allowSearch);`精确文本；OCROnly新增最后一个实验参数后签名不同，误触发过时静态断言。修订三个静态检查锚点后重新触发 run **42384203882**，该 run 完整检查/JVM测试/Android编译全部成功。这是CI源代码断言过期，不是安卓设备运行异常；原失败构建从未发布。
+- **发行 run**：[42384568494](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42384568494) = `completed/success`；只下载**同一个成功的CI构建产物**，先验证准确 CI SHA、`sha256sum -c SHA256SUMS.txt`、APK ZIP CRC、arm64 USB JNI/图标/金属咔叮和嗖声音效、包名版本，再发布，**没有重新构建或重新签名**。
+- **GitHub 发布** `blue-star-guide-cloud-rc20-20261107`：public prerelease `draft=false`，资产 `BlueStar_Guide_1.0.19_RC20_arm64.apk` 已 `uploaded`，**8,601,322 字节**，官方资产 SHA256 **`c9ff343be53c808bf5adc7b57b118c89479742fa121c3d9288bc3656de57f42a`**，浏览器直链：
+  https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/blue-star-guide-cloud-rc20-20261107/BlueStar_Guide_1.0.19_RC20_arm64.apk
+- **真机结论尚未得到**：虽然本机单元测试和CI都通过，实验 C 不能据此认定一定提速，也无法判断阿里云忙或模型自己首字返回慢。需用户 vivo X200 Pro 真实多次A/B/C对照：保证同一个OCR模型、图片分辨率、画面与光线，发回匿名日志并报告实际听到首句的时间与漏字/乱序/重复。只有实际有意义地提前朗读且稳定准确，用户才决定是否正式启用。
