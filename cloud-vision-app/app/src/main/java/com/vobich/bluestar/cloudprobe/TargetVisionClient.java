@@ -52,7 +52,11 @@ final class TargetVisionClient {
                 .put("content",new JSONArray()
                     .put(new JSONObject().put("type","text").put("text",instruction))
                     .put(image))));
-        if(VisionModelCatalog.isBudgetFlash(model))body.put("enable_thinking",false);
+        // This path requests JSON Object output. Bailian rejects thinking=true
+        // together with JSON mode, so even manual Max uses direct JSON here.
+        if(VisionModelCatalog.isBudgetFlash(model) ||
+           VisionModelCatalog.isEmergencyMax(model))
+            body.put("enable_thinking",false);
         HttpURLConnection c=(HttpURLConnection)new URL(
             "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions").openConnection();
         c.setRequestMethod("POST");
