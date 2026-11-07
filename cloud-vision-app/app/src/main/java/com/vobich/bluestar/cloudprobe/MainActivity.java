@@ -9,6 +9,7 @@ import android.graphics.Paint;
 import java.io.ByteArrayOutputStream;
 import java.util.concurrent.atomic.AtomicBoolean;
 import android.content.ClipboardManager;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.net.Uri;
 import java.io.OutputStream;
@@ -23,6 +24,7 @@ import android.media.AudioManager;
 import android.media.SoundPool;
 import android.media.AudioAttributes;
 import android.hardware.usb.UsbDevice;
+import android.hardware.usb.UsbConstants;
 import android.hardware.usb.UsbManager;
 import android.os.Bundle;
 import android.os.VibrationEffect;
@@ -86,6 +88,9 @@ public final class MainActivity extends CameraActivity {
     private static final String TAG = "BlueStarDualCloud";
     private static final String PREFS = "kanzi_settings";
     private static final String PREF_PHONE_CAMERA = "phone_camera_source";
+    private static final String PREF_USB_AUTO_SWITCH="usb_camera_auto_switch_v1";
+    private static final String PREF_USB_AUTO_LAUNCH="usb_camera_auto_launch_v1";
+    private static final String USB_ATTACH_ALIAS="com.vobich.bluestar.cloudprobe.UsbAttachEntry";
     private static final String PREF_FRONT_CAMERA = "phone_camera_front";
     private static final String PREF_PREVIEW_ROTATION = "preview_rotation";
     private static final String PREF_PREVIEW_MIRROR = "preview_mirror";
@@ -156,6 +161,10 @@ public final class MainActivity extends CameraActivity {
     private boolean previewCallbackAdded;
     private volatile boolean usbForeground;
     private boolean usbStopPending, usbReopenWanted;
+    private boolean manualPhoneUntilUsbDetach;
+    private String activeUsbDeviceName;
+    private final UsbRollingFps usbRollingFps=new UsbRollingFps();
+    private long usbLastSampleAtMs,lastUsbFirstFrameMs=-1;
     // RC14: all observation is counter-only. No snapshots, text or extra USB frames.
     private volatile boolean usbKnownOpened;
     private final AtomicLong usbTextureCount=new AtomicLong();
@@ -229,8 +238,10 @@ public final class MainActivity extends CameraActivity {
             usbFrameCount.incrementAndGet();
             if(!usbFirstFrameRecorded){
                 usbFirstFrameRecorded=true;
+                lastUsbFirstFrameMs=usbOpenedAtMs>0?
+                    Math.max(0,frame.atMs-usbOpenedAtMs):-1;
                 if(diagnostics!=null)diagnostics.event("camera","usb_first_frame_ms",
-                    usbOpenedAtMs>0?Math.max(0,frame.atMs-usbOpenedAtMs):-1,"ok");
+                    lastUsbFirstFrameMs,"ok");
             }
         }
     }
@@ -624,15 +635,28 @@ public final class MainActivity extends CameraActivity {
     void refreshSelectedTask(String id){refreshTask(id);}
     String runtimeDiagnosticSummary(){
         String basic=diagnostics==null?"暂无记录":diagnostics.summary();
+        if(usingPhoneCamera)return basic+
+            "\n当前使用手机摄像头；USB预览FPS不适用，不展示历史USB快照。\n";
+        if(!usbForeground)return basic+"\nUSB处于后台，当前帧率不可测。\n";
         UsbStreamHealth.Sample last=usbLastSample;
-        if(last==null)return basic+"\nUSB流诊断：尚无采样（请用USB预览几秒）。\n";
-        return basic+"\nUSB流当前快照（不含照片/文字）\n"+
+        long age=usbLastSampleAtMs<=0?-1:
+            Math.max(0,SystemClock.elapsedRealtime()-usbLastSampleAtMs);
+        if(last==null||age>4500L)return basic+
+            "\nUSB流诊断：没有足够新的采样，请保持USB预览几秒后再刷新。\n";
+        UsbRollingFps.Stats window=usbRollingFps.stats(SystemClock.elapsedRealtime());
+        return basic+"\nUSB预览流快照（更新时间距今 "+age+"ms）\n"+
             "状态码 "+last.state+"（0启动中/1正常/2双路停/3原始帧停/4预览停）\n"+
-            "NV21回调每秒×10 "+last.rawFps10+
-            "；TextureView新缓冲每秒×10 "+last.previewFps10+"\n"+
+            "原始NV21回调约 "+(last.rawFps10/10f)+"次/秒（此回调人为限约5Hz）\n"+
+            "TextureView新缓冲当前约 "+(last.previewFps10/10f)+"次/秒\n"+
+            (window.count==0?"最近10秒有效样本：暂无（初始化中）\n":
+                "最近10秒有效样本 "+window.count+
+                " 组；平均约 "+(window.meanFps10/10f)+
+                " 次/秒；最低约 "+(window.minFps10/10f)+
+                " 次/秒；最高约 "+(window.maxFps10/10f)+" 次/秒\n")+
+            "最近一次USB打开至首NV21帧 "+lastUsbFirstFrameMs+"ms（-1为尚未取得）\n"+
             "NV21最近帧距今 "+last.rawAgeMs+"ms；预览新缓冲距今 "+
             last.previewAgeMs+"ms\n"+
-            "注意：TextureView新缓冲不等于屏幕面板真实上屏帧率。\n";
+            "注意：TextureView新缓冲提交次数不保证每次是不同画面，也不是面板上屏帧率。\n";
     }
     private void sampleUsbHealth(){
         if(!usbForeground||usingPhoneCamera)return;
@@ -642,6 +666,9 @@ public final class MainActivity extends CameraActivity {
             usbFrameCount.get(),usbTextureCount.get(),frame==null?0:frame.atMs,
             usbTextureLastAtMs,usbKnownOpened);
         usbLastSample=sample;
+        usbLastSampleAtMs=now;
+        usbRollingFps.add(now,sample.previewFps10,sample.elapsedMs,
+            usbKnownOpened&&sample.state!=UsbStreamHealth.OPENING);
         boolean changed=sample.state!=usbLastHealthState;
         if(diagnostics!=null&&(usbHealthSampleBudget>0||
            (changed&&sample.state!=UsbStreamHealth.OPENING))){
@@ -656,6 +683,20 @@ public final class MainActivity extends CameraActivity {
         if(usbHealthSampleBudget>0)usbHealthSampleBudget--;
         usbLastHealthState=sample.state;
         handler.postDelayed(usbHealthTicker,2000L);
+    }
+    private void resetUsbFpsState(){
+        handler.removeCallbacks(usbHealthTicker);
+        usbStreamHealth.reset();
+        usbRollingFps.reset();
+        usbLastSample=null;
+        usbLastSampleAtMs=0;
+        usbLastHealthState=-1;
+        usbHealthSampleBudget=3;
+    }
+    private void startUsbFpsMonitoring(){
+        resetUsbFpsState();
+        if(usbForeground&&!usingPhoneCamera)
+            handler.postDelayed(usbHealthTicker,2000L);
     }
     @Override protected void onUsbSurfaceAvailableForDiagnostics(){
         if(diagnostics!=null)diagnostics.event("usb","surface",1,"available");
@@ -732,6 +773,49 @@ public final class MainActivity extends CameraActivity {
     String mirrorDescription(){return previewMirror?"已开启":"已关闭";}
     String flipDescription(){return previewVerticalFlip?"已开启":"已关闭";}
     String usbCorrectionDescription(){return usbPreviewCorrectMirror?"已开启":"已关闭";}
+    boolean isUsbAutoSwitch(){return getSharedPreferences(PREFS,MODE_PRIVATE)
+        .getBoolean(PREF_USB_AUTO_SWITCH,true);}
+    boolean isUsbAutoLaunch(){return getSharedPreferences(PREFS,MODE_PRIVATE)
+        .getBoolean(PREF_USB_AUTO_LAUNCH,true);}
+    void setUsbAutoSwitch(boolean enable){
+        getSharedPreferences(PREFS,MODE_PRIVATE).edit()
+            .putBoolean(PREF_USB_AUTO_SWITCH,enable).apply();
+        if(enable&&!usingPhoneCamera&&!hasConnectedUsbVideoDevice())
+            switchCameraSource(true);
+    }
+    void setUsbAutoLaunch(boolean enable){
+        getSharedPreferences(PREFS,MODE_PRIVATE).edit()
+            .putBoolean(PREF_USB_AUTO_LAUNCH,enable).apply();
+        updateUsbAttachAlias(enable);
+    }
+    private void updateUsbAttachAlias(boolean enable){
+        try{
+            ComponentName entry=new ComponentName(this,USB_ATTACH_ALIAS);
+            PackageManager manager=getPackageManager();
+            int desired=enable?PackageManager.COMPONENT_ENABLED_STATE_ENABLED:
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED;
+            if(manager.getComponentEnabledSetting(entry)!=desired)
+                manager.setComponentEnabledSetting(entry,desired,PackageManager.DONT_KILL_APP);
+        }catch(RuntimeException err){
+            Log.w(TAG,"USB system attach alias unavailable",err);
+            toastShort("无法修改系统USB启动关联，可手动打开应用");
+        }
+    }
+    private static boolean isUsbVideoDevice(UsbDevice device){
+        if(device==null)return false;
+        if(device.getVendorId()==0xEBA4&&device.getProductId()==0x6579)return true;
+        for(int i=0;i<device.getInterfaceCount();i++)
+            if(device.getInterface(i).getInterfaceClass()==UsbConstants.USB_CLASS_VIDEO)
+                return true;
+        return device.getDeviceClass()==UsbConstants.USB_CLASS_VIDEO;
+    }
+    private boolean hasConnectedUsbVideoDevice(){
+        UsbManager manager=(UsbManager)getSystemService(USB_SERVICE);
+        if(manager==null)return false;
+        for(UsbDevice dev:manager.getDeviceList().values())
+            if(isUsbVideoDevice(dev))return true;
+        return false;
+    }
     void adjustCamera(int index){
         if(index==1)previewRotation=(previewRotation+90)%360;
         else if(index==2)previewMirror=!previewMirror;
@@ -744,6 +828,7 @@ public final class MainActivity extends CameraActivity {
         if(index<0||index>2)return;
         boolean phone=index!=0,front=index==2;
         if(phone==usingPhoneCamera&&(!phone||front==phoneFrontFacing))return;
+        manualPhoneUntilUsbDetach=phone&&hasConnectedUsbVideoDevice();
         saveCameraProfile();
         if(phone){
             phoneFrontFacing=front;
@@ -984,6 +1069,7 @@ public final class MainActivity extends CameraActivity {
                 boolean front=which==2;
                 if(phone==usingPhoneCamera&&(!phone||front==phoneFrontFacing))return;
                 if(settingsDialog!=null)settingsDialog.dismiss();
+                manualPhoneUntilUsbDetach=phone&&hasConnectedUsbVideoDevice();
                 saveCameraProfile();
                 if(phone){
                     phoneFrontFacing=front;
@@ -1037,6 +1123,7 @@ public final class MainActivity extends CameraActivity {
         diagnostics=new RuntimeDiagnostics(this);
         modelUsage=new ModelUsageLedger(this);
         SharedPreferences prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
+        updateUsbAttachAlias(prefs.getBoolean(PREF_USB_AUTO_LAUNCH,true));
         usingPhoneCamera=prefs.getBoolean(PREF_PHONE_CAMERA,false);
         phoneFrontFacing=prefs.getBoolean(PREF_FRONT_CAMERA,false);
         previewRotation=prefs.getInt(PREF_PREVIEW_ROTATION,0);
@@ -1101,6 +1188,19 @@ public final class MainActivity extends CameraActivity {
             if(cameraTextureView!=null)cameraTextureView.setVisibility(View.INVISIBLE);
         }
         setResultStatus("");
+        // A USB-started activity may be created before AUSBC grants permission;
+        // wait for its actual onConnect hook instead of opening blindly.
+        if(isUsbAutoSwitch()&&!usingPhoneCamera&&!hasConnectedUsbVideoDevice())
+            handler.post(()->{if(!usingPhoneCamera||!hasConnectedUsbVideoDevice())
+                if(!usingPhoneCamera)switchCameraSource(true);});
+    }
+
+    @Override protected void onNewIntent(Intent intent){
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if(intent!=null&&UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(intent.getAction())
+            &&diagnostics!=null)diagnostics.event("usb","intent_attach",1,"ok");
+        // Existing AUSBC USBMonitor owns permission + onConnect; do not duplicate it.
     }
 
     private void showImagePolicySelector(){
@@ -1269,6 +1369,13 @@ public final class MainActivity extends CameraActivity {
 
     /** Preserve camera/source switching and attachment order from 2.0. */
     private void switchCameraSource(boolean phone) {
+        boolean wasPhone=usingPhoneCamera;
+        if(phone&&!wasPhone){
+            // Stop only the old selected USB stream. Its asynchronous CLOSED
+            // callback must not resurrect UVC behind the phone preview.
+            stopUsb();
+            usbReopenWanted=false;
+        }
         invalidate();
         pendingPhoneFrameToken=-1;
         if(phoneController!=null)phoneController.cancelFreshFrame();
@@ -1277,6 +1384,11 @@ public final class MainActivity extends CameraActivity {
         usingPhoneCamera=phone;
         latestPhoneFrame=null;
         latestUsbFrame=null;
+        resetUsbFpsState();
+        if(diagnostics!=null){
+            diagnostics.begin(phone?"phone_switch":"usb_switch");
+            diagnostics.event("usb","selected_source",phone?1:0,"ok");
+        }
         loadCameraProfile();
         getSharedPreferences(PREFS,MODE_PRIVATE).edit()
             .putBoolean(PREF_PHONE_CAMERA,phone).apply();
@@ -1287,11 +1399,12 @@ public final class MainActivity extends CameraActivity {
         if(phone){
             if(phoneController!=null)phoneController.setZoom(zoom);
             startPhoneCamera();
-        }
-        else{
+        }else{
             phonePreviewReceived=false;
             if(phonePreviewStatus!=null)phonePreviewStatus.setVisibility(View.GONE);
             applyPreviewTransform();
+            usbReopenWanted=true;
+            startUsbFpsMonitoring();
             handler.post(this::resumeUsb);
         }
         String message=phone?(phoneFrontFacing?"已切换手机前置摄像头":"已切换手机后置摄像头"):
@@ -1518,12 +1631,51 @@ public final class MainActivity extends CameraActivity {
         return null;
     }
 
+    @Override protected void onUsbDeviceAttachedForApp(UsbDevice device){
+        if(diagnostics!=null)diagnostics.event("usb","device_attached",
+            isUsbVideoDevice(device)?1:0,"ok");
+    }
+    @Override protected void onUsbDeviceConnectedForApp(UsbDevice device){
+        if(!isUsbVideoDevice(device))return;
+        if(diagnostics!=null)diagnostics.event("usb","device_connected",1,"ok");
+        if(UsbAutoSwitchPolicy.useUsbOnConnect(isUsbAutoSwitch(),usbForeground,
+           true,usingPhoneCamera,manualPhoneUntilUsbDetach)){
+            saveCameraProfile();
+            activeUsbDeviceName=device.getDeviceName();
+            switchCameraSource(false);
+        }else if(!usingPhoneCamera){
+            activeUsbDeviceName=device.getDeviceName();
+        }
+    }
+    @Override protected boolean shouldAutoOpenUsbCameraForApp(UsbDevice device){
+        return isUsbVideoDevice(device)&&UsbAutoSwitchPolicy.allowNativeUsbOpen(
+            usbForeground,!usingPhoneCamera);
+    }
+    @Override protected void onUsbDeviceDetachedForApp(UsbDevice device){
+        if(!isUsbVideoDevice(device))return;
+        manualPhoneUntilUsbDetach=false;
+        boolean same=activeUsbDeviceName==null||
+            activeUsbDeviceName.equals(device.getDeviceName());
+        if(diagnostics!=null)diagnostics.event("usb","device_detached",same?1:0,"ok");
+        if(UsbAutoSwitchPolicy.usePhoneOnDetach(isUsbAutoSwitch(),
+            !usingPhoneCamera,same)){
+            usbKnownOpened=false;
+            usbStopPending=false;usbReopenWanted=false;
+            activeUsbDeviceName=null;
+            saveCameraProfile();
+            switchCameraSource(true);
+        }else if(same){
+            activeUsbDeviceName=null;
+        }
+    }
+
     @Override public void onCameraState(MultiCameraClient.ICamera self,
                                         ICameraStateCallBack.State code,String msg){
         if(code==ICameraStateCallBack.State.OPENED){
             usbOpenedAtMs=SystemClock.elapsedRealtime();
             usbKnownOpened=true;
-            usbStreamHealth.reset();
+            startUsbFpsMonitoring();
+            lastUsbFirstFrameMs=-1;
             usbFirstFrameRecorded=false;
             usbStopPending=false;usbReopenWanted=false;
             if(diagnostics!=null){
@@ -2314,14 +2466,15 @@ public final class MainActivity extends CameraActivity {
         super.onResume();
         uiActive=true;usbForeground=true;
         usbResumeAtMs=SystemClock.elapsedRealtime();
-        usbStreamHealth.reset();usbLastHealthState=-1;usbHealthSampleBudget=3;
+        startUsbFpsMonitoring();
         if(!usingPhoneCamera&&diagnostics!=null){
             diagnostics.begin("usb_resume");
             diagnostics.event("usb","resume",0,"ok");
         }
-        handler.removeCallbacks(usbHealthTicker);
-        if(!usingPhoneCamera)handler.postDelayed(usbHealthTicker,2000L);
-        handler.post(this::resumeUsb);
+        if(isUsbAutoSwitch()&&!usingPhoneCamera&&!hasConnectedUsbVideoDevice()){
+            saveCameraProfile();
+            switchCameraSource(true);
+        }else handler.post(this::resumeUsb);
         if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED)
             requestPermissions(new String[]{Manifest.permission.CAMERA},REQUEST_PHONE_CAMERA);
         else if(usingPhoneCamera)startPhoneCamera();
@@ -2336,6 +2489,7 @@ public final class MainActivity extends CameraActivity {
                 Math.max(0,SystemClock.elapsedRealtime()-usbTextureLastAtMs),"ok");
         }
         handler.removeCallbacks(usbHealthTicker);
+        usbLastSample=null;usbLastSampleAtMs=0;usbRollingFps.reset();
         usbPictureGeneration.incrementAndGet();
         uiActive=false;usbForeground=false;
         voiceSequence.incrementAndGet();voiceRecorder.cancel();

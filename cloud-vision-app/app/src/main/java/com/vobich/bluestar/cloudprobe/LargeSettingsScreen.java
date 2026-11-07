@@ -352,6 +352,14 @@ final class LargeSettingsScreen {
         row("USB 左右校正 · "+app.usbCorrectionDescription(),"",()->{app.adjustCamera(4);render(history.get(history.size()-1));});
         row("缩放恢复1×","双指捏合和张开缩放画面",()->{app.adjustCamera(5);render(history.get(history.size()-1));});
         row("USB 画质调节","硬件亮度、对比度、饱和度和增益",()->navigate("usb-picture",""));
+        row("USB插拔自动切换 · "+(app.isUsbAutoSwitch()?"开启":"关闭"),
+            "插上切外置；拔掉切手机后置；手动选择优先",
+            ()->{app.setUsbAutoSwitch(!app.isUsbAutoSwitch());
+                 render(history.get(history.size()-1));});
+        row("插入USB时自动启动 · "+(app.isUsbAutoLaunch()?"开启":"关闭"),
+            "Android弹出设备应用选择；首次需授权，锁屏不保证启动",
+            ()->{app.setUsbAutoLaunch(!app.isUsbAutoLaunch());
+                 render(history.get(history.size()-1));});
     }
     private void usbPicture(){
         heading("外置摄像头硬件画质");
@@ -545,7 +553,8 @@ final class LargeSettingsScreen {
         action("查看上次发给 AI 的照片（仅本机）",()->app.previewLastUploadedJpeg());
         note("仅在点击后显示本次运行内存中的真实 JPEG；不保存文件、不添加照片到日志、不额外上传。");
         note("USB健康状态包含前后台切换、原始帧FPS和TextureView预览新缓冲FPS；"
-            +"不代表物理屏幕真正显示的FPS。慢速/停流优先看这两条是否同步下降。");
+            +"显示最近10秒有效采样平均和最低值；手机模式不沿用旧USB快照。"
+            +"这不是物理屏幕真正显示的FPS。慢速/停流优先看两条是否同步下降。");
         action("复制诊断摘要",()->app.copyRuntimeDiagnostics());
         action("导出匿名诊断日志",()->app.exportRuntimeDiagnostics());
         action("刷新诊断记录",()->render(history.get(history.size()-1)));
