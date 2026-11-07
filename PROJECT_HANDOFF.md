@@ -1402,3 +1402,17 @@
 - **可复制手机浏览器的APK直链**：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/blue-star-guide-cloud-rc16-20261107/BlueStar_Guide_1.0.15_RC16_arm64.apk
 - **审计文件**：https://github.com/vobichngan285-collab/kanzi-assistant/blob/fix/bluestar-115-cold-usb-auto-select-20261107/docs/bluestar-v1015-rc16-cold-attach-autoswitch-20261107.md
 - **未完成验收与后续原则**：必须用户用 vivo 实测自动开/切 USB 与真机fps（60..61只是**协商优先，并非已实现61实际视频帧/秒**），验证 USB 高FPS 对长时间预览/前后台稳定性是否反而退化；如仍约30，先结合摄像头的具体1080p模式/光线/USB带宽和运行诊断，**不自动增加循环重启或各式补帧**；保留 RC13 已验证正确的方向与OCR，RC14硬件亮度等与AI/朗读/任务功能原样。
+
+
+### 2026-11-07 — 蓝星向导 RC17 v1.0.16：独立文字识别模型四选，用户批准短提示词，CI+APK已发布
+
+- **用户确认**：用户要求在「云端 AI」的视觉模型选择之外增加一个独立「文字识别模型」选择，专用OCR+现有3个大模型。四个选项：`qwen-vl-ocr`（默认）、`qwen3.7-flash`、`qwen3.8-flash`、`qwen3.8-max`；点击「朗读文字」APP自动拍照并发送内置指令，不用用户另行发送语言指令，只读原文字不要场景描述。用户明确逐字确认的**短提示词**：**“识别图片中清晰可见的文字，按正确阅读顺序原样输出，不解释、不补充、不猜测。”**，之后明确说“可以就这样干，你现在就可以修改”。最近用户报的 USB增益0%不生效属于另一项问题，**本轮未修增益**。
+- **原仓库基线**：读取 `main:PROJECT_HANDOFF.md` 并核对上一版 RC16 发行分支 HEAD `7522c79414cf7fe4342bf99b01303e40c58b79be`，派生 **`feat/bluestar-116-independent-ocr-model-choice-20261107`**。实际Android构建源码SHA **`c6c00aa170b8a081d8260b500fb184f6df11755f`**。单独包 `com.vobich.bluestar.rc17`、versionCode26、versionName`1.0.16-rc17`，与 RC16并存、不覆盖任何原离线OCR或历史分支。
+- **改动仅影响OCR选择链路**：新增 `OcrModelCatalog.java` 提供4项白名单/默认专用OCR/用户短提示词和纯函数按任务选择。MainActivity 新本机Pref `cloud_ocr_model_v1`，独立于视觉 `cloud_vision_model`，无网络开销；拍照点击桌面「朗读文字」及语音`READ_TEXT`使用当前OCR选择，TaskCatalog默认「朗读文字」提示词更新为用户短句；`CloudVisionClient` OCR白名单允许4项、仍用**单张JPEG/单个HTTP/原非流式OCR/原OcrResponseGate/原TTS朗读**，通用Flash/Max OCR关闭thinking，但OCR专用原参数不变，错误和空文本使用实际模型写入token用量记录。保留任务管理修改 OCR提示词的既有功能，不覆盖用户曾编辑的预设；默认任务用用户确认句。
+- **视觉链路完全独立**：原视觉模型仍三选，医院科室、菜单、商店、商品、寻找目标继续沿原视觉model；即使用户当前桌面选了「朗读文字」，「寻找目标」也强制使用视觉模型；纯文本追问仍原 Flash38。OCR切模型时不会自动做任何付费测试、后台识别、双重上传或失败自动换模型，不用用户说额外指令。通用大模型识别质量/费用/账号是否可用需实际 A/B 测试，提示词不是100%防臆造保证。
+- **设置及用量 UI**：「云端AI→文字识别模型」，4个显式选项/勾选当前/显示短提示词；视觉模型原三项及测试入口不改，用量页可见两套当前模型；内部日志不写照片/识别内容/API key。RC16 实测原生 USB约60次 TextureView缓冲更新/秒/60..61 FPS协商、RC13 方向校正、RC14 UVC亮度对比度饱和度增益（增益bug未动）、RC15/RC16 自动插拔、TTS/音效/任务管理全部保留。
+- **真实构建 CI**：[42362900151](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42362900151) `completed/success`，准确源码SHA `c6c00aa...`，`RC17_OCR_FOUR_CHOICES_INDEPENDENT_AND_PROMPT=PASS` + RC12视觉模型迁移 + RC13 USB方向32组合 + RC14画质/帧率 + RC15插拔/滑动FPS + cloud/voice/task排序回归，全通过；原生 UVC patch / ARM64 Android `BUILD SUCCESSFUL in 2m 14s`，原图标和音效/包名/版本/apk核验 PASS。官方CI产物 **13569623900**，`blue-star-guide-1-0-16-rc17-arm64`。
+- **发行验证**：[42363173778](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42363173778) `completed/success`；严格确认来自准确 CI 成功run及源码 SHA、`sha256sum -c SHA256SUMS.txt`、原 UVC arm64库/图标/咔叮和嗖声音效/包名/版本/ZIP完整性/无本机OCR模型，**不重编译不重签直接发布原件**。GitHub release tag `blue-star-guide-cloud-rc17-20261107`，正式上传 `BlueStar_Guide_1.0.16_RC17_arm64.apk`，**8,601,318 bytes**，SHA256 `8ffa04c4c74932b67b8bc0bd1e80051d65eefe9e1cb8cb92c08fc443d9ad9c24`。
+- **手机浏览器 APK 直链**：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/blue-star-guide-cloud-rc17-20261107/BlueStar_Guide_1.0.16_RC17_arm64.apk
+- **专项文档**：https://github.com/vobichngan285-collab/kanzi-assistant/blob/feat/bluestar-116-independent-ocr-model-choice-20261107/docs/bluestar-v1016-rc17-independent-ocr-models-20261107.md
+- **真机验收**：用户在新隔离包需要再次填API Key/配置USB；逐一用同张医院指示牌/菜单/招牌测试4种OCR选项的正确顺序、原样读、不猜测、首句延迟和Token；切换选项不增加单独调用；语音 READ_TEXT 与点击结果相同，视觉任务和文字追问原功能不受影响；检查USB仍有≈60次缓冲更新/秒。**构建通过不能等同4款云端模型已在用户账户成功执行**。
