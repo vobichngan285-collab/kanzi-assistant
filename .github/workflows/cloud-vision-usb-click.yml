@@ -1,7 +1,7 @@
-name: Blue Star Guide 1.0.17 - RC18 Online Conversation in All Three Visual Models
+name: Blue Star Guide 1.0.18 - RC19 Fix Scene Voice Intent Auto Capture
 on:
   push:
-    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106, fix/bluestar-104-ocr-voice-empty-20261106, fix/bluestar-105-model-options-20261107, fix/bluestar-106-three-tier-models-20261107, fix/bluestar-107-compact-settings-20261107, fix/bluestar-108-voice-intent-text-followups-20261107, fix/bluestar-109-37flash-keep-plus-20261107, fix/bluestar-110-stop-finding-drag-grid-20261107, fix/bluestar-111-maxfast-remove-plus-drag-delete-20261107, fix/bluestar-112-usb-orientation-preview-jpeg-20261107, fix/bluestar-113-usb-lifecycle-trace-picture-controls-20261107, fix/bluestar-114-usb-auto-switch-launch-fps-20261107, fix/bluestar-115-cold-usb-auto-select-20261107, feat/bluestar-116-independent-ocr-model-choice-20261107, feat/bluestar-117-web-search-followup-20261107]
+    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106, fix/bluestar-104-ocr-voice-empty-20261106, fix/bluestar-105-model-options-20261107, fix/bluestar-106-three-tier-models-20261107, fix/bluestar-107-compact-settings-20261107, fix/bluestar-108-voice-intent-text-followups-20261107, fix/bluestar-109-37flash-keep-plus-20261107, fix/bluestar-110-stop-finding-drag-grid-20261107, fix/bluestar-111-maxfast-remove-plus-drag-delete-20261107, fix/bluestar-112-usb-orientation-preview-jpeg-20261107, fix/bluestar-113-usb-lifecycle-trace-picture-controls-20261107, fix/bluestar-114-usb-auto-switch-launch-fps-20261107, fix/bluestar-115-cold-usb-auto-select-20261107, feat/bluestar-116-independent-ocr-model-choice-20261107, feat/bluestar-117-web-search-followup-20261107, fix/bluestar-118-voice-eye-scene-auto-capture-20261107]
     paths:
       - 'cloud-vision-app/**'
       - '.github/workflows/cloud-vision-usb-click.yml'
@@ -119,6 +119,13 @@ jobs:
           assert 'final String selectedModel=visionModel;' in activity
           assert 'FollowupPrompt.buildStandalone(followupTurns,question,search)' in activity
           assert 'VoiceAction.Type.REVIEW_IMAGE&&lastSessionJpeg==null' in activity
+          assert 'if(action.type==VoiceAction.Type.OBSERVE_SCENE)' in activity
+          scene=activity.split('if(action.type==VoiceAction.Type.OBSERVE_SCENE)')[1].split('if(action.type==VoiceAction.Type.READ_TEXT)')[0]
+          assert 'captureOneFrame(observe);' in scene
+          # RC19 spoken scene must NOT fall through into the no-image chat.
+          assert '"(有什么|有些什么|有哪些|什么东西|是什么|是啥|' in voice
+          assert 'v.contains("刚才")||v.contains("上一张")' in voice
+          assert 'if(isObserveRequest(v))return new VoiceAction(Type.OBSERVE_SCENE,"");' in voice
           assert 'return recognizeInternal(null,key,task,model,listener,true,allowSearch);' in cloud_client
           assert 'if(!textOnly)' in cloud_client and 'content.put(image);' in cloud_client
           assert cloud_client.count('Base64.encodeToString')==1
@@ -442,8 +449,8 @@ jobs:
           camera2=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/InternalCameraController.java').read_text()
           assert 'CameraManager' in camera2 and 'CameraCaptureSession' in camera2
           assert 'Nv21Rotation.rotate(' in camera2
-          assert "versionCode 27" in app and "versionName '1.0.17-rc18'" in app
-          assert "applicationIdSuffix '.rc18'" in app
+          assert "versionCode 28" in app and "versionName '1.0.18-rc19'" in app
+          assert "applicationIdSuffix '.rc19'" in app
           assert Path('cloud-vision-app/app/src/main/res/drawable-nodpi/bluestar_globe.png').is_file()
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('ic_launcher.webp'))
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('bluestar_icon.webp'))
@@ -496,6 +503,7 @@ jobs:
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.UsbRollingFpsTest
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.CloudOptimizationTest
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.VoiceFlowTest
+          echo 'RC19_EYE_SCENE_SPEECH_CLASSIFIED_TO_FRESH_CAMERA=PASS'
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.TaskOrderTest
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.FollowupPromptTest
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.VisionModelCatalogTest
@@ -544,28 +552,28 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p cloud-vision-artifact
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.17_RC18_arm64.apk
-          test -s cloud-vision-artifact/BlueStar_Guide_1.0.17_RC18_arm64.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.18_RC19_arm64.apk
+          test -s cloud-vision-artifact/BlueStar_Guide_1.0.18_RC19_arm64.apk
           (cd cloud-vision-artifact && sha256sum *.apk > SHA256SUMS.txt)
           unzip -Z1 cloud-vision-artifact/*.apk > cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' cloud-vision-artifact/apk-entries.txt
           cd cloud-vision-app
-          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.17_RC18_arm64.apk
-          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.17_RC18_arm64.apk
+          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.18_RC19_arm64.apk
+          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.18_RC19_arm64.apk
           cd ..
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           test -x "$AAPT"
-          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.17_RC18_arm64.apk > cloud-vision-artifact/badging.txt
+          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.18_RC19_arm64.apk > cloud-vision-artifact/badging.txt
           grep -F "application-label:'Blue Star Guide'" cloud-vision-artifact/badging.txt
-          grep -F "package: name='com.vobich.bluestar.rc18'" cloud-vision-artifact/badging.txt
+          grep -F "package: name='com.vobich.bluestar.rc19'" cloud-vision-artifact/badging.txt
           grep -q 'application-icon-' cloud-vision-artifact/badging.txt
           grep -Fxq 'res/raw/c_metal_clack_ding.mp3' cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'res/raw/voice_send_whoosh.wav' cloud-vision-artifact/apk-entries.txt
           ! grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx' cloud-vision-artifact/apk-entries.txt
-          echo 'Blue Star Guide 1.0.17 RC18: three selectable visual models gain optional online web search for explicitly initiated AI follow-up conversations, using a single official enable_search Chat Completions call (no forced search, no duplicate requests). Text-only follow-up now honors user-chosen visual model instead of always Flash38, and general voice chat works without previously photographed image. Photo recheck preserves single old JPEG. Preset OCR, initial photos, target location/finding, model self-test and audio ASR never web-search. Optional web-search toggle defaults enabled; disabled reverts conversations to normal no-search. Official OpenAI-compatible Chat Completions does not provide verified structured source citations. Keep RC17 OCR four-choice short user prompt, RC16 USB native high fps, RC13 original 32-case upload orientation, RC14 hardware controls, voice/TTS, task controls, icons/sounds; all via native arm64. Offline runtime and account access require vivo tests.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Blue Star Guide 1.0.18 RC19 is a focused voice regression fix: voice messages like 我眼前是什么, 前面是什么, 眼前是啥 now route to OBSERVE_SCENE and automatically take a NEW camera photo once (same reliable USB/Camera2 capture, original visual model, and TTS). RC18 newly introduced no-photo web conversation had caused these unrecognized expressions to be sent without an image. Historic-image questions, text reading, general web questions, target finding, audio and scene routing are explicitly regression-tested. RC18 online 3-model conversations, RC17 four-choice OCR, RC16 USB native FPS/direct stream, RC13 32-case orientation, RC14 hardware controls, task UI, icon and TTS sounds unchanged. Full arm64 native Android build and checksum verified. User true device/ASR tests still required.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload 1.0 release candidate APK (debug-signed, device testing)
         uses: actions/upload-artifact@v4
         with:
-          name: blue-star-guide-1-0-17-rc18-arm64
+          name: blue-star-guide-1-0-18-rc19-arm64
           path: cloud-vision-artifact/*
           retention-days: 7
