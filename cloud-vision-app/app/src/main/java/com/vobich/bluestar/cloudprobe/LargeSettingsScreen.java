@@ -99,6 +99,7 @@ final class LargeSettingsScreen {
             case "preset":heading="编辑预设提示词";break;
             case "custom":heading="编辑自定义任务";break;
             case "camera":heading="摄像头设置";break;
+            case "usb-picture":heading="USB 画质调节";break;
             case "sources":heading="选择摄像头";break;
             case "feedback":heading="提示音与振动";break;
             case "cloud":heading="云端 AI";break;
@@ -128,6 +129,7 @@ final class LargeSettingsScreen {
         else if(p.name.equals("preset"))editor(p.param,false);
         else if(p.name.equals("custom"))editor(p.param,true);
         else if(p.name.equals("camera"))camera();
+        else if(p.name.equals("usb-picture"))usbPicture();
         else if(p.name.equals("sources"))sources();
         else if(p.name.equals("feedback"))feedback();
         else if(p.name.equals("cloud"))cloud();
@@ -349,6 +351,81 @@ final class LargeSettingsScreen {
         row("垂直翻转 · "+app.flipDescription(),"",()->{app.adjustCamera(3);render(history.get(history.size()-1));});
         row("USB 左右校正 · "+app.usbCorrectionDescription(),"",()->{app.adjustCamera(4);render(history.get(history.size()-1));});
         row("缩放恢复1×","双指捏合和张开缩放画面",()->{app.adjustCamera(5);render(history.get(history.size()-1));});
+        row("USB 画质调节","硬件亮度、对比度、饱和度和增益",()->navigate("usb-picture",""));
+    }
+    private void usbPicture(){
+        heading("外置摄像头硬件画质");
+        note("只调节设备支持的 UVC 项目，直接作用于采集画面，"
+            +"不是屏幕滤镜。强光下发白可能是自动曝光过高，"
+            +"仅调整饱和度无法恢复已过曝的文字。");
+        if(!app.isUsbSelected()){
+            note("当前为手机摄像头。请先在摄像头设置中选择 USB，再进入此页。");
+            return;
+        }
+        TextView status=text("正在读取USB设备实际支持的控制项…",17,SUB,false);
+        content.addView(status,new LinearLayout.LayoutParams(-1,-2));
+        SeekBar[] sliders=new SeekBar[UsbPictureLevels.COUNT];
+        TextView[] labels=new TextView[UsbPictureLevels.COUNT];
+        for(int k=0;k<UsbPictureLevels.COUNT;k++){
+            final int kind=k;
+            labels[k]=text(UsbPictureLevels.LABELS[k]+" · 检查中",20,TEXT,true);
+            labels[k].setPadding(dp(10),dp(16),dp(10),0);
+            content.addView(labels[k],new LinearLayout.LayoutParams(-1,-2));
+            SeekBar slider=new SeekBar(app);
+            slider.setMax(100);
+            slider.setProgress(50);
+            slider.setEnabled(false);
+            content.addView(slider,new LinearLayout.LayoutParams(-1,dp(58)));
+            sliders[k]=slider;
+            slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+                @Override public void onProgressChanged(SeekBar bar,int progress,boolean fromUser){
+                    if(fromUser)labels[kind].setText(UsbPictureLevels.LABELS[kind]+
+                        " · "+progress+"%（松手应用）");
+                }
+                @Override public void onStartTrackingTouch(SeekBar bar){}
+                @Override public void onStopTrackingTouch(SeekBar bar){
+                    final int value=bar.getProgress();
+                    bar.setEnabled(false);
+                    status.setText("正在发送 UVC 硬件调节请求…");
+                    app.setUsbPictureControl(kind,value,(supported,values,message)->{
+                        if(closed||history.isEmpty()||
+                           !"usb-picture".equals(history.get(history.size()-1).name))return;
+                        status.setText(message);
+                        bar.setEnabled(true);
+                    });
+                }
+            });
+        }
+        action("重新读取设备控制项",()->render(history.get(history.size()-1)));
+        action("恢复USB画质默认设置",()->new AlertDialog.Builder(app)
+            .setTitle("恢复USB摄像头硬件画质")
+            .setMessage("只恢复该USB设备的亮度、对比度、饱和度和增益，"
+                +"不会改变已修复的旋转、左右校正、缩放或云端模型。")
+            .setNegativeButton("取消",null)
+            .setPositiveButton("恢复默认",(dialog,which)->{
+                status.setText("正在恢复硬件默认值…");
+                app.resetUsbPictureControls((supported,values,message)->{
+                    if(closed||history.isEmpty()||
+                       !"usb-picture".equals(history.get(history.size()-1).name))return;
+                    app.toastShort(message);
+                    render(history.get(history.size()-1));
+                });
+            }).show());
+        app.queryUsbPictureControls((supported,values,message)->{
+            if(closed||history.isEmpty()||
+               !"usb-picture".equals(history.get(history.size()-1).name))return;
+            status.setText(message);
+            for(int k=0;k<UsbPictureLevels.COUNT;k++){
+                boolean valid=supported!=null&&supported.length>k&&supported[k]&&
+                    values!=null&&values.length>k&&values[k]>=0;
+                sliders[k].setEnabled(valid);
+                if(valid){
+                    sliders[k].setProgress(UsbPictureLevels.clamp(values[k]));
+                    labels[k].setText(UsbPictureLevels.LABELS[k]+" · "+
+                        values[k]+"%");
+                }else labels[k].setText(UsbPictureLevels.LABELS[k]+" · 设备不支持");
+            }
+        });
     }
     private void sources(){
         row("USB 外接摄像头","保留原生UVC直接预览",()->{app.setCameraSourceFromSettings(0);back();});
@@ -467,6 +544,8 @@ final class LargeSettingsScreen {
     private void diagnostics(){
         action("查看上次发给 AI 的照片（仅本机）",()->app.previewLastUploadedJpeg());
         note("仅在点击后显示本次运行内存中的真实 JPEG；不保存文件、不添加照片到日志、不额外上传。");
+        note("USB健康状态包含前后台切换、原始帧FPS和TextureView预览新缓冲FPS；"
+            +"不代表物理屏幕真正显示的FPS。慢速/停流优先看这两条是否同步下降。");
         action("复制诊断摘要",()->app.copyRuntimeDiagnostics());
         action("导出匿名诊断日志",()->app.exportRuntimeDiagnostics());
         action("刷新诊断记录",()->render(history.get(history.size()-1)));
