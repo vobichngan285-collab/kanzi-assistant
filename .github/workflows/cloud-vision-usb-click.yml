@@ -1,7 +1,7 @@
-name: Blue Star Guide 1.0.20 - RC21 Default Fast Line OCR Speech
+name: Blue Star Guide 1.0.21 - RC22 Reading Shelf and Camera Sleep
 on:
   push:
-    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106, fix/bluestar-104-ocr-voice-empty-20261106, fix/bluestar-105-model-options-20261107, fix/bluestar-106-three-tier-models-20261107, fix/bluestar-107-compact-settings-20261107, fix/bluestar-108-voice-intent-text-followups-20261107, fix/bluestar-109-37flash-keep-plus-20261107, fix/bluestar-110-stop-finding-drag-grid-20261107, fix/bluestar-111-maxfast-remove-plus-drag-delete-20261107, fix/bluestar-112-usb-orientation-preview-jpeg-20261107, fix/bluestar-113-usb-lifecycle-trace-picture-controls-20261107, fix/bluestar-114-usb-auto-switch-launch-fps-20261107, fix/bluestar-115-cold-usb-auto-select-20261107, feat/bluestar-116-independent-ocr-model-choice-20261107, feat/bluestar-117-web-search-followup-20261107, fix/bluestar-118-voice-eye-scene-auto-capture-20261107, exp/bluestar-120-ocr-abc-stream-speed-20261107, feat/bluestar-121-default-line-ocr-20261107]
+    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106, fix/bluestar-104-ocr-voice-empty-20261106, fix/bluestar-105-model-options-20261107, fix/bluestar-106-three-tier-models-20261107, fix/bluestar-107-compact-settings-20261107, fix/bluestar-108-voice-intent-text-followups-20261107, fix/bluestar-109-37flash-keep-plus-20261107, fix/bluestar-110-stop-finding-drag-grid-20261107, fix/bluestar-111-maxfast-remove-plus-drag-delete-20261107, fix/bluestar-112-usb-orientation-preview-jpeg-20261107, fix/bluestar-113-usb-lifecycle-trace-picture-controls-20261107, fix/bluestar-114-usb-auto-switch-launch-fps-20261107, fix/bluestar-115-cold-usb-auto-select-20261107, feat/bluestar-116-independent-ocr-model-choice-20261107, feat/bluestar-117-web-search-followup-20261107, fix/bluestar-118-voice-eye-scene-auto-capture-20261107, exp/bluestar-120-ocr-abc-stream-speed-20261107, feat/bluestar-121-default-line-ocr-20261107, feat/bluestar-122-reading-library-20261108]
     paths:
       - 'cloud-vision-app/**'
       - '.github/workflows/cloud-vision-usb-click.yml'
@@ -353,6 +353,43 @@ jobs:
           assert 'OcrSpeedExperiment.B' not in settings
           assert 'if(!(OcrSpeedExperiment.A.equals(mode)||OcrSpeedExperiment.C.equals(mode)))return false;' in activity
           assert 'OcrModelCatalog.PROMPT' in tasks
+          # RC22: book reading is a separate bottom dock, never a reordered preset.
+          read_base='cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/'
+          reading=Path(read_base+'ReadingScreen.java').read_text()
+          library=Path(read_base+'ReadingLibrary.java').read_text()
+          rules=Path(read_base+'ReadingRules.java').read_text()
+          narrator=Path(read_base+'ReadingNarrationQueue.java').read_text()
+          assert 'modeButton,startButton,readingButton,settingsButton' in activity
+          assert 'readingButton.setOnClickListener(v->openReadingMode())' in activity
+          assert 'new ReadingScreen(this,rootFrame,readingLibrary,' in activity
+          assert 'private void suspendReadingCamera()' in activity
+          assert 'usbForeground=false;' in activity and 'phoneController.stop();' in activity
+          assert 'readingAwaitingFrame.compareAndSet(true,false)' in activity
+          assert 'frame.atMs-readingCaptureStartedAtMs>=450L' in activity
+          assert 'private void beginReadingCapturedFrame(Frame frame,int token)' in activity
+          assert 'FrameCompressor.encodeAdjusted(' in activity
+          assert 'OcrSpeedExperiment.C);' in activity
+          assert 'final String model=OcrModelCatalog.normalize(ocrModel);' in activity
+          assert 'ReadingRules.PROMPT' in activity and 'ReadingRules.TASK_ID' in activity
+          assert 'readingLibrary.add(bookId,result.text)' in activity
+          assert 'readingScreen.saved(saved)' in activity
+          assert 'ACTION_CREATE_DOCUMENT' in activity and 'REQUEST_READING_EXPORT' in activity
+          assert 'readingLibrary.export(id)' in activity
+          assert 'ReadingRules.truncated(' in cloud_client
+          assert 'isBook?3800:1200' in cloud_client
+          assert 'isBook?ReadingRules.MAX_PAGE_CHARS:6000' in cloud_client
+          assert 'outputTruncated' in cloud_client and '本页未保存' in cloud_client
+          assert 'reading_books' in library and 'AtomicFile' in library
+          assert 'new File(context.getFilesDir(),' in library
+          assert 'photo.jpeg' in activity and 'out.write(readingLibrary.export(id)' in activity
+          assert 'private void renderShelf(' in reading and 'private void renderPage(' in reading
+          assert '下一张' in reading and '朗读' in reading
+          assert 'Color.WHITE' in reading and '0xFF091B32' in reading
+          assert 'readingScreen.failure(' in activity and 'readingScreen.appendLine(part)' in activity
+          assert 'ReadingNarrationQueue' in narrator
+          assert '不猜测' in rules and '整张书页' in rules
+          assert 'PaddleOcrEngine' not in activity
+          print('RC22_READING_SHELF_OCR_CAMERA_TEXT_STORAGE_STATIC_AUDIT=PASS')
           assert 'SearchRoutePolicy.allow(task.id,task.engine,model,allowSearch)' in cloud_client
           # RC14: USB diagnostics use native texture buffer updates and 5Hz
           # raw callbacks only; no Bitmap readbacks or extra AI calls.
@@ -478,8 +515,8 @@ jobs:
           camera2=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/InternalCameraController.java').read_text()
           assert 'CameraManager' in camera2 and 'CameraCaptureSession' in camera2
           assert 'Nv21Rotation.rotate(' in camera2
-          assert "versionCode 30" in app and "versionName '1.0.20-rc21'" in app
-          assert "applicationIdSuffix '.rc21'" in app
+          assert "versionCode 31" in app and "versionName '1.0.21-rc22'" in app
+          assert "applicationIdSuffix '.rc22'" in app
           assert Path('cloud-vision-app/app/src/main/res/drawable-nodpi/bluestar_globe.png').is_file()
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('ic_launcher.webp'))
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('bluestar_icon.webp'))
@@ -526,6 +563,10 @@ jobs:
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/OcrSpeedExperiment.java \
             cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/OcrLineChunks.java \
             cloud-vision-app/tests/OcrSpeedExperimentTest.java \
+            cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/ReadingRules.java \
+            cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/ReadingNarrationQueue.java \
+            cloud-vision-app/tests/ReadingRulesTest.java \
+            cloud-vision-app/tests/ReadingNarrationQueueTest.java \
             cloud-vision-app/tests/VoiceFlowTest.java \
             cloud-vision-app/tests/CloudOptimizationTest.java
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.UsbFrameOrientationTest
@@ -541,7 +582,9 @@ jobs:
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.VisionModelCatalogTest
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.OcrModelCatalogTest
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.OcrSpeedExperimentTest
-          echo 'RC21_OCR_C_DEFAULT_A_FALLBACK_NO_DUPLICATE=PASS'
+          java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.ReadingRulesTest
+          java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.ReadingNarrationQueueTest
+          echo 'RC22_READING_FULL_PAGE_LOCAL_BOOKS_TTS_QUEUE_TESTS=PASS'
           java -cp /tmp/bluestar-unit com.vobich.bluestar.cloudprobe.SearchRoutePolicyTest
       - name: Patch pinned Android 16 USB permission and native sampling safely
         run: |
@@ -586,28 +629,28 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p cloud-vision-artifact
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.20_RC21_arm64.apk
-          test -s cloud-vision-artifact/BlueStar_Guide_1.0.20_RC21_arm64.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.21_RC22_arm64.apk
+          test -s cloud-vision-artifact/BlueStar_Guide_1.0.21_RC22_arm64.apk
           (cd cloud-vision-artifact && sha256sum *.apk > SHA256SUMS.txt)
           unzip -Z1 cloud-vision-artifact/*.apk > cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' cloud-vision-artifact/apk-entries.txt
           cd cloud-vision-app
-          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.20_RC21_arm64.apk
-          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.20_RC21_arm64.apk
+          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.21_RC22_arm64.apk
+          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.21_RC22_arm64.apk
           cd ..
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           test -x "$AAPT"
-          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.20_RC21_arm64.apk > cloud-vision-artifact/badging.txt
+          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.21_RC22_arm64.apk > cloud-vision-artifact/badging.txt
           grep -F "application-label:'Blue Star Guide'" cloud-vision-artifact/badging.txt
-          grep -F "package: name='com.vobich.bluestar.rc21'" cloud-vision-artifact/badging.txt
+          grep -F "package: name='com.vobich.bluestar.rc22'" cloud-vision-artifact/badging.txt
           grep -q 'application-icon-' cloud-vision-artifact/badging.txt
           grep -Fxq 'res/raw/c_metal_clack_ding.mp3' cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'res/raw/voice_send_whoosh.wav' cloud-vision-artifact/apk-entries.txt
           ! grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx' cloud-vision-artifact/apk-entries.txt
-          echo 'RC21 promotion of user-tested RC20 mode C into RC19 baseline: default OCR SSE streams one complete line at a time to TTS, original full-result A remains an optional fallback, no B option in UI. Same single JPEG single cloud request, selected OCR model/prompt, no changes to native UVC, camera orientation, voice actions, search or audio assets. RC20 real phone first TTS callback 1650ms versus A 5210ms in one 720p comparison; user reports satisfaction across more repetitions, true loudspeaker and new package device acceptance pending.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'RC22 Reading button after AI dialog and before Settings; blue shelf with atomic text-only book JSON, chapter/page index, TXT export by Android SAF, no audio/photo storage. Reading uses selected OCR model with whole-page instruction and user-verified C line streaming. Native USB and Camera2 close after fresh capture and reopen for Next Page, no old-frame reuse. Bounded long output and explicit length truncation rejection prevent incomplete books from silently saving. Existing task grid, voice/chat, camera/USB, audio and icon checks remain. Real phone and USB verification required.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload 1.0 release candidate APK (debug-signed, device testing)
         uses: actions/upload-artifact@v4
         with:
-          name: blue-star-guide-1-0-20-rc21-arm64
+          name: blue-star-guide-1-0-21-rc22-arm64
           path: cloud-vision-artifact/*
           retention-days: 7
