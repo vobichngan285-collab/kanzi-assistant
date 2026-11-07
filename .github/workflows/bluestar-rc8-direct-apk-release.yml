@@ -1,0 +1,67 @@
+name: Publish RC8 Compact Dark Settings APK (verified)
+on:
+  push:
+    branches: [fix/bluestar-107-compact-settings-20261107]
+    paths: ['.github/workflows/bluestar-rc8-direct-apk-release.yml']
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish-original-ci-apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Verify original RC8 CI succeeded and exact source SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          result="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/42325680471" --jq '.conclusion')"
+          source="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/42325680471" --jq '.head_sha')"
+          test "$result" = success
+          test "$source" = acae013fe90b54a8afcfc52eeab0eb0852b71dd2
+      - name: Get immutable original RC8 artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p original
+          gh run download 42325680471 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name blue-star-guide-1-0-7-rc8-arm64 \
+            --dir original
+          test -s original/BlueStar_Guide_1.0.7_RC8_arm64.apk
+          test -s original/SHA256SUMS.txt
+      - name: Verify unchanged APK, settings package, assets, and checksum
+        run: |
+          set -euo pipefail
+          cd original
+          sha256sum -c SHA256SUMS.txt
+          echo "848b6eac3e581761779b8c47f1303808ca5a191e67d4939c28da883f05178278  BlueStar_Guide_1.0.7_RC8_arm64.apk" | sha256sum -c -
+          test "$(stat -c%s BlueStar_Guide_1.0.7_RC8_arm64.apk)" = 8567976
+          unzip -tq BlueStar_Guide_1.0.7_RC8_arm64.apk >/dev/null
+          unzip -Z1 BlueStar_Guide_1.0.7_RC8_arm64.apk | grep -Fx 'lib/arm64-v8a/libUVCCamera.so'
+          unzip -Z1 BlueStar_Guide_1.0.7_RC8_arm64.apk | grep -Fx 'res/raw/c_metal_clack_ding.mp3'
+          unzip -Z1 BlueStar_Guide_1.0.7_RC8_arm64.apk | grep -Fx 'res/raw/voice_send_whoosh.wav'
+          grep -Fq "package: name='com.vobich.bluestar.rc8'" badging.txt
+          grep -Fq "versionName='1.0.7-rc8'" badging.txt
+          grep -Fq "application-label:'Blue Star Guide'" badging.txt
+      - name: Publish verified public direct APK, no re-signing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=blue-star-guide-cloud-rc8-20261107
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Existing tag: do not overwrite known APK" >&2
+            exit 1
+          fi
+          gh release create "$TAG" \
+            "original/BlueStar_Guide_1.0.7_RC8_arm64.apk" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target acae013fe90b54a8afcfc52eeab0eb0852b71dd2 \
+            --title "Blue Star Guide 1.0.7 RC8 - Compact Dark Settings (arm64)" \
+            --notes "Compact large-text dark-blue settings, removes redundant descriptions below setting cards and visual-model choices; retains inline camera/resolution values. Three model choices unchanged: daily qwen3.8-flash, stable qwen3-vl-plus, manual premium qwen3.8-max. Max test button shows a short pay warning at actual test time. All capture, USB, OCR, ASR, TTS, camera, audio, token records remain on prior RC7 core. APK SHA256 848b6eac3e581761779b8c47f1303808ca5a191e67d4939c28da883f05178278, 8,567,976 bytes, identical to successful CI run 42325680471; no rebuild or resign. Independent com.vobich.bluestar.rc8 does not replace existing RC7; setup of Bailian key is needed. CI is not a vivo device test." \
+            --prerelease
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -Fx 'BlueStar_Guide_1.0.7_RC8_arm64.apk'
+          echo "Direct install APK: https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/BlueStar_Guide_1.0.7_RC8_arm64.apk" >> "$GITHUB_STEP_SUMMARY"
