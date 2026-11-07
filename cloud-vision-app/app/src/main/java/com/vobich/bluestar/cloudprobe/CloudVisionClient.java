@@ -32,6 +32,23 @@ final class CloudVisionClient {
 
     static Result recognize(byte[] jpeg,String key,TaskCatalog.Task task,
                             String visionModel,PartListener listener) throws Exception {
+        return recognizeInternal(jpeg,key,task,visionModel,listener,false);
+    }
+
+    /** Same streaming/TTS and accounting path, but strictly NO JPEG/image_url. */
+    static Result recognizeText(String textPrompt,String key,PartListener listener) throws Exception {
+        if(textPrompt==null||textPrompt.trim().isEmpty())
+            throw new IllegalArgumentException("文字智能分析缺少上下文");
+        TaskCatalog.Task task=new TaskCatalog.Task(
+            "text-followup","文字智能分析",textPrompt,TaskCatalog.VISION,true,"✦");
+        // Use the user's confirmed inexpensive Flash, independently of visual
+        // Max/Plus selection. Never auto-switch or retry a failed request.
+        return recognizeInternal(null,key,task,VisionModelCatalog.FLASH_38,listener,true);
+    }
+
+    private static Result recognizeInternal(byte[] jpeg,String key,TaskCatalog.Task task,
+                               String visionModel,PartListener listener,
+                               boolean textOnly) throws Exception {
         if(key==null||key.trim().isEmpty())
             throw new IllegalArgumentException("请先在设置中配置API Key");
         boolean isOcr=TaskCatalog.OCR.equals(task.engine);
@@ -41,13 +58,12 @@ final class CloudVisionClient {
         if(!isOcr&&VisionModelCatalog.indexOf(visionModel)<0)
             throw new IllegalArgumentException("所选视觉模型不支持，请重新选择");
         String model=isOcr?"qwen-vl-ocr":visionModel;
-        JSONObject image=new JSONObject().put("type","image_url").put("image_url",
-            new JSONObject().put("url","data:image/jpeg;base64,"+
-                Base64.encodeToString(jpeg,Base64.NO_WRAP)));
         boolean customPreset=!task.custom&&!task.instruction.equals(
             TaskCatalog.defaultInstruction(task.id));
         String instruction;
-        if(isOcr){
+        if(textOnly){
+            instruction=task.instruction;
+        }else if(isOcr){
             instruction="只依据照片中真实可见的信息完成任务；不猜测模糊文字。任务："+task.instruction;
         }else if("menu".equals(task.id)){
             instruction="只根据照片可见信息完成用户当前任务："+task.instruction+
@@ -61,13 +77,19 @@ final class CloudVisionClient {
                 "不做冗长解释，不重复题目，不使用Markdown符号；文字和细节看不清就说明看不清。";
         }
         JSONArray content=new JSONArray()
-            .put(new JSONObject().put("type","text").put("text",instruction))
-            .put(image);
+            .put(new JSONObject().put("type","text").put("text",instruction));
+        if(!textOnly){
+            if(jpeg==null||jpeg.length==0)throw new IllegalArgumentException("没有可用的照片");
+            JSONObject image=new JSONObject().put("type","image_url").put("image_url",
+                new JSONObject().put("url","data:image/jpeg;base64,"+
+                    Base64.encodeToString(jpeg,Base64.NO_WRAP)));
+            content.put(image);
+        }
         // The emergency Max may think briefly before answering. Keep a hard
         // ceiling on reasoning + response tokens, rather than its unbounded default.
         boolean emergency=VisionModelCatalog.isEmergencyMax(model);
         int maxOutput=isOcr?1200:(connectionTest?64:(emergency?2048:
-            ("menu".equals(task.id)?550:((task.custom||customPreset)?650:350))));
+            (textOnly?550:("menu".equals(task.id)?550:((task.custom||customPreset)?650:350)))));
         JSONObject body=new JSONObject().put("model",model).put("stream",streaming)
             .put("max_tokens",maxOutput).put("messages",new JSONArray().put(
                 new JSONObject().put("role","user").put("content",content)));
