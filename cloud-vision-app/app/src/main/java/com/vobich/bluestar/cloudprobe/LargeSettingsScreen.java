@@ -453,8 +453,14 @@ final class LargeSettingsScreen {
     }
     private void cloud(){
         row("视觉模型","",()->navigate("models",""));
+        row("联网智能追问 · "+(app.isWebSearchEnabled()?"开启":"关闭"),
+            "",()->{app.setWebSearchEnabled(!app.isWebSearchEnabled());
+                 render(history.get(history.size()-1));});
         row("文字识别模型 · "+OcrModelCatalog.label(app.ocrModelDescription()),
             "",()->navigate("ocr-models",""));
+        note("允许三个视觉模型在语音聊天和照片追问中按需搜索网络，" +
+            "不会强制搜索；朗读文字、普通拍照识别及寻找目标不联网。" +
+            "可能增加等待时间和使用费用。");
         row("模型用量统计","查看当前模型、今日真实Token及各模型列表",()->navigate("usage",""));
         row("图片分辨率 · "+app.imagePolicyDescription(),"",()->{
             app.cycleImagePolicy();render(history.get(history.size()-1));

@@ -22,6 +22,18 @@ public final class FollowupPromptTest {
         try{FollowupPrompt.build("task"," ",null,"问什么");}
         catch(IllegalArgumentException expected){failed=true;}
         ok(failed,"reject empty source");
+        String search=FollowupPrompt.build("招牌","一家商店",null,"今天几点关门",true);
+        ok(search.contains("需要最新外部信息时可联网核对"),"web-aware prompt");
+        ok(search.contains("不得编造来源"),"never fabricate citations");
+        ok(!txt.contains("需要最新外部信息时可联网核对"),"old no-search prompt unchanged");
+        String standalone=FollowupPrompt.buildStandalone(
+            Arrays.asList("问：你好，答：你好"),"今天有哪些新闻",true);
+        ok(standalone.contains("没有照片供你查看"),"no phantom photo");
+        ok(standalone.contains("此前问答："),"dialogue continuity");
+        ok(standalone.contains("最新外部信息"),"general voice question can web-search");
+        String noWeb=FollowupPrompt.buildStandalone(null,"你好",false);
+        ok(!noWeb.contains("可联网核对"),"setting off does not instruct search");
+        System.out.println("RC18_FOLLOWUP_WEB_AND_STANDALONE_PROMPTS=PASS");
         System.out.println("TEXT_ONLY_FOLLOWUP_PROMPT_TESTS=PASS");
     }
 }

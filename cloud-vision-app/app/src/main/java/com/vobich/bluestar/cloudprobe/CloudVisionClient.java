@@ -32,23 +32,29 @@ final class CloudVisionClient {
 
     static Result recognize(byte[] jpeg,String key,TaskCatalog.Task task,
                             String visionModel,PartListener listener) throws Exception {
-        return recognizeInternal(jpeg,key,task,visionModel,listener,false);
+        return recognizeInternal(jpeg,key,task,visionModel,listener,false,false);
     }
 
-    /** Same streaming/TTS and accounting path, but strictly NO JPEG/image_url. */
-    static Result recognizeText(String textPrompt,String key,PartListener listener) throws Exception {
+    /** One optional web-enabled recheck of an existing photographed image. */
+    static Result recognize(byte[] jpeg,String key,TaskCatalog.Task task,
+                            String visionModel,PartListener listener,
+                            boolean allowSearch) throws Exception {
+        return recognizeInternal(jpeg,key,task,visionModel,listener,false,allowSearch);
+    }
+
+    /** One text-only Chat Completions request; strictly NO JPEG/image_url. */
+    static Result recognizeText(String textPrompt,String key,String model,
+                               PartListener listener,boolean allowSearch) throws Exception {
         if(textPrompt==null||textPrompt.trim().isEmpty())
             throw new IllegalArgumentException("文字智能分析缺少上下文");
         TaskCatalog.Task task=new TaskCatalog.Task(
             "text-followup","文字智能分析",textPrompt,TaskCatalog.VISION,true,"✦");
-        // Use the user's confirmed inexpensive Flash, independently of visual
-        // Max/Plus selection. Never auto-switch or retry a failed request.
-        return recognizeInternal(null,key,task,VisionModelCatalog.FLASH_38,listener,true);
+        return recognizeInternal(null,key,task,model,listener,true,allowSearch);
     }
 
     private static Result recognizeInternal(byte[] jpeg,String key,TaskCatalog.Task task,
                                String visionModel,PartListener listener,
-                               boolean textOnly) throws Exception {
+                               boolean textOnly,boolean allowSearch) throws Exception {
         if(key==null||key.trim().isEmpty())
             throw new IllegalArgumentException("请先在设置中配置API Key");
         boolean isOcr=TaskCatalog.OCR.equals(task.engine);
@@ -96,16 +102,20 @@ final class CloudVisionClient {
         JSONObject body=new JSONObject().put("model",model).put("stream",streaming)
             .put("max_tokens",maxOutput).put("messages",new JSONArray().put(
                 new JSONObject().put("role","user").put("content",content)));
-        // Flash/Max OCR uses the same fast non-thinking path as visual tasks.
-        // Dedicated qwen-vl-ocr is unchanged; text-only followups remain Flash.
+        // Flash/Max stays non-thinking for speed; dedicated OCR is unchanged.
         if(VisionModelCatalog.isBudgetFlash(model)||fastMax)
             body.put("enable_thinking",false);
+        // Official Bailian Chat Completions: enable_search on the SAME request.
+        // Only explicit follow-ups qualify. This never forces a paid search,
+        // never creates an extra HTTP request, and never searches OCR photos.
+        boolean web=SearchRoutePolicy.allow(task.id,task.engine,model,allowSearch);
+        if(web)body.put("enable_search",true);
         if(streaming)body.put("stream_options",new JSONObject().put("include_usage",true));
 
         HttpURLConnection connection=(HttpURLConnection)new URL(ENDPOINT).openConnection();
         connection.setRequestMethod("POST");
         connection.setConnectTimeout(12000);
-        connection.setReadTimeout(45000);
+        connection.setReadTimeout(web?90000:45000);
         connection.setDoOutput(true);
         connection.setRequestProperty("Authorization","Bearer "+key.trim());
         connection.setRequestProperty("Content-Type","application/json");

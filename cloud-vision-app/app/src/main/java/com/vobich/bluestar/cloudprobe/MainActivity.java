@@ -205,6 +205,7 @@ public final class MainActivity extends CameraActivity {
     private String imagePolicy="auto";
     private String visionModel=VisionModelCatalog.DEFAULT;
     private String ocrModel=OcrModelCatalog.DEFAULT;
+    private volatile boolean webSearchEnabled=SearchRoutePolicy.DEFAULT_ENABLED;
     private String lastCloudResult="";
 
     private static final class Frame {
@@ -909,6 +910,12 @@ public final class MainActivity extends CameraActivity {
             .putString(PREF_OCR_MODEL,id).apply();
         return true;
     }
+    boolean isWebSearchEnabled(){return webSearchEnabled;}
+    void setWebSearchEnabled(boolean enabled){
+        webSearchEnabled=enabled;
+        getSharedPreferences(PREFS,MODE_PRIVATE).edit()
+            .putBoolean(SearchRoutePolicy.PREF,enabled).apply();
+    }
     boolean selectVisionModel(String id){
         if(VisionModelCatalog.indexOf(id)<0)return false;
         visionModel=id;
@@ -1216,6 +1223,8 @@ public final class MainActivity extends CameraActivity {
         ocrModel=OcrModelCatalog.normalize(storedOcrModel);
         if(!ocrModel.equals(storedOcrModel))
             prefs.edit().putString(PREF_OCR_MODEL,ocrModel).apply();
+        webSearchEnabled=prefs.getBoolean(SearchRoutePolicy.PREF,
+            SearchRoutePolicy.DEFAULT_ENABLED);
         findingTarget=prefs.getString(PREF_FINDING_TARGET,"");
         if(findingTarget==null)findingTarget="";
         ttsEngine=prefs.getString(PREF_TTS_ENGINE,"");
@@ -2200,12 +2209,13 @@ public final class MainActivity extends CameraActivity {
             captureOneFrame(read);
             return;
         }
-        if(lastSessionText==null||lastSessionText.isEmpty()||
-           (action.type==VoiceAction.Type.REVIEW_IMAGE&&lastSessionJpeg==null)){
-            setResultStatus("没有可追问的照片；可说「看看眼前有什么」自动拍照");
-            speakUnfiltered("还没有照片。你可以说，帮我看看眼前有什么，我会自动拍照。");
+        if(action.type==VoiceAction.Type.REVIEW_IMAGE&&lastSessionJpeg==null){
+            setResultStatus("没有可重新查看的照片，请先拍照");
+            speakUnfiltered("还没有可重新查看的照片，请先拍照。");
             return;
         }
+        // General spoken questions can use the same one-shot text-only path,
+        // even before any photo has been taken. Never invent an unseen photo.
         askAboutCurrentImage(transcript,action.type==VoiceAction.Type.REVIEW_IMAGE);
     }
 
@@ -2226,14 +2236,17 @@ public final class MainActivity extends CameraActivity {
     }
 
     private void askAboutCurrentImage(String question,boolean recheckImage){
-        if(cloudBusy||lastSessionText==null||lastSessionText.isEmpty()||
-            (recheckImage&&lastSessionJpeg==null))return;
+        if(cloudBusy||(recheckImage&&(lastSessionJpeg==null||
+            lastSessionText==null||lastSessionText.isEmpty())))return;
+        final boolean search=webSearchEnabled;
+        final boolean hasContext=lastSessionText!=null&&!lastSessionText.isEmpty();
         final byte[] jpeg=recheckImage?lastSessionJpeg:null;
         final String observed=lastSessionText;
         final String taskName=lastSessionTask;
         final String prompt=recheckImage?
-            FollowupPrompt.buildForImage(taskName,observed,followupTurns,question):
-            FollowupPrompt.build(taskName,observed,followupTurns,question);
+            FollowupPrompt.buildForImage(taskName,observed,followupTurns,question,search):
+            (hasContext?FollowupPrompt.build(taskName,observed,followupTurns,question,search):
+                FollowupPrompt.buildStandalone(followupTurns,question,search));
         final TaskCatalog.Task ask=recheckImage?new TaskCatalog.Task(
             "user-followup","重新看图",prompt,TaskCatalog.VISION,true,"✦"):null;
         invalidate();
@@ -2243,10 +2256,11 @@ public final class MainActivity extends CameraActivity {
         speechCaptureAtMs=SystemClock.elapsedRealtime();
         ttsEngineStartMs=-1;
         ttsAudioCallbackMs=-1;
-        setResultStatus(recheckImage?"正在重新看图…":"正在分析已有文字…");
-        // Text analysis always uses the user's confirmed inexpensive Flash.
-        // It cannot silently switch to Plus/Max, or upload an image.
-        final String selectedModel=recheckImage?visionModel:VisionModelCatalog.FLASH_38;
+        setResultStatus(recheckImage?"正在重新看图…":
+            (hasContext?"正在回答追问…":"正在AI对话…"));
+        // Both photographed and text-only conversations use the user's
+        // selected visual model. "联网智能追问" allows, but never forces, search.
+        final String selectedModel=visionModel;
         final java.util.concurrent.atomic.AtomicInteger pieces=new java.util.concurrent.atomic.AtomicInteger();
         encodingTask=encoder.submit(()->{
             try{
@@ -2261,14 +2275,15 @@ public final class MainActivity extends CameraActivity {
                             TextToSpeech.QUEUE_ADD,null,"follow-"+token+"-"+partIndex);
                     });
                 CloudVisionClient.Result result=recheckImage?
-                    CloudVisionClient.recognize(jpeg,key,ask,selectedModel,speaker):
-                    CloudVisionClient.recognizeText(prompt,key,speaker);
+                    CloudVisionClient.recognize(jpeg,key,ask,selectedModel,speaker,search):
+                    CloudVisionClient.recognizeText(prompt,key,selectedModel,speaker,search);
                 if(modelUsage!=null)modelUsage.recordAsync(selectedModel,result.serverModel,
                     result.promptTokens,result.completionTokens,true);
                 handler.post(()->{
                     if(!uiActive||token!=requestVersion.get())return;
                     cloudBusy=false;
-                    setResultStatus(recheckImage?"重新看图已完成":"文字分析已完成");
+                    setResultStatus(recheckImage?"重新看图已完成":
+                        (hasContext?"追问已完成":"AI对话已完成"));
                     lastCloudResult=result.text;
                     if(pieces.get()==0)speakForCapture(result.text,token,false);
                     if(diagnostics!=null){
