@@ -224,10 +224,11 @@ public final class MainActivity extends CameraActivity {
     private void updateFrame(byte[] bytes,int w,int h,boolean phone) {
         if(bytes==null||w<2||h<2||(w&1)!=0||(h&1)!=0||
             (long)bytes.length!=(long)w*h*3L/2L)return;
-        // Native USB callback buffer can be reused: keep the defensive copy.
-        // Camera2 always creates its own NV21 byte[], so never clone that a second time.
-        Frame frame=new Frame(phone?bytes:java.util.Arrays.copyOf(bytes,bytes.length),
-            w,h,SystemClock.elapsedRealtime());
+        // Pinned AUSBC CameraUVC.frameCallBack creates a fresh ByteArray on
+        // every NV21 delivery and never mutates it. Camera2 does the same.
+        // Keep that owned buffer directly: no duplicate 1920x1080 allocation
+        // for each photo-cache update. Native preview remains direct TextureView.
+        Frame frame=new Frame(bytes,w,h,SystemClock.elapsedRealtime());
         if(phone){
             handler.post(()->{
                 int token=pendingPhoneFrameToken;

@@ -15,3 +15,12 @@
 - **不修改 RC13 32方向/JPEG同向、RC14 UVC画质、RC15 10秒FPS计算和基本拍摄/模型/音效/任务**，30 FPS 不擅自强制提高至60。之前 `cloud.key missing` 是新沙盒未配置密钥；要在新 APK 重新填写。
 - CI新增静态实际路径审计和 `UsbAutoSwitchPolicyTest` 冷启动/Intent/前后台/手动覆盖/拔插物理ID场景，保留全部此前回归、Gradle arm64构建和校验。
 - 此文写于CI前，**不可把源码改动或 Android 编译当作 vivo 真机验收**。用户可先在 RC15 手动进入设置选 USB 摄像头恢复使用；以RC16实测系统 USB 自动启动并自动切镜头验收。
+
+
+## 用户追加需求：简单直接的画面和 USB 61 FPS 优先（源代码修复，待 CI/真机）
+
+- 本轮用户在 RC16 发布前又明确要求“把30改成61起改”“我们的原则就是简单粗暴，越简单越好；看看还有哪些画面复杂，都改成最直接”。对全套图像路径只读核对：USB 已为 `CameraRequest.RenderMode.NORMAL` + MJPEG + `AspectRatioTextureView` 原生 Texture 直显；手机 Camera2 也是 TextureView 直显，**无多余GL/AI视频渲染链可以删**；RC13 JPEG 方向变换是保持 OCR 准确性的必要处理，不能删除。所谓“简单”是减少重复 copy/变换，不能删除本来有用的功能或无故改功能已稳定的模块。
+- 确认 pinned AUSBC 3.6.0 `CameraUVC.kt` `setPreviewSize(width,height,MIN_FS=1,MAX_FPS=61,MJPEG)` 只是允许1..61的范围，并不要求最高帧率；真机 RC15 数据 TextureView 29.9~30.3更新/秒。现在**优先在同一1920x1080 MJPEG格式请求 60..61 FPS**，若 UVC 接口不支持此档，原格式安全回退到原1..61（通常可保持30），若 MJPEG 也不行才维持已有的 YUYV 兼容回退。**不能声称设备将确定输出61实际独立画面/秒**。
+- 发现底层 `UVCPreview.cpp::setPreviewSize` 原来的变更检查仅比较宽、高、预览格式，不比较 FPS；先请求60..61失败后再请求1..61，如果尺寸格式相同会被忽略并导致后续打开失败。针对这个确凿 bug 同步修改仅在 `min_fps/max_fps` 不同的情况下重新查询 UVC 协商，不动原生 render/capture/close 路径。
+- 原 pinned `CameraUVC.kt.frameCallBack` 每次 JNI ByteBuffer→`ByteArray(capacity())` 全新分配且只入队，不再修改；`MainActivity.updateFrame()` 仍为 USB 每帧 `Arrays.copyOf(bytes,bytes.length)` 重复制约3.11MB。RC16 直接保留每次新分配的原 ByteArray（电话 Camera2 也有自有 byte[]），移除此冗余拷贝。USB原始NV21回调仍原生限约5Hz以降低CPU；不是预览 60 FPS 限制。
+- 增加 CI 校验原生高帧率优先/相同尺寸重协商/兼容回退/没有冗余全帧复制，保留 RC13 方向32组测试、冷启动 USB 自动切换、10秒 FPS诊断、USB亮度等画质硬件控制、音效、云端 AI、ASR/TTS 和图标检查。真实 USB 摄像头最终是否支持60/61fps需要验收新包 10秒 FPS 当前/均值/最低、开关往返与OCR；**不要在30FPS模式继续盲目叠加复杂补帧**。

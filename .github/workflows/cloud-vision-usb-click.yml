@@ -238,6 +238,21 @@ jobs:
           assert 'getSharedPreferences(PREFS,MODE_PRIVATE)' in activity
           assert 'UsbFrameOrientation.forSettings(' in activity
           assert 'UsbAutoSwitchPolicy.usePhoneOnDetach(' in activity
+          # RC16 simple/direct native-preview performance improvements.
+          assert 'BSG_UVC_FPS_61_FIRST' in native_patch
+          assert 'BSG_UVC_FPS_61_REPROBE' in native_patch
+          assert '60, 61, previewFormat, UVCCamera.DEFAULT_BANDWIDTH' in native_patch
+          assert 'MIN_FS, MAX_FPS, previewFormat, UVCCamera.DEFAULT_BANDWIDTH' in native_patch
+          assert '(requestMinFps != min_fps)' in native_patch
+          assert '(requestMaxFps != max_fps)' in native_patch
+          assert 'Frame frame=new Frame(bytes,w,h,SystemClock.elapsedRealtime());' in activity
+          assert 'Arrays.copyOf(bytes,bytes.length)' not in activity
+          assert 'setPreviewWidth(1920).setPreviewHeight(1080)' in activity
+          assert 'CameraRequest.RenderMode.NORMAL' in activity
+          assert 'CameraRequest.PreviewFormat.FORMAT_MJPEG' in activity
+          assert 'setRawPreviewData(true)' in activity
+          assert 'UsbFrameOrientation.forSettings(' in activity
+          assert 'UsbAutoSwitchPolicy.usePhoneOnDetach(' in activity
           assert 'startUsbFpsMonitoring();' in activity
           assert 'resetUsbFpsState();' in activity
           assert 'usbRollingFps.add(' in activity
@@ -438,6 +453,8 @@ jobs:
           grep -q BSG_USB_HEALTH_114 cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/base/CameraActivity.kt
           grep -q BSG_UVC_PICTURE_CONTROLS_114 cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
           grep -q BSG_USB_AUTOSWITCH_115 cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/base/CameraActivity.kt
+          grep -q BSG_UVC_FPS_61_FIRST cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
+          grep -q BSG_UVC_FPS_61_REPROBE cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/jni/UVCCamera/UVCPreview.cpp
           grep -q 'if (shouldAutoOpenUsbCameraForApp(device)) openCamera(mCameraView)' cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/base/CameraActivity.kt
       - name: JDK 17
         uses: actions/setup-java@v4

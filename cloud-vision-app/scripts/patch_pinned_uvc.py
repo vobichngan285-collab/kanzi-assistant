@@ -155,6 +155,42 @@ patch(activity,
       """                    mCurrentCamera?.set(camera)
                     onUsbDeviceConnectedForApp(device)
                     if (shouldAutoOpenUsbCameraForApp(device)) openCamera(mCameraView)""")
+# RC16: prefer 61-FPS-capable native MJPEG modes (60..61 fps),
+# then fall back to the original 1..61 SAME format and lastly YUYV.
+# Device UVC capabilities decide the actual rate; 61 is not a guaranteed FPS.
+# The UVCPreview native implementation must refresh the probe even for the
+# SAME size/format if min/max FPS changed, otherwise fallback silently fails.
+patch(source,
+      """    if ((requestWidth != width) || (requestHeight != height) || (requestMode != mode)) {""",
+      """    // BSG_UVC_FPS_61_REPROBE: high-rate attempt can fall back on same format.
+    if ((requestWidth != width) || (requestHeight != height)
+        || (requestMode != mode) || (requestMinFps != min_fps)
+        || (requestMaxFps != max_fps)) {""")
+patch(uvc,
+      """            mUvcCamera?.setPreviewSize(
+                previewSize.width,
+                previewSize.height,
+                MIN_FS,
+                MAX_FPS,
+                previewFormat,
+                UVCCamera.DEFAULT_BANDWIDTH
+            )""",
+      """            // BSG_UVC_FPS_61_FIRST: prefer native 60/61fps, no software rendering.
+            // If this device exposes only 30fps at 1080p, stay in MJPEG and
+            // retry the original compatible 1..61 interval instead of blanking.
+            try {
+                mUvcCamera?.setPreviewSize(
+                    previewSize.width, previewSize.height,
+                    60, 61, previewFormat, UVCCamera.DEFAULT_BANDWIDTH
+                )
+                Logger.i(TAG, "BSG requested high-fps native MJPEG (60..61)")
+            } catch (highFps: Exception) {
+                Logger.e(TAG, "UVC 60..61 unsupported; retry compatible 1..61", highFps)
+                mUvcCamera?.setPreviewSize(
+                    previewSize.width, previewSize.height,
+                    MIN_FS, MAX_FPS, previewFormat, UVCCamera.DEFAULT_BANDWIDTH
+                )
+            }""")
 # Access to hardware capabilities, not software color effects; UVC check occurs only
 # on the control executor after OPENED (the library warns that immediate queries fail).
 patch(uvc,
@@ -187,4 +223,6 @@ print("BSG_CLOUD_CLOSE_BARRIER=PASS")
 print("BSG_USB_HEALTH_114=PASS")
 print("BSG_UVC_PICTURE_CONTROLS_114=PASS")
 print("BSG_USB_AUTOSWITCH_115=PASS")
+print("BSG_UVC_FPS_61_FIRST=PASS")
+print("BSG_UVC_FPS_61_REPROBE=PASS")
 print("arm64-only native compilation=PASS")
