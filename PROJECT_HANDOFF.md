@@ -1307,3 +1307,14 @@
 - **可复制给用户浏览器的直链（APK 非 ZIP）**：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/blue-star-guide-cloud-rc12-20261107/BlueStar_Guide_1.0.11_RC12_arm64.apk
 - **审计文档已补充最终结果**：https://github.com/vobichngan285-collab/kanzi-assistant/blob/fix/bluestar-111-maxfast-remove-plus-drag-delete-20261107/docs/bluestar-v1011-rc12-maxfast-no-plus-drag-delete-20261107.md
 - **真机待测**：在 vivo X200 Pro 比较同图 Max 快速与 Flash 的首句声音、准确性、云端时延；检查 Plus 不在菜单内、RC12 旧 Plus 设置迁移策略；长按任务拖动删除（取消不删、确认删自定义、隐藏预设、设置恢复、跨页排序、当前任务删除切换、最后可用任务保护）。CI 不能代替真机测试，不能声称用户实际设备已验收。RC12 为独立调试包，不会继承 RC11 沙盒的 API Key、自定义任务数据。
+
+
+### 2026-11-07 — RC12 真机反馈：USB 摄像头看字准确率明显低于手机镜头；USB 预览与上传图像方向核查（只读源码审查，未修改或构建）
+
+- **用户新增真机反馈**：在蓝星向导 RC12 上插入 USB 外置摄像头，文字识别出现明显误读、朗读混乱。匿名诊断 12:05:37、12:05:59、12:06:18、12:06:32 四次 `usb` 拍照，JPEG 113506/111560/113176/126214 bytes，编码 93/37/37/38ms，云端 9688/3458/3296/3432ms。四次 `cloud.response_headers_ms` 且 `first_speakable_ms=-1`，对应固定、非流式的 **`qwen-vl-ocr` 专用 OCR 路径**，**与高精度 Max 的快速/思考参数无关**；`-1` 本身并非 OCR 失败。相机/网络耗时日志无法判断文字识别内容是否准确。
+- **输入路径核对**：USB 屏幕走 UVC `AspectRatioTextureView` + `setRotation(previewRotation)` + `setScaleY(zoom*verticalFlip)` + `TextureView.setTransform` 的本地 X 镜像；上传走 NV21 callback 拷贝 → `Nv21ImageOps.orient`（原始字节旋转、输出坐标镜像/翻转）→ 中心裁剪/缩放 → YuvImage JPEG，**两者并非天然一致**。目前没有上传 JPEG 与预览图的同帧像素对照验收。
+- **重点代码分支错误风险**：`MainActivity.applyPreviewTransform` 以 view-local Y 轴 `setScaleY` 做 `previewVerticalFlip`，而 `beginCapturedFrame` 对 90°/270° 图像把 `previewVerticalFlip` 合并进 post-rotation **Y 轴翻转**：`photoMirror=quarterTurn?false:localUsbMirror`；`photoFlip=previewVerticalFlip^(quarterTurn&&localUsbMirror)`。按 Android View RenderNode 的 rotation/scale 组合规则，90°/270° 下 view-local Y 翻转在屏幕坐标等价于 X 方向镜像，现 JPEG 规则没有对应此组合。**在预设启用“垂直翻转”并旋转 90°/270° 时，源码推导出现预览与 JPEG 方向差异；尚不知道用户当前 USB profile 的旋转/翻转开关实际值，因此不能直接归因本次实测**。需要原生 Android 图像/矩阵回归和真实同帧比对。
+- **确凿诊断缺陷**：USB `camera.fresh_frame_ms` 在 `beginCapturedFrame` 记录 `max(0,current.atMs-tapAtMs)`，USB 使用的是点击前的 `latestUsbFrame`，故正常为 0，不是新鲜帧延迟。当前 `now-usbShot.atMs<=1400` 即允许使用最长 1.4 秒缓存帧；UVC JNI NV21 callback 限制至约 5Hz，但不等于每次拍照新采帧。应该改成记录正向 `usb.frame_age_ms` 并独立判断真实帧年龄，避免把 0ms 当作即时获取。
+- **清晰度因素**：`ImageQualityPolicy.pick` 在 `auto` 状态默认按 1280 长边（720p）发送，只有软纹理特定条件保留 1920 长边；UI 上 USB 即便显示 1920x1080 原画面，也可能给 AI 发送缩小后的照片。当前匿名日志只给 JPEG 字节大小，**没记录实际原图/上传图尺寸**，不能从 11~12 万字节直接推断分辨率，需新增数值尺寸诊断且 A/B 720/1080。
+- **新测试包兼容**：RC12 debug 包名 `com.vobich.bluestar.rc12` 与 RC11 独立沙盒，RC11 USB 的旋转、镜像、flip、zoom、分辨率设置不会自动继承。USB profile 对 EBA4:6579 默认旋转90°，其他摄像头默认0°，可能解释用户见到“预览正、识别乱”或首次插入与旧版本差异。是否为该型号仍待确认。
+- **下一轮建议与范围**：先让用户将 USB 缩放归 1×、垂直翻转关闭，确认预览正立，再把图片分辨率手动切 1080p，用固定清晰大字对比手机/USB 同场景；若仍不一致，以可选仅本机暂时显示/保存**真实上传前 JPEG**进行同帧预览-输入 A/B，回归四方向、镜像/翻转各组合，修正单一统一变换函数，新增 `usb.frame_age_ms` 与 JPEG 实际宽高匿名数值记录。禁止静默保存或上传额外照片、改变 API 次数、重构 USB 预览底层，未经用户下一步授权不修代码或启动构建。
