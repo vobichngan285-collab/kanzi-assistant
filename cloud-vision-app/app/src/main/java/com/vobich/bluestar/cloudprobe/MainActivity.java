@@ -649,7 +649,7 @@ public final class MainActivity extends CameraActivity {
             .putString(PREF_VISION_MODEL,id).apply();
         return true;
     }
-    // Legacy settings route remains functional, but no longer cycles to rejected Flash.
+    // Legacy settings route remains functional and uses the shared model catalog.
     void toggleVisionModel(){showVisionModelSelector();}
     ModelUsageLedger.Snapshot todayModelUsage(){
         return modelUsage==null?null:modelUsage.today();
@@ -1012,7 +1012,7 @@ public final class MainActivity extends CameraActivity {
         // Legacy selector: the primary large-text settings page uses a solid dark panel.
         int selected=Math.max(0,VisionModelCatalog.indexOf(visionModel));
         new AlertDialog.Builder(this).setTitle("视觉模型")
-            .setMessage("日常Flash、稳定Plus、高精度应急Max三选一。Max仅在手动选择后使用，费用较高；失败不自动切换。文字朗读仍固定用qwen-vl-ocr。")
+            .setMessage("超省3.7、日常3.8、稳定Plus、应急Max四选一。Max仅手动使用，费用较高；失败不自动切换。文字朗读固定使用qwen-vl-ocr。")
             .setSingleChoiceItems(VisionModelCatalog.LABELS,selected,(d,i)->{
                 selectVisionModel(VisionModelCatalog.IDS[i]);
                 d.dismiss();
