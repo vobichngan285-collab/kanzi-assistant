@@ -382,8 +382,9 @@ final class LargeSettingsScreen {
         for(int i=0;i<VisionModelCatalog.IDS.length;i++){
             final String id=VisionModelCatalog.IDS[i];
             final boolean selected=id.equals(app.visionModelDescription());
-            String detail=i==0?"你已在真机验证可用的 Plus，费用相对较高":
-                "低成本候选；是否能访问取决于百炼账号、地域与模型权限";
+            String detail=i==0?"已通过手机连接测试，适合日常拍照及语音追问":
+                (i==1?"已验证可用，费用较高，必要时手动备用":
+                    "旗舰高精度模型，费用明显更高，待用你的 API Key 验证；绝不自动启用");
             row((selected?"✓ 当前  ":"")+VisionModelCatalog.LABELS[i],detail,
                 ()->{app.selectVisionModel(id);render(history.get(history.size()-1));});
         }
@@ -391,7 +392,8 @@ final class LargeSettingsScreen {
         note("点击一次将上传一张程序临时生成的64×64测试图，可能消耗少量Token。"
             +"只有成功响应才显示连接成功；失败不会自动退回付费更高的Plus，也不会重试收费请求。");
         action("▶ 测试当前模型能否看图",()->app.testSelectedVisionModel());
-        note("新模型尚未在你的百炼账户里完成实测。请先确认免费额度和「用完即停」。");
+        note("Max 尚未通过你的百炼账户实测，只有主动选中后才会调用；"
+            +"使用前请确认百炼额度与「用完即停」，测试请求也可能收费。");
     }
 
     /** Uses exactly the existing opaque BG/PANEL/TEXT/SUB settings palette. */
