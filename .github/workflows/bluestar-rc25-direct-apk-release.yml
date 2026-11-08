@@ -1,0 +1,75 @@
+name: Publish verified RC25 reading entrance and page library APK
+on:
+  push:
+    branches: [feat/bluestar-125-reading-entry-pages-actions-20261108]
+    paths: ['.github/workflows/bluestar-rc25-direct-apk-release.yml']
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish-verified-rc25:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Require exact successful RC25 Android CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RUN=42444753150
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN" --jq '.conclusion')" = success
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN" --jq '.head_sha')" = 1b29d56ec55e8030dfceb1d34ee7748e79deb7a5
+      - name: Download official original CI APK artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p verified
+          gh run download 42444753150 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name blue-star-guide-1-0-24-rc25-arm64 --dir verified
+          test -s verified/BlueStar_Guide_1.0.24_RC25_arm64.apk
+          test -s verified/SHA256SUMS.txt
+          test -s verified/badging.txt
+          test -s verified/apk-entries.txt
+      - name: Verify unchanged APK bytes native UVC audio app ID and version
+        run: |
+          set -euo pipefail
+          cd verified
+          sha256sum -c SHA256SUMS.txt
+          unzip -tq BlueStar_Guide_1.0.24_RC25_arm64.apk >/dev/null
+          unzip -Z1 BlueStar_Guide_1.0.24_RC25_arm64.apk | grep -Fxq 'lib/arm64-v8a/libUVCCamera.so'
+          unzip -Z1 BlueStar_Guide_1.0.24_RC25_arm64.apk | grep -Fxq 'res/raw/c_metal_clack_ding.mp3'
+          unzip -Z1 BlueStar_Guide_1.0.24_RC25_arm64.apk | grep -Fxq 'res/raw/voice_send_whoosh.wav'
+          grep -Fq "package: name='com.vobich.bluestar.rc25'" badging.txt
+          grep -Fq "versionCode='34'" badging.txt
+          grep -Fq "versionName='1.0.24-rc25'" badging.txt
+          grep -Fq "application-label:'Blue Star Guide'" badging.txt
+          grep -q 'application-icon-' badging.txt
+          if grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx' apk-entries.txt; then
+            echo "Unexpected on-device OCR model found" >&2
+            exit 1
+          fi
+          echo "APK_SIZE_BYTES=$(stat -c%s BlueStar_Guide_1.0.24_RC25_arm64.apk)" >> "$GITHUB_STEP_SUMMARY"
+          echo "APK_SHA256=$(sha256sum BlueStar_Guide_1.0.24_RC25_arm64.apk | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish only verified CI APK without rebuilding or resigning
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=blue-star-guide-cloud-rc25-20261108
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Existing RC25 Release; refuse overwrite." >&2
+            exit 1
+          fi
+          gh release create "$TAG" \
+            "verified/BlueStar_Guide_1.0.24_RC25_arm64.apk" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target 1b29d56ec55e8030dfceb1d34ee7748e79deb7a5 \
+            --title "Blue Star Guide 1.0.24 RC25 - Minimal Reading Entry and Book Pages" \
+            --notes "RC25 implements user-approved ultra-clean Reading entry: only title plus 2 large side-by-side choices Continue Reading / New Reading, with no subtitle, extra text or auto-opening camera. Continue Reading opens the last-used book page list; New Reading creates a book and opens live camera preview where the user must tap again to capture. Each successful photographed OCR saves exactly one numbered book page, no AI chapter inference. Tap any saved page to view and re-read local original text with no network call; long press to open a bottom sheet of exactly three vertical choices Mark/Unmark (red), Rename, Delete (with confirmation). Page names, red mark and stable page numbering after deletion are persisted locally in private atomic JSON, compatible with old data. Book list bottom Continue Reading launches camera preview without automatic shutter; existing camera, USB, OCR, vibration, C streaming speech and page-reading controls remain intact. User-requested custom provider URL / model key integration is reserved for a later release. CI 42444753150 completed success on exact source 1b29d56ec55e8030dfceb1d34ee7748e79deb7a5, including source UX audits, unit tests, Android ARM64 build, UVC/launcher/audio/metadata/APK checksum validation. This release uses the original verified CI APK without rebuild or resigning. Separate com.vobich.bluestar.rc25 versionCode34 versionName1.0.24-rc25; users configure this app's API key and preferences separately, and private books in older independent test packages do not automatically migrate. Export any important previous TXT before uninstall. Real vivo phone and USB hardware tests are still pending." \
+            --prerelease
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -Fx 'BlueStar_Guide_1.0.24_RC25_arm64.apk'
+          echo "Direct browser URL: https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/BlueStar_Guide_1.0.24_RC25_arm64.apk" >> "$GITHUB_STEP_SUMMARY"
