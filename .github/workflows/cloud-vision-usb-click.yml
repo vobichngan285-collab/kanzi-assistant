@@ -1,7 +1,7 @@
-name: Blue Star Guide 1.0.22 - RC23 Manual Reading Preview and OCR Text Fix
+name: Blue Star Guide 1.0.23 - RC24 Clean Reading Screen Controls
 on:
   push:
-    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106, fix/bluestar-104-ocr-voice-empty-20261106, fix/bluestar-105-model-options-20261107, fix/bluestar-106-three-tier-models-20261107, fix/bluestar-107-compact-settings-20261107, fix/bluestar-108-voice-intent-text-followups-20261107, fix/bluestar-109-37flash-keep-plus-20261107, fix/bluestar-110-stop-finding-drag-grid-20261107, fix/bluestar-111-maxfast-remove-plus-drag-delete-20261107, fix/bluestar-112-usb-orientation-preview-jpeg-20261107, fix/bluestar-113-usb-lifecycle-trace-picture-controls-20261107, fix/bluestar-114-usb-auto-switch-launch-fps-20261107, fix/bluestar-115-cold-usb-auto-select-20261107, feat/bluestar-116-independent-ocr-model-choice-20261107, feat/bluestar-117-web-search-followup-20261107, fix/bluestar-118-voice-eye-scene-auto-capture-20261107, exp/bluestar-120-ocr-abc-stream-speed-20261107, feat/bluestar-121-default-line-ocr-20261107, feat/bluestar-122-reading-library-20261108, fix/bluestar-123-reading-preview-ocr-text-20261108]
+    branches: [exp/cloud-vision-usb-click-v1-20261106, fix/bluestar-101-voice-ui-usb-20261106, fix/bluestar-102-press-to-talk-target-icon-20261106, fix/bluestar-103-demand-capture-diagnostics-20261106, fix/bluestar-104-ocr-voice-empty-20261106, fix/bluestar-105-model-options-20261107, fix/bluestar-106-three-tier-models-20261107, fix/bluestar-107-compact-settings-20261107, fix/bluestar-108-voice-intent-text-followups-20261107, fix/bluestar-109-37flash-keep-plus-20261107, fix/bluestar-110-stop-finding-drag-grid-20261107, fix/bluestar-111-maxfast-remove-plus-drag-delete-20261107, fix/bluestar-112-usb-orientation-preview-jpeg-20261107, fix/bluestar-113-usb-lifecycle-trace-picture-controls-20261107, fix/bluestar-114-usb-auto-switch-launch-fps-20261107, fix/bluestar-115-cold-usb-auto-select-20261107, feat/bluestar-116-independent-ocr-model-choice-20261107, feat/bluestar-117-web-search-followup-20261107, fix/bluestar-118-voice-eye-scene-auto-capture-20261107, exp/bluestar-120-ocr-abc-stream-speed-20261107, feat/bluestar-121-default-line-ocr-20261107, feat/bluestar-122-reading-library-20261108, fix/bluestar-123-reading-preview-ocr-text-20261108, feat/bluestar-124-clean-reading-controls-20261108]
     paths:
       - 'cloud-vision-app/**'
       - '.github/workflows/cloud-vision-usb-click.yml'
@@ -410,6 +410,34 @@ jobs:
           assert 'ReadingRules.coordinatesOnly(answer)' in cloud_client
           assert 'private void suspendReadingCamera()' in activity
           assert 'usbForeground=false;' in activity and 'phoneController.stop();' in activity
+          # RC24: menu contains all secondary actions; reading page has exactly
+          # three horizontal bottom controls, in the user's fixed order.
+          reader_page=reading.split('private void renderPage(')[1].split('private void showContents()')[0]
+          reader_header=reading.split('private LinearLayout layout(')[1].split('private void render(){')[0]
+          reader_popup=reading.split('private void showPageMenu(')[1].split('private void render(){')[0]
+          assert 'import android.widget.PopupMenu;' in reading
+          assert 'Button menu=button("☰",PANEL,false);' in reader_header
+          assert 'menu.setOnClickListener(this::showPageMenu)' in reader_header
+          assert 'PopupMenu popup=new PopupMenu(activity,anchor);' in reader_popup
+          for expected in ['"书架"', '"章节 / 页码"', '"导出文字"', '"删除这本书"']:
+              assert expected in reader_popup
+          assert 'actions.setOrientation(LinearLayout.HORIZONTAL);' in reader_page
+          positions=[reader_page.index('nextButton=button("下一张",ACCENT,false)'),
+                     reader_page.index('pauseButton=button(paused?"继续":"暂停",PANEL,false)'),
+                     reader_page.index('Button restart=button("重新开始",PANEL,false)')]
+          assert positions==sorted(positions)
+          added=[reader_page.index('actions.addView(nextButton,nextLp);'),
+                 reader_page.index('actions.addView(pauseButton,pauseLp);'),
+                 reader_page.index('actions.addView(restart,restartLp);')]
+          assert added==sorted(added)
+          assert 'restart.setEnabled("page".equals(phase)&&currentPage!=null)' in reader_page
+          assert 'nextButton.setEnabled(!working);' in reader_page
+          for missing in ['addButton(actions,export','addButton(actions,delete',
+                          'secondary.addView(shelf','secondary.addView(chapters']:
+              assert missing not in reader_page
+          assert 'listener.enterPreview(bookId);' in reading
+          assert 'if(pauseButton!=null){' in reading
+          print('RC24_READER_THREE_BOTTOM_CONTROLS_AND_OVERFLOW_MENU=PASS')
           print('RC23_MANUAL_PREVIEW_FRESH_CAPTURE_VIBRATION_TEXT_ONLY_OCR=PASS')
           print('RC22_READING_SHELF_OCR_CAMERA_TEXT_STORAGE_STATIC_AUDIT=PASS')
           assert 'SearchRoutePolicy.allow(task.id,task.engine,model,allowSearch)' in cloud_client
@@ -537,8 +565,8 @@ jobs:
           camera2=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/InternalCameraController.java').read_text()
           assert 'CameraManager' in camera2 and 'CameraCaptureSession' in camera2
           assert 'Nv21Rotation.rotate(' in camera2
-          assert "versionCode 32" in app and "versionName '1.0.22-rc23'" in app
-          assert "applicationIdSuffix '.rc23'" in app
+          assert "versionCode 33" in app and "versionName '1.0.23-rc24'" in app
+          assert "applicationIdSuffix '.rc24'" in app
           assert Path('cloud-vision-app/app/src/main/res/drawable-nodpi/bluestar_globe.png').is_file()
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('ic_launcher.webp'))
           assert not list(Path('cloud-vision-app/app/src/main/res').rglob('bluestar_icon.webp'))
@@ -651,28 +679,28 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p cloud-vision-artifact
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.22_RC23_arm64.apk
-          test -s cloud-vision-artifact/BlueStar_Guide_1.0.22_RC23_arm64.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk cloud-vision-artifact/BlueStar_Guide_1.0.23_RC24_arm64.apk
+          test -s cloud-vision-artifact/BlueStar_Guide_1.0.23_RC24_arm64.apk
           (cd cloud-vision-artifact && sha256sum *.apk > SHA256SUMS.txt)
           unzip -Z1 cloud-vision-artifact/*.apk > cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' cloud-vision-artifact/apk-entries.txt
           cd cloud-vision-app
-          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.22_RC23_arm64.apk
-          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.22_RC23_arm64.apk
+          java scripts/VerifyPackagedLauncher.java ../cloud-vision-artifact/BlueStar_Guide_1.0.23_RC24_arm64.apk
+          python3 scripts/verify_audio_assets.py ../cloud-vision-artifact/BlueStar_Guide_1.0.23_RC24_arm64.apk
           cd ..
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           test -x "$AAPT"
-          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.22_RC23_arm64.apk > cloud-vision-artifact/badging.txt
+          "$AAPT" dump badging cloud-vision-artifact/BlueStar_Guide_1.0.23_RC24_arm64.apk > cloud-vision-artifact/badging.txt
           grep -F "application-label:'Blue Star Guide'" cloud-vision-artifact/badging.txt
-          grep -F "package: name='com.vobich.bluestar.rc23'" cloud-vision-artifact/badging.txt
+          grep -F "package: name='com.vobich.bluestar.rc24'" cloud-vision-artifact/badging.txt
           grep -q 'application-icon-' cloud-vision-artifact/badging.txt
           grep -Fxq 'res/raw/c_metal_clack_ding.mp3' cloud-vision-artifact/apk-entries.txt
           grep -Fxq 'res/raw/voice_send_whoosh.wav' cloud-vision-artifact/apk-entries.txt
           ! grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx' cloud-vision-artifact/apk-entries.txt
-          echo 'RC23 manual reading preview: tapping Reading or Next Page opens transparent overlay over live camera, never auto-takes a picture. Only second user tap requests a fresh Camera2 or new USB frame; successful frame gets 50ms vibration then physically closes camera and uses original selected OCR model with official text-only prompt for dedicated qwen-vl-ocr, preserving C stream line TTS and atomic text book saves. Coordinate-only row output is blocked from TTS and page persistence. Native UVC unchanged, old application functions and sounds preserved. Real vivo and USB hardware acceptance still necessary.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'RC24 simplifies reading page with bottom horizontal buttons in user-specified left-to-right order: Next Page, Pause/Continue, Restart from beginning. The top-right hamburger contains Bookshelf, Chapters/Pages, Export Text, Delete Book. No secondary action bands clutter the page. Preserves the RC23 manual preview-only Next Page, explicit shutter vibration, physical camera stop, official dedicated OCR text prompt, C line streaming, text-only local book storage and original voice/USB/audio functionality. Android real-device visual layout and playback verification still required.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload 1.0 release candidate APK (debug-signed, device testing)
         uses: actions/upload-artifact@v4
         with:
-          name: blue-star-guide-1-0-22-rc23-arm64
+          name: blue-star-guide-1-0-23-rc24-arm64
           path: cloud-vision-artifact/*
           retention-days: 7
