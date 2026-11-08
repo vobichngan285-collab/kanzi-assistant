@@ -226,13 +226,13 @@ final class ReadingScreen {
         LinearLayout.LayoutParams row=new LinearLayout.LayoutParams(-1,dp(208));
         row.topMargin=dp(36);
         content.addView(choices,row);
-        Button again=button("▣\\n继续阅读".replace("\\\\n","\\n"),ACCENT,true);
+        Button again=button("▣\n继续阅读",ACCENT,true);
         again.setTextSize(TypedValue.COMPLEX_UNIT_SP,23);
         again.setContentDescription("继续阅读：进入上次书籍的书页列表");
         LinearLayout.LayoutParams left=new LinearLayout.LayoutParams(0,-1,1f);
         left.rightMargin=dp(6);choices.addView(again,left);
         again.setOnClickListener(v->continueBook());
-        Button fresh=button("▤\\n新阅读".replace("\\\\n","\\n"),PANEL,true);
+        Button fresh=button("▤\n新阅读",PANEL,true);
         fresh.setTextSize(TypedValue.COMPLEX_UNIT_SP,23);
         fresh.setContentDescription("新阅读：新建书籍后手动拍摄");
         LinearLayout.LayoutParams right=new LinearLayout.LayoutParams(0,-1,1f);
