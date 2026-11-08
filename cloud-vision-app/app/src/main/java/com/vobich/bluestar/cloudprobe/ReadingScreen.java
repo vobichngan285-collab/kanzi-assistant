@@ -13,6 +13,7 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import androidx.appcompat.app.AlertDialog;
@@ -113,13 +114,43 @@ final class ReadingScreen {
         screen.addView(all,new FrameLayout.LayoutParams(-1,-1));
         LinearLayout top=new LinearLayout(activity);
         top.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title=label("蓝星向导 · 阅读",21,WHITE,true);
-        top.addView(title,new LinearLayout.LayoutParams(0,dp(56),1f));
-        Button close=button("返回",PANEL,false);
-        top.addView(close,new LinearLayout.LayoutParams(dp(78),dp(50)));
+        Button close=button("‹",PANEL,false);
+        close.setTextSize(TypedValue.COMPLEX_UNIT_SP,30);
+        close.setContentDescription("返回蓝星向导主界面");
+        top.addView(close,new LinearLayout.LayoutParams(dp(54),dp(52)));
         close.setOnClickListener(v->listener.closeReading());
+        TextView title=label("蓝星向导 · 阅读",20,WHITE,true);
+        title.setPadding(dp(10),0,0,0);
+        top.addView(title,new LinearLayout.LayoutParams(0,dp(56),1f));
+        if("page".equals(phase)||"recognizing".equals(phase)||
+            "failed".equals(phase)){
+            Button menu=button("☰",PANEL,false);
+            menu.setTextSize(TypedValue.COMPLEX_UNIT_SP,24);
+            menu.setContentDescription("更多阅读功能：书架、章节、导出、删除");
+            top.addView(menu,new LinearLayout.LayoutParams(dp(54),dp(52)));
+            menu.setOnClickListener(this::showPageMenu);
+        }
         all.addView(top);
         return all;
+    }
+    /** Ordinary Android anchored menu; only reading controls stay visible. */
+    private void showPageMenu(View anchor){
+        if(bookId.isEmpty())return;
+        PopupMenu popup=new PopupMenu(activity,anchor);
+        popup.getMenu().add(0,1,0,"书架");
+        popup.getMenu().add(0,2,1,"章节 / 页码");
+        popup.getMenu().add(0,3,2,"导出文字");
+        popup.getMenu().add(0,4,3,"删除这本书");
+        popup.setOnMenuItemClickListener(item->{
+            switch(item.getItemId()){
+                case 1: showShelf();return true;
+                case 2: showContents();return true;
+                case 3: listener.exportBook(bookId);return true;
+                case 4: confirmDelete();return true;
+                default:return false;
+            }
+        });
+        popup.show();
     }
     private void render(){
         if("preview".equals(phase)){renderPreview();return;}
@@ -192,48 +223,41 @@ final class ReadingScreen {
         textBody.setBackground(bg(PANEL,16));
         content.addView(textBody,new LinearLayout.LayoutParams(-1,-2));
 
+        // RC24: only three bottom buttons, fixed order left to right.
+        // Reading, chapter management, export and deletion live in the top menu.
         LinearLayout actions=new LinearLayout(activity);
-        actions.setOrientation(LinearLayout.VERTICAL);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.CENTER);
         all.addView(actions,new LinearLayout.LayoutParams(-1,-2));
-        if("recognizing".equals(phase)){
-            pauseButton=button(paused?"▶ 继续朗读":"Ⅱ 暂停朗读",PANEL,false);
-            addButton(actions,pauseButton,4);
-            pauseButton.setOnClickListener(v->{listener.togglePause();});
-            nextButton=button("正在识别，请完成本页后拍下一张",ACCENT,true);
-            nextButton.setEnabled(false);
-            addButton(actions,nextButton,8);
-        }else if("failed".equals(phase)){
-            nextButton=button("重新拍照",ACCENT,true);
-            addButton(actions,nextButton,8);
-            nextButton.setOnClickListener(v->requestCapture());
-        }else {
-            if(currentPage!=null){
-                pauseButton=button(paused?"▶ 继续朗读":"Ⅱ 暂停朗读",PANEL,false);
-                addButton(actions,pauseButton,4);
-                pauseButton.setOnClickListener(v->listener.togglePause());
-                Button replay=button("↻ 重新朗读本页",PANEL,false);
-                addButton(actions,replay,6);
-                replay.setOnClickListener(v->listener.replay(displayText));
-            }
-            nextButton=button(currentPage==null?"拍照朗读":"下一张",ACCENT,true);
-            addButton(actions,nextButton,8);
-            nextButton.setOnClickListener(v->requestCapture());
-        }
-        LinearLayout secondary=new LinearLayout(activity);
-        secondary.setGravity(Gravity.CENTER);actions.addView(secondary);
-        Button shelf=button("书架",PANEL,false);
-        LinearLayout.LayoutParams shelfLp=new LinearLayout.LayoutParams(0,dp(50),1f);
-        shelfLp.setMargins(dp(2),dp(8),dp(2),0);secondary.addView(shelf,shelfLp);
-        shelf.setOnClickListener(v->showShelf());
-        Button chapters=button("章节 / 页码",PANEL,false);
-        LinearLayout.LayoutParams chaptersLp=new LinearLayout.LayoutParams(0,dp(50),1f);
-        chaptersLp.setMargins(dp(2),dp(8),dp(2),0);secondary.addView(chapters,chaptersLp);
-        chapters.setOnClickListener(v->showContents());
-        Button export=button("导出文字",PANEL,false);
-        addButton(actions,export,7);export.setOnClickListener(v->listener.exportBook(bookId));
-        Button delete=button("删除这本书",0xFF55304A,false);
-        addButton(actions,delete,7);delete.setOnClickListener(v->confirmDelete());
+
+        nextButton=button("下一张",ACCENT,false);
+        nextButton.setContentDescription("下一张，先打开实时摄像头预览，点击屏幕后再拍照");
+        nextButton.setEnabled(!working);
+        nextButton.setOnClickListener(v->requestCapture());
+        LinearLayout.LayoutParams nextLp=new LinearLayout.LayoutParams(0,dp(68),1f);
+        nextLp.setMargins(dp(2),dp(8),dp(3),0);
+        actions.addView(nextButton,nextLp);
+
+        pauseButton=button(paused?"继续":"暂停",PANEL,false);
+        pauseButton.setContentDescription(paused?"继续朗读":"暂停朗读");
+        boolean canControlSpeech="recognizing".equals(phase)||
+            ("page".equals(phase)&&currentPage!=null);
+        pauseButton.setEnabled(canControlSpeech);
+        pauseButton.setOnClickListener(v->listener.togglePause());
+        LinearLayout.LayoutParams pauseLp=new LinearLayout.LayoutParams(0,dp(68),1f);
+        pauseLp.setMargins(dp(3),dp(8),dp(3),0);
+        actions.addView(pauseButton,pauseLp);
+
+        Button restart=button("重新开始",PANEL,false);
+        restart.setContentDescription("从头重新朗读当前完整书页");
+        // Do not restart partial OCR while new C-mode lines are still arriving.
+        restart.setEnabled("page".equals(phase)&&currentPage!=null);
+        restart.setOnClickListener(v->listener.replay(displayText));
+        LinearLayout.LayoutParams restartLp=new LinearLayout.LayoutParams(0,dp(68),1f);
+        restartLp.setMargins(dp(3),dp(8),dp(2),0);
+        actions.addView(restart,restartLp);
     }
+
     private void showContents(){
         try{
             ReadingLibrary.Book b=books.get(bookId);
@@ -342,6 +366,9 @@ final class ReadingScreen {
     }
     void setPaused(boolean value){
         paused=value;
-        if(pauseButton!=null)pauseButton.setText(paused?"▶ 继续朗读":"Ⅱ 暂停朗读");
+        if(pauseButton!=null){
+            pauseButton.setText(paused?"继续":"暂停");
+            pauseButton.setContentDescription(paused?"继续朗读":"暂停朗读");
+        }
     }
 }
