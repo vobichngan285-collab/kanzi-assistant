@@ -31,12 +31,22 @@ final class ReadingLibrary {
     static final class Book {
         final String id,title;
         final long created,updated;
+        final int nextPageNumber;
         final List<Page> pages;
         Book(String id,String title,long created,long updated,List<Page> pages){
+            this(id,title,created,updated,pages,highestPageNumber(pages)+1);
+        }
+        Book(String id,String title,long created,long updated,List<Page> pages,int nextPageNumber){
             this.id=id;this.title=title;this.created=created;this.updated=updated;
             this.pages=Collections.unmodifiableList(new ArrayList<>(pages));
+            this.nextPageNumber=Math.max(highestPageNumber(pages)+1,nextPageNumber);
         }
         Page lastPage(){return pages.isEmpty()?null:pages.get(pages.size()-1);}
+    }
+    private static int highestPageNumber(List<Page> pages){
+        int highest=0;
+        for(Page p:pages)highest=Math.max(highest,p.number);
+        return highest;
     }
     private final File dir;
     ReadingLibrary(Context context){
@@ -73,7 +83,7 @@ final class ReadingLibrary {
                 p.optLong("at",0),p.optString("label",""),p.optBoolean("marked",false)));
         }
         return new Book(data.getString("id"),data.getString("title"),data.getLong("created"),
-            data.optLong("updated",0),pages);
+            data.optLong("updated",0),pages,data.optInt("nextPageNumber",0));
     }
     synchronized Book get(String id) throws Exception {return read(id);}
     synchronized List<Book> list() throws Exception {
@@ -104,14 +114,13 @@ final class ReadingLibrary {
         if(last!=null&&last.text.equals(clean))
             throw new IllegalStateException("检测到重复的上一页，已阻止重复保存");
         // One successful photographed OCR = one page; no AI chapter inference.
-        // Page numbers never recycle, even after a page was manually deleted.
-        int highest=0;
-        for(Page page:prior.pages)highest=Math.max(highest,page.number);
-        int nextNumber=highest+1;
+        // Stable sequence, including after deletion of the former last page.
+        int nextNumber=prior.nextPageNumber;
         Page next=new Page(nextNumber,clean,"",System.currentTimeMillis(),
             "第"+nextNumber+"页",false);
         ArrayList<Page> pages=new ArrayList<>(prior.pages);pages.add(next);
-        write(new Book(prior.id,prior.title,prior.created,System.currentTimeMillis(),pages));
+        write(new Book(prior.id,prior.title,prior.created,System.currentTimeMillis(),
+            pages,nextNumber+1));
         return next;
     }
     /** Rename, mark and delete modify only the selected page, atomically. */
@@ -125,7 +134,8 @@ final class ReadingLibrary {
             if(old.number!=number)continue;
             Page updated=new Page(old.number,old.text,old.chapter,old.at,title,old.marked);
             pages.set(i,updated);
-            write(new Book(book.id,book.title,book.created,System.currentTimeMillis(),pages));
+            write(new Book(book.id,book.title,book.created,System.currentTimeMillis(),
+                pages,book.nextPageNumber));
             return updated;
         }
         throw new IllegalStateException("指定书页不存在");
@@ -139,7 +149,8 @@ final class ReadingLibrary {
             Page updated=new Page(old.number,old.text,old.chapter,old.at,
                 old.label,!old.marked);
             pages.set(i,updated);
-            write(new Book(book.id,book.title,book.created,System.currentTimeMillis(),pages));
+            write(new Book(book.id,book.title,book.created,System.currentTimeMillis(),
+                pages,book.nextPageNumber));
             return updated;
         }
         throw new IllegalStateException("指定书页不存在");
@@ -152,7 +163,8 @@ final class ReadingLibrary {
             if(pages.get(i).number==number){pages.remove(i);found=true;break;}
         }
         if(!found)throw new IllegalStateException("指定书页不存在");
-        write(new Book(book.id,book.title,book.created,System.currentTimeMillis(),pages));
+        write(new Book(book.id,book.title,book.created,System.currentTimeMillis(),
+                pages,book.nextPageNumber));
     }
     synchronized void delete(String id) throws Exception {
         File file=path(id);
@@ -172,6 +184,7 @@ final class ReadingLibrary {
         JSONObject data=new JSONObject();
         data.put("id",book.id);data.put("title",book.title);
         data.put("created",book.created);data.put("updated",book.updated);
+        data.put("nextPageNumber",book.nextPageNumber);
         JSONArray pages=new JSONArray();
         for(Page page:book.pages){
             JSONObject p=new JSONObject();
