@@ -1,7 +1,9 @@
-name: Android APK (PP-OCRv6 + patched USB permission)
+name: Android APK (PP-OCRv6 Small + 1080p UVC)
 # Manual workflow_dispatch is enabled for clean rebuilds after stalled runs.
 on:
   push:
+    branches: [ main, feature/v0.7.0-accessibility-upgrades ]
+  pull_request:
     branches: [ main ]
   workflow_dispatch:
 concurrency:
@@ -24,25 +26,24 @@ jobs:
           repository: PaddlePaddle/PaddleOCR
           ref: v3.7.0
           path: third_party/PaddleOCR
-      - name: Prepare official PP-OCRv6 Android SDK and tiny models
+      - name: Prepare official PP-OCRv6 Android SDK and Small models
         run: |
           set -euo pipefail
           SDK="third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk"
           test -s "$SDK/src/main/java/com/paddle/ocr/PaddleOCR.kt"
           rm -f "$SDK/build.gradle.kts"
           mkdir -p "$SDK/src/main/assets/models/det" "$SDK/src/main/assets/models/rec"
-          curl -fL --retry 3 "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv6_tiny_det_onnx_infer.tar" -o "$RUNNER_TEMP/ppocr-det.tar"
-          curl -fL --retry 3 "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv6_tiny_rec_onnx_infer.tar" -o "$RUNNER_TEMP/ppocr-rec.tar"
-          mkdir -p "$RUNNER_TEMP/ppocr-det" "$RUNNER_TEMP/ppocr-rec"
-          tar -xf "$RUNNER_TEMP/ppocr-det.tar" -C "$RUNNER_TEMP/ppocr-det"
-          tar -xf "$RUNNER_TEMP/ppocr-rec.tar" -C "$RUNNER_TEMP/ppocr-rec"
-          DET="$(find "$RUNNER_TEMP/ppocr-det" -type f -name inference.onnx | head -n 1)"
-          REC="$(find "$RUNNER_TEMP/ppocr-rec" -type f -name inference.onnx | head -n 1)"
-          CFG="$(find "$RUNNER_TEMP/ppocr-rec" -type f -name inference.yml | head -n 1)"
-          test -n "$DET" && test -n "$REC" && test -n "$CFG"
-          cp "$DET" "$SDK/src/main/assets/models/det/inference.onnx"
-          cp "$REC" "$SDK/src/main/assets/models/rec/inference.onnx"
-          cp "$CFG" "$SDK/src/main/assets/models/rec/inference.yml"
+          DET="$SDK/src/main/assets/models/det/inference.onnx"
+          REC="$SDK/src/main/assets/models/rec/inference.onnx"
+          CFG="$SDK/src/main/assets/models/rec/inference.yml"
+          curl -fL --retry 3 "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/5994b4f/inference.onnx" -o "$DET"
+          curl -fL --retry 3 "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/3d2d345/inference.onnx" -o "$REC"
+          curl -fL --retry 3 "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.yml?download=true" -o "$CFG"
+          echo "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  $DET" | sha256sum -c -
+          echo "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  $REC" | sha256sum -c -
+          test -s "$CFG"
+          grep -q "PostProcess:" "$CFG"
+          grep -q "character_dict:" "$CFG"
           cat > "$SDK/build.gradle" <<'GRADLE'
           plugins {
               id 'com.android.library'
@@ -61,12 +62,40 @@ jobs:
           }
           dependencies {
               implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.21.1'
-              implementation 'com.quickbirdstudios:opencv:4.5.3.0'
+              api 'com.quickbirdstudios:opencv:4.5.3.0'
               implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
               implementation 'androidx.core:core-ktx:1.15.0'
           }
           GRADLE
-          echo "PP-OCRv6 tiny model assets prepared." >> "$GITHUB_STEP_SUMMARY"
+          # Allow the bundled SDK to load a verified model pair from the app-private files directory.
+          python3 - <<'PY'
+          from pathlib import Path
+          ort = Path("third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/java/com/paddle/ocr/engine/ORTSessionManager.kt")
+          src = ort.read_text()
+          if "import java.io.File" not in src:
+              src = src.replace("import java.nio.FloatBuffer", "import java.nio.FloatBuffer\nimport java.io.File")
+          needle = "context.assets.open(assetPath).use { it.readBytes() }"
+          if needle not in src:
+              raise SystemExit("Could not safely patch ORTSessionManager model loader")
+          src = src.replace(needle, """val modelFile = File(assetPath)
+                      if (modelFile.isFile) modelFile.readBytes()
+                      else context.assets.open(assetPath).use { it.readBytes() }""", 1)
+          ort.write_text(src)
+
+          cfg = Path("third_party/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/java/com/paddle/ocr/model/ModelConfig.kt")
+          src = cfg.read_text()
+          if "import java.io.File" not in src:
+              src = src.replace("import com.paddle.ocr.util.YamlUtils", "import com.paddle.ocr.util.YamlUtils\nimport java.io.File")
+          needle = "context.assets.open(assetPath).bufferedReader().use { it.readText() }"
+          if needle not in src:
+              raise SystemExit("Could not safely patch ModelConfig file loader")
+          src = src.replace(needle, """val configFile = File(assetPath)
+                      if (configFile.isFile) configFile.bufferedReader().use { it.readText() }
+                      else context.assets.open(assetPath).bufferedReader().use { it.readText() }""", 1)
+          cfg.write_text(src)
+          print("PP-OCR SDK supports app-private ONNX/YAML model files.")
+          PY
+          echo "PP-OCRv6 Small model assets prepared; app-private model file loading enabled." >> "$GITHUB_STEP_SUMMARY"
           du -h "$SDK/src/main/assets/models/"*/* >> "$GITHUB_STEP_SUMMARY"
       - name: Checkout AUSBC source
         uses: actions/checkout@v4
@@ -74,6 +103,10 @@ jobs:
           repository: ernestp/AndroidUSBCamera
           ref: 3.6.0
           path: third_party/AndroidUSBCamera
+      - name: Cap UVC camera mode at 1080p
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_uvc_resolution.py third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/MultiCameraClient.kt
       - name: Patch Android USB permission PendingIntent
         run: |
           set -euo pipefail
@@ -122,6 +155,8 @@ jobs:
           gradle --no-daemon --no-parallel --max-workers=2 --stacktrace assembleRelease
           APK="app/build/outputs/apk/release/app-release.apk"
           test -s "$APK"
+          # Match the known-good 0.6.0 build: Gradle signs with the original keystore using V2.
+          # Do not re-sign the APK with apksigner or change the signing scheme here.
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           "$APKSIGNER" verify --verbose --print-certs "$APK" | tee "$RUNNER_TEMP/certificate-check.txt"
           "$APKSIGNER" verify --verbose "$APK" | tee "$RUNNER_TEMP/signature-check.txt"
@@ -131,15 +166,15 @@ jobs:
           "$ZIPALIGN" -c -v 4 "$APK"
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           "$AAPT" dump badging "$APK" | tee "$RUNNER_TEMP/apk-manifest.txt"
-          grep -q "package: name='com.vobichngan.kanzi' versionCode='15' versionName='0.6.0'" "$RUNNER_TEMP/apk-manifest.txt"
+          grep -q "package: name='com.vobich.kanzi' versionCode='23' versionName='0.7.7'" "$RUNNER_TEMP/apk-manifest.txt"
           grep -q "sdkVersion:'26'" "$RUNNER_TEMP/apk-manifest.txt"
           echo "APK_SHA256=$(sha256sum "$APK" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
           echo "APK_SIZE=$(stat -c%s "$APK") bytes" >> "$GITHUB_STEP_SUMMARY"
-          echo "PP-OCRv6 tiny, V2 signature, certificate, package/version/minSdk and zipalign checks passed." >> "$GITHUB_STEP_SUMMARY"
+          echo "PP-OCRv6 Small, original V2 signature, certificate, package/version/minSdk and zipalign checks passed." >> "$GITHUB_STEP_SUMMARY"
       - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kanzi-assistant-0.6.0-ppocrv6-signed
+          name: kanzi-assistant-0.7.7-ppocrv6-small-signed
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
@@ -147,6 +182,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: test-build-${{ github.run_number }}
-          name: 看字助手测试版 0.6.0 PP-OCRv6 (${{ github.run_number }})
+          name: 看字助手测试版 0.7.7 PP-OCRv6 Small (${{ github.run_number }})
           prerelease: true
           files: app/build/outputs/apk/release/app-release.apk

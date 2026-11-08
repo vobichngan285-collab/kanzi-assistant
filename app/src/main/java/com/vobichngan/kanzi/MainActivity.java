@@ -22,16 +22,19 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.SeekBar;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.graphics.Color;
 import android.util.TypedValue;
+import android.util.Log;
 
 import com.jiangdg.ausbc.MultiCameraClient;
 import com.jiangdg.ausbc.base.CameraActivity;
 import com.jiangdg.ausbc.camera.bean.CameraRequest;
 import com.jiangdg.ausbc.callback.ICameraStateCallBack;
 import com.jiangdg.ausbc.callback.IPreviewDataCallBack;
+import com.jiangdg.ausbc.camera.bean.PreviewSize;
 import com.jiangdg.ausbc.widget.AspectRatioTextureView;
 import com.jiangdg.ausbc.widget.IAspectRatio;
 import android.graphics.BitmapFactory;
@@ -46,12 +49,18 @@ import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends CameraActivity {
-    private static final String APP_VERSION = "0.6.0";
+    private static final String APP_VERSION = "0.7.7";
     private static final String PREFS_NAME = "kanzi_settings";
     private static final String PREF_AUTO_MODE = "automatic_mode";
     private static final String PREF_INTERVAL = "recognition_interval_ms";
     private static final String PREF_SIMILARITY = "similarity_threshold";
     private static final String PREF_QUEUE_SPEECH = "queue_speech";
+    private static final String PREF_SPEECH_RATE = "speech_rate";
+    private static final String PREF_PREVIEW_ROTATION = "preview_rotation";
+    private static final String PREF_PREVIEW_MIRROR = "preview_mirror";
+    private static final String PREF_PREVIEW_FLIP = "preview_flip";
+    private static final String PREF_ENHANCED_OCR = "enhanced_ocr";
+    private static final String PREF_USE_SMALL_MODEL = "use_small_model";
     private final Handler diagnosticHandler = new Handler(Looper.getMainLooper());
     private int diagnosticAttempts = 0;
     private final Runnable diagnosticRunnable = new Runnable() {
@@ -69,6 +78,12 @@ public class MainActivity extends CameraActivity {
     private volatile long recognitionIntervalMs = 500L;
     private volatile int similarityThreshold = 88;
     private volatile boolean queueSpeech = true;
+    private volatile float speechRate = 1.0f;
+    private volatile int previewRotation = 0;
+    private volatile boolean previewMirror = false;
+    private volatile boolean previewVerticalFlip = false;
+    private volatile boolean enhancedOcr = false;
+    private volatile boolean useSmallModel = false;
     private boolean ttsReady = false;
     private boolean previewCallbackAdded = false;
     private String lastSpoken = "";
@@ -99,6 +114,12 @@ public class MainActivity extends CameraActivity {
     private final IPreviewDataCallBack previewCallback = new IPreviewDataCallBack() {
         @Override public void onPreviewData(byte[] data, int width, int height, DataFormat format) {
             if (!running || data == null || format != DataFormat.NV21) return;
+            if (width <= 0 || height <= 0 || (width & 1) != 0 || (height & 1) != 0 ||
+                data.length != ((long) width * height * 3L) / 2L) {
+                Log.w("KanziCamera", "Discard invalid NV21 frame: " + width + "x" + height +
+                    ", bytes=" + data.length);
+                return;
+            }
             long now = System.currentTimeMillis();
             boolean oneShot = manualCaptureRequested.get();
             if (oneShot) {
@@ -112,19 +133,28 @@ public class MainActivity extends CameraActivity {
             }
             lastProcess = now;
             byte[] frame = data.clone();
-            recognizer.recognizeNv21(frame, width, height, found -> {
+            final int rotation = previewRotation;
+            final boolean enhance = enhancedOcr;
+            try {
+                recognizer.recognizeNv21(frame, width, height, rotation, enhance, found -> {
+                    busy.set(false);
+                    if (found != null) onRecognized(found);
+                }, error -> {
+                    busy.set(false);
+                    Log.e("KanziOCR", "OCR failed for " + width + "x" + height, new RuntimeException(error));
+                    runOnUiThread(() -> status.setText("飞桨 OCR 识别异常：" + error));
+                });
+            } catch (Throwable error) {
                 busy.set(false);
-                if (found != null) onRecognized(found);
-            }, error -> {
-                busy.set(false);
-                runOnUiThread(() -> status.setText("飞桨 OCR 识别异常：" + error));
-            });
+                Log.e("KanziOCR", "Could not submit OCR frame", error);
+            }
         }
     };
 
     @Override protected View getRootView(LayoutInflater inflater) {
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
+        // Use a full-screen overlay root: the control row must not consume preview height.
+        // This lets a quarter-turned 16:9 camera image use the full portrait screen area.
+        FrameLayout root = new FrameLayout(this);
         root.setPadding(0, 0, 0, 0);
         root.setBackgroundColor(Color.BLACK);
 
@@ -134,18 +164,21 @@ public class MainActivity extends CameraActivity {
         diagnostic = new TextView(this);
         diagnostic.setVisibility(View.GONE);
 
-        // The camera preview owns all available space above the bottom control strip.
         previewContainer = new FrameLayout(this);
         previewContainer.setBackgroundColor(Color.BLACK);
-        root.addView(previewContainer, new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        previewContainer.setClipChildren(true);
+        previewContainer.setClipToPadding(true);
+        root.addView(previewContainer, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
         ));
 
+        // Floating controls sit on top of the preview instead of taking away its height.
         LinearLayout controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.HORIZONTAL);
         controls.setGravity(Gravity.CENTER);
         controls.setPadding(dp(4), dp(4), dp(4), dp(4));
-        controls.setBackgroundColor(0xFF151515);
+        controls.setBackgroundColor(0xAA151515);
 
         modeButton = createControlButton("模式：自动");
         controls.addView(modeButton, new LinearLayout.LayoutParams(0, dp(54), 1f));
@@ -156,9 +189,11 @@ public class MainActivity extends CameraActivity {
         settingsButton = createControlButton("设置");
         controls.addView(settingsButton, new LinearLayout.LayoutParams(0, dp(54), 1f));
 
-        root.addView(controls, new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(62)
-        ));
+        FrameLayout.LayoutParams controlsParams = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(62), Gravity.BOTTOM
+        );
+        root.addView(controls, controlsParams);
+        controls.bringToFront();
         return root;
     }
 
@@ -189,12 +224,37 @@ public class MainActivity extends CameraActivity {
         similarityThreshold = Math.max(0, Math.min(100,
             prefs.getInt(PREF_SIMILARITY, 88)));
         queueSpeech = prefs.getBoolean(PREF_QUEUE_SPEECH, true);
+        speechRate = Math.max(0.5f, Math.min(2.0f, prefs.getFloat(PREF_SPEECH_RATE, 1.0f)));
+        previewRotation = prefs.getInt(PREF_PREVIEW_ROTATION, 0);
+        if (previewRotation != 0 && previewRotation != 90 && previewRotation != 180 && previewRotation != 270) previewRotation = 0;
+        previewMirror = prefs.getBoolean(PREF_PREVIEW_MIRROR, false);
+        previewVerticalFlip = prefs.getBoolean(PREF_PREVIEW_FLIP, false);
+        enhancedOcr = prefs.getBoolean(PREF_ENHANCED_OCR, false);
+        useSmallModel = prefs.getBoolean(PREF_USE_SMALL_MODEL, false) && OcrModelDownloader.isInstalled(this);
     }
 
     private void showSettingsDialog() {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(20), dp(8), dp(20), dp(4));
+
+        CheckBox enhancedCheck = new CheckBox(this);
+        enhancedCheck.setText("增强图像处理（降噪、对比度增强、锐化）");
+        enhancedCheck.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        enhancedCheck.setChecked(enhancedOcr);
+        panel.addView(enhancedCheck);
+
+        TextView enhancedNote = new TextView(this);
+        enhancedNote.setText("适合背景杂乱、文字与背景颜色接近的画面。处理会增加耗时；如果画面本身清晰，可关闭以保持速度。");
+        enhancedNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        enhancedNote.setTextColor(0xFF667085);
+        panel.addView(enhancedNote);
+
+        TextView modelNote = new TextView(this);
+        modelNote.setText("当前内置 PP-OCRv6 Small 识别模型，默认直接使用，无需额外下载。");
+        modelNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        modelNote.setTextColor(0xFF667085);
+        panel.addView(modelNote);
 
         CheckBox queueCheck = new CheckBox(this);
         queueCheck.setText("完整读完当前文字，再读下一段");
@@ -239,16 +299,96 @@ public class MainActivity extends CameraActivity {
         });
         panel.addView(similaritySeek);
 
+        TextView speechTitle = new TextView(this);
+        speechTitle.setText("朗读语速：" + String.format(Locale.US, "%.2f", speechRate) + " 倍");
+        speechTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        speechTitle.setPadding(0, dp(18), 0, dp(4));
+        panel.addView(speechTitle);
+
+        SeekBar speechRateSeek = new SeekBar(this);
+        speechRateSeek.setMax(150);
+        speechRateSeek.setProgress(Math.round((speechRate - 0.5f) * 100f));
+        speechRateSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                float value = 0.5f + progress / 100f;
+                speechTitle.setText("朗读语速：" + String.format(Locale.US, "%.2f", value) + " 倍");
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+        panel.addView(speechRateSeek);
+
+        Button speechPreviewButton = createControlButton("试听当前语速");
+        speechPreviewButton.setOnClickListener(v -> {
+            if (tts != null && ttsReady) {
+                tts.setSpeechRate(0.5f + speechRateSeek.getProgress() / 100f);
+                tts.speak("看字助手语音试听，现在是当前设置的朗读速度。", TextToSpeech.QUEUE_FLUSH, null, "settings-preview");
+            } else {
+                Toast.makeText(this, "中文语音尚未准备好", Toast.LENGTH_SHORT).show();
+            }
+        });
+        panel.addView(speechPreviewButton);
+
+        TextView rotationTitle = new TextView(this);
+        rotationTitle.setText("摄像头画面旋转：" + previewRotation + "°");
+        rotationTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        rotationTitle.setPadding(0, dp(18), 0, dp(4));
+        panel.addView(rotationTitle);
+
+        SeekBar rotationSeek = new SeekBar(this);
+        rotationSeek.setMax(3);
+        rotationSeek.setProgress(previewRotation / 90);
+        rotationSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                rotationTitle.setText("摄像头画面旋转：" + (progress * 90) + "°");
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+        panel.addView(rotationSeek);
+
+        CheckBox mirrorCheck = new CheckBox(this);
+        mirrorCheck.setText("水平镜像");
+        mirrorCheck.setChecked(previewMirror);
+        panel.addView(mirrorCheck);
+        CheckBox flipCheck = new CheckBox(this);
+        flipCheck.setText("垂直翻转");
+        flipCheck.setChecked(previewVerticalFlip);
+        panel.addView(flipCheck);
+
+        TextView transformNote = new TextView(this);
+        PreviewSize currentSize = previewCallbackAdded ? getCurrentPreviewSize() : null;
+        String actualSizeText = currentSize == null
+            ? "当前未连接摄像头"
+            : currentSize.getWidth() + "×" + currentSize.getHeight();
+        TextView previewQualityNote = new TextView(this);
+        previewQualityNote.setText("当前实际预览分辨率：" + actualSizeText
+            + "。固定请求 1920×1080；若摄像头不支持，会选择 1080p 以下最合适的模式；如果没有符合上限的模式则明确报错，不会偷偷切换到 4K。");
+        previewQualityNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        previewQualityNote.setTextColor(0xFF667085);
+        panel.addView(previewQualityNote);
+
+        transformNote.setText("画面始终按摄像头实际比例等比显示；旋转 90°/270°后完整显示，不裁切、不拉伸，屏幕比例不一致时保留黑边。镜像和翻转只影响预览，不会把文字镜像后送入 OCR。OCR 使用原始摄像头帧并单独校正旋转方向。");
+        transformNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        transformNote.setTextColor(0xFF667085);
+        panel.addView(transformNote);
+
         TextView similarityNote = new TextView(this);
         similarityNote.setText("数值越高，判断越严格；设为 0 时关闭相似度去重，但仍要求连续两次识别后才朗读。");
         similarityNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         similarityNote.setTextColor(0xFF667085);
         panel.addView(similarityNote);
 
+        ScrollView settingsScroll = new ScrollView(this);
+        settingsScroll.setFillViewport(true);
+        settingsScroll.addView(panel);
+
         new androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("识别与朗读设置")
-            .setView(panel)
-            .setNegativeButton("取消", null)
+            .setView(settingsScroll)
+            .setNegativeButton("取消", (dialog, which) -> {
+                if (tts != null && ttsReady) tts.setSpeechRate(speechRate);
+            })
             .setPositiveButton("保存", (dialog, which) -> {
                 long interval = 500L;
                 try {
@@ -258,11 +398,24 @@ public class MainActivity extends CameraActivity {
                 similarityThreshold = similaritySeek.getProgress();
                 boolean wasQueueEnabled = queueSpeech;
                 queueSpeech = queueCheck.isChecked();
+                speechRate = 0.5f + speechRateSeek.getProgress() / 100f;
+                previewRotation = rotationSeek.getProgress() * 90;
+                previewMirror = mirrorCheck.isChecked();
+                previewVerticalFlip = flipCheck.isChecked();
+                enhancedOcr = enhancedCheck.isChecked();
+                if (tts != null) tts.setSpeechRate(speechRate);
+                applyPreviewTransform();
                 getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
                     .putBoolean(PREF_AUTO_MODE, automaticMode)
                     .putLong(PREF_INTERVAL, recognitionIntervalMs)
                     .putInt(PREF_SIMILARITY, similarityThreshold)
                     .putBoolean(PREF_QUEUE_SPEECH, queueSpeech)
+                    .putFloat(PREF_SPEECH_RATE, speechRate)
+                    .putInt(PREF_PREVIEW_ROTATION, previewRotation)
+                    .putBoolean(PREF_PREVIEW_MIRROR, previewMirror)
+                    .putBoolean(PREF_PREVIEW_FLIP, previewVerticalFlip)
+                    .putBoolean(PREF_ENHANCED_OCR, enhancedOcr)
+                    .putBoolean(PREF_USE_SMALL_MODEL, useSmallModel)
                     .apply();
                 if (wasQueueEnabled && !queueSpeech) clearSpeechQueue(true);
                 Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show();
@@ -272,7 +425,51 @@ public class MainActivity extends CameraActivity {
 
     @Override protected IAspectRatio getCameraView() {
         cameraTextureView = new AspectRatioTextureView(this);
+        cameraTextureView.addOnLayoutChangeListener((view, left, top, right, bottom,
+                oldLeft, oldTop, oldRight, oldBottom) -> applyPreviewTransform());
+        applyPreviewTransform();
         return (IAspectRatio) cameraTextureView;
+    }
+
+    private void applyPreviewTransform() {
+        if (cameraTextureView == null) return;
+        int containerWidth = previewContainer == null ? 0 : previewContainer.getWidth();
+        int containerHeight = previewContainer == null ? 0 : previewContainer.getHeight();
+        if (containerWidth <= 0 || containerHeight <= 0) return;
+        boolean quarterTurn = previewRotation == 90 || previewRotation == 270;
+
+        // Keep the entire camera frame visible. Use the actual negotiated camera ratio,
+        // so even a fallback mode is letterboxed rather than stretched or cropped.
+        PreviewSize actualSize = previewCallbackAdded ? getCurrentPreviewSize() : null;
+        float sourceAspect = actualSize != null && actualSize.getHeight() > 0
+            ? actualSize.getWidth() / (float) actualSize.getHeight()
+            : (16.0f / 9.0f);
+        float displayAspect = quarterTurn ? (1.0f / sourceAspect) : sourceAspect;
+        float displayWidth = Math.min(containerWidth, containerHeight * displayAspect);
+        float displayHeight = displayWidth / displayAspect;
+        int wantedWidth = Math.max(1, Math.round(quarterTurn ? displayHeight : displayWidth));
+        int wantedHeight = Math.max(1, Math.round(quarterTurn ? displayWidth : displayHeight));
+
+        ViewGroup.LayoutParams raw = cameraTextureView.getLayoutParams();
+        if (raw instanceof FrameLayout.LayoutParams) {
+            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) raw;
+            if (lp.width != wantedWidth || lp.height != wantedHeight || lp.gravity != Gravity.CENTER) {
+                lp.width = wantedWidth;
+                lp.height = wantedHeight;
+                lp.gravity = Gravity.CENTER;
+                cameraTextureView.setLayoutParams(lp);
+            }
+        }
+
+        cameraTextureView.setRotation(previewRotation);
+        int viewWidth = cameraTextureView.getWidth();
+        int viewHeight = cameraTextureView.getHeight();
+
+        cameraTextureView.setPivotX(viewWidth / 2.0f);
+        cameraTextureView.setPivotY(viewHeight / 2.0f);
+        // No zoom/fill scaling: this is a strict full-frame FIT transform.
+        cameraTextureView.setScaleX(previewMirror ? -1.0f : 1.0f);
+        cameraTextureView.setScaleY(previewVerticalFlip ? -1.0f : 1.0f);
     }
 
     @Override protected ViewGroup getCameraViewContainer() { return previewContainer; }
@@ -280,8 +477,8 @@ public class MainActivity extends CameraActivity {
 
     @Override protected CameraRequest getCameraRequest() {
         return new CameraRequest.Builder()
-            .setPreviewWidth(1280)
-            .setPreviewHeight(720)
+            .setPreviewWidth(1920)
+            .setPreviewHeight(1080)
             .setRenderMode(CameraRequest.RenderMode.OPENGL)
             .setPreviewFormat(CameraRequest.PreviewFormat.FORMAT_MJPEG)
             .setRawPreviewData(true)
@@ -292,6 +489,7 @@ public class MainActivity extends CameraActivity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         loadSettings();
+        applyPreviewTransform();
         updateControlLabels();
         diagnosticAttempts = 0;
         diagnosticHandler.postDelayed(diagnosticRunnable, 1200);
@@ -302,11 +500,12 @@ public class MainActivity extends CameraActivity {
             @Override public void onError(String message) {
                 runOnUiThread(() -> status.setText("飞桨 OCR 初始化失败：" + message));
             }
-        });
+        }, useSmallModel);
         recognizer.initialize();
         tts = new TextToSpeech(this, code -> {
             if (code == TextToSpeech.SUCCESS) {
                 int language = tts.setLanguage(Locale.SIMPLIFIED_CHINESE);
+                tts.setSpeechRate(speechRate);
                 ttsReady = language != TextToSpeech.LANG_MISSING_DATA && language != TextToSpeech.LANG_NOT_SUPPORTED;
                 if (ttsReady) {
                     tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
@@ -382,7 +581,10 @@ public class MainActivity extends CameraActivity {
                 addPreviewDataCallBack(previewCallback);
                 previewCallbackAdded = true;
             }
-            runOnUiThread(() -> updateControlLabels());
+            runOnUiThread(() -> {
+                applyPreviewTransform();
+                updateControlLabels();
+            });
         } else if (code == ICameraStateCallBack.State.CLOSED) {
             previewCallbackAdded = false;
             manualCaptureRequested.set(false);
@@ -448,6 +650,10 @@ public class MainActivity extends CameraActivity {
             "，子视图 " + previewContainer.getChildCount() + " 个");
         info.append("\n摄像头状态：").append(cameraOpened ? "已打开" : "未打开");
         info.append("\n预览回调：").append(previewCallbackAdded ? "已注册" : "未注册");
+        PreviewSize actualPreviewSize = cameraOpened ? getCurrentPreviewSize() : null;
+        info.append("\n实际摄像头预览分辨率：").append(actualPreviewSize == null ? "尚未获取" :
+            actualPreviewSize.getWidth() + "×" + actualPreviewSize.getHeight());
+        info.append("\n预览显示：完整画面 FIT（无裁切、无缩放）");
         info.append("\n摄像头视图：").append(cameraTextureView == null ? "未创建" :
             cameraTextureView.getWidth() + "×" + cameraTextureView.getHeight());
         info.append("\nTextureView表面：").append(cameraTextureView == null ? "未知" :
