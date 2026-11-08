@@ -1,6 +1,7 @@
 package com.vobich.bluestar.cloudprobe;
 
 import android.app.Activity;
+import android.app.Dialog;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
@@ -9,6 +10,8 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
+import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -30,8 +33,11 @@ final class ReadingScreen {
         void replay(String text);
         void togglePause();
         void exportBook(String bookId);
+        String lastBookId();
+        void selectedBook(String bookId);
     }
-    private static final int BG=0xFF091B32,PANEL=0xFF183553,ACCENT=0xFF286FCB,WHITE=Color.WHITE;
+    private static final int BG=0xFF091B32,PANEL=0xFF183553,ACCENT=0xFF286FCB,
+        MARK=0xFF952D40,WHITE=Color.WHITE;
     private final Activity activity;
     private final FrameLayout host,screen;
     private final ReadingLibrary books;
@@ -49,7 +55,7 @@ final class ReadingScreen {
     void open(){
         if(screen.getParent()==null)host.addView(screen,
             new FrameLayout.LayoutParams(-1,-1));
-        showShelf();
+        showEntry();
     }
     boolean isOpen(){return screen.getParent()!=null;}
     void bringForward(){screen.bringToFront();}
@@ -59,6 +65,24 @@ final class ReadingScreen {
         textBody=null;statusLabel=null;pauseButton=null;nextButton=null;
     }
     String bookId(){return bookId;}
+    void showEntry(){
+        listener.stopReading();
+        phase="entry";working=false;paused=false;bookId="";
+        currentPage=null;displayText="";render();
+    }
+    /** Continue means open page index, never activate camera or OCR. */
+    private void continueBook(){
+        try{
+            List<ReadingLibrary.Book> all=books.list();
+            if(all.isEmpty()){createBook();return;}
+            String previous=listener.lastBookId();
+            ReadingLibrary.Book choice=null;
+            for(ReadingLibrary.Book b:all)
+                if(b.id.equals(previous)){choice=b;break;}
+            if(choice==null)choice=all.get(0);
+            showBookPages(choice.id);
+        }catch(Exception e){message("打开阅读记录失败："+e.getMessage());}
+    }
     void showShelf(){
         phase="shelf";working=false;bookId="";
         listener.stopReading();render();
@@ -66,13 +90,34 @@ final class ReadingScreen {
     void openBook(String id){
         try{
             ReadingLibrary.Book book=books.get(id);
-            bookId=book.id;currentPage=book.lastPage();
-            displayText=currentPage==null?"":currentPage.text;
-            status=currentPage==null?"尚未拍摄书页 · 摄像头已关闭":
-                "第 "+currentPage.number+" 页 · 已保存到本机 · 摄像头已关闭";
-            phase="page";paused=false;working=false;
-            listener.stopReading();render();
+            if(book.lastPage()==null){showBookPages(id);return;}
+            showSavedPage(id,book.lastPage().number);
         }catch(Exception e){message("打开书籍失败："+e.getMessage());}
+    }
+    /** Ordered by successful OCR captures, never by guessed chapters. */
+    void showBookPages(String id){
+        try{
+            ReadingLibrary.Book book=books.get(id);
+            listener.stopReading();
+            listener.selectedBook(id);
+            bookId=id;currentPage=null;displayText="";
+            phase="pages";paused=false;working=false;render();
+        }catch(Exception e){message("打开书页失败："+e.getMessage());}
+    }
+    private void showSavedPage(String id,int number){
+        try{
+            ReadingLibrary.Book book=books.get(id);
+            for(ReadingLibrary.Page page:book.pages){
+                if(page.number!=number)continue;
+                listener.stopReading();
+                listener.selectedBook(id);
+                bookId=id;currentPage=page;displayText=page.text;
+                phase="page";paused=false;working=false;
+                status=page.displayName()+" · 已保存";
+                render();return;
+            }
+            message("指定书页已被删除");showBookPages(id);
+        }catch(Exception e){message("打开书页失败："+e.getMessage());}
     }
     private int dp(int n){return Math.round(n*activity.getResources().getDisplayMetrics().density);}
     private GradientDrawable bg(int color,int radius){
@@ -118,7 +163,12 @@ final class ReadingScreen {
         close.setTextSize(TypedValue.COMPLEX_UNIT_SP,30);
         close.setContentDescription("返回蓝星向导主界面");
         top.addView(close,new LinearLayout.LayoutParams(dp(54),dp(52)));
-        close.setOnClickListener(v->listener.closeReading());
+        close.setOnClickListener(v->{
+            if("entry".equals(phase))listener.closeReading();
+            else if("page".equals(phase)||"failed".equals(phase)||
+                    "recognizing".equals(phase))showBookPages(bookId);
+            else showEntry();
+        });
         TextView title=label("蓝星向导 · 阅读",20,WHITE,true);
         title.setPadding(dp(10),0,0,0);
         top.addView(title,new LinearLayout.LayoutParams(0,dp(56),1f));
@@ -126,7 +176,7 @@ final class ReadingScreen {
             "failed".equals(phase)){
             Button menu=button("☰",PANEL,false);
             menu.setTextSize(TypedValue.COMPLEX_UNIT_SP,24);
-            menu.setContentDescription("更多阅读功能：书架、章节、导出、删除");
+            menu.setContentDescription("更多阅读功能：书架、书页列表、导出、删除");
             top.addView(menu,new LinearLayout.LayoutParams(dp(54),dp(52)));
             menu.setOnClickListener(this::showPageMenu);
         }
@@ -138,7 +188,7 @@ final class ReadingScreen {
         if(bookId.isEmpty())return;
         PopupMenu popup=new PopupMenu(activity,anchor);
         popup.getMenu().add(0,1,0,"书架");
-        popup.getMenu().add(0,2,1,"章节 / 页码");
+        popup.getMenu().add(0,2,1,"书页列表");
         popup.getMenu().add(0,3,2,"导出文字");
         popup.getMenu().add(0,4,3,"删除这本书");
         popup.setOnMenuItemClickListener(item->{
@@ -163,13 +213,149 @@ final class ReadingScreen {
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(4),dp(10),dp(4),dp(10));
         scroll.addView(content);
+        if("entry".equals(phase)){renderEntry(content);return;}
         if("shelf".equals(phase)){renderShelf(content);return;}
+        if("pages".equals(phase)){renderPages(content,all);return;}
         renderPage(content,all);
+    }
+    /** The entrance intentionally contains no subtitle or explanatory copy. */
+    private void renderEntry(LinearLayout content){
+        LinearLayout choices=new LinearLayout(activity);
+        choices.setOrientation(LinearLayout.HORIZONTAL);
+        choices.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams row=new LinearLayout.LayoutParams(-1,dp(208));
+        row.topMargin=dp(36);
+        content.addView(choices,row);
+        Button again=button("▣\\n继续阅读".replace("\\\\n","\\n"),ACCENT,true);
+        again.setTextSize(TypedValue.COMPLEX_UNIT_SP,23);
+        again.setContentDescription("继续阅读：进入上次书籍的书页列表");
+        LinearLayout.LayoutParams left=new LinearLayout.LayoutParams(0,-1,1f);
+        left.rightMargin=dp(6);choices.addView(again,left);
+        again.setOnClickListener(v->continueBook());
+        Button fresh=button("▤\\n新阅读".replace("\\\\n","\\n"),PANEL,true);
+        fresh.setTextSize(TypedValue.COMPLEX_UNIT_SP,23);
+        fresh.setContentDescription("新阅读：新建书籍后手动拍摄");
+        LinearLayout.LayoutParams right=new LinearLayout.LayoutParams(0,-1,1f);
+        right.leftMargin=dp(6);choices.addView(fresh,right);
+        fresh.setOnClickListener(v->createBook());
+    }
+    /** Persistent page list: exactly one row for each successful OCR photograph. */
+    private void renderPages(LinearLayout content,LinearLayout all){
+        ReadingLibrary.Book book;
+        try{book=books.get(bookId);}
+        catch(Exception e){showShelf();message("读取书页失败："+e.getMessage());return;}
+        LinearLayout heading=new LinearLayout(activity);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title=label(book.title,24,WHITE,true);
+        heading.addView(title,new LinearLayout.LayoutParams(0,dp(62),1f));
+        Button shelf=button("书架",PANEL,false);
+        heading.addView(shelf,new LinearLayout.LayoutParams(dp(72),dp(50)));
+        shelf.setOnClickListener(v->showShelf());
+        content.addView(heading);
+        if(book.pages.isEmpty()){
+            TextView empty=label("尚无书页",19,WHITE,false);
+            empty.setPadding(dp(12),dp(16),0,0);
+            content.addView(empty);
+        }
+        for(ReadingLibrary.Page page:book.pages){
+            Button item=button((page.marked?"★  ":"")+page.displayName(),
+                page.marked?MARK:PANEL,false);
+            item.setGravity(Gravity.CENTER_VERTICAL|Gravity.LEFT);
+            item.setPadding(dp(20),0,dp(12),0);
+            item.setMinimumHeight(dp(68));
+            item.setContentDescription(page.displayName()+
+                (page.marked?"，已标记":"")+"，点击打开原文，长按管理");
+            addButton(content,item,7);
+            item.setOnClickListener(v->showSavedPage(book.id,page.number));
+            item.setOnLongClickListener(v->{
+                openPageActions(book.id,page.number);
+                return true;
+            });
+        }
+        Button continueButton=button("继续阅读",ACCENT,true);
+        continueButton.setContentDescription("继续阅读，打开实时摄像头预览，再点击拍照");
+        LinearLayout.LayoutParams foot=new LinearLayout.LayoutParams(-1,dp(72));
+        foot.topMargin=dp(12);all.addView(continueButton,foot);
+        continueButton.setOnClickListener(v->listener.enterPreview(book.id));
+    }
+    /** Android dialog anchored to the BOTTOM; no gratuitous fourth option. */
+    private void openPageActions(String id,int number){
+        try{
+            ReadingLibrary.Book b=books.get(id);
+            ReadingLibrary.Page chosen=null;
+            for(ReadingLibrary.Page p:b.pages)
+                if(p.number==number){chosen=p;break;}
+            if(chosen==null){message("书页已删除");showBookPages(id);return;}
+            final ReadingLibrary.Page page=chosen;
+            Dialog dialog=new Dialog(activity);
+            LinearLayout sheet=new LinearLayout(activity);
+            sheet.setOrientation(LinearLayout.VERTICAL);
+            sheet.setPadding(dp(14),dp(12),dp(14),dp(20));
+            sheet.setBackground(bg(BG,18));
+            Button mark=button(page.marked?"取消标记":"标记",PANEL,false);
+            addButton(sheet,mark,4);
+            mark.setOnClickListener(v->{
+                dialog.dismiss();
+                try{books.toggleMark(id,page.number);showBookPages(id);}
+                catch(Exception e){message("标记失败："+e.getMessage());}
+            });
+            Button rename=button("重命名",PANEL,false);
+            addButton(sheet,rename,8);
+            rename.setOnClickListener(v->{
+                dialog.dismiss();renamePage(id,page);
+            });
+            Button delete=button("删除",MARK,false);
+            addButton(sheet,delete,8);
+            delete.setOnClickListener(v->{
+                dialog.dismiss();confirmDeletePage(id,page);
+            });
+            dialog.setContentView(sheet);
+            dialog.setCanceledOnTouchOutside(true);
+            Window window=dialog.getWindow();
+            if(window!=null){
+                window.setBackgroundDrawableResource(android.R.color.transparent);
+                window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+                WindowManager.LayoutParams params=window.getAttributes();
+                params.width=WindowManager.LayoutParams.MATCH_PARENT;
+                params.height=WindowManager.LayoutParams.WRAP_CONTENT;
+                params.gravity=Gravity.BOTTOM;
+                params.dimAmount=0.45f;
+                window.setAttributes(params);
+            }
+            dialog.show();
+            if(window!=null)window.setLayout(-1,-2);
+        }catch(Exception e){message("打开书页菜单失败："+e.getMessage());}
+    }
+    private void renamePage(String id,ReadingLibrary.Page page){
+        EditText input=new EditText(activity);
+        input.setText(page.displayName());
+        input.setSelectAllOnFocus(true);
+        input.setSingleLine(true);
+        input.setTextColor(WHITE);
+        input.setInputType(InputType.TYPE_CLASS_TEXT);
+        LinearLayout wrap=new LinearLayout(activity);
+        wrap.setPadding(dp(20),dp(8),dp(20),0);
+        wrap.addView(input);
+        new AlertDialog.Builder(activity).setTitle("重命名书页")
+            .setView(wrap).setNegativeButton("取消",null)
+            .setPositiveButton("保存",(d,w)->{
+                try{
+                    books.renamePage(id,page.number,input.getText().toString());
+                    showBookPages(id);
+                }catch(Exception e){message("重命名失败："+e.getMessage());}
+            }).show();
+    }
+    private void confirmDeletePage(String id,ReadingLibrary.Page page){
+        new AlertDialog.Builder(activity).setTitle("删除 "+page.displayName()+"？")
+            .setMessage("只删除这一页的文字，无法撤销。")
+            .setNegativeButton("取消",null)
+            .setPositiveButton("确认删除",(d,w)->{
+                try{books.deletePage(id,page.number);showBookPages(id);}
+                catch(Exception e){message("删除书页失败："+e.getMessage());}
+            }).show();
     }
     private void renderShelf(LinearLayout content){
         content.addView(label("我的书架",26,WHITE,true));
-        TextView hint=label("照片只用于当前云端识别，本机永久保存的是书页文字，不保存录音。",15,0xFFBCD8F4,false);
-        hint.setPadding(0,dp(12),0,dp(12));content.addView(hint);
         Button newBook=button("＋ 新建一本书",ACCENT,true);
         addButton(content,newBook,8);
         newBook.setOnClickListener(v->createBook());
@@ -184,7 +370,7 @@ final class ReadingScreen {
                 Button item=button("📖 "+b.title+"\n已保存 "+b.pages.size()+" 页",PANEL,false);
                 item.setContentDescription("打开"+b.title+"，已保存"+b.pages.size()+"页");
                 item.setMinHeight(dp(85));addButton(content,item,11);
-                item.setOnClickListener(v->openBook(b.id));
+                item.setOnClickListener(v->showBookPages(b.id));
             }
         }catch(Exception e){message("读取书架失败："+e.getMessage());}
     }
@@ -200,7 +386,8 @@ final class ReadingScreen {
             .setPositiveButton("创建",(d,which)->{
                 try{
                     ReadingLibrary.Book b=books.create(field.getText().toString());
-                    openBook(b.id);
+                    bookId=b.id;
+                    listener.selectedBook(b.id);
                     listener.enterPreview(b.id);
                 }catch(Exception ex){message("创建失败："+ex.getMessage());}
             }).show();
@@ -258,25 +445,7 @@ final class ReadingScreen {
         actions.addView(restart,restartLp);
     }
 
-    private void showContents(){
-        try{
-            ReadingLibrary.Book b=books.get(bookId);
-            if(b.pages.isEmpty()){message("还没有保存的书页");return;}
-            String[] names=new String[b.pages.size()];
-            for(int i=0;i<b.pages.size();i++){
-                ReadingLibrary.Page p=b.pages.get(i);
-                names[i]="第 "+p.number+" 页"+(p.chapter.isEmpty()?"":" · "+p.chapter);
-            }
-            new AlertDialog.Builder(activity).setTitle(b.title+" · 目录")
-                .setItems(names,(d,position)->{
-                    listener.stopReading();
-                    currentPage=b.pages.get(position);
-                    displayText=currentPage.text;phase="page";paused=false;working=false;
-                    status="第 "+currentPage.number+" 页 · 本地保存 · 无需摄像头";
-                    render();
-                }).setNegativeButton("关闭",null).show();
-        }catch(Exception e){message("无法显示目录："+e.getMessage());}
-    }
+    private void showContents(){showBookPages(bookId);}
     private void confirmDelete(){
         final String id=bookId;
         new AlertDialog.Builder(activity).setTitle("删除这本书？")
@@ -352,7 +521,7 @@ final class ReadingScreen {
     void saved(ReadingLibrary.Page page){
         currentPage=page;displayText=page.text;phase="page";
         working=false;paused=false;
-        status="第 "+page.number+" 页 · 已保存文字 · 摄像头已关闭";
+        status=page.displayName()+" · 已保存";
         render();
     }
     void failure(String why){
