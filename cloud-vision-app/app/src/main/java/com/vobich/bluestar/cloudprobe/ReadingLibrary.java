@@ -19,11 +19,14 @@ import java.util.UUID;
 final class ReadingLibrary {
     static final class Page {
         final int number;
-        final String text,chapter;
+        final String text,chapter,label;
         final long at;
-        Page(int number,String text,String chapter,long at){
+        final boolean marked;
+        Page(int number,String text,String chapter,long at,String label,boolean marked){
             this.number=number;this.text=text;this.chapter=chapter;this.at=at;
+            this.label=label==null?"":label;this.marked=marked;
         }
+        String displayName(){return label.isEmpty()?"第"+number+"页":label;}
     }
     static final class Book {
         final String id,title;
@@ -64,7 +67,10 @@ final class ReadingLibrary {
             JSONObject p=records.getJSONObject(i);
             String text=p.getString("text");
             if(!ReadingRules.usable(text))throw new IllegalStateException("书页内容已损坏");
-            pages.add(new Page(p.getInt("number"),text,p.optString("chapter",""),p.optLong("at",0)));
+            // RC22/23/24 books have no label or mark: migrate in memory, never
+            // overwrite or reinterpret any previously saved OCR text.
+            pages.add(new Page(p.getInt("number"),text,p.optString("chapter",""),
+                p.optLong("at",0),p.optString("label",""),p.optBoolean("marked",false)));
         }
         return new Book(data.getString("id"),data.getString("title"),data.getLong("created"),
             data.optLong("updated",0),pages);
@@ -97,12 +103,56 @@ final class ReadingLibrary {
         String clean=text.trim();
         if(last!=null&&last.text.equals(clean))
             throw new IllegalStateException("检测到重复的上一页，已阻止重复保存");
-        String chapter=ReadingRules.chapter(clean);
-        if(chapter.isEmpty()&&last!=null)chapter=last.chapter;
-        Page next=new Page(prior.pages.size()+1,clean,chapter,System.currentTimeMillis());
+        // One successful photographed OCR = one page; no AI chapter inference.
+        // Page numbers never recycle, even after a page was manually deleted.
+        int highest=0;
+        for(Page page:prior.pages)highest=Math.max(highest,page.number);
+        int nextNumber=highest+1;
+        Page next=new Page(nextNumber,clean,"",System.currentTimeMillis(),
+            "第"+nextNumber+"页",false);
         ArrayList<Page> pages=new ArrayList<>(prior.pages);pages.add(next);
         write(new Book(prior.id,prior.title,prior.created,System.currentTimeMillis(),pages));
         return next;
+    }
+    /** Rename, mark and delete modify only the selected page, atomically. */
+    synchronized Page renamePage(String id,int number,String name) throws Exception {
+        String title=ReadingRules.title(name);
+        if(title.isEmpty())throw new IllegalArgumentException("书页名称不能为空");
+        Book book=read(id);
+        ArrayList<Page> pages=new ArrayList<>(book.pages);
+        for(int i=0;i<pages.size();i++){
+            Page old=pages.get(i);
+            if(old.number!=number)continue;
+            Page updated=new Page(old.number,old.text,old.chapter,old.at,title,old.marked);
+            pages.set(i,updated);
+            write(new Book(book.id,book.title,book.created,System.currentTimeMillis(),pages));
+            return updated;
+        }
+        throw new IllegalStateException("指定书页不存在");
+    }
+    synchronized Page toggleMark(String id,int number) throws Exception {
+        Book book=read(id);
+        ArrayList<Page> pages=new ArrayList<>(book.pages);
+        for(int i=0;i<pages.size();i++){
+            Page old=pages.get(i);
+            if(old.number!=number)continue;
+            Page updated=new Page(old.number,old.text,old.chapter,old.at,
+                old.label,!old.marked);
+            pages.set(i,updated);
+            write(new Book(book.id,book.title,book.created,System.currentTimeMillis(),pages));
+            return updated;
+        }
+        throw new IllegalStateException("指定书页不存在");
+    }
+    synchronized void deletePage(String id,int number) throws Exception {
+        Book book=read(id);
+        ArrayList<Page> pages=new ArrayList<>(book.pages);
+        boolean found=false;
+        for(int i=0;i<pages.size();i++){
+            if(pages.get(i).number==number){pages.remove(i);found=true;break;}
+        }
+        if(!found)throw new IllegalStateException("指定书页不存在");
+        write(new Book(book.id,book.title,book.created,System.currentTimeMillis(),pages));
     }
     synchronized void delete(String id) throws Exception {
         File file=path(id);
@@ -113,9 +163,8 @@ final class ReadingLibrary {
         Book book=read(id);
         StringBuilder text=new StringBuilder(book.title).append("\n\n");
         for(Page page:book.pages){
-            text.append("第").append(page.number).append("页");
-            if(!page.chapter.isEmpty())text.append(" · ").append(page.chapter);
-            text.append("\n").append(page.text).append("\n\n");
+            text.append(page.displayName()).append("\n")
+                .append(page.text).append("\n\n");
         }
         return text.toString();
     }
@@ -128,6 +177,7 @@ final class ReadingLibrary {
             JSONObject p=new JSONObject();
             p.put("number",page.number);p.put("text",page.text);
             p.put("chapter",page.chapter);p.put("at",page.at);
+            p.put("label",page.label);p.put("marked",page.marked);
             pages.put(p);
         }
         data.put("pages",pages);
