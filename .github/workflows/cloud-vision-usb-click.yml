@@ -419,7 +419,7 @@ jobs:
           assert 'Button menu=button("☰",PANEL,false);' in reader_header
           assert 'menu.setOnClickListener(this::showPageMenu)' in reader_header
           assert 'PopupMenu popup=new PopupMenu(activity,anchor);' in reader_popup
-          for expected in ['"书架"', '"章节 / 页码"', '"导出文字"', '"删除这本书"']:
+          for expected in ['"书架"', '"书页列表"', '"导出文字"', '"删除这本书"']:
               assert expected in reader_popup
           assert 'actions.setOrientation(LinearLayout.HORIZONTAL);' in reader_page
           positions=[reader_page.index('nextButton=button("下一张",ACCENT,false)'),
