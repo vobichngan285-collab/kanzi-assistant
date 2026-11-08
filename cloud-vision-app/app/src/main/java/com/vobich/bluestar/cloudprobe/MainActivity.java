@@ -2430,24 +2430,19 @@ public final class MainActivity extends CameraActivity {
                     @Override public void replay(String text){replayReadingText(text);}
                     @Override public void togglePause(){toggleReadingPause();}
                     @Override public void exportBook(String id){exportReadingBook(id);}
+                    @Override public String lastBookId(){
+                        return getSharedPreferences(PREFS,MODE_PRIVATE)
+                            .getString("reader_last_book_v1","");
+                    }
+                    @Override public void selectedBook(String id){
+                        getSharedPreferences(PREFS,MODE_PRIVATE).edit()
+                            .putString("reader_last_book_v1",id).apply();
+                    }
                 });
             readingScreen.open();
             suspendReadingCamera();
-            // Open directly to a live preview. Pick the last book silently;
-            // first use creates a local default book. Shelf remains accessible.
-            String bookId=getSharedPreferences(PREFS,MODE_PRIVATE)
-                .getString("reader_last_book_v1","");
-            ReadingLibrary.Book book=null;
-            if(bookId!=null&&!bookId.isEmpty()){
-                try{book=readingLibrary.get(bookId);}
-                catch(Exception ignored){book=null;}
-            }
-            if(book==null){
-                List<ReadingLibrary.Book> existing=readingLibrary.list();
-                book=existing.isEmpty()?readingLibrary.create("我的第一本书"):existing.get(0);
-            }
-            readingScreen.openBook(book.id);
-            enterReadingPreview(book.id);
+            // RC25: Reading now opens only the minimal two-choice landing page.
+            // Camera is activated only by New Reading or Continue inside a book.
         }catch(Exception error){
             Log.w(TAG,"Reader launch failed",error);
             readingScreen=null;
