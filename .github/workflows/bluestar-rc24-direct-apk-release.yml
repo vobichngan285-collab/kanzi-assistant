@@ -1,0 +1,75 @@
+name: Publish verified RC24 clean reading controls APK
+on:
+  push:
+    branches: [feat/bluestar-124-clean-reading-controls-20261108]
+    paths: ['.github/workflows/bluestar-rc24-direct-apk-release.yml']
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish-verified-rc24:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Require exact successful RC24 Android CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RUN=42437657106
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN" --jq '.conclusion')" = success
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN" --jq '.head_sha')" = 50c271c47d9c0c77a0d830efe74c282658658163
+      - name: Download official original CI APK artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p verified
+          gh run download 42437657106 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name blue-star-guide-1-0-23-rc24-arm64 --dir verified
+          test -s verified/BlueStar_Guide_1.0.23_RC24_arm64.apk
+          test -s verified/SHA256SUMS.txt
+          test -s verified/badging.txt
+          test -s verified/apk-entries.txt
+      - name: Verify unchanged APK bytes native UVC audio app ID and version
+        run: |
+          set -euo pipefail
+          cd verified
+          sha256sum -c SHA256SUMS.txt
+          unzip -tq BlueStar_Guide_1.0.23_RC24_arm64.apk >/dev/null
+          unzip -Z1 BlueStar_Guide_1.0.23_RC24_arm64.apk | grep -Fxq 'lib/arm64-v8a/libUVCCamera.so'
+          unzip -Z1 BlueStar_Guide_1.0.23_RC24_arm64.apk | grep -Fxq 'res/raw/c_metal_clack_ding.mp3'
+          unzip -Z1 BlueStar_Guide_1.0.23_RC24_arm64.apk | grep -Fxq 'res/raw/voice_send_whoosh.wav'
+          grep -Fq "package: name='com.vobich.bluestar.rc24'" badging.txt
+          grep -Fq "versionCode='33'" badging.txt
+          grep -Fq "versionName='1.0.23-rc24'" badging.txt
+          grep -Fq "application-label:'Blue Star Guide'" badging.txt
+          grep -q 'application-icon-' badging.txt
+          if grep -Ei 'inference\.onnx|paddle|ppocr|sherpa|layout.*onnx' apk-entries.txt; then
+            echo "Unexpected on-device OCR model found" >&2
+            exit 1
+          fi
+          echo "APK_SIZE_BYTES=$(stat -c%s BlueStar_Guide_1.0.23_RC24_arm64.apk)" >> "$GITHUB_STEP_SUMMARY"
+          echo "APK_SHA256=$(sha256sum BlueStar_Guide_1.0.23_RC24_arm64.apk | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish only verified CI APK without rebuilding or resigning
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=blue-star-guide-cloud-rc24-20261108
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Existing RC24 Release; refuse overwrite." >&2
+            exit 1
+          fi
+          gh release create "$TAG" \
+            "verified/BlueStar_Guide_1.0.23_RC24_arm64.apk" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target 50c271c47d9c0c77a0d830efe74c282658658163 \
+            --title "Blue Star Guide 1.0.23 RC24 - Clean Reading Controls" \
+            --notes "Blue Star Guide RC24 1.0.23 simplifies the Reading page UI exactly as requested: bottom horizontal controls fixed left-to-right NEXT PAGE, PAUSE (tap again to RESUME), RESTART (read the current completed page again from the beginning). All secondary controls are moved into the top-right three-line overflow menu: Bookshelf, Chapters / Page Numbers, Export Text, Delete Book. Dark blue background and large white body text are retained; three equal-width controls fit one horizontal row. Disable restart on partial OCR response while recognition is streaming, and do not let Next Page interrupt unfinished page saving. Existing tested manual camera preview on Reading and Next Page (NEVER auto-shutter), explicit tap-to-capture, 50ms vibration, physical Camera2/USB closure after capture, official text-only OCR prompt, coordinate-row rejection, selected OCR model, C-mode TTS, text-only local book storage, TXT export, AI chat and sound effects are all retained. No change to camera, OCR or TTS engine; no extra cloud calls. GitHub Actions 42437657106 completed successfully for source SHA 50c271c47d9c0c77a0d830efe74c282658658163 with UI layout audit, Java regression tests, Android ARM64 build, native USB, launcher and original audio APK checks. This public prerelease uses the identical checksum-verified original CI APK with no rebuild or resigning. Separate package com.vobich.bluestar.rc24 versionCode33 versionName1.0.23-rc24 requires separate API key and camera preferences; older independent app packages retain their own private book data. Export important books as TXT before uninstall. Vivo X200 Pro device layout and sound acceptance remain pending." \
+            --prerelease
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -Fx 'BlueStar_Guide_1.0.23_RC24_arm64.apk'
+          echo "Direct browser URL: https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/BlueStar_Guide_1.0.23_RC24_arm64.apk" >> "$GITHUB_STEP_SUMMARY"
