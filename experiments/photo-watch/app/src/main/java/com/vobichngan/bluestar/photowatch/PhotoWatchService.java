@@ -21,8 +21,10 @@ import android.os.SystemClock;
 import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 
@@ -44,6 +46,10 @@ public final class PhotoWatchService extends Service {
     public static final String KEY_LAST_SCAN = "last_scan_ms";
     public static final String KEY_LOCAL_TO_TTS_MS = "scan_to_speech_request_ms";
     public static final String KEY_TTS_REQUEST = "tts_request_status";
+    public static final String KEY_DIRECT_STATUS = "direct_file_observer_status";
+    public static final String KEY_DIRECT_EVENTS = "direct_file_events";
+    public static final String KEY_LAST_SOURCE = "last_detection_source";
+    public static final String KEY_TTS_ONSTART_MS = "tts_engine_onstart_delay_ms";
 
     private static final String CHANNEL_ID = "photo_watch_v1";
     private static final int NOTIFICATION_ID = 2341;
@@ -58,6 +64,10 @@ public final class PhotoWatchService extends Service {
     private volatile boolean watching = false;
     private Thread worker;
     private ContentObserver contentObserver;
+    private DirectFolderEvents directEvents;
+    private volatile PhotoSnapshotTracker photoTracker;
+    private volatile String lastUtteranceId = "";
+    private volatile long lastSpeechRequestElapsed;
     private Uri treeUri;
     private PowerManager.WakeLock wakeLock;
     private TextToSpeech tts;
@@ -74,6 +84,20 @@ public final class PhotoWatchService extends Service {
                 int available = tts.setLanguage(Locale.SIMPLIFIED_CHINESE);
                 ttsReady = available != TextToSpeech.LANG_MISSING_DATA &&
                            available != TextToSpeech.LANG_NOT_SUPPORTED;
+            }
+        });
+        tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+            @Override public void onStart(String id) {
+                if (id != null && id.equals(lastUtteranceId) && prefs != null) {
+                    long delay = SystemClock.elapsedRealtime() - lastSpeechRequestElapsed;
+                    prefs.edit().putLong(KEY_TTS_ONSTART_MS, Math.max(0L, delay)).apply();
+                }
+            }
+            @Override public void onDone(String id) { }
+            @Override public void onError(String id) {
+                if (id != null && id.equals(lastUtteranceId) && prefs != null) {
+                    prefs.edit().putString(KEY_TTS_REQUEST, "语音引擎播放失败").apply();
+                }
             }
         });
     }
@@ -124,10 +148,19 @@ public final class PhotoWatchService extends Service {
                     .putString(KEY_LAST_NAME, "暂无")
                     .putLong(KEY_DELAY, -1)
                     .putLong(KEY_LOCAL_TO_TTS_MS, -1)
+                    .putLong(KEY_TTS_ONSTART_MS, -1)
+                    .putString(KEY_LAST_SOURCE, "尚未触发")
+                    .putInt(KEY_DIRECT_EVENTS, 0)
+                    .putString(KEY_DIRECT_STATUS, "正在尝试直接监听文件夹")
                     .putString(KEY_TTS_REQUEST, "尚未触发")
                     .putString(KEY_STATUS, "正在建立初始照片列表，旧照片不会播报。")
                     .apply();
+            photoTracker = new PhotoSnapshotTracker();
             subscribe(treeUri);
+            directEvents = DirectFolderEvents.start(treeUri, this::onDirectPhotoEvent);
+            prefs.edit().putString(KEY_DIRECT_STATUS, directEvents == null
+                    ? "直连不可用：使用照片通知与600ms备用扫描"
+                    : "文件系统监听已注册，尚待收到真实事件").apply();
             worker = new Thread(this::scanLoop, "BlueStarPhotoFolderMonitor");
             worker.start();
         } catch (Exception failure) {
@@ -216,8 +249,67 @@ public final class PhotoWatchService extends Service {
         }
     }
 
+    /**
+     * Native filesystem event path. Never performs SAF/MediaStore queries and
+     * never opens image bytes before the speech cue. The tracker suppresses
+     * repeated MODIFY/CLOSE_WRITE or later SAF results for the same filename.
+     */
+    private void onDirectPhotoEvent(String filename, long fileEventElapsed) {
+        PhotoSnapshotTracker state = photoTracker;
+        if (!watching || state == null || !state.acceptPhysicalEvent(filename)) return;
+        announcePhotos(Collections.singletonList(
+                        new PhotoSnapshotTracker.Photo("fs:" + filename, filename, -1, 0)),
+                "文件系统 FileObserver（直达）", fileEventElapsed);
+        prefs.edit().putInt(KEY_DIRECT_EVENTS,
+                        prefs.getInt(KEY_DIRECT_EVENTS, 0) + 1)
+                .putString(KEY_DIRECT_STATUS, "已收到真实文件系统事件").apply();
+        // Let the regular SAF scan catch up for UI and metadata. Speech does
+        // NOT wait for that scan, so this is not an extra intermediary.
+        wakeScan();
+    }
+
+    private synchronized void announcePhotos(List<PhotoSnapshotTracker.Photo> fresh,
+                                              String source, long startedElapsed) {
+        if (!watching || fresh.isEmpty()) return;
+        PhotoSnapshotTracker.Photo latest = fresh.get(fresh.size() - 1);
+        long wallNow = System.currentTimeMillis();
+        long timeSinceModified = latest.modified > 0
+                && wallNow >= latest.modified
+                && wallNow - latest.modified < 24L * 60L * 60L * 1000L
+                ? wallNow - latest.modified : -1;
+
+        // Submit speech BEFORE Preferences, notifications or metadata scans.
+        // TTS.onStart only reports engine progress, not actual speaker audio.
+        String spoken = fresh.size() == 1 ? "发现新照片"
+                : "发现" + fresh.size() + "张新照片";
+        String voiceStatus = "系统中文语音尚未就绪";
+        long requestElapsed = SystemClock.elapsedRealtime();
+        long eventToRequest = Math.max(0L, requestElapsed - startedElapsed);
+        if (ttsReady && tts != null) {
+            lastUtteranceId = "new_photo_" + requestElapsed;
+            lastSpeechRequestElapsed = requestElapsed;
+            int result = tts.speak(spoken, TextToSpeech.QUEUE_FLUSH,
+                    null, lastUtteranceId);
+            voiceStatus = result == TextToSpeech.SUCCESS
+                    ? "已提交给语音引擎" : "语音请求失败";
+        }
+        count += fresh.size();
+        prefs.edit().putInt(KEY_COUNT, count)
+                .putString(KEY_LAST_NAME, latest.name)
+                .putLong(KEY_DELAY, timeSinceModified)
+                .putLong(KEY_LOCAL_TO_TTS_MS, eventToRequest)
+                .putLong(KEY_TTS_ONSTART_MS, -1)
+                .putString(KEY_TTS_REQUEST, voiceStatus)
+                .putString(KEY_LAST_SOURCE, source)
+                .putString(KEY_STATUS,
+                        "发现新照片 " + fresh.size() + " 张，累计 " + count +
+                        " 张。提示仅代表文件出现，图片可能仍在写入。")
+                .apply();
+        updateNotification("已发现 " + count + " 张新照片");
+    }
+
     private void scanLoop() {
-        final PhotoSnapshotTracker tracker = new PhotoSnapshotTracker();
+        final PhotoSnapshotTracker tracker = photoTracker;
         final long began = SystemClock.elapsedRealtime();
         try {
             while (watching && SystemClock.elapsedRealtime() - began < MAX_SESSION_MS) {
@@ -229,7 +321,6 @@ public final class PhotoWatchService extends Service {
 
                 if (!watching) break;
                 if (!tracker.hasBaseline()) {
-                    // tracker.accept always baselines the first valid listing.
                     throw new IllegalStateException("Baseline not ready");
                 }
                 if (count == 0 && fresh.isEmpty()
@@ -237,41 +328,11 @@ public final class PhotoWatchService extends Service {
                                 prefs.getString(KEY_STATUS, ""))) {
                     prefs.edit().putString(KEY_STATUS,
                             "正在监听 · 已忽略 " + tracker.baselineCount() +
-                            " 张原有照片；请用相机再拍一张。").apply();
+                            " 张原有照片；可以用相机拍一张。").apply();
                     updateNotification("等待新照片 · 已建立基线");
                 }
-
                 if (!fresh.isEmpty()) {
-                    count += fresh.size();
-                    PhotoSnapshotTracker.Photo latest = fresh.get(fresh.size() - 1);
-                    long estimated = latest.modified > 0
-                            && scannedAt >= latest.modified
-                            && scannedAt - latest.modified < 24L * 60L * 60L * 1000L
-                            ? scannedAt - latest.modified : -1;
-                    prefs.edit().putInt(KEY_COUNT, count)
-                            .putString(KEY_LAST_NAME, latest.name)
-                            .putLong(KEY_DELAY, estimated)
-                            .putString(KEY_STATUS,
-                                    "成功发现 " + fresh.size() + " 张新照片；累计 " + count +
-                                    " 张。已发现文件，尚未验证图片写入完整。")
-                            .apply();
-                    updateNotification("已发现 " + count + " 张新照片");
-                    if (ttsReady && tts != null) {
-                        String spoken = fresh.size() == 1 ? "发现新照片"
-                                : "发现" + fresh.size() + "张新照片";
-                        int code = tts.speak(spoken, TextToSpeech.QUEUE_FLUSH,
-                                null, "new_photo_" + scannedAt);
-                        prefs.edit()
-                                .putLong(KEY_LOCAL_TO_TTS_MS,
-                                        SystemClock.elapsedRealtime() - scanStartedElapsed)
-                                .putString(KEY_TTS_REQUEST,
-                                        code == TextToSpeech.SUCCESS
-                                                ? "已提交给语音引擎" : "语音引擎拒绝请求")
-                                .apply();
-                    } else {
-                        prefs.edit().putString(KEY_TTS_REQUEST,
-                                "系统中文语音引擎尚未就绪").apply();
-                    }
+                    announcePhotos(fresh, "SAF 目录扫描 / 系统通知", scanStartedElapsed);
                 }
                 synchronized (wakeSignal) {
                     if (!scanRequested) wakeSignal.wait(SCAN_PERIOD_MS);
@@ -346,6 +407,10 @@ public final class PhotoWatchService extends Service {
         isRunning = false;
         wakeScan();
         if (worker != null) worker.interrupt();
+        if (directEvents != null) {
+            try { directEvents.stop(); } catch (RuntimeException ignored) { }
+            directEvents = null;
+        }
         if (contentObserver != null) {
             try { getContentResolver().unregisterContentObserver(contentObserver); }
             catch (RuntimeException ignored) { }
