@@ -115,7 +115,7 @@ public final class MainActivity extends Activity {
         scrolling.addView(column);
         setContentView(scrolling);
 
-        text(column, "蓝星 · 照片监听实验", 27, true, 2);
+        text(column, "蓝星 · 照片监听极速实验", 27, true, 2);
         text(column, "独立小工具｜仅检测新增照片，不读取图像内容、不联网、不接 OCR。",
                 17, false, 8);
 
@@ -136,9 +136,10 @@ public final class MainActivity extends Activity {
                 "1. 选择与手机相机保存路径一致的文件夹，通常是 DCIM/Camera。\n" +
                 "2. 点「开始自动监听」，建立旧照片基线。\n" +
                 "3. 点「打开手机相机」拍一张新照片，然后返回。\n" +
-                "4. 软件发现新照片后会朗读「发现新照片」，并显示检测时间。\n\n" +
+                "4. 照片文件一出现就会提示「发现新照片」，无需等到写入完全稳定。\n\n" +
                 "注意：系统文件夹授权因机型而异；只扫描所选目录的直接图片，不递归子文件夹。\n" +
                 "估计延迟来自照片文件时间戳，不能代表按下快门到传输完成的精确延迟。\n" +
+                "本版增加约600毫秒轮询兜底和照片数据库变更事件，速度仍受手机相机保存方式影响。\n" +
                 "监听期间会出现常驻通知，并临时保持 CPU 活跃以测试息屏，最多30分钟；可以随时停止。",
                 16, false, 22);
     }
@@ -173,6 +174,8 @@ public final class MainActivity extends Activity {
                     .putInt(PhotoWatchService.KEY_COUNT, 0)
                     .putString(PhotoWatchService.KEY_LAST_NAME, "暂无")
                     .putLong(PhotoWatchService.KEY_DELAY, -1)
+                    .putLong(PhotoWatchService.KEY_LOCAL_TO_TTS_MS, -1)
+                    .putString(PhotoWatchService.KEY_TTS_REQUEST, "尚未触发")
                     .apply();
         } catch (SecurityException e) {
             prefs.edit().putString(PhotoWatchService.KEY_STATUS,
@@ -257,13 +260,18 @@ public final class MainActivity extends Activity {
         String latest = prefs.getString(PhotoWatchService.KEY_LAST_NAME, "暂无");
         long delay = prefs.getLong(PhotoWatchService.KEY_DELAY, -1);
         long lastScan = prefs.getLong(PhotoWatchService.KEY_LAST_SCAN, 0);
+        long requestDelay = prefs.getLong(PhotoWatchService.KEY_LOCAL_TO_TTS_MS, -1);
+        String ttsStatus = prefs.getString(PhotoWatchService.KEY_TTS_REQUEST, "尚未触发");
         String time = lastScan > 0 ?
                 new SimpleDateFormat("HH:mm:ss", Locale.CHINA).format(new Date(lastScan))
                 : "尚未扫描";
         String delayText = delay < 0 ? "不可估算" : "约 " + delay + " 毫秒";
         recentText.setText("发现新照片：" + count + " 张\n" +
                 "最近照片：" + latest + "\n" +
-                "估计文件保存到检测：" + delayText + "\n" +
+                "估计文件时间戳到检测：" + delayText + "\n" +
+                "本机扫描开始到语音请求：" +
+                    (requestDelay >= 0 ? requestDelay + " 毫秒" : "尚未测量") + "\n" +
+                "语音请求状态：" + ttsStatus + "\n" +
                 "最近扫描时间：" + time);
     }
 
