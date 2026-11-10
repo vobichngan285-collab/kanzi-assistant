@@ -61,6 +61,7 @@ public final class PhotoWatchService extends Service {
     public static final String KEY_PROBE_DIMENSIONS = "probe_dimensions";
     public static final String KEY_PROBE_MARKER = "probe_marker";
     public static final String KEY_PROBE_SOURCE = "probe_source";
+    public static final String KEY_PROBE_ACCESS_PATH = "probe_access_path";
 
     private static final String CHANNEL_ID = "photo_watch_v1";
     private static final int NOTIFICATION_ID = 2341;
@@ -167,6 +168,7 @@ public final class PhotoWatchService extends Service {
                     .putString(KEY_TTS_REQUEST, "尚未触发")
                     .putString(KEY_PROBE_FILE, "暂无")
                     .putString(KEY_PROBE_SOURCE, "尚未触发")
+                    .putString(KEY_PROBE_ACCESS_PATH, "尚未打开")
                     .putString(KEY_PROBE_STATUS, "尚未触发")
                     .putLong(KEY_PROBE_OPEN_MS, -1)
                     .putLong(KEY_PROBE_DECODE_MS, -1)
@@ -300,6 +302,7 @@ public final class PhotoWatchService extends Service {
         // The most recently announced photo is the one displayed by the UI.
         prefs.edit().putString(KEY_PROBE_FILE, filename)
                 .putString(KEY_PROBE_SOURCE, source)
+                .putString(KEY_PROBE_ACCESS_PATH, "等待图片可访问")
                 .putString(KEY_PROBE_STATUS, "排队进行本地读取实验")
                 .putLong(KEY_PROBE_OPEN_MS, -1)
                 .putLong(KEY_PROBE_DECODE_MS, -1)
@@ -320,6 +323,7 @@ public final class PhotoWatchService extends Service {
         prefs.edit()
                 .putString(KEY_PROBE_STATUS, result.status)
                 .putString(KEY_PROBE_SOURCE, result.source)
+                .putString(KEY_PROBE_ACCESS_PATH, result.accessPath)
                 .putLong(KEY_PROBE_OPEN_MS, result.firstOpenMs)
                 .putLong(KEY_PROBE_DECODE_MS, result.firstDecodedMs)
                 .putLong(KEY_PROBE_READY_MS, result.readyMs)
@@ -327,9 +331,7 @@ public final class PhotoWatchService extends Service {
                 .putInt(KEY_PROBE_ATTEMPTS, result.attempts)
                 .putString(KEY_PROBE_DIMENSIONS,
                         result.width > 0 ? result.width + "×" + result.height : "未知")
-                .putString(KEY_PROBE_MARKER,
-                        result.strictEndMarker ? "需要 JPEG/PNG 结束标志" :
-                                "此格式没有可靠末尾标志，结果仅为估计")
+                .putString(KEY_PROBE_MARKER, result.markerInfo)
                 .apply();
     }
 
