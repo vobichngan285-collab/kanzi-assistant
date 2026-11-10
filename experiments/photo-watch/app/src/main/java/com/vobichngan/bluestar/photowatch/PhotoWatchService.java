@@ -19,6 +19,7 @@ import android.os.Looper;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.provider.DocumentsContract;
+import android.provider.MediaStore;
 import android.speech.tts.TextToSpeech;
 
 import java.util.ArrayList;
@@ -41,15 +42,19 @@ public final class PhotoWatchService extends Service {
     public static final String KEY_LAST_NAME = "last_name";
     public static final String KEY_DELAY = "estimated_delay_ms";
     public static final String KEY_LAST_SCAN = "last_scan_ms";
+    public static final String KEY_LOCAL_TO_TTS_MS = "scan_to_speech_request_ms";
+    public static final String KEY_TTS_REQUEST = "tts_request_status";
 
     private static final String CHANNEL_ID = "photo_watch_v1";
     private static final int NOTIFICATION_ID = 2341;
-    private static final long SCAN_PERIOD_MS = 2000L;
+    // MediaStore observer is fast path; 600ms fallback if the provider is silent.
+    private static final long SCAN_PERIOD_MS = 600L;
     private static final long MAX_SESSION_MS = 30L * 60L * 1000L;
 
     public static volatile boolean isRunning = false;
 
     private final Object wakeSignal = new Object();
+    private boolean scanRequested = false;
     private volatile boolean watching = false;
     private Thread worker;
     private ContentObserver contentObserver;
@@ -118,6 +123,8 @@ public final class PhotoWatchService extends Service {
             prefs.edit().putInt(KEY_COUNT, 0)
                     .putString(KEY_LAST_NAME, "暂无")
                     .putLong(KEY_DELAY, -1)
+                    .putLong(KEY_LOCAL_TO_TTS_MS, -1)
+                    .putString(KEY_TTS_REQUEST, "尚未触发")
                     .putString(KEY_STATUS, "正在建立初始照片列表，旧照片不会播报。")
                     .apply();
             subscribe(treeUri);
@@ -179,22 +186,34 @@ public final class PhotoWatchService extends Service {
     }
 
     private void subscribe(Uri tree) {
+        contentObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
+            @Override public void onChange(boolean selfChange) { wakeScan(); }
+            @Override public void onChange(boolean selfChange, Uri changedUri) { wakeScan(); }
+        };
+        // The folder's DocumentsProvider may not emit change events on vivo.
+        // MediaStore updates are an independent way to wake the *same* SAF
+        // folder query. No broad photo-reading permission is requested.
         try {
             String parentId = DocumentsContract.getTreeDocumentId(tree);
             Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId);
-            contentObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
-                @Override public void onChange(boolean selfChange) { wakeScan(); }
-                @Override public void onChange(boolean selfChange, Uri changedUri) { wakeScan(); }
-            };
             getContentResolver().registerContentObserver(children, true, contentObserver);
         } catch (RuntimeException ignored) {
-            // Some providers don't support change notifications. Poll fallback remains.
-            contentObserver = null;
+            // Another observer plus bounded polling remain available.
+        }
+        try {
+            getContentResolver().registerContentObserver(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    true, contentObserver);
+        } catch (RuntimeException ignored) {
+            // Some Android variants deny image collection notifications.
         }
     }
 
     private void wakeScan() {
-        synchronized (wakeSignal) { wakeSignal.notifyAll(); }
+        synchronized (wakeSignal) {
+            scanRequested = true;
+            wakeSignal.notifyAll();
+        }
     }
 
     private void scanLoop() {
@@ -202,6 +221,7 @@ public final class PhotoWatchService extends Service {
         final long began = SystemClock.elapsedRealtime();
         try {
             while (watching && SystemClock.elapsedRealtime() - began < MAX_SESSION_MS) {
+                long scanStartedElapsed = SystemClock.elapsedRealtime();
                 List<PhotoSnapshotTracker.Photo> photos = listDirectImages(treeUri);
                 long scannedAt = System.currentTimeMillis();
                 List<PhotoSnapshotTracker.Photo> fresh = tracker.accept(photos);
@@ -233,17 +253,30 @@ public final class PhotoWatchService extends Service {
                             .putLong(KEY_DELAY, estimated)
                             .putString(KEY_STATUS,
                                     "成功发现 " + fresh.size() + " 张新照片；累计 " + count +
-                                    " 张。已等到文件写入稳定。")
+                                    " 张。已发现文件，尚未验证图片写入完整。")
                             .apply();
                     updateNotification("已发现 " + count + " 张新照片");
-                    if (ttsReady) {
+                    if (ttsReady && tts != null) {
                         String spoken = fresh.size() == 1 ? "发现新照片"
                                 : "发现" + fresh.size() + "张新照片";
-                        tts.speak(spoken, TextToSpeech.QUEUE_ADD, null,
-                                "new_photo_" + scannedAt);
+                        int code = tts.speak(spoken, TextToSpeech.QUEUE_FLUSH,
+                                null, "new_photo_" + scannedAt);
+                        prefs.edit()
+                                .putLong(KEY_LOCAL_TO_TTS_MS,
+                                        SystemClock.elapsedRealtime() - scanStartedElapsed)
+                                .putString(KEY_TTS_REQUEST,
+                                        code == TextToSpeech.SUCCESS
+                                                ? "已提交给语音引擎" : "语音引擎拒绝请求")
+                                .apply();
+                    } else {
+                        prefs.edit().putString(KEY_TTS_REQUEST,
+                                "系统中文语音引擎尚未就绪").apply();
                     }
                 }
-                synchronized (wakeSignal) { wakeSignal.wait(SCAN_PERIOD_MS); }
+                synchronized (wakeSignal) {
+                    if (!scanRequested) wakeSignal.wait(SCAN_PERIOD_MS);
+                    scanRequested = false;
+                }
             }
             if (watching) {
                 prefs.edit().putString(KEY_STATUS,
