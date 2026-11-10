@@ -1,5 +1,15 @@
 # 蓝星向导｜当前工作交接（2026-11-09）
 
+## 最新独立实验｜2026-11-10 外部照片自动发现小工具（Android 已构建并发布）
+
+- **用户指令：** 在尚未购买 AI 眼镜之前，先做一个**独立安卓小工具**，系统文件夹选择器绑定照片目录，再用手机拍摄新照片，验证新图片能否被自动发现、播报、计时，并测试切换应用、息屏。**不是蓝星向导 RC26 更新，也不修改 RC25 正式版**。
+- **代码隔离：** 原仓库 `kanzi-assistant` 中独立分支 `exp/bluestar-external-photo-watch-20261110`，子项目 `experiments/photo-watch/`，独立包名 `com.vobichngan.bluestar.photowatch`、版本 0.1.0。用户原安卓云端 AI 分支 `feat/bluestar-125-reading-entry-pages-actions-20261108` / RC25 不变。
+- **已实现：** Android SAF `ACTION_OPEN_DOCUMENT_TREE` 让用户授权一个文件夹；首次扫描为基线，忽略所有已有照片；`ContentObserver` + 每2秒轮询兜底，图片大小/修改时间连续两轮稳定才当作新图，去重；使用系统本地中文 TTS 播报“发现新照片”，界面显示计数、最近照片文件名、粗略修改时间到检测延迟、最后扫描时刻；提供「打开手机相机」「试听」「停止监听」按钮，屏幕阅读器可访问的标准大字体原生控件。启动30分钟本地前台 `dataSync` 服务、可暂停/终止、短时 `PARTIAL_WAKE_LOCK` 供息屏实验。**没有 CAMERA/INTERNET 权限，不解码、保存或上传任何照片内容，没有 OCR 和云端 API。**
+- **CI 验证：** [Android Actions 42806842345](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42806842345) `completed/success`，实际源码 SHA `31b72474a5addabedfdf84e4232b2208505644c7`。Java JUnit 测试、Android SDK36 / Gradle8.11.1 编译、签名 v2 验证、zipalign、APK 包名与版本校验、无 INTERNET 权限校验均通过。第一轮 `42806703601` 因 Android SDK setup 动作请求已下架的 `tools` 包而失败，已修正，并非产品代码故障。
+- **公开发行：** [Release bluestar-photo-watch-lab-20261110](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-photo-watch-lab-20261110)，独立直下 APK `BlueStar_PhotoWatch_Lab_0.1.0_Android.apk`，22109 bytes、SHA256 `663e7618f331c370e688493cebc29b4c86c97d5ebf36cb1c137ce88338ac3eac`。可安装到手机并与原版共存；DEBUG 签名仅用于实验。
+- **仍需手机验证：** **用户 vivo X200 Pro / Android 16 上的文件夹能否被系统选择并获得持久权限（通常 DCIM/Camera）**，官方相机拍照后是否真的存储在选中目录，后台和息屏通知、中文系统 TTS 是否发声；文件服务商可能不发送实时事件，2秒轮询可兜底；厂商省电策略可能打断前台服务。**仅验证手机新照片到达，不等于 AI 眼镜官方 App 会自动同步照片**。Android11+ 系统禁止选择部分根目录。成功后再评估接到蓝星视觉 AI，切勿提前修改正式版。
+- **开发原则：** 后续此小工具只在单独实验分支修改；先等用户真实日志，再做针对性优化。保留 RC25、原 USB、云端 OCR / TTS、RC26 待开发任务不受影响。
+
 > **只按本页恢复当前项目。** 原仓库：[kanzi-assistant](https://github.com/vobichngan285-collab/kanzi-assistant)。本仓库旧离线 OCR／CRAFT 已停止开发；Windows 游戏 OCR 是另一项目，不要混淆或自动恢复旧实验。
 
 ## 1. 现在做什么
