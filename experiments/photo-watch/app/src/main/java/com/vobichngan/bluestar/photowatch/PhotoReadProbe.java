@@ -14,30 +14,26 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import java.util.Map;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Local-only read-readiness experiment.
+ * Local-only image-read timing lab. Does not change or block FileObserver
+ * -> TTS.speak and never transmits or saves a user's photo.
  *
- * Measures from receipt of the first app-observed file arrival event to:
- *  (1) successful SAF open with a nonzero file size;
- *  (2) successful low-memory sampled bitmap decoding;
- *  (3) a conservative "read-ready candidate": complete compressed stream
- *      read, sampled bitmap decode, unchanged file length/mtime on two probes,
- *      and a valid terminal marker for JPEG/PNG.
+ * Tries a known authorized Android ExternalStorageProvider child URI first
+ * (avoids a potentially slow full SAF directory listing). Falls back to
+ * listing the selected SAF directory if that shortcut is unsupported.
  *
- * On HEIC/WebP, no universal terminal marker is checked: result is only
- * a heuristic estimate. Nothing is uploaded, retained, or logged from the
- * photo bytes; only timing, filename, dimensions and byte count are reported.
+ * A stable decoded, fully readable file is an "OCR-ready candidate". This
+ * cannot guarantee a camera app won't rewrite the same file later.
  *
- * The source photo might still change after a successful probe. This is
- * an experiment, NOT an atomic finalization guarantee.
+ * JPEG's EOI (FF D9) can precede appended Motion Photo video: requiring the
+ * LAST two bytes to be FF D9 was an incorrect v0.1.3 assumption.
  */
 public final class PhotoReadProbe {
     public interface Listener {
@@ -56,11 +52,13 @@ public final class PhotoReadProbe {
         public final int height;
         public final int attempts;
         public final boolean strictEndMarker;
+        public final String accessPath;
+        public final String markerInfo;
 
         Result(String filename, String source, String status,
                long firstOpenMs, long firstDecodedMs, long readyMs,
                long bytes, int width, int height, int attempts,
-               boolean strictEndMarker) {
+               boolean strictEndMarker, String accessPath, String markerInfo) {
             this.filename = filename;
             this.source = source;
             this.status = status;
@@ -72,13 +70,18 @@ public final class PhotoReadProbe {
             this.height = height;
             this.attempts = attempts;
             this.strictEndMarker = strictEndMarker;
+            this.accessPath = accessPath;
+            this.markerInfo = markerInfo;
         }
     }
 
     private static final long PROBE_TIMEOUT_MS = 10_000L;
     private static final long RETRY_MS = 85L;
+    private static final long FALLBACK_RETRY_MS = 350L;
     private static final long MAX_PHOTO_BYTES = 80L * 1024L * 1024L;
     private static final int MAX_ACTIVE = 3;
+    private static final String EXTERNAL_STORAGE_AUTHORITY =
+            "com.android.externalstorage.documents";
 
     private final ContentResolver resolver;
     private final Uri tree;
@@ -95,10 +98,7 @@ public final class PhotoReadProbe {
     }
 
     public boolean offer(String filename, long startElapsed, String source) {
-        if (!enabled.get() || !ImageCompletionPolicy.isSupported(filename)) return false;
-        if (filename == null || filename.indexOf('/') >= 0 || filename.indexOf('\\') >= 0) {
-            return false;
-        }
+        if (!enabled.get() || !ImageCompletionPolicy.isSafePhotoLeaf(filename)) return false;
         String key = filename.toLowerCase(Locale.ROOT);
         synchronized (slots) {
             if (booked.containsKey(key) || booked.size() >= MAX_ACTIVE) return false;
@@ -127,35 +127,55 @@ public final class PhotoReadProbe {
     private static final class Found {
         final Uri uri;
         final long declaredModified;
-        Found(Uri uri, long declaredModified) {
+        final String accessPath;
+        Found(Uri uri, long declaredModified, String accessPath) {
             this.uri = uri;
             this.declaredModified = declaredModified;
+            this.accessPath = accessPath;
         }
     }
 
-    private Found findChild(String filename) {
+    /**
+     * Android's built-in ExternalStorageProvider uses path-shaped document
+     * IDs for primary shared storage. This optimization is ONLY tried for
+     * the EXACT previously authorized Camera directory, with a safe single
+     * filename. It grants no access beyond the user-selected tree.
+     *
+     * Other providers/phones may reject this URI: fall back to SAF listing.
+     */
+    private Found knownChildUri(String filename) {
+        if (!EXTERNAL_STORAGE_AUTHORITY.equals(tree.getAuthority())
+                || !ImageCompletionPolicy.isSafePhotoLeaf(filename)) {
+            return null;
+        }
         String treeId = DocumentsContract.getTreeDocumentId(tree);
-        Uri childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(tree, treeId);
+        if (!"primary:DCIM/Camera".equalsIgnoreCase(treeId)) return null;
+        String childId = treeId + "/" + filename;
+        Uri uri = DocumentsContract.buildDocumentUriUsingTree(tree, childId);
+        // 0 means mtime unknown; two stable byte counts are still required.
+        return new Found(uri, 0, "授权目录子文件 URI（无需列举目录）");
+    }
+
+    private Found findChildByListing(String filename) {
+        String treeId = DocumentsContract.getTreeDocumentId(tree);
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, treeId);
         String[] projection = {
                 DocumentsContract.Document.COLUMN_DOCUMENT_ID,
                 DocumentsContract.Document.COLUMN_DISPLAY_NAME,
                 DocumentsContract.Document.COLUMN_LAST_MODIFIED
         };
-        try (Cursor cursor = resolver.query(childrenUri, projection, null, null, null)) {
-            if (cursor == null) return null;
-            int idColumn = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
-            int nameColumn = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME);
-            int modifiedColumn = cursor.getColumnIndex(
-                    DocumentsContract.Document.COLUMN_LAST_MODIFIED);
-            if (idColumn < 0 || nameColumn < 0) return null;
-            while (cursor.moveToNext()) {
-                if (cursor.isNull(nameColumn) || cursor.isNull(idColumn)) continue;
-                if (!filename.equals(cursor.getString(nameColumn))) continue;
-                Uri documentUri = DocumentsContract.buildDocumentUriUsingTree(
-                        tree, cursor.getString(idColumn));
-                long modified = modifiedColumn >= 0 && !cursor.isNull(modifiedColumn)
-                        ? cursor.getLong(modifiedColumn) : 0;
-                return new Found(documentUri, modified);
+        try (Cursor c = resolver.query(children, projection, null, null, null)) {
+            if (c == null) return null;
+            int id = c.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
+            int name = c.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME);
+            int modified = c.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED);
+            if (id < 0 || name < 0) return null;
+            while (c.moveToNext()) {
+                if (c.isNull(id) || c.isNull(name)) continue;
+                if (!filename.equals(c.getString(name))) continue;
+                Uri uri = DocumentsContract.buildDocumentUriUsingTree(tree, c.getString(id));
+                long time = modified < 0 || c.isNull(modified) ? 0 : c.getLong(modified);
+                return new Found(uri, time, "SAF 目录列表（备用方式）");
             }
         }
         return null;
@@ -163,199 +183,269 @@ public final class PhotoReadProbe {
 
     private static final class Sample {
         long bytes;
-        long openedAtElapsed;
+        long firstOpenElapsed;
         long modified;
-        boolean terminalMarker;
+        boolean tailMarker;
         boolean decoded;
         int width;
         int height;
     }
 
     private Sample sample(Found found, String filename) throws IOException {
-        Sample result = new Sample();
-        result.modified = found.declaredModified;
-
+        Sample sample = new Sample();
+        sample.modified = found.declaredModified;
         try (ParcelFileDescriptor pfd = resolver.openFileDescriptor(found.uri, "r")) {
-            if (pfd == null) throw new IOException("Document open returned null");
+            if (pfd == null) throw new IOException("Photo document open returned null");
+            // The FileChannel size is used because provider mtime or statSize
+            // may be unavailable under the Android scoped-storage model.
             try (FileInputStream stream = new FileInputStream(pfd.getFileDescriptor())) {
                 FileChannel channel = stream.getChannel();
-                long length = channel.size();
-                result.bytes = length;
-                if (length > 0) result.openedAtElapsed = SystemClock.elapsedRealtime();
-                if (length <= 0 || length > MAX_PHOTO_BYTES) {
-                    return result;
-                }
-
-                int count = (int) Math.min(12L, length);
+                long size = channel.size();
+                sample.bytes = size;
+                if (size > 0) sample.firstOpenElapsed = SystemClock.elapsedRealtime();
+                if (size <= 0 || size > MAX_PHOTO_BYTES) return sample;
+                int count = (int) Math.min(12L, size);
                 byte[] tail = new byte[count];
-                ByteBuffer buffer = ByteBuffer.wrap(tail);
-                long offset = length - count;
-                while (buffer.hasRemaining()) {
-                    int n = channel.read(buffer, offset);
-                    if (n <= 0) throw new IOException("Unable to read image end bytes");
-                    offset += n;
+                ByteBuffer bytes = ByteBuffer.wrap(tail);
+                long at = size - count;
+                while (bytes.hasRemaining()) {
+                    int n = channel.read(bytes, at);
+                    if (n <= 0) throw new IOException("Cannot read image tail");
+                    at += n;
                 }
-                result.terminalMarker = ImageCompletionPolicy.hasValidEndMarker(
-                        filename, tail);
+                sample.tailMarker = ImageCompletionPolicy.hasValidEndMarker(filename, tail);
             }
         }
+        BitmapFactory.Options header = new BitmapFactory.Options();
+        header.inJustDecodeBounds = true;
+        try (InputStream in = resolver.openInputStream(found.uri)) {
+            if (in == null) throw new IOException("Photo header stream unavailable");
+            BitmapFactory.decodeStream(in, null, header);
+        }
+        if (header.outWidth <= 0 || header.outHeight <= 0) return sample;
+        int divisor = 1;
+        while (Math.max(header.outWidth, header.outHeight) / divisor > 1280) divisor *= 2;
+        BitmapFactory.Options opts = new BitmapFactory.Options();
+        opts.inSampleSize = divisor;
+        opts.inPreferredConfig = Bitmap.Config.RGB_565;
+        try (InputStream in = resolver.openInputStream(found.uri)) {
+            if (in == null) throw new IOException("Photo decoding stream unavailable");
+            Bitmap decoded = BitmapFactory.decodeStream(in, null, opts);
+            if (decoded != null) {
+                sample.decoded = true;
+                sample.width = header.outWidth;
+                sample.height = header.outHeight;
+                decoded.recycle();
+            }
+        }
+        return sample;
+    }
 
-        // The compressed file may have a valid header long before it is finished.
-        // Decode only a *sampled bitmap* (max ~1280 px), not a 50MP original.
-        BitmapFactory.Options bounds = new BitmapFactory.Options();
-        bounds.inJustDecodeBounds = true;
-        try (InputStream in = resolver.openInputStream(found.uri)) {
-            if (in == null) throw new IOException("Could not open photo stream");
-            BitmapFactory.decodeStream(in, null, bounds);
-        }
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return result;
-        int sampleSize = 1;
-        while (Math.max(bounds.outWidth, bounds.outHeight) / sampleSize > 1280) {
-            sampleSize *= 2;
-        }
-        BitmapFactory.Options sample = new BitmapFactory.Options();
-        sample.inSampleSize = sampleSize;
-        sample.inPreferredConfig = Bitmap.Config.RGB_565;
-        Bitmap decoded;
-        try (InputStream in = resolver.openInputStream(found.uri)) {
-            if (in == null) throw new IOException("Could not reopen photo stream");
-            decoded = BitmapFactory.decodeStream(in, null, sample);
-        }
-        if (decoded != null) {
-            result.decoded = true;
-            result.width = bounds.outWidth;
-            result.height = bounds.outHeight;
-            decoded.recycle();
+    private static final class StreamResult {
+        long bytesRead;
+        boolean allBytesReadable;
+        boolean jpegEoiSeen;
+    }
+
+    /**
+     * Stream compressed bytes through a small reusable buffer, never into an
+     * in-memory full photo copy. Also scans for JPEG FF D9 appearing ANYWHERE
+     * (not a full JPEG parser); the actual marker may precede appended MP4.
+     */
+    private StreamResult readAllBytes(Uri uri, long expectedBytes) {
+        StreamResult result = new StreamResult();
+        if (expectedBytes <= 0 || expectedBytes > MAX_PHOTO_BYTES) return result;
+        try (InputStream in = resolver.openInputStream(uri)) {
+            if (in == null) return result;
+            byte[] buffer = new byte[64 * 1024];
+            int last = -1;
+            int n;
+            while (enabled.get() && (n = in.read(buffer)) >= 0) {
+                for (int k = 0; k < n; k++) {
+                    int next = buffer[k] & 0xff;
+                    if (last == 0xff && next == 0xd9) result.jpegEoiSeen = true;
+                    last = next;
+                }
+                result.bytesRead += n;
+                if (result.bytesRead > expectedBytes) return result;
+            }
+            result.allBytesReadable = enabled.get() && result.bytesRead == expectedBytes;
+        } catch (IOException | RuntimeException ignored) {
+            result.allBytesReadable = false;
         }
         return result;
     }
 
-    /**
-     * Stream the ENTIRE compressed photo to nowhere, not to RAM and not to a
-     * network endpoint, ensuring every reported byte can be opened/read.
-     */
-    private boolean readAllBytes(Uri uri, long expectedLength) {
-        if (expectedLength <= 0 || expectedLength > MAX_PHOTO_BYTES) return false;
-        try (InputStream in = resolver.openInputStream(uri)) {
-            if (in == null) return false;
-            byte[] buffer = new byte[64 * 1024];
-            long count = 0;
-            int n;
-            while (enabled.get() && (n = in.read(buffer)) != -1) {
-                count += n;
-                if (count > expectedLength) return false;
+    /** Re-check length after the full byte read; writer may still append. */
+    private boolean sizeStillMatches(Uri uri, long expectedBytes) {
+        try (ParcelFileDescriptor pfd = resolver.openFileDescriptor(uri, "r")) {
+            if (pfd == null) return false;
+            long size = pfd.getStatSize();
+            if (size >= 0) return size == expectedBytes;
+            try (FileInputStream in = new FileInputStream(pfd.getFileDescriptor())) {
+                return in.getChannel().size() == expectedBytes;
             }
-            return enabled.get() && count == expectedLength;
         } catch (IOException | RuntimeException ignored) {
             return false;
         }
     }
 
-    private void report(String filename, String source, String state,
-                        long opened, long decoded, long ready,
-                        long bytes, int width, int height, int attempts,
-                        boolean strictMarker) {
-        if (enabled.get()) {
-            listener.onUpdate(new Result(filename, source, state,
-                    opened, decoded, ready, bytes, width, height, attempts, strictMarker));
-        }
+    private void report(String filename, String source, String status,
+                        long openMs, long decodeMs, long readyMs,
+                        long bytes, int width, int height, int tries,
+                        boolean strictMarker, String route, String markerInfo) {
+        if (enabled.get()) listener.onUpdate(new Result(filename, source, status,
+                openMs, decodeMs, readyMs, bytes, width, height, tries,
+                strictMarker, route, markerInfo));
     }
 
     private void run(String filename, long eventElapsed, String source) {
-        long begin = Math.max(0, eventElapsed);
-        long firstOpen = -1;
-        long firstDecode = -1;
-        long completed = -1;
-        int attempt = 0;
-        long lastBytes = -1;
-        long lastModified = -1;
-        long lastDecodedSize = -1;
-        boolean lastDecoded = false;
-        boolean previouslyMarker = false;
-        long lastObservedAt = 0;
-        int width = 0, height = 0;
-        String error = "尚未从系统文件夹提供程序找到该照片";
+        long start = eventElapsed;
+        long firstOpen = -1, firstDecode = -1, completed = -1;
+        long priorBytes = -1, priorModified = -1, priorAt = 0;
+        boolean priorDecoded = false;
+        int width = 0, height = 0, tries = 0;
+        long latestBytes = 0;
         boolean strict = ImageCompletionPolicy.hasReliableEndMarker(filename);
+        String markerInfo = "尚未读取结束标志";
+        String route = "等待授权照片文件";
+        String reason = "照片尚未出现在已授权的目录中";
+        Found direct = knownChildUri(filename);
+        Found listing = null;
+        long lastListingAt = 0;
+        report(filename, source, "正在等待新照片可打开", -1, -1, -1,
+                0, 0, 0, 0, strict, route, markerInfo);
 
-        report(filename, source, "开始等待照片可读取", firstOpen, firstDecode,
-                completed, 0, 0, 0, 0, strict);
-
-        while (enabled.get() && SystemClock.elapsedRealtime() - begin < PROBE_TIMEOUT_MS) {
-            attempt++;
-            try {
-                Found found = findChild(filename);
-                if (found != null) {
-                    Sample current = sample(found, filename);
-                    if (current.bytes > 0 && firstOpen < 0) {
-                        firstOpen = current.openedAtElapsed - begin;
-                        report(filename, source, "文件已打开，正在测试解码",
-                                firstOpen, firstDecode, -1, current.bytes,
-                                width, height, attempt, strict);
-                    }
-                    if (current.bytes > MAX_PHOTO_BYTES) {
-                        error = "图片大于80MB，超出实验安全上限";
-                        break;
-                    }
-                    if (current.decoded) {
-                        lastDecoded = true;
-                        lastDecodedSize = current.bytes;
-                        width = current.width;
-                        height = current.height;
-                        if (firstDecode < 0) {
-                            firstDecode = SystemClock.elapsedRealtime() - begin;
-                            report(filename, source, "首次成功抽样解码",
-                                    firstOpen, firstDecode, -1, current.bytes,
-                                    width, height, attempt, strict);
-                        }
-                    }
-                    long currentAt = SystemClock.elapsedRealtime();
-                    boolean stable = ImageCompletionPolicy.stable(
-                            lastBytes, current.bytes, lastModified, current.modified)
-                            && (currentAt - lastObservedAt) >= 60;
-                    if (stable && current.terminalMarker && previouslyMarker
-                            && current.decoded && lastDecoded
-                            && current.bytes == lastDecodedSize) {
-                        if (readAllBytes(found.uri, current.bytes)) {
-                            completed = SystemClock.elapsedRealtime() - begin;
-                            report(filename, source,
-                                    strict ? "JPEG/PNG结束标志、抽样解码、稳定与完整字节读取均通过"
-                                           : "抽样解码、稳定与完整字节读取通过（格式结束标志未验证）",
-                                    firstOpen, firstDecode, completed, current.bytes,
-                                    width, height, attempt, strict);
-                            return;
-                        }
-                        error = "图片发生变化或压缩字节尚未全部可读";
-                    } else if (!current.terminalMarker) {
-                        error = "等待图片结束标志";
-                    } else if (!current.decoded) {
-                        error = "等待图片能够正常解码";
-                    } else {
-                        error = "等待文件大小连续两次保持稳定";
-                    }
-                    lastBytes = current.bytes;
-                    lastModified = current.modified;
-                    lastObservedAt = currentAt;
-                    previouslyMarker = current.terminalMarker;
-                    lastDecoded = current.decoded;
-                    lastDecodedSize = current.bytes;
-                } else {
-                    error = "照片尚未在已授权目录中可见";
+        while (enabled.get() && SystemClock.elapsedRealtime() - start < PROBE_TIMEOUT_MS) {
+            tries++;
+            Sample now = null;
+            Found used = null;
+            // Fast attempt: no full directory scan, no image read before
+            // the unchanged TTS cue in PhotoWatchService.
+            if (direct != null) {
+                try {
+                    now = sample(direct, filename);
+                    used = direct;
+                } catch (IOException | RuntimeException ignored) {
+                    reason = "已授权子文件 URI 暂时不可打开";
                 }
-            } catch (Exception problem) {
-                // Temporary import/rename races are normal. Do not crash the
-                // successful direct file-event voice notification.
-                error = "尚不能读取：" + problem.getClass().getSimpleName();
             }
+            // Fallback only when fast direct open has failed. Avoid blocking
+            // every 85ms on a potentially slow DocumentsProvider query.
+            if (now == null) {
+                long time = SystemClock.elapsedRealtime();
+                if (direct == null || time - start >= 250) {
+                    if (listing == null || time - lastListingAt >= FALLBACK_RETRY_MS) {
+                        try {
+                            listing = findChildByListing(filename);
+                        } catch (RuntimeException ignored) {
+                            listing = null;
+                        }
+                        lastListingAt = SystemClock.elapsedRealtime();
+                    }
+                    if (listing != null) {
+                        try {
+                            now = sample(listing, filename);
+                            used = listing;
+                        } catch (IOException | RuntimeException ignored) {
+                            reason = "目录已找到照片，但尚未可以打开";
+                        }
+                    }
+                }
+            }
+
+            if (now != null && used != null) {
+                latestBytes = now.bytes;
+                route = used.accessPath;
+                if (now.bytes > MAX_PHOTO_BYTES) {
+                    reason = "照片超过实验80MB的上限";
+                    break;
+                }
+                if (now.bytes > 0 && firstOpen < 0) {
+                    firstOpen = now.firstOpenElapsed - start;
+                    report(filename, source, "首次成功打开文件", firstOpen,
+                            firstDecode, -1, now.bytes, width, height,
+                            tries, strict, route, markerInfo);
+                }
+                if (now.decoded) {
+                    width = now.width;
+                    height = now.height;
+                    if (firstDecode < 0) {
+                        firstDecode = SystemClock.elapsedRealtime() - start;
+                        report(filename, source, "首次成功抽样解码", firstOpen,
+                                firstDecode, -1, now.bytes, width, height,
+                                tries, strict, route, markerInfo);
+                    }
+                }
+                long nowAt = SystemClock.elapsedRealtime();
+                boolean stable = ImageCompletionPolicy.stable(
+                        priorBytes, now.bytes, priorModified, now.modified)
+                        && nowAt - priorAt >= 60L;
+                boolean isPng = filename.toLowerCase(Locale.ROOT).endsWith(".png");
+                boolean isJpeg = filename.toLowerCase(Locale.ROOT).endsWith(".jpg")
+                        || filename.toLowerCase(Locale.ROOT).endsWith(".jpeg");
+
+                if (isJpeg) {
+                    markerInfo = now.tailMarker
+                            ? "JPEG文件最后2字节是 FF D9"
+                            : "JPEG末尾不是 FF D9：可能包含动态照片附加数据";
+                } else if (isPng) {
+                    markerInfo = now.tailMarker ? "PNG结尾 IEND 正常"
+                            : "PNG结尾 IEND 尚未出现";
+                } else {
+                    markerInfo = "本格式不检查统一的结尾标志";
+                }
+
+                if (stable && now.decoded && priorDecoded && now.bytes > 0
+                        && (!isPng || now.tailMarker)) {
+                    StreamResult full = readAllBytes(used.uri, now.bytes);
+                    boolean jpegValid = !isJpeg || full.jpegEoiSeen;
+                    boolean stableAfterRead = full.allBytesReadable
+                            && sizeStillMatches(used.uri, now.bytes);
+                    boolean ready = ImageCompletionPolicy.isReadReadyCandidate(
+                            stable, now.decoded, stableAfterRead) && jpegValid;
+                    if (ready) {
+                        completed = SystemClock.elapsedRealtime() - start;
+                        if (isJpeg) {
+                            markerInfo = full.jpegEoiSeen
+                                    ? (now.tailMarker
+                                    ? "JPEG EOI 位于末尾"
+                                    : "JPEG内发现 EOI，后面可能附带动态照片数据")
+                                    : "未找到 JPEG EOI";
+                        }
+                        report(filename, source,
+                                "本地可读候选：解码成功、大小稳定、完整字节读完"
+                                + "（未来上传仍需保证文件不再被修改）",
+                                firstOpen, firstDecode, completed,
+                                now.bytes, width, height, tries, strict, route, markerInfo);
+                        return;
+                    }
+                    if (isJpeg && !jpegValid) reason = "JPEG文件内部尚未发现 EOI";
+                    else if (!stableAfterRead) reason = "完整字节读取前后文件大小仍在变化";
+                } else if (!now.decoded) {
+                    reason = "等待完整图片可以抽样解码";
+                } else if (isPng && !now.tailMarker) {
+                    reason = "等待 PNG IEND 结束标志";
+                } else {
+                    reason = "等待文件大小在两轮探测中保持稳定";
+                }
+                priorBytes = now.bytes;
+                priorModified = now.modified;
+                priorAt = nowAt;
+                priorDecoded = now.decoded;
+            } else {
+                reason = "照片尚未在 SAF 授权范围内可打开";
+            }
+
             try {
                 Thread.sleep(RETRY_MS);
-            } catch (InterruptedException stopped) {
+            } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
             }
         }
-        if (enabled.get()) {
-            report(filename, source, "10秒实验超时：" + error, firstOpen,
-                    firstDecode, -1, lastBytes, width, height, attempt, strict);
-        }
+        report(filename, source, "10秒实验结束：" + reason, firstOpen,
+                firstDecode, -1, latestBytes, width, height,
+                tries, strict, route, markerInfo);
     }
 }
