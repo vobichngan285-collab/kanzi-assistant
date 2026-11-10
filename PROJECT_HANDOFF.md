@@ -1,5 +1,15 @@
 # 蓝星向导｜当前工作交接（2026-11-09）
 
+## 2026-11-10 照片读取真机反馈及修复 v0.1.4（独立 APK 已发布；待复测）
+
+- **用户本次真机截图：** vivo X200 Pro，照片 `IMG_20261110_202217.jpg`（4096×3072，1951KB），事件来源确认为 **FileObserver 原生文件事件**（已收到真实文件事件、直达新图累计2）。截图显示“事件/扫描开始→语音请求”**0ms**（设备计时分辨率下的值，不是声波播放延迟）、“TTS onStart”**1199ms**（不能证明扬声器已出声）、“首次打开”**1618ms**、“首次抽样解码”**1688ms**、“完整字节读取+稳定”仍未完成；10秒结束原因“等待 JPEG 结束标志”，**不能推断真实图片读取要10秒**。
+- **排查：** 0.1.3 的 `ImageCompletionPolicy.hasValidEndMarker` 只认整份 JPEG 最后两字节为 `FF D9`，并把它作为必过条件。这不适用于可能包含附加运动视频的动态照片（Android Motion Photo 规范允许 JPEG/HEIC/AVIF 图像后附视频，参见 https://developer.android.com/media/platform/motion-photo-format）。此截图**还不能证明该用户的 JPG 一定是动态照片**，但判断过严造成的10秒假超时已成为明确兼容性缺陷。
+- **隔离修复：** 从此前成功 v0.1.3 commit `256851a76ad694114d7fadaa209e0d6601aef944` 创建新实验分支 `fix/photo-readiness-fast-uri-and-trailer-20261110`，原 GitHub 仓库未变，**保持 v0.1.2 FileObserver→本地 TTS 快速提醒逻辑不变**，也不改正式蓝星 RC25。读取后台线程先针对**用户 SAF 已授权且精确等于 `primary:DCIM/Camera` 的树**尝试合法直接构造子文件 document Uri（免全文件夹列表查询），仅支持单一安全图片文件名；失败则退回已有 SAF 列表查询。修复 JPEG 结尾逻辑：对 JPEG 已读取的完整字节流检索 `FF D9` EOI（支持跨缓冲块，位于动态照片附加视频**之前**也可），**不强制整个文件的最后两个字节是 FF D9**；PNG 仍检查 IEND。需同时抽样解码成功、两次文件大小/修改时间稳定、全部压缩字节流可读、读后文件大小再次相符，才报告**“本地可读取候选”**；不得将候选当成相机此后不会写入的终局保证。UI 新增“读取渠道”（直接子文件 URI/SAF 列表）和真实末尾标记分析，继续显示各毫秒数。
+- **编译验证：** 独立实验 APP v0.1.4（versionCode 5，包名 `com.vobichngan.bluestar.photowatch`），构建固定源码 SHA `74703c147b1df6a16304de73ee3defb25d343797`。GitHub Actions [42816752197](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42816752197) **completed/success**，JUnit（包含JPEG动态照片附加数据与缓冲块分割EOI回归测试）、Android 编译、签名 V2、zipalign、安装包版本/无 INTERNET 权限检查均通过。**未做用户 vivo 真机测试**。
+- **发布：** [bluestar-photo-readiness-fix-20261110](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-photo-readiness-fix-20261110)，下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-photo-readiness-fix-20261110/BlueStar_PhotoWatch_ReadinessFix_0.1.4_Android.apk，文件 36621 bytes，SHA256 `19e6493cce6b596930991337f6185c9faa8821eb5c510db76d1e175e8116619e`。旧 v0.1.2（用户满意的最速提醒）、0.1.3 及各 Release 均保留。
+- **下一步：** 请用户安装 0.1.4，仍选择 `DCIM/Camera`、启动监听、拍一张 JPG；比对自动语音是否仍立即播报；回传“读取渠道”、“首次打开”、“首次抽样解码”、“完整字节读完+稳定候选”、“结束标志分析”和“读取状态”。若正常，才考虑另做完整照片发送到云端 OCR 的端到端实验。调试 App 不上传照片、不请求网络权限。APK测试签名如与旧版冲突，**只卸载照片实验工具，不卸载蓝星正式版**。
+
+
 ## 2026-11-10 新增独立实验｜照片完整读取就绪测速 v0.1.3（已构建发布，待真机）
 
 - **用户授权：** 前一版 `FileObserver` 快速监听已在 vivo X200 Pro 口头反馈“几乎毫秒级”，要求继续独立实验验证**新照片出现后，何时能完整读取并用于后续 OCR**。本次只做第一阶段，不接云端 OCR、不修改原正式安卓 Blue Star Guide RC25、不修改此前成功的 0.1.2 APK/代码分支。
