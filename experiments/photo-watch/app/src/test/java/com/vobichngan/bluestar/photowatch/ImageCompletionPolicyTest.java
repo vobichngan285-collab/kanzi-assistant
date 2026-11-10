@@ -35,4 +35,26 @@ public class ImageCompletionPolicyTest {
         assertFalse(ImageCompletionPolicy.stable(0, 0, 1000, 1000));
         assertFalse(ImageCompletionPolicy.stable(500, 500, 1000, 1001));
     }
+    @Test public void motionPhotoJpegTrailingBytesMustNotBlockReadCandidate() {
+        // JPEG image may be followed by MP4 data; EOF need not be FF D9.
+        byte[] endingInVideo = new byte[]{0,0,0,20,'m','d','a','t'};
+        assertFalse(ImageCompletionPolicy.hasValidEndMarker(
+                "IMG_20261110_202217.jpg", endingInVideo));
+        assertTrue(ImageCompletionPolicy.isReadReadyCandidate(true, true, true));
+        assertFalse(ImageCompletionPolicy.isReadReadyCandidate(false, true, true));
+        assertFalse(ImageCompletionPolicy.isReadReadyCandidate(true, false, true));
+        assertFalse(ImageCompletionPolicy.isReadReadyCandidate(true, true, false));
+    }
+
+    @Test public void fastDocumentUriRequiresSafeFilenameOnly() {
+        assertTrue(ImageCompletionPolicy.isSafePhotoLeaf("IMG_20261110_202217.jpg"));
+        assertTrue(ImageCompletionPolicy.isSafePhotoLeaf("照片.heic"));
+        assertFalse(ImageCompletionPolicy.isSafePhotoLeaf("../sample.jpg"));
+        assertFalse(ImageCompletionPolicy.isSafePhotoLeaf("foo\\\\bar.jpg"));
+        assertFalse(ImageCompletionPolicy.isSafePhotoLeaf("foo:bar.jpg"));
+        assertFalse(ImageCompletionPolicy.isSafePhotoLeaf("foo.tmp"));
+        assertFalse(ImageCompletionPolicy.isSafePhotoLeaf(""));
+        assertFalse(ImageCompletionPolicy.isSafePhotoLeaf(null));
+    }
+
 }
