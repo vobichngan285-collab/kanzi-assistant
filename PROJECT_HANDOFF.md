@@ -1,5 +1,15 @@
 # 蓝星向导｜当前工作交接（2026-11-09）
 
+## 2026-11-10 新增独立实验｜照片完整读取就绪测速 v0.1.3（已构建发布，待真机）
+
+- **用户授权：** 前一版 `FileObserver` 快速监听已在 vivo X200 Pro 口头反馈“几乎毫秒级”，要求继续独立实验验证**新照片出现后，何时能完整读取并用于后续 OCR**。本次只做第一阶段，不接云端 OCR、不修改原正式安卓 Blue Star Guide RC25、不修改此前成功的 0.1.2 APK/代码分支。
+- **代码隔离：** 在原 `vobichngan285-collab/kanzi-assistant` 仓库由 v0.1.2 的固定成功 SHA `288ed01ebb65355ec3e4a309b8e6d9138faa4e5d` 派生新实验分支 `exp/photo-watch-readable-timing-20261110`；构建源码 HEAD `256851a76ad694114d7fadaa209e0d6601aef944`。只修改 `experiments/photo-watch/` 子项目，并新建对应独立 workflow。
+- **实现 v0.1.3：** 保留原 `FileObserver`（对 `primary:DCIM/Camera` 优先监听）→立即本地 TTS“发现新照片”链路不阻塞；每张新照片的本地读取检测交给**独立后台线程池（最多2工作线程、最多3张在途，每张最多10秒、图片最多80MB）**。使用用户已授权的 SAF Uri 查询/打开新照片，无新增图片库全局权限，不联网上传、不复制存储原照片、不在日志写入像素或 OCR 文本。每张记录“事件或扫描开始→首次成功打开且非零长度”“→首次成功低内存抽样 BitmapFactory 解码”“→完整压缩字节流可全部读完且大小/修改时间两次稳定、抽样解码成功”三项耗时。**JPG/JPEG 必须有文件末尾 FF D9，PNG 必须有 IEND 尾标**；HEIC/WebP/BMP 无本实验统一尾标校验，所显示“就绪”只是启发式估计。就算有稳定标记也不能绝对保证相机此后不修改文件，未来 OCR 仍需专门完整性/并发保护。另有状态、重试轮数、图像分辨率、来源和字节数供截图反馈。
+- **独立版本及验证：** `com.vobichngan.bluestar.photowatch` versionCode4 / versionName `0.1.3`，GitHub Actions [42814264726](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42814264726) **completed/success**：JUnit 单元测试、Android Gradle 编译、APK V2 签名、zipalign、package/version 和不含 INTERNET 权限验证全部通过。该成功表示 APK 构建通过，**尚未经用户 Android 16/vivo 真机验证读取耗时、照片解码、后台运行和性能**。
+- **发布及校验：** 公共预发布 [bluestar-photo-readiness-lab-20261110](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-photo-readiness-lab-20261110)，APK `BlueStar_PhotoWatch_ReadinessLab_0.1.3_Android.apk` 大小 **34457 bytes**，SHA256 `c4016d3e6553cdcde4e1af2606e9f0d2048f3c01fefaf5aa1d79659e07033921`；直下地址 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-photo-readiness-lab-20261110/BlueStar_PhotoWatch_ReadinessLab_0.1.3_Android.apk 。旧 v0.1.2/0.1.1/0.1.0 Release 保留。
+- **手机测试与下一步：** 用户如覆盖安装报告测试签名不匹配，只能卸载旧**照片监听实验小工具**并重新授权 `DCIM/Camera`，**不可卸载正式蓝星向导**。启动监听后拍一张 JPG，验证“发现新照片”依旧立刻发声，再拍普通/大图观察三项毫秒数字及读取状态（用户不需上传私有照片内容）。若用户实际测试证明很快就绪且不影响音频，后续再做独立云端 OCR 集成方案；没有眼镜，眼镜到手机同步时间仍未知。
+
+
 ## 2026-11-10 现场验收更新｜照片 FileObserver 直达方案用户反馈成功
 
 - **用户实际反馈：** 在 vivo X200 Pro 上安装 v0.1.2 原生文件事件监听实验版后，用户明确反馈「这下非常成功，几乎是毫秒级」。这意味着拍照后「发现新照片」提示在主观体验上比 v0.1.1（先前约2秒）快得多。**这是用户主观听感，未拿到系统诊断的实际事件→TTS 毫秒值，也没有收到“本次发现渠道”的截图，不得声称已测量出精确毫秒级或完全证明 FileObserver 路径为最终触发来源。**
