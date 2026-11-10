@@ -163,6 +163,7 @@ public final class PhotoReadProbe {
 
     private static final class Sample {
         long bytes;
+        long openedAtElapsed;
         long modified;
         boolean terminalMarker;
         boolean decoded;
@@ -180,6 +181,7 @@ public final class PhotoReadProbe {
                 FileChannel channel = stream.getChannel();
                 long length = channel.size();
                 result.bytes = length;
+                if (length > 0) result.openedAtElapsed = SystemClock.elapsedRealtime();
                 if (length <= 0 || length > MAX_PHOTO_BYTES) {
                     return result;
                 }
@@ -285,7 +287,7 @@ public final class PhotoReadProbe {
                 if (found != null) {
                     Sample current = sample(found, filename);
                     if (current.bytes > 0 && firstOpen < 0) {
-                        firstOpen = SystemClock.elapsedRealtime() - begin;
+                        firstOpen = current.openedAtElapsed - begin;
                         report(filename, source, "文件已打开，正在测试解码",
                                 firstOpen, firstDecode, -1, current.bytes,
                                 width, height, attempt, strict);
