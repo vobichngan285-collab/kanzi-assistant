@@ -4,7 +4,7 @@ import static org.junit.Assert.*;
 import org.junit.Test;
 
 public class ImageCompletionPolicyTest {
-    @Test public void completeJpegNeedsFinalEndMarker() {
+    @Test public void jpegPhysicalTailSignatureIsOnlyDiagnostic() {
         assertTrue(ImageCompletionPolicy.hasReliableEndMarker("IMG.JPG"));
         assertTrue(ImageCompletionPolicy.hasValidEndMarker("a.jpg",
                 new byte[]{1, 2, (byte) 0xff, (byte) 0xd9}));
@@ -55,6 +55,24 @@ public class ImageCompletionPolicyTest {
         assertFalse(ImageCompletionPolicy.isSafePhotoLeaf("foo.tmp"));
         assertFalse(ImageCompletionPolicy.isSafePhotoLeaf(""));
         assertFalse(ImageCompletionPolicy.isSafePhotoLeaf(null));
+    }
+
+    @Test public void jpegEoiScannerFindsEndBeforeAppendedVideoAcrossChunks() {
+        ImageCompletionPolicy.JpegEoiScanner scanner =
+                new ImageCompletionPolicy.JpegEoiScanner();
+        scanner.accept(new byte[]{(byte) 0xff}, 1);
+        assertFalse(scanner.found());
+        scanner.accept(new byte[]{(byte) 0xd9, 0, 0, 0, 12, 'm', 'p', '4'}, 8);
+        assertTrue(scanner.found());
+    }
+
+    @Test public void jpegEoiScannerRejectsEscapedByteAndInvalidCount() {
+        ImageCompletionPolicy.JpegEoiScanner scanner =
+                new ImageCompletionPolicy.JpegEoiScanner();
+        scanner.accept(new byte[]{(byte) 0xff, 0, (byte) 0xd9}, 3);
+        assertFalse(scanner.found());
+        scanner.accept(new byte[]{(byte) 0xff, (byte) 0xd9}, 2);
+        assertTrue(scanner.found());
     }
 
 }
