@@ -1,5 +1,15 @@
 # 蓝星向导｜当前工作交接（2026-11-09）
 
+## 2026-11-10 最新照片监听实验｜FileObserver 原生文件事件直达 v0.1.2（APK 发布）
+
+- **用户真机新反馈：** v0.1.1 在 vivo X200 Pro 的 `DCIM/Camera` 自动播放「发现新照片」已明显快于 v0.1.0，用户主观约2秒；希望「文件夹只要发生一点变化立刻响应，没有中间商」，继续优化。**这只是用户大致体感，不是严谨测得的总延迟**。
+- **独立新分支：** `exp/photo-watch-fileobserver-direct-20261110`，在 v0.1.1 分支之上开展，不改正式安卓 Blue Star Guide RC25、云端 OCR / USB / 语音相关代码。实际构建 commit **`288ed01ebb65355ec3e4a309b8e6d9138faa4e5d`**。
+- **改动原理：** 新 `DirectFolderEvents.java` 使用 Android 原生 `FileObserver`（内核 inotify）对**用户 SAF 授权且文档 ID 精确匹配** `primary:DCIM/Camera` 的实际目录，尝试监听 CREATE、MODIFY、MOVED_TO、CLOSE_WRITE。**第一次目录列表建立旧图片基线后**，新 JPG/HEIC/PNG/WebP 图片文件名出现即走 `FileObserver -> PhotoSnapshotTracker 去重 -> TTS.speak`，不等待两次目录扫描、不等待 MediaStore，也不在语音请求之前写文件日志/通知。不读取图片内容，仅给“发现新照片”的本地语音。文件事件与 SAF 迟来的图片元数据统一按文件名去重，避免同一张图重播。保留 `ContentObserver` / MediaStore / **600ms 兜底**，以应对 Android scoped storage 或厂商实现不允许原生事件的情况；`FileObserver.startWatching` 不保证真的收到事件，必须以**实际 FileObserver 事件计数**证明。
+- **诊断：** 独立 APK 0.1.2 增加「直接监听状态」（注册但未收到事件/已收到真实事件/不可用）、「直接捕获新照片数」、「本次发现渠道」（FileObserver 直达 或 SAF 回退）、「事件/扫描→TTS 请求耗时」、「TTS 引擎 onStart 反馈耗时」。`onStart` **不代表物理扬声器已经响**；文件首次创建也不代表写入完毕，将来真正将图片传给云端 OCR 必须另做完整性校验。本实验没有 Root、全文件管理权限、互联网权限、图片上传或新权限。
+- **构建发布：** 独立 GitHub Actions [42810923510](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42810923510) **completed/success**，Java 单元测试、Android 编译、APK v2 签名、zipalign、包名版本、无 INTERNET 检查成功；原实验与 RC25 不受影响。GitHub Public prerelease [bluestar-photo-watch-direct-lab-20261110](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-photo-watch-direct-lab-20261110)，APK 0.1.2 `BlueStar_PhotoWatch_DirectLab_0.1.2_Android.apk` **25541 bytes**，SHA256 `c6a1cf243dee9849abd9fd76329252317862442520b57e7b70617f10680e6c80`，下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-photo-watch-direct-lab-20261110/BlueStar_PhotoWatch_DirectLab_0.1.2_Android.apk；保留 v0.1.0/0.1.1 发行版。
+- **待用户真实验收：** 0.1.2 安装后仍选择 `DCIM/Camera`，开启监听等待旧图片基线，手机拍照一次；记录“本次发现渠道”，看“直接捕获新照片数”是否>0，和“事件/扫描→语音请求”“引擎 onStart”。如首次仍靠 SAF，说明此机 Android 16 文件权限/系统行为或相机保存方式没有产生可见原生 FileObserver 通知；不能再盲目缩短间隔，需分析系统相机实际写文件时序。两秒中有多少是相机拍摄处理/保存或 TTS 首声尚无法断言，不承诺低于1秒。
+- **安装提醒：** 测试 APK 可能因每轮 GitHub Actions debug signing key 不同而无法覆盖，遇到提示签名不匹配仅卸载之前的**「蓝星照片监听实验」**，重装并重选目录；不得卸载正式蓝星向导。
+
 ## 最新反馈及优化｜2026-11-10 照片监听速度专项实验 v0.1.1（已发布，待真机）
 
 - **用户真机反馈：** vivo X200 Pro 已成功通过 SAF 选择 `primary:DCIM/Camera`，实验 v0.1.0 在手机相机拍照后能自动发现新 JPG（截图见成功发现1张）且**自动语音“发现新照片”确实会播报**。用户澄清不是语音失效，而是提示速度偏慢；上一版照片修改时间到检测估计为 **6844ms**，不是实测快门到扬声器延迟，不得据此断定眼镜传输耗时。
