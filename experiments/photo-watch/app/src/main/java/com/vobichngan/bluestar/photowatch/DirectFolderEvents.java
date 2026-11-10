@@ -2,6 +2,7 @@ package com.vobichngan.bluestar.photowatch;
 
 import android.net.Uri;
 import android.os.Environment;
+import android.os.Build;
 import android.os.FileObserver;
 import android.os.SystemClock;
 import android.provider.DocumentsContract;
@@ -33,6 +34,7 @@ public final class DirectFolderEvents {
     }
 
     public static DirectFolderEvents start(Uri tree, Callback onFile) {
+        if (Build.VERSION.SDK_INT < 29) return null;
         try {
             String documentId = DocumentsContract.getTreeDocumentId(tree);
             // Do not convert arbitrary SAF IDs to filesystem paths.
