@@ -30,7 +30,8 @@ import java.util.Locale;
 
 /**
  * User-initiated 30-minute folder-watch experiment.
- * No camera, no Internet permission, no OCR, no image byte reads.
+ * No camera, no Internet permission, no OCR, no photo uploads.
+ * A separate bounded worker reads image bytes LOCALLY to test readiness.
  * A foreground service plus short-duration partial wakelock lets users test
  * camera-app switching and screen-off behavior without an always-on daemon.
  */
@@ -50,6 +51,16 @@ public final class PhotoWatchService extends Service {
     public static final String KEY_DIRECT_EVENTS = "direct_file_events";
     public static final String KEY_LAST_SOURCE = "last_detection_source";
     public static final String KEY_TTS_ONSTART_MS = "tts_engine_onstart_delay_ms";
+    public static final String KEY_PROBE_FILE = "probe_filename";
+    public static final String KEY_PROBE_STATUS = "probe_status";
+    public static final String KEY_PROBE_OPEN_MS = "probe_first_open_ms";
+    public static final String KEY_PROBE_DECODE_MS = "probe_first_decode_ms";
+    public static final String KEY_PROBE_READY_MS = "probe_read_ready_ms";
+    public static final String KEY_PROBE_ATTEMPTS = "probe_attempts";
+    public static final String KEY_PROBE_SIZE = "probe_size_bytes";
+    public static final String KEY_PROBE_DIMENSIONS = "probe_dimensions";
+    public static final String KEY_PROBE_MARKER = "probe_marker";
+    public static final String KEY_PROBE_SOURCE = "probe_source";
 
     private static final String CHANNEL_ID = "photo_watch_v1";
     private static final int NOTIFICATION_ID = 2341;
@@ -66,6 +77,7 @@ public final class PhotoWatchService extends Service {
     private ContentObserver contentObserver;
     private DirectFolderEvents directEvents;
     private volatile PhotoSnapshotTracker photoTracker;
+    private PhotoReadProbe photoReadProbe;
     private volatile String lastUtteranceId = "";
     private volatile long lastSpeechRequestElapsed;
     private Uri treeUri;
@@ -153,9 +165,21 @@ public final class PhotoWatchService extends Service {
                     .putInt(KEY_DIRECT_EVENTS, 0)
                     .putString(KEY_DIRECT_STATUS, "正在尝试直接监听文件夹")
                     .putString(KEY_TTS_REQUEST, "尚未触发")
+                    .putString(KEY_PROBE_FILE, "暂无")
+                    .putString(KEY_PROBE_SOURCE, "尚未触发")
+                    .putString(KEY_PROBE_STATUS, "尚未触发")
+                    .putLong(KEY_PROBE_OPEN_MS, -1)
+                    .putLong(KEY_PROBE_DECODE_MS, -1)
+                    .putLong(KEY_PROBE_READY_MS, -1)
+                    .putLong(KEY_PROBE_SIZE, 0)
+                    .putInt(KEY_PROBE_ATTEMPTS, 0)
+                    .putString(KEY_PROBE_DIMENSIONS, "未知")
+                    .putString(KEY_PROBE_MARKER, "尚未判断")
                     .putString(KEY_STATUS, "正在建立初始照片列表，旧照片不会播报。")
                     .apply();
             photoTracker = new PhotoSnapshotTracker();
+            photoReadProbe = new PhotoReadProbe(getContentResolver(),
+                    treeUri, this::onPhotoProbeResult);
             subscribe(treeUri);
             directEvents = DirectFolderEvents.start(treeUri, this::onDirectPhotoEvent);
             prefs.edit().putString(KEY_DIRECT_STATUS, directEvents == null
@@ -260,12 +284,53 @@ public final class PhotoWatchService extends Service {
         announcePhotos(Collections.singletonList(
                         new PhotoSnapshotTracker.Photo("fs:" + filename, filename, -1, 0)),
                 "文件系统 FileObserver（直达）", fileEventElapsed);
+        schedulePhotoProbe(filename, fileEventElapsed, "FileObserver 原生文件事件");
         prefs.edit().putInt(KEY_DIRECT_EVENTS,
                         prefs.getInt(KEY_DIRECT_EVENTS, 0) + 1)
                 .putString(KEY_DIRECT_STATUS, "已收到真实文件系统事件").apply();
         // Let the regular SAF scan catch up for UI and metadata. Speech does
         // NOT wait for that scan, so this is not an extra intermediary.
         wakeScan();
+    }
+
+    private void schedulePhotoProbe(String filename, long startedElapsed, String source) {
+        PhotoReadProbe probe = photoReadProbe;
+        if (!watching || probe == null) return;
+        if (!ImageCompletionPolicy.isSupported(filename)) return;
+        // The most recently announced photo is the one displayed by the UI.
+        prefs.edit().putString(KEY_PROBE_FILE, filename)
+                .putString(KEY_PROBE_SOURCE, source)
+                .putString(KEY_PROBE_STATUS, "排队进行本地读取实验")
+                .putLong(KEY_PROBE_OPEN_MS, -1)
+                .putLong(KEY_PROBE_DECODE_MS, -1)
+                .putLong(KEY_PROBE_READY_MS, -1)
+                .putLong(KEY_PROBE_SIZE, 0)
+                .putInt(KEY_PROBE_ATTEMPTS, 0)
+                .putString(KEY_PROBE_DIMENSIONS, "未知")
+                .putString(KEY_PROBE_MARKER, "尚未判断").apply();
+        if (!probe.offer(filename, startedElapsed, source)) {
+            prefs.edit().putString(KEY_PROBE_STATUS,
+                    "当前已有同名图片测试或同时测试数量已满").apply();
+        }
+    }
+
+    private void onPhotoProbeResult(PhotoReadProbe.Result result) {
+        if (!watching || prefs == null) return;
+        if (!result.filename.equals(prefs.getString(KEY_PROBE_FILE, ""))) return;
+        prefs.edit()
+                .putString(KEY_PROBE_STATUS, result.status)
+                .putString(KEY_PROBE_SOURCE, result.source)
+                .putLong(KEY_PROBE_OPEN_MS, result.firstOpenMs)
+                .putLong(KEY_PROBE_DECODE_MS, result.firstDecodedMs)
+                .putLong(KEY_PROBE_READY_MS, result.readyMs)
+                .putLong(KEY_PROBE_SIZE, result.bytes)
+                .putInt(KEY_PROBE_ATTEMPTS, result.attempts)
+                .putString(KEY_PROBE_DIMENSIONS,
+                        result.width > 0 ? result.width + "×" + result.height : "未知")
+                .putString(KEY_PROBE_MARKER,
+                        result.strictEndMarker ? "需要 JPEG/PNG 结束标志" :
+                                "此格式没有可靠末尾标志，结果仅为估计")
+                .apply();
     }
 
     private synchronized void announcePhotos(List<PhotoSnapshotTracker.Photo> fresh,
@@ -333,6 +398,10 @@ public final class PhotoWatchService extends Service {
                 }
                 if (!fresh.isEmpty()) {
                     announcePhotos(fresh, "SAF 目录扫描 / 系统通知", scanStartedElapsed);
+                    for (PhotoSnapshotTracker.Photo photo : fresh) {
+                        schedulePhotoProbe(photo.name, scanStartedElapsed,
+                                "SAF 目录发现（非文件系统首次事件）");
+                    }
                 }
                 synchronized (wakeSignal) {
                     if (!scanRequested) wakeSignal.wait(SCAN_PERIOD_MS);
@@ -407,6 +476,10 @@ public final class PhotoWatchService extends Service {
         isRunning = false;
         wakeScan();
         if (worker != null) worker.interrupt();
+        if (photoReadProbe != null) {
+            photoReadProbe.stop();
+            photoReadProbe = null;
+        }
         if (directEvents != null) {
             try { directEvents.stop(); } catch (RuntimeException ignored) { }
             directEvents = null;
