@@ -115,7 +115,7 @@ public final class MainActivity extends Activity {
         scrolling.addView(column);
         setContentView(scrolling);
 
-        text(column, "蓝星 · 照片完整读取测速", 26, true, 2);
+        text(column, "蓝星 · 照片快速读取测速", 26, true, 2);
         text(column, "独立小工具｜保留快速语音提示，同时本地验证照片何时可以完整读取。不联网，不上传图片。",
                 17, false, 8);
 
@@ -130,7 +130,7 @@ public final class MainActivity extends Activity {
         statusText.setTextIsSelectable(true);
         recentText = text(column, "检测结果：暂无", 18, false, 10);
         recentText.setTextIsSelectable(true);
-        text(column, "照片读取速度（新实验）", 21, true, 17);
+        text(column, "照片读取速度（修复实验）", 21, true, 17);
         readProbeText = text(column, "请先拍一张新照片", 18, false, 7);
         readProbeText.setTextIsSelectable(true);
 
@@ -143,7 +143,8 @@ public final class MainActivity extends Activity {
                 "注意：系统文件夹授权因机型而异；只扫描所选目录的直接图片，不递归子文件夹。\n" +
                 "估计延迟来自照片文件时间戳，不能代表按下快门到传输完成的精确延迟。\n" +
                 "新版会显示：第一次能打开、第一次抽样解码、字节完整读取且文件稳定的耗时。\n" +
-                "JPEG/PNG还检查标准结束标志；HEIC等格式仅为就绪估算。\n" +
+                "JPEG动态照片允许在图像后面附加视频，不再强制整份 JPG 以 FF D9 结尾。\n" +
+                "结果是安全的本地读取候选时间，仍不能保证拍照程序将来不会再次修改。\n" +
                 "解码成功并不意味着之后文件绝不会变化，不会自动将照片上传到云端。\n" +
                 "继续保留以前的 FileObserver 直达语音和600毫秒回退方案。\n" +
                 "监听期间会出现常驻通知，并临时保持 CPU 活跃以测试息屏，最多30分钟；可以随时停止。",
@@ -189,6 +190,7 @@ public final class MainActivity extends Activity {
                     .putString(PhotoWatchService.KEY_PROBE_FILE, "暂无")
                     .putString(PhotoWatchService.KEY_PROBE_STATUS, "尚未触发")
                     .putString(PhotoWatchService.KEY_PROBE_SOURCE, "尚未触发")
+                    .putString(PhotoWatchService.KEY_PROBE_ACCESS_PATH, "尚未打开")
                     .putLong(PhotoWatchService.KEY_PROBE_OPEN_MS, -1)
                     .putLong(PhotoWatchService.KEY_PROBE_DECODE_MS, -1)
                     .putLong(PhotoWatchService.KEY_PROBE_READY_MS, -1)
@@ -313,18 +315,20 @@ public final class MainActivity extends Activity {
         String probeName = prefs.getString(PhotoWatchService.KEY_PROBE_FILE, "暂无");
         String probeStatus = prefs.getString(PhotoWatchService.KEY_PROBE_STATUS, "尚未触发");
         String probeSource = prefs.getString(PhotoWatchService.KEY_PROBE_SOURCE, "尚未触发");
+        String probeRoute = prefs.getString(PhotoWatchService.KEY_PROBE_ACCESS_PATH, "尚未打开");
         long bytes = prefs.getLong(PhotoWatchService.KEY_PROBE_SIZE, 0);
         int attempts = prefs.getInt(PhotoWatchService.KEY_PROBE_ATTEMPTS, 0);
         String dimensions = prefs.getString(PhotoWatchService.KEY_PROBE_DIMENSIONS, "未知");
         String marker = prefs.getString(PhotoWatchService.KEY_PROBE_MARKER, "尚未判断");
         readProbeText.setText("测试照片：" + probeName + "\n" +
                 "发现方式：" + probeSource + "\n" +
+                "读取渠道：" + probeRoute + "\n" +
                 "首次打开文件：" + elapsed(opened) + "\n" +
                 "首次成功抽样解码：" + elapsed(decoded) + "\n" +
-                "完整字节读取 + 稳定就绪：" + elapsed(ready) + "\n" +
+                "完整字节读完 + 稳定候选：" + elapsed(ready) + "\n" +
                 "图像分辨率：" + dimensions + "\n" +
                 "文件大小：" + (bytes > 0 ? (bytes / 1024) + " KB" : "未知") + "\n" +
-                "验证方式：" + marker + "\n" +
+                "结束标志分析：" + marker + "\n" +
                 "检测轮数：" + attempts + "\n" +
                 "读取状态：" + probeStatus);
     }
