@@ -38,7 +38,7 @@ public final class MainActivity extends Activity {
     private static final int INK = Color.rgb(26, 41, 62);
 
     private SharedPreferences prefs;
-    private TextView folderText, statusText, recentText, noteText;
+    private TextView folderText, statusText, recentText, readProbeText, noteText;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private TextToSpeech testTts;
     private boolean ttsReady;
@@ -115,8 +115,8 @@ public final class MainActivity extends Activity {
         scrolling.addView(column);
         setContentView(scrolling);
 
-        text(column, "蓝星 · 照片直连实验", 27, true, 2);
-        text(column, "独立小工具｜仅检测新增照片，不读取图像内容、不联网、不接 OCR。",
+        text(column, "蓝星 · 照片完整读取测速", 26, true, 2);
+        text(column, "独立小工具｜保留快速语音提示，同时本地验证照片何时可以完整读取。不联网，不上传图片。",
                 17, false, 8);
 
         folderText = text(column, "照片文件夹：尚未选择", 19, true, 18);
@@ -130,16 +130,22 @@ public final class MainActivity extends Activity {
         statusText.setTextIsSelectable(true);
         recentText = text(column, "检测结果：暂无", 18, false, 10);
         recentText.setTextIsSelectable(true);
+        text(column, "照片读取速度（新实验）", 21, true, 17);
+        readProbeText = text(column, "请先拍一张新照片", 18, false, 7);
+        readProbeText.setTextIsSelectable(true);
 
         noteText = text(column,
                 "使用说明：\n" +
                 "1. 选择与手机相机保存路径一致的文件夹，通常是 DCIM/Camera。\n" +
                 "2. 点「开始自动监听」，建立旧照片基线。\n" +
                 "3. 点「打开手机相机」拍一张新照片，然后返回。\n" +
-                "4. 手机保存新照片时，优先直接监听文件系统事件，立即发出提示。\n\n" +
+                "4. 监听到新照片时，先照旧快速播报，然后另开后台任务测试本地读取。\n\n" +
                 "注意：系统文件夹授权因机型而异；只扫描所选目录的直接图片，不递归子文件夹。\n" +
                 "估计延迟来自照片文件时间戳，不能代表按下快门到传输完成的精确延迟。\n" +
-                "本版优先原生 FileObserver 直接检测 DCIM/Camera 变化；若手机系统不允许直连，则回退照片事件和600毫秒扫描。\n" +
+                "新版会显示：第一次能打开、第一次抽样解码、字节完整读取且文件稳定的耗时。\n" +
+                "JPEG/PNG还检查标准结束标志；HEIC等格式仅为就绪估算。\n" +
+                "解码成功并不意味着之后文件绝不会变化，不会自动将照片上传到云端。\n" +
+                "继续保留以前的 FileObserver 直达语音和600毫秒回退方案。\n" +
                 "监听期间会出现常驻通知，并临时保持 CPU 活跃以测试息屏，最多30分钟；可以随时停止。",
                 16, false, 22);
     }
@@ -180,6 +186,16 @@ public final class MainActivity extends Activity {
                     .putInt(PhotoWatchService.KEY_DIRECT_EVENTS, 0)
                     .putString(PhotoWatchService.KEY_DIRECT_STATUS, "尚未启动")
                     .putLong(PhotoWatchService.KEY_TTS_ONSTART_MS, -1)
+                    .putString(PhotoWatchService.KEY_PROBE_FILE, "暂无")
+                    .putString(PhotoWatchService.KEY_PROBE_STATUS, "尚未触发")
+                    .putString(PhotoWatchService.KEY_PROBE_SOURCE, "尚未触发")
+                    .putLong(PhotoWatchService.KEY_PROBE_OPEN_MS, -1)
+                    .putLong(PhotoWatchService.KEY_PROBE_DECODE_MS, -1)
+                    .putLong(PhotoWatchService.KEY_PROBE_READY_MS, -1)
+                    .putLong(PhotoWatchService.KEY_PROBE_SIZE, 0)
+                    .putInt(PhotoWatchService.KEY_PROBE_ATTEMPTS, 0)
+                    .putString(PhotoWatchService.KEY_PROBE_DIMENSIONS, "未知")
+                    .putString(PhotoWatchService.KEY_PROBE_MARKER, "尚未判断")
                     .apply();
         } catch (SecurityException e) {
             prefs.edit().putString(PhotoWatchService.KEY_STATUS,
@@ -246,6 +262,10 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private static String elapsed(long millis) {
+        return millis < 0 ? "尚未完成" : millis + " 毫秒";
+    }
+
     private void render() {
         String tree = prefs.getString(PhotoWatchService.KEY_TREE, "");
         if (tree.isEmpty()) {
@@ -286,6 +306,27 @@ public final class MainActivity extends Activity {
                     (ttsOnStart >= 0 ? ttsOnStart + " 毫秒" : "尚未收到") + "\n" +
                 "语音请求状态：" + ttsStatus + "\n" +
                 "最近扫描时间：" + time);
+
+        long opened = prefs.getLong(PhotoWatchService.KEY_PROBE_OPEN_MS, -1);
+        long decoded = prefs.getLong(PhotoWatchService.KEY_PROBE_DECODE_MS, -1);
+        long ready = prefs.getLong(PhotoWatchService.KEY_PROBE_READY_MS, -1);
+        String probeName = prefs.getString(PhotoWatchService.KEY_PROBE_FILE, "暂无");
+        String probeStatus = prefs.getString(PhotoWatchService.KEY_PROBE_STATUS, "尚未触发");
+        String probeSource = prefs.getString(PhotoWatchService.KEY_PROBE_SOURCE, "尚未触发");
+        long bytes = prefs.getLong(PhotoWatchService.KEY_PROBE_SIZE, 0);
+        int attempts = prefs.getInt(PhotoWatchService.KEY_PROBE_ATTEMPTS, 0);
+        String dimensions = prefs.getString(PhotoWatchService.KEY_PROBE_DIMENSIONS, "未知");
+        String marker = prefs.getString(PhotoWatchService.KEY_PROBE_MARKER, "尚未判断");
+        readProbeText.setText("测试照片：" + probeName + "\n" +
+                "发现方式：" + probeSource + "\n" +
+                "首次打开文件：" + elapsed(opened) + "\n" +
+                "首次成功抽样解码：" + elapsed(decoded) + "\n" +
+                "完整字节读取 + 稳定就绪：" + elapsed(ready) + "\n" +
+                "图像分辨率：" + dimensions + "\n" +
+                "文件大小：" + (bytes > 0 ? (bytes / 1024) + " KB" : "未知") + "\n" +
+                "验证方式：" + marker + "\n" +
+                "检测轮数：" + attempts + "\n" +
+                "读取状态：" + probeStatus);
     }
 
     @Override protected void onResume() {
