@@ -78,6 +78,29 @@ public final class ImageCompletionPolicy {
         return isSupported(filename);
     }
 
+    /**
+     * Locates JPEG EOI (FF D9) in a chunked byte stream, even when a motion
+     * photo appends a video beyond the JPEG portion. This is an indicator,
+     * not a complete JPEG syntax/segment parser.
+     */
+    public static final class JpegEoiScanner {
+        private int prior = -1;
+        private boolean found;
+
+        public void accept(byte[] buffer, int count) {
+            if (buffer == null || count < 0 || count > buffer.length) {
+                throw new IllegalArgumentException("Invalid JPEG scanner chunk");
+            }
+            for (int i = 0; i < count; i++) {
+                int next = buffer[i] & 0xff;
+                if (prior == 0xff && next == 0xd9) found = true;
+                prior = next;
+            }
+        }
+
+        public boolean found() { return found; }
+    }
+
     public static boolean stable(long previousBytes, long currentBytes,
                                  long previousModified, long currentModified) {
         return previousBytes > 0 && previousBytes == currentBytes
