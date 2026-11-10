@@ -61,4 +61,35 @@ public class PhotoSnapshotTrackerTest {
         assertEquals(1, t.accept(Arrays.asList(p("valid", 1, 2))).size());
         assertTrue(t.accept(Arrays.asList(p("valid", 2, 3))).isEmpty());
     }
+
+    @Test public void directFileEventIsImmediateAndSubsequentSafScanDoesNotRepeat() {
+        PhotoSnapshotTracker t = new PhotoSnapshotTracker();
+        t.accept(Arrays.asList(p("old", 200, 1000)));
+        assertTrue(t.acceptPhysicalEvent("IMG_20261110_194500.JPG"));
+        assertFalse(t.acceptPhysicalEvent("img_20261110_194500.jpg"));
+        assertTrue(t.accept(Arrays.asList(p("old", 200, 1000),
+                new PhotoSnapshotTracker.Photo("provider:34", "img_20261110_194500.jpg", 2400, 2000)))
+                .isEmpty());
+        assertEquals(1, t.accept(Arrays.asList(p("next", 33, 3))).size());
+    }
+
+    @Test public void directEventIgnoresExistingAndTemporaryFiles() {
+        PhotoSnapshotTracker t = new PhotoSnapshotTracker();
+        assertFalse(t.acceptPhysicalEvent("new.jpg")); // baseline mandatory
+        t.accept(Arrays.asList(p("old", 1, 1)));
+        assertFalse(t.acceptPhysicalEvent("old.jpg"));
+        assertFalse(t.acceptPhysicalEvent("photo.tmp"));
+        assertFalse(t.acceptPhysicalEvent("subfolder/photo.jpg"));
+        assertFalse(t.acceptPhysicalEvent("subfolder\\\\photo.jpg"));
+        assertFalse(t.acceptPhysicalEvent(""));
+        assertTrue(t.acceptPhysicalEvent("new.heic"));
+        assertFalse(t.acceptPhysicalEvent("new.heic"));
+    }
+
+    @Test public void safDiscoveredPhotosPreventLateDirectDuplicates() {
+        PhotoSnapshotTracker t = new PhotoSnapshotTracker();
+        t.accept(Collections.emptyList());
+        assertEquals(1, t.accept(Arrays.asList(p("new", 99, 11))).size());
+        assertFalse(t.acceptPhysicalEvent("new.jpg"));
+    }
 }
