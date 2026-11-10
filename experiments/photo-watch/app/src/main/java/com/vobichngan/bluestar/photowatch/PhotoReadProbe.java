@@ -258,17 +258,17 @@ public final class PhotoReadProbe {
         try (InputStream in = resolver.openInputStream(uri)) {
             if (in == null) return result;
             byte[] buffer = new byte[64 * 1024];
-            int last = -1;
+            ImageCompletionPolicy.JpegEoiScanner jpegMarker =
+                    new ImageCompletionPolicy.JpegEoiScanner();
             int n;
             while (enabled.get() && (n = in.read(buffer)) >= 0) {
-                for (int k = 0; k < n; k++) {
-                    int next = buffer[k] & 0xff;
-                    if (last == 0xff && next == 0xd9) result.jpegEoiSeen = true;
-                    last = next;
+                if (n > 0) {
+                    jpegMarker.accept(buffer, n);
+                    result.bytesRead += n;
                 }
-                result.bytesRead += n;
                 if (result.bytesRead > expectedBytes) return result;
             }
+            result.jpegEoiSeen = jpegMarker.found();
             result.allBytesReadable = enabled.get() && result.bytesRead == expectedBytes;
         } catch (IOException | RuntimeException ignored) {
             result.allBytesReadable = false;
