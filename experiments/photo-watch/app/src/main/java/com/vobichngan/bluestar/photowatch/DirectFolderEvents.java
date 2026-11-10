@@ -57,7 +57,7 @@ public final class DirectFolderEvents {
             };
             watcher.startWatching();
             return new DirectFolderEvents(watcher, camera.getAbsolutePath());
-        } catch (RuntimeException | SecurityException ignored) {
+        } catch (RuntimeException ignored) {
             return null;
         }
     }
