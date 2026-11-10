@@ -1,5 +1,12 @@
 # 蓝星向导｜当前工作交接（2026-11-09）
 
+## 最新反馈及优化｜2026-11-10 照片监听速度专项实验 v0.1.1（已发布，待真机）
+
+- **用户真机反馈：** vivo X200 Pro 已成功通过 SAF 选择 `primary:DCIM/Camera`，实验 v0.1.0 在手机相机拍照后能自动发现新 JPG（截图见成功发现1张）且**自动语音“发现新照片”确实会播报**。用户澄清不是语音失效，而是提示速度偏慢；上一版照片修改时间到检测估计为 **6844ms**，不是实测快门到扬声器延迟，不得据此断定眼镜传输耗时。
+- **本次授权与修复：** 只优化独立小工具，不动蓝星 RC25，也不修改语音引擎。新分支 `fix/photo-watch-fast-detection-20261110` 基于原照片监听实验。首次扫描仍建立旧照片基线；后续新图片首次出现且文件长度非零就立即提示一次，**不再为通知目的等待连续两轮文件大小稳定**。保留文件夹 SAF 监听，额外注册系统 MediaStore Images 变更通知，若官方厂商不发事件则 **600ms 轮询兜底**。用标志保留查询时到达的事件以免丢失。保留系统中文 TTS，改 `QUEUE_FLUSH` 避免堆积过往提示。新增界面诊断「本机扫描开始→语音请求毫秒数」「语音引擎接受状态」，保留时间戳到检测的近似估算并解释不是拍照→听声总时长。**新文件刚发现不等于文件写入完整；未来真正云端 OCR 仍须独立检查图片完整性，切勿直接照搬当前快速通知逻辑用于上传。**
+- **版本及发布：** 独立 APK 0.1.1，包名仍 `com.vobichngan.bluestar.photowatch`（前一版安卓 debug 签名可能与本次 CI 不同，因此用户如遇覆盖安装签名不匹配，只需卸载**旧照片监听实验小工具**后安装新版，需重新授权目录；**绝不可卸载正式蓝星向导**）。构建+发布 GitHub Actions [run 42809329654](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/42809329654) `completed/success`，**构建 Commit `b14baea9770a1ffe5267d632425b2e2cea837f8b`**；Gradle JUnit、APK 签名 v2、zipalign、manifest 包名/版本、无 INTERNET 权限检查全部通过。独立公开 prerelease [bluestar-photo-watch-fast-lab-20261110](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-photo-watch-fast-lab-20261110)，APK `BlueStar_PhotoWatch_FastLab_0.1.1_Android.apk`，22545 bytes，SHA256 `c7353e6a6a729470a79d535f5732f0493fc7f3d2e933ece99b04f4508be92c26`。旧 v0.1.0 release 及旧实验分支保留。
+- **待用户测试：** 重选 `DCIM/Camera`，按“开始监听”，相机拍一张，记录是否能更快听到自动提示、新的「本机扫描→语音请求」毫秒值和「照片时间戳→发现」近似值。多扫描可能加重 CPU/电量；如仍慢，需调查相机保存完成、SAF provider 查询、TTS 实际首声，不得承诺1秒内；尚无任何 AI 眼镜传输验证。
+
 ## 最新独立实验｜2026-11-10 外部照片自动发现小工具（Android 已构建并发布）
 
 - **用户指令：** 在尚未购买 AI 眼镜之前，先做一个**独立安卓小工具**，系统文件夹选择器绑定照片目录，再用手机拍摄新照片，验证新图片能否被自动发现、播报、计时，并测试切换应用、息屏。**不是蓝星向导 RC26 更新，也不修改 RC25 正式版**。
