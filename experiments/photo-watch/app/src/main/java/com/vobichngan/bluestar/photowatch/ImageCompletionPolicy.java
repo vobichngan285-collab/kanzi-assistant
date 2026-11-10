@@ -5,8 +5,10 @@ import java.util.Locale;
 /**
  * Test-only conservative markers and file-size stabilization. A parser
  * accepting a bitmap doesn't prove a concurrent writer has finished.
- * JPEG/PNG completion additionally requires their normal file terminators.
- * HEIC/WebP are heuristic (decode + unchanged size), never called guaranteed.
+ * JPEG/PNG EOF signatures are DIAGNOSTIC ONLY: a valid JPEG may
+ * contain appended motion-photo video after its JPEG EOI marker. Sampled
+ * decode + two stable metadata observations + full byte-stream read is a
+ * read-ready CANDIDATE (not a guarantee against later producer writes).
  */
 public final class ImageCompletionPolicy {
     private ImageCompletionPolicy() { }
@@ -28,6 +30,20 @@ public final class ImageCompletionPolicy {
 
     private static boolean isPng(String s) {
         return s.endsWith(".png");
+    }
+
+    /** Only a single safe filename component inside the user-approved tree. */
+    public static boolean isSafePhotoLeaf(String filename) {
+        return filename != null && !filename.isEmpty()
+                && !filename.equals(".") && !filename.equals("..")
+                && filename.indexOf('/') < 0 && filename.indexOf('\\') < 0
+                && filename.indexOf(':') < 0 && filename.indexOf((char)0) < 0
+                && isSupported(filename);
+    }
+
+    public static boolean isReadReadyCandidate(boolean stable, boolean decoded,
+                                                boolean fullBytesReadable) {
+        return stable && decoded && fullBytesReadable;
     }
 
     public static boolean hasReliableEndMarker(String filename) {
