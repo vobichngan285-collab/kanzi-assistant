@@ -1,0 +1,108 @@
+name: Blue Star Direct FileObserver Photo Watch Android APK
+on:
+  push:
+    branches:
+      - exp/photo-watch-fileobserver-direct-20261110
+    paths:
+      - 'experiments/photo-watch/**'
+      - '.github/workflows/photo-watch-fileobserver-lab.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release-lab-apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify hosted Android SDK 36 and build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "${ANDROID_HOME:?Android SDK not found}"
+          if [ ! -d "$ANDROID_HOME/platforms/android-36" ] || [ ! -d "$ANDROID_HOME/build-tools/36.0.0" ]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+          fi
+          test -s "$ANDROID_HOME/platforms/android-36/android.jar"
+          test -x "$ANDROID_HOME/build-tools/36.0.0/apksigner"
+      - name: Prepare Gradle 8.11.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Run unit tests and compile independent debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --no-parallel --max-workers=2 \
+            -p experiments/photo-watch :app:testDebugUnitTest :app:assembleDebug \
+            --stacktrace
+      - name: Verify APK signature, manifest, and offline isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="experiments/photo-watch/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/36.0.0"
+          "$BUILD_TOOLS/apksigner" verify --verbose "$APK" | tee "$RUNNER_TEMP/photo-apksign.txt"
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" "$RUNNER_TEMP/photo-apksign.txt"
+          "$BUILD_TOOLS/zipalign" -c -v 4 "$APK"
+          "$BUILD_TOOLS/aapt" dump badging "$APK" | tee "$RUNNER_TEMP/photo-badging.txt"
+          grep -q "package: name='com.vobichngan.bluestar.photowatch' versionCode='3' versionName='0.1.2'" "$RUNNER_TEMP/photo-badging.txt"
+          "$BUILD_TOOLS/aapt" dump permissions "$APK" | tee "$RUNNER_TEMP/photo-permissions.txt"
+          if grep -q 'android.permission.INTERNET' "$RUNNER_TEMP/photo-permissions.txt"; then
+            echo "Unexpected INTERNET permission in offline-only tool" >&2
+            exit 1
+          fi
+          unzip -t "$APK" | tail -n 2
+          mkdir -p release
+          cp "$APK" release/BlueStar_PhotoWatch_DirectLab_0.1.2_Android.apk
+          sha256sum release/*.apk | tee release/SHA256SUMS.txt
+          echo "Built source: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          cat release/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload independent experimental APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar-PhotoWatch-Direct-Standalone-Android-Experiment
+          path: release/BlueStar_PhotoWatch_DirectLab_0.1.2_Android.apk
+          retention-days: 30
+          if-no-files-found: error
+      - name: Publish public direct-download experiment APK
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/release-note.txt" <<'EOF'
+          Independent Blue Star Photo Watch FAST Lab v0.1.2. Does not modify or replace Blue Star Guide.
+          User picks a folder through Android's system folder picker, then starts a 30-minute foreground folder-watch experiment.
+          On startup old images are ignored; a new non-empty image emits a cue on first sighting without a mandatory second metadata poll. Native FileObserver directly observes CREATE/MODIFY/MOVED_TO/CLOSE_WRITE for selected DCIM/Camera when permitted, with immediate TTS request before any SAF query. MediaStore + SAF plus 600ms fallback remain for Android scoped-storage limitations. Built-in UI identifies real FileObserver events vs fallback and measures TTS request/onStart. A detected photo may still be writing; do not upload to OCR before separate integrity check.
+          Files are neither uploaded nor decoded. This APK requests no INTERNET permission.
+          Use: choose DCIM/Camera (or another allowed folder used by your camera), tap Start, then launch camera and take a new picture.
+          Local-only metadata and approximate file timestamp-to-detection latency are shown on screen.
+          Android 11+ does not permit choosing some storage roots and Download through the folder-tree picker.
+          Uses a bounded foreground service/partial wake lock for background/locked-screen testing; user can Stop any time.
+          Manual Android hardware test on user's vivo X200 Pro / Android 16 is still required. No claims about AI-glasses sync.
+          This is a standard DEBUG-signed experimental APK, not a Play Store production release.
+          EOF
+          gh release create "bluestar-photo-watch-direct-lab-20261110" \
+            release/BlueStar_PhotoWatch_DirectLab_0.1.2_Android.apk \
+            release/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Blue Star Photo Watch Direct Lab - FileObserver image event experiment" \
+            --prerelease --notes-file "$RUNNER_TEMP/release-note.txt"
+      - name: Confirm public release asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view bluestar-photo-watch-direct-lab-20261110 --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,isPrerelease,assets,url \
+            --jq '{isDraft,isPrerelease,url,assets: [.assets[] | {name: .name, size: .size, url: .url}]}'
