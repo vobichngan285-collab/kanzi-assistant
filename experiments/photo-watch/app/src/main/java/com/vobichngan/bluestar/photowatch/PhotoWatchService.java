@@ -285,6 +285,7 @@ public final class PhotoWatchService extends Service {
         String voiceStatus = "系统中文语音尚未就绪";
         long requestElapsed = SystemClock.elapsedRealtime();
         long eventToRequest = Math.max(0L, requestElapsed - startedElapsed);
+        prefs.edit().putLong(KEY_TTS_ONSTART_MS, -1).apply();
         if (ttsReady && tts != null) {
             lastUtteranceId = "new_photo_" + requestElapsed;
             lastSpeechRequestElapsed = requestElapsed;
@@ -298,7 +299,6 @@ public final class PhotoWatchService extends Service {
                 .putString(KEY_LAST_NAME, latest.name)
                 .putLong(KEY_DELAY, timeSinceModified)
                 .putLong(KEY_LOCAL_TO_TTS_MS, eventToRequest)
-                .putLong(KEY_TTS_ONSTART_MS, -1)
                 .putString(KEY_TTS_REQUEST, voiceStatus)
                 .putString(KEY_LAST_SOURCE, source)
                 .putString(KEY_STATUS,
