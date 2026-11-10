@@ -1,18 +1,19 @@
 package com.vobichngan.bluestar.photowatch;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 /**
- * Per-session detector. First scan establishes a baseline and NEVER announces
- * old photos. A new image must keep the same nonzero size and modification time
- * on two consecutive scans before it can be announced.
+ * Fast *arrival* detector for the experiment, NOT a file-completeness check.
  *
- * No image bytes are read. No network communication occurs.
+ * On the first scan it records pre-existing photos without announcing them.
+ * On subsequent scans it announces a newly-visible image on its FIRST
+ * appearance with nonzero size, exactly once.
+ *
+ * For a future OCR upload, a separate stage MUST verify file completeness
+ * before opening/uploading image bytes. This detector reads metadata only.
  */
 public final class PhotoSnapshotTracker {
     public static final class Photo {
@@ -28,60 +29,31 @@ public final class PhotoSnapshotTracker {
         }
     }
 
-    private static final class Pending {
-        final long size;
-        final long modified;
-        final int unchangedScans;
-        Pending(long size, long modified, int unchangedScans) {
-            this.size = size;
-            this.modified = modified;
-            this.unchangedScans = unchangedScans;
-        }
-    }
-
     private boolean baselined = false;
     private final Set<String> known = new HashSet<>();
-    private final Map<String, Pending> pending = new HashMap<>();
 
     public synchronized boolean hasBaseline() { return baselined; }
     public synchronized int baselineCount() { return known.size(); }
 
     public synchronized List<Photo> accept(List<Photo> listing) {
-        List<Photo> newlyStable = new ArrayList<>();
-        if (listing == null) {
-            throw new IllegalArgumentException("listing cannot be null");
-        }
+        if (listing == null) throw new IllegalArgumentException("listing cannot be null");
+        List<Photo> newlyVisible = new ArrayList<>();
         if (!baselined) {
             for (Photo photo : listing) {
-                if (photo.id != null) known.add(photo.id);
+                if (photo.id != null && !photo.id.isEmpty()) known.add(photo.id);
             }
             baselined = true;
-            return newlyStable;
+            return newlyVisible;
         }
-
-        Set<String> present = new HashSet<>();
         for (Photo photo : listing) {
             if (photo.id == null || photo.id.isEmpty()) continue;
-            present.add(photo.id);
             if (known.contains(photo.id)) continue;
-            if (photo.size <= 0) {
-                pending.remove(photo.id);
-                continue;
-            }
-            Pending before = pending.get(photo.id);
-            if (before != null && before.size == photo.size
-                    && before.modified == photo.modified) {
-                if (before.unchangedScans >= 1) {
-                    known.add(photo.id);
-                    pending.remove(photo.id);
-                    newlyStable.add(photo);
-                }
-            } else {
-                pending.put(photo.id, new Pending(photo.size, photo.modified, 1));
-            }
+            // Some providers expose a placeholder of 0 bytes during import.
+            // Wait for nonzero size, but do not wait for a second poll.
+            if (photo.size <= 0) continue;
+            known.add(photo.id);
+            newlyVisible.add(photo);
         }
-        // Do not trigger on a half-written or temporarily missing photo.
-        pending.keySet().retainAll(present);
-        return newlyStable;
+        return newlyVisible;
     }
 }
