@@ -53,10 +53,8 @@ jobs:
           grep -Fq 'button("播放RTSP画面", this::playE09Preview)' "$SRC"
           grep -Fq 'M02sBleWire.e09BlePhoto()' "$SRC"
           ! grep -Fq 'Bitmap.compress(' "$SRC"
-          # The original BLE assembler has not changed from the tested baseline
-          git show b7f42f8ce8887c7417426f1b8a1ad6c8e584cd66:experiments/m02s-wifi-lab/app/src/main/java/com/vobichngan/bluestar/m02slab/M02sE09PhotoAssembler.java | sha256sum | cut -d' ' -f1 > /tmp/original-assembler.sha
-          sha256sum experiments/m02s-wifi-lab/app/src/main/java/com/vobichngan/bluestar/m02slab/M02sE09PhotoAssembler.java | cut -d' ' -f1 > /tmp/current-assembler.sha
-          diff -u /tmp/original-assembler.sha /tmp/current-assembler.sha
+          # Compare the immutable Git blob from the user's tested v0.1.12 base.
+          test "$(git hash-object experiments/m02s-wifi-lab/app/src/main/java/com/vobichngan/bluestar/m02slab/M02sE09PhotoAssembler.java)" = "3be7b6c1b485d1766a9f0ebb5c65cbce2a0df0df"
           echo "E09 export opt-in and byte preserving; original assembler unchanged"
 
       - name: Verify independent APK, permissions, and signature
