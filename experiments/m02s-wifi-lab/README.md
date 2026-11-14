@@ -1,3 +1,17 @@
+# M02S E09 实时直播能力只读查询 v0.1.12-livecheck（2026-11-15）
+
+**为什么做这个检查**：用户2026-11-15真机发送 `0x67/0x30` 后收到AA14 `0x67`、`0x25`有效SSID，手机看见眼镜新AP广播，但Android 16 `WifiNetworkSpecifier` 返回本地失败原因=1（**association关联阶段失败**）。没有真实AP Network/私有网关，也没有尝试RTSP播放器/视频解码，**不能把关联失败当成RTSP无画面或不支持的证明**。
+
+**源码依据**：反编译参考原厂EyeVue `SendCommandViaBle.getSupportFunction()` 调用 `configSendCommand(149,0)`，与 MIT 开源 E09 `BleProbe.validateSupportFunction()` 完全对应：AA13 `AB 55 00 03 95 00 95`，AA14 `0x95` 应返回 **4字节大端能力掩码**，`bit0 supportLive`。来源 https://github.com/sctg-development/ai-smart-glasses-e09-reverse 和 https://github.com/sctg-development/ai-smart-glasses-e09/blob/main/REVERSE_ENGINEERING_EYEVUE_BLE_PROTOCOL.md 。与用户设备相同的原厂 APK `com.starglasses.app` 存在 `SupportFunctionBean`、`GET_SUPPORT_FUNCTION`、`StarLiveActivity`、`StarTLiveActivity` 与 RTSP 地址，但**未从设备读到其自身掩码，不可预判支持直播**。用户先前只读项目号为 `TK8`，符合含 T 的 AP 选路规则，但**AP选路不等于直播能力为真**。
+
+**唯一新增功能**：⑥ E09 区新增「检测眼镜直播功能支持位（只读 BLE 0x95）」按钮。仅当BLE GATT AA14通知就绪、当前没有拍照/RTSP/Wi-Fi任务时，用户手动点击发送唯一白名单 `0x95/0x00`，等待最多5秒；不自动重试。严格验AC55帧结构、校验和及**恰好4字节**功能数据，正确按大端解析，仅显示能力掩码/bit0 true或false；未收到、长度不对、校验错一律显示**未知**，不能冒充不支持。退出监听时取消待查。其余已实测成功的BLE 320×180 JPEG及相册导出、原 RTSP APP_LIVE/P2P/AP/MediaPlayer 原代码均保留。这个新按钮**不会连接Wi-Fi、拍照、删眼镜文件、改固件、调用OTA或上传内容**。未授权任何 `0x95` 参数变体。
+
+**真机一次测试**：关闭其它眼镜控制App→安装此独立APK→扫描M02S/连接LE1M→开启蓝牙监听直到AA14订阅 status=0→**保持Wi-Fi会话为空，不要先点AP热点/RTSP直播**→只点「检测眼镜直播功能支持位（只读 BLE 0x95）」一次→回传日志中 `E09直播支持查询：设备能力掩码...bit0 supportLive...` 或「5秒无有效回复」。若bit0=false，不要盲目改扫码/AP超时；若true，说明固件报告能力存在，但仍需独立解决 Android Wi-Fi 关联失败，不能直接保证直播可用。
+
+**版本纪律**：基于已经通过真机JPEG解码的 `v0.1.12-export` 隔离分支，新增包名 `com.vobichngan.bluestar.m02se09livechecklab` 和versionName `0.1.12-livecheck`；不覆盖旧APK、正式蓝星向导RC25、Windows OCR、原厂HeyCyan或眼镜文件。保留 `E09_SOURCE_LICENSE.md` 中MIT许可。
+
+---
+
 # M02S E09 蓝牙JPEG手动导出实验（基于v0.1.12已真机成功版）
 
 - 基线：`exp/m02s-e09-jpeg-tail-fix-v0112-20261114`，用户2026-11-14 21:03实测AA15直传并解码成功320×180 JPEG、3061ms。完整AA15分片、0x22/0x31、RTSP 0x67/0x30、原厂HTTP等全部不改变。
