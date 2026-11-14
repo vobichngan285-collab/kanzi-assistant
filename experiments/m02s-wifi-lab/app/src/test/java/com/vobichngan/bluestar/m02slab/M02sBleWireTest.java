@@ -13,12 +13,18 @@ public final class M02sBleWireTest {
                 M02sBleWire.wifiApInfo());
     }
 
-    @Test public void allowOnlyThreeKnownPackets() {
+    @Test public void allowKnownAndSafeE09PacketsOnly() {
         assertTrue(M02sBleWire.isExactAuthorizedCommand(M02sBleWire.photoThumbnail()));
         assertTrue(M02sBleWire.isExactAuthorizedCommand(M02sBleWire.wifiP2pInfo()));
         assertTrue(M02sBleWire.isExactAuthorizedCommand(M02sBleWire.wifiApInfo()));
-        assertFalse(M02sBleWire.isExactAuthorizedCommand(
-                new byte[]{(byte)0xab, 0x55, 0, 3, 0x22, 0x31, 0x53}));
+        assertArrayEquals(new byte[]{(byte)0xab,0x55,0,3,0x22,0x31,0x53},M02sBleWire.e09BlePhoto());
+        assertArrayEquals(new byte[]{(byte)0xab,0x55,0,3,0x67,0x30,(byte)0x97},M02sBleWire.e09AppLiveAp());
+        assertArrayEquals(new byte[]{(byte)0xab,0x55,0,4,0x44,0x30,1,0x75},M02sBleWire.e09SafeTransferFinish());
+        assertTrue(M02sBleWire.isExactAuthorizedCommand(M02sBleWire.e09BlePhoto()));
+        assertTrue(M02sBleWire.isExactAuthorizedCommand(M02sBleWire.e09AppLiveAp()));
+        assertTrue(M02sBleWire.isExactAuthorizedCommand(M02sBleWire.e09SafeTransferFinish()));
+        assertFalse("Never allow media deletion", M02sBleWire.isExactAuthorizedCommand(
+                new byte[]{(byte)0xab,0x55,0,4,0x44,0x30,0,0x74}));
         assertFalse(M02sBleWire.isExactAuthorizedCommand(new byte[]{0x22, 0x30}));
     }
 
