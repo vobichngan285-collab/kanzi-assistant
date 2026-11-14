@@ -1,26 +1,24 @@
-# M02S-3584｜v0.1.15 实体手动快门 + Wi-Fi 精准连接回退修复
+# M02S v0.1.16 — 实体拍照后极速 Wi-Fi 高清取图（独立实验）
 
-## 修复依据（真实Android16失败）
-- 用户 v0.1.14 21:55:46 BLE `0x39/0x30` 开AP已成功写入；AA14 `0x25`返回校验通过的真实SSID；21:55:47 曾检测到本次新AP广播。
-- 后续实机屏幕提示 **“连接失败：12秒内未扫描到本次新的眼镜Wi-Fi热点；不连接旧缓存或邻居设备”**。当眼镜BLE提供真实SSID后，Android扫描可能限流、结果回收或广播暂时消失。扫描缺席**不能推断该眼镜不支持或不存在AP**；也不能直接承诺AP在线。
-- 截图界面顶部错误残留 `v0.1.13`，虽然运行的是v0.1.14。此版修正UI与APK Manifest版本标签，所有显示统一为v0.1.15。
+## 这次只解决速度：不再先连Wi-Fi等眼镜拍照
+用户在v0.1.15真机看到：每次开热点后Android扫描白等12秒，然后精确连接用2–5秒。已实测原厂高清3200×2400 JPEG GET本身仅475–758ms。眼镜在Wi-Fi模式下实体快门无正常反应；因此v0.1.16改变顺序：**先连接BLE并待机，不开Wi-Fi；眼镜在正常拍照模式下手动实体按键；收到有效候选通知后请求一次原厂Wi-Fi AP，按蓝牙校验SSID立刻请求Android连接；从原厂HTTP目录选择唯一最新候选，两次稳定后仅GET原始高清图片到手机RAM。**
 
-## 最小变更——在旧成功流程上加安全回退
-1. **只启动一次原厂已验证BLE开AP**：扫描唯一 `M02S`，GATT LE1M、AA14 CCCD，AA13写精确白名单 `AB 55 00 03 39 30 69` (`0x39/0x30`)，等待GATT status0和AA14 checksum正确的 `0x25` 真实SSID。无 `0x22` 远程拍照、无BLE直传、无删除/OTA/P2P写指令。
-2. **优先复用已经连接的精确目标**：遍历Android已连Wi-Fi Network，若WifiInfo SSID与BLE返回的完全相同、并有真实私有IPv4网关，复用此Network，**不申请新连接**。但仍必须让 `MainActivity` 读取 `GET /app/getfilelist` 验证原厂JSON `result=0` / `info`。不因SSID相同就宣称眼镜已就绪。
-3. **新扫描成功**：依旧遵循旧版真实已测的 `FRESH_UNIQUE` / 1.8秒新扫描稳定规则，再执行一次精确SSID/WPA2 Android `requestNetwork`；不能连接其它热点，不凭扫描结果宣称Wi-Fi已连通。
-4. **扫描12秒无可靠本次新结果**：如果**AA13开AP写入回调status0、AA14 `0x25` SSID字节/校验合法、没有已发出Network请求、未出现多个同SSID不同BSSID歧义**，则**只对BLE确认的准确SSID**用先前v0.1.6/v0.1.10成功的 `WifiNetworkSpecifier`+OEM WPA2密钥申请一次Android目标网络。Android是否提示授权、`onAvailable`、真实网关和原厂HTTP列表是否存在，才是最终判断；失败明确停止，不再次写BLE、不反复Wi-Fi重试、不猜邻居SSID。
-5. **建连成功后取消旧90秒连接超时**，让拍照前基线+最多120秒/3张连续监听不被建连超时误停。手动按实体快门，HTTP每约450ms找相对旧基线的新文件并稳定两次再GET原始照片。保留旧的文件名/URL/尺寸/32MB安全限制，只在内存显示，不上传、不存相册、不删眼镜照片。
+### 具体入口
+- **「准备蓝牙待机」**：扫描唯一M02S、GATT LE1M连接、AA14 CCCD通知订阅后停止动作并待机；不发送任何Wi-Fi或拍照指令。BLE待机连接的首次耗时不计入拍照后传输。
+- **实体快门**：眼镜正常模式拍照。MIT开源E09的 `ACTION_SYNC/0x45` payload[0] 标记 `isTakePhoto`，本实验只从校验正确的AA14包解析 **0→1** 候选变化，350ms后尝试启动取图。**该上游字段在M02S固件上未经真机证明会对应实体按键；软件日志明确显示“候选”而不伪称确认。**
+- **「我已经拍照，立即取高清原图」**：若M02S没有任何可用0x45通知，不要求继续猜协议；在按实体快门之后点本按钮，**立即**发送已真机验证的原厂BLE `0x39/0x30` 开AP命令，完成同一条最短Wi-Fi传输路径。这是验证高速传图的确定性后备入口。
+- **Wi-Fi极速连接**：收到AA14严格校验 `0x25` 实际SSID，等待AA13 GATT写入status0，如已连接完全相同SSID+私有IPv4网关则复用；否则 **直接一次 `ConnectivityManager.requestNetwork(WifiNetworkSpecifier exact SSID + OEM WPA2)`**。**没有12秒扫描、没有1.8秒等待、没有多轮补救重试或连接其他网络**。成功必须Android `Network.onAvailable`、真实网关，并经 `GET /app/getfilelist` 的HTTP200/原厂JSON验证；Android是否成功连接、是否弹授权完全由真机决定。
+- **取图**：只读 `GET /app/getfilelist`，依照已有 `M02sPhotoPolicy.uniqueLatestOrNull` 判断唯一可排序的最新照片，两次相隔约350ms读取到相同文件/大小/时间并且与本App上次下载的不是同一张，才GET 原始高分辨率图片；解码/长度/文件路径限制沿用已验证代码。**首次启动没有拍照前文件列表：最新只代表“最可能的候选”，无法证明该照片确实来自刚才的实体快门；若相同时间戳、排序不唯一、没有合格图片，停止而不猜。**文件名/照片内容/SSID/蓝牙地址/密码都不写日志。单轮最多39秒超时，禁止自动重发。完成后解除手机本轮Wi-Fi请求，BLE仍保持待机；**这并不证明眼镜固件已退出Wi-Fi导入模式**。
+- 不再连接后每450ms无休止查询目录；只在拍照后的传输会话中查询两次稳定列表；不发送BLE `0x22` 拍照/ `0x44` 结束或删除 /OTA命令，不清除眼镜文件，不保存相册，不上传公网或云AI。**本实验“上传照片”指原始JPEG由眼镜传到手机RAM预览，后续云OCR/TTS需要另行明确配置。**
 
-## 实机验证指引
-1. 不需要进入Android WLAN手动猜SSID。关闭HeyCyan，手机蓝牙/WLAN开，授予所需蓝牙/附近Wi-Fi/位置权限，打开 **独立v0.1.15**。
-2. 点击 **「连接M02S并开启Wi-Fi、自动等待照片」** 一次，不再重复点；Android系统如果弹出眼镜Wi-Fi授权，请选择允许。
-3. 日志应出现 `收到AA14 0x25准确SSID`，然后根据实际情况显示“复用已有目标Network”“已看到新AP”“扫描12秒回退，仅请求一次准确SSID”其中之一；接着**必须**有`Network onAvailable`或复用真实Network、原厂HTTP200照片列表通过、旧照片基线建立。
-4. **只有显示“旧照片基线已建立”后**才按眼镜实体快门一次，观察有没有真实快门动作，以及是否出现新文件/下载高清图；第一张确认后再按第二和第三次。
-5. 若走到 `onAvailable` 但原厂HTTP失败，请复制安全日志以定位网关/原厂接口；若AP已连接但眼镜实体按键拍照没反应，记录**固件可能拍照/传输互斥**，不要重试旧蓝牙拍照链路。
-6. **测试边界**：本轮仅保证代码能编译并在Android中尝试一次安全回退，不保证眼镜AP真的允许手动快门，亦不保证“按键到高清原图≤3秒”。用户的全流程OCR/TTS尚未添加；单次Wi-Fi GET过去真机实测约475～758ms是已有事实，端到端速度仍待测。
+## 最短的真机使用步骤
+1. 关HeyCyan/别的眼镜控制APP，打开蓝牙及WLAN，授予权限，打开v0.1.16，点击一次**「准备蓝牙待机」**，观察到 **「BLE已待机」**。
+2. 在眼镜正常拍照状态**按实体快门一次**。如果app日志打印了0x45标志并启动取图，等Android系统Wi-Fi授权提示，允许本次精确眼镜网络。**如果没自动反应，直接点击一次「我已经拍照，立即取高清原图」**，无需再拍一张、无需等12秒。
+3. 观察“AA13开AP回执/AA14 SSID/直连Wi-Fi请求/Network onAvailable/网关/原厂照片列表/高清JPEG下载”每个阶段耗时和原图尺寸；如果失败，复制匿名日志。不要反复点击取图或触发旧远程拍照。
+4. 下载后app只释放手机WifiNetworkSpecifier请求，保留BLE；眼镜恢复拍照模式**仍需真机验证**。如果不能继续实体拍照，要进一步研究原厂**非删除**退出命令，但本版绝不未经验证自动发可能伤及用户照片的0x44指令。
+5. 重要：**这不是保证3秒取图**。既然不确定0x45在M02S上有效，自动触发与用户快门时刻目前不可承诺；Android初次Wi-Fi关联也可能耗数秒。实验日志的“取图触发到JPEG解码”不等于用户按快门到成功的全部时延。
 
-## 开源与版本隔离
-- 复用本仓库旧实验已验证的 `M02sPhotoTransport`、`M02sPhotoListReader`、`M02sFreshPhotoPolicy`，WPA2与BLE AA14/AA13控制，以及 `M02sApScanPolicy` / `M02sApReadinessPolicy`。参考 MIT `sctg-development/ai-smart-glasses-e09-reverse` 源码 `Constants.swift`、`WifiMediaManager.swift`，许可证和署名保存在 `E09_SOURCE_LICENSE.md`。
-- 新隔离分支 `exp/m02s-ap-ssid-fallback-v0115-20261114`，实验目录 `experiments/m02s-wifi-only-lab`。独立Android App ID `com.vobichngan.bluestar.m02sapfallbacklab`，versionCode16/versionName0.1.15，与旧v0.1.14、v0.1.13、v0.1.12及正式蓝星向导RC25共存，Windows OCR/原厂App均不动。
-- 新增 `M02sApConnectPolicy` + JUnit回归测试覆盖无扫描/只有旧缓存可安全回退、12秒前不回退、没BLE写确认/无效SSID/已请求过网络/同名多热点不回退等。CI成功≠真机连接成功或手动快门验证成功。
+## 复用而不是重造
+- 本仓库经过用户真实Android16测试的 `M02sApWire`、`M02sApStarter`（唯一BLE AA13/AA14开启AP）、`M02sPhotoTransport`、`M02sPhotoListReader`、`M02sPhotoPolicy`、`M02sFreshPhotoPolicy`、`ProbePolicy` 沿用。
+- 开源 MIT [sctg-development/ai-smart-glasses-e09-reverse](https://github.com/sctg-development/ai-smart-glasses-e09-reverse) 的 `Sources/e09_reverse/AdditionalValidations.swift`（decodeActionSyncFlags的isTakePhoto字段）及 `Constants.swift` / `WifiMediaManager.swift`，出处与MIT许可见 `E09_SOURCE_LICENSE.md`。**这里不复制其任何未经真机验证的触发成功结论**。
+- 独立分支 `exp/m02s-shot-wifi-fastpath-v0116-20261114`，仅修改该分支的 `experiments/m02s-wifi-only-lab`。独立Android包名 `com.vobichngan.bluestar.m02sshotfastlab`、versionCode17、versionName0.1.16。v0.1.12～v0.1.15和正式蓝星向导RC25、Windows OCR、HeyCyan全部保持不动。
