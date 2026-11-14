@@ -24,6 +24,8 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.media.MediaPlayer;
+import android.net.Uri;
 import android.net.ConnectivityManager;
 import android.net.LinkProperties;
 import android.net.RouteInfo;
@@ -54,6 +56,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
+import android.view.SurfaceView;
 import android.widget.TextView;
 
 import java.io.ByteArrayOutputStream;
@@ -112,6 +115,7 @@ public final class MainActivity extends Activity {
     private static final UUID COMMAND_SERVICE = UUID.fromString("0000aa12-0000-1000-8000-00805f9b34fb");
     private static final UUID COMMAND_WRITE = UUID.fromString("0000aa13-0000-1000-8000-00805f9b34fb");
     private static final UUID COMMAND_NOTIFY = UUID.fromString("0000aa14-0000-1000-8000-00805f9b34fb");
+    private static final UUID PHOTO_NOTIFY = UUID.fromString("0000aa15-0000-1000-8000-00805f9b34fb");
     private boolean commandNotifyReady;
     private String writeInFlight;
     private Runnable writeTimeout;
@@ -187,6 +191,18 @@ public final class MainActivity extends Activity {
     private boolean previousFinishedListValid;
     private Network oneClickBoundNetwork;
     private String oneClickBoundHost;
+
+    /** Experimental E09 family protocol; NOT yet proven on M02S. */
+    private boolean e09BlePhotoActive;
+    private final M02sE09PhotoAssembler e09Assembler = new M02sE09PhotoAssembler();
+    private long e09PhotoStartedAt;
+    private Runnable e09PhotoTimeout;
+    private boolean e09LiveRequested;
+    private boolean e09LiveProbing;
+    private boolean e09ProcessBound;
+    private MediaPlayer e09Player;
+    private SurfaceView e09Surface;
+    private String e09LiveLastHost;
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -291,7 +307,7 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(receiver, f);
         receiverRegistered = true;
-        log("v0.1.10 AP就绪诊断：BLE拍照一次→核对拍照后新扫描时间戳→仅一次Android精准连接");
+        log("v0.1.11 开源E09实验：AA15蓝牙JPEG直传+APP_LIVE 0x67/0x30 RTSP；旧AP拍照测试保留");
         log("照片只从眼镜AP按原厂接口GET至内存；不保存相册、不上传云端、不删文件");
         requestPermissionsIfNeeded();
         updateNetworkStatus();
@@ -306,7 +322,7 @@ public final class MainActivity extends Activity {
         body.setBackgroundColor(Color.rgb(245, 248, 252));
         scroll.addView(body);
 
-        body.addView(text("蓝星 M02S AP就绪诊断 v0.1.10", 23, true));
+        body.addView(text("蓝星 M02S 开源E09直传实验 v0.1.11", 23, true));
         body.addView(text("独立实验，不修改正式蓝星向导。Wi-Fi 网络名称/密码不会写进日志。", 14, false));
         status = text("蓝牙未连接 / 眼镜 Wi-Fi 未建立", 17, true);
         status.setPadding(0, dp(12), 0, dp(10));
@@ -370,6 +386,24 @@ public final class MainActivity extends Activity {
                 + "等待本次AP信息请求后的新扫描时间戳；同一目标热点再等待1.8秒后仅发一次SSID连接请求。"
                 + "Android16会尽量记录具体失败原因；不立刻重连、不猜热点、不重复拍照。"
                 + "首次下载的最新图片仍需人工核对是否刚拍摄。", 14, false));
+
+        section(body, "⑥ E09开源协议独立测试｜免相册导入");
+        body.addView(text("下面是按开源 ai-smart-glasses-e09-reverse 移植的独立实验："
+                + "蓝牙0x22/0x31尝试从AA15直接接收JPEG；0x67/0x30尝试打开AP直播RTSP。"
+                + "与M02S的兼容性尚未确认，不会自动循环发命令。", 14, false));
+        addRow(body, button("E09 蓝牙直传照片", this::startE09BlePhoto),
+                button("取消蓝牙接收", this::stopE09BlePhoto));
+        addRow(body, button("E09 RTSP直播建连", this::startE09Live),
+                button("播放RTSP画面", this::playE09Preview));
+        addRow(body, button("停止直播并安全退出", this::endE09Live),
+                button("单独发送不删除结束指令", this::sendE09SafeFinish));
+        body.addView(text("直播仅访问眼镜专属已验证AP网关 /h264；收到RTSP控制应答不等于能播放画面。"
+                + "结束通知仅允许0x44/0x30/0x01，不提供删除媒体的0x44/0x30/0x00。"
+                + "无照片保存、无云上传、无固件命令。", 14, false));
+        e09Surface = new SurfaceView(this);
+        e09Surface.setMinimumHeight(dp(190));
+        body.addView(e09Surface, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(190)));
 
         // Retained internally for legacy diagnostics; never displayed, so
         // unrelated nearby P2P devices cannot be selected accidentally.
