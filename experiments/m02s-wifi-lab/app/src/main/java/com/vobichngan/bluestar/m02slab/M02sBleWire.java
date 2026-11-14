@@ -30,6 +30,18 @@ public final class M02sBleWire {
         return frame(CMD_TAKE_PHOTO, 0x30);
     }
 
+    /** Eyevue E09 open-source source: TAKE_PHOTO high-quality -> AA15 JPEG transfer. */
+    public static byte[] e09BlePhoto() { return frame(0x22, 0x31); }
+
+    /** Eyevue E09 open-source source: APP_LIVE AP mode -> 0x25 SSID -> RTSP /h264. */
+    public static byte[] e09AppLiveAp() { return frame(0x67, 0x30); }
+
+    /** E09/HeyCyan documented NON-DELETING Wi-Fi session finish (0x44/0x30/0x01).
+     * Never expose 0x44/0x30/0x00: that variant can delete media. */
+    public static byte[] e09SafeTransferFinish() {
+        return new byte[]{(byte)0xAB,0x55,0,4,0x44,0x30,1,0x75};
+    }
+
     public static byte[] wifiP2pInfo() {
         return frame(CMD_GET_WIFI_INFO, 0x31);
     }
@@ -49,7 +61,10 @@ public final class M02sBleWire {
     public static boolean isExactAuthorizedCommand(byte[] bytes) {
         return Arrays.equals(bytes, photoThumbnail())
                 || Arrays.equals(bytes, wifiP2pInfo())
-                || Arrays.equals(bytes, wifiApInfo());
+                || Arrays.equals(bytes, wifiApInfo())
+                || Arrays.equals(bytes, e09BlePhoto())
+                || Arrays.equals(bytes, e09AppLiveAp())
+                || Arrays.equals(bytes, e09SafeTransferFinish());
     }
 
     public static final class ParsedFrame {
@@ -117,7 +132,10 @@ public final class M02sBleWire {
 
     public static String outgoingDescription(byte[] bytes) {
         if (!isExactAuthorizedCommand(bytes)) return "不是白名单内指令";
-        if (Arrays.equals(bytes, photoThumbnail())) return "原厂缩略图拍照命令 0x22/0x30";
+        if (Arrays.equals(bytes, photoThumbnail())) return "已验证BLE拍照 0x22/0x30";
+        if (Arrays.equals(bytes, e09BlePhoto())) return "E09 BLE直传照片试验 0x22/0x31";
+        if (Arrays.equals(bytes, e09AppLiveAp())) return "E09 RTSP直播AP试验 0x67/0x30";
+        if (Arrays.equals(bytes, e09SafeTransferFinish())) return "E09安全结束传输(不删文件) 0x44/0x30/0x01";
         if (Arrays.equals(bytes, wifiP2pInfo())) return "原厂P2P Wi-Fi信息请求 0x39/0x31";
         return "原厂AP Wi-Fi信息请求 0x39/0x30";
     }
