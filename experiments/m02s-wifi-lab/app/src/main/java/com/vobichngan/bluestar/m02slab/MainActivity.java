@@ -154,6 +154,17 @@ public final class MainActivity extends Activity {
     /** The original image is held in RAM only, never saved to disk or cloud. */
     private byte[] lastPhotoInMemory;
     private boolean photoBusy;
+    /** One-click flow does not start until AP + BLE are both ready. */
+    private boolean oneClickActive;
+    private int oneClickGeneration;
+    private int oneClickPollNumber;
+    private boolean oneClickWaitingWrite;
+    private long oneClickShutterAt;
+    private Runnable oneClickTimer;
+    private M02sFreshPhotoPolicy.Selection oneClickPrevious;
+    private List<M02sPhotoPolicy.Candidate> oneClickBefore = Collections.emptyList();
+    private Network oneClickBoundNetwork;
+    private String oneClickBoundHost;
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -245,7 +256,7 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(receiver, f);
         receiverRegistered = true;
-        log("v0.1.6 原始照片实验：保留已验证BLE+AP网络，新增内存JSON列表解析和安全原图预览");
+        log("v0.1.7 一键拍照取图实验：先记录列表基线，再发一次原厂拍照指令，只下载新出现且稳定的原图");
         log("照片只从眼镜AP按原厂接口GET至内存；不保存相册、不上传云端、不删文件");
         requestPermissionsIfNeeded();
         updateNetworkStatus();
@@ -260,7 +271,7 @@ public final class MainActivity extends Activity {
         body.setBackgroundColor(Color.rgb(245, 248, 252));
         scroll.addView(body);
 
-        body.addView(text("蓝星 M02S 原图验证 v0.1.6", 23, true));
+        body.addView(text("蓝星 M02S 一键拍照取图 v0.1.7", 23, true));
         body.addView(text("独立实验，不修改正式蓝星向导。Wi-Fi 网络名称/密码不会写进日志。", 14, false));
         status = text("蓝牙未连接 / 眼镜 Wi-Fi 未建立", 17, true);
         status.setPadding(0, dp(12), 0, dp(10));
@@ -316,6 +327,14 @@ public final class MainActivity extends Activity {
         photoPreview.setMaxHeight(dp(280));
         photoPreview.setScaleType(ImageView.ScaleType.FIT_CENTER);
         body.addView(photoPreview);
+
+        section(body, "⑤ 一键新拍照并自动获取（只用已连通AP）");
+        addRow(body, button("一键拍照并获取新照片", this::startOneClick),
+                button("取消本次拍照任务", () -> stopOneClick("用户取消本次一键任务")));
+        body.addView(text("先连接眼镜蓝牙和AP一次；按此按钮后先读取当前列表作基线，"
+                + "仅发送一次已经真机验证的原厂拍照命令，等待新文件出现并连续两次稳定后下载。"
+                + "最多等待45秒；绝不会用旧的最新照片冒充新拍照片。"
+                + "不自动重新连接Wi-Fi，不保存相册，不上传云端。", 14, false));
 
         // Retained internally for legacy diagnostics; never displayed, so
         // unrelated nearby P2P devices cannot be selected accidentally.
@@ -465,6 +484,7 @@ public final class MainActivity extends Activity {
 
     /** Only called from the main thread; late GATT callbacks are ignored by token. */
     private void closeGatt(String reason) {
+        stopOneClick("蓝牙连接结束，本次一键拍照任务取消");
         stopNotificationMonitor("GATT 连接结束");
         if (wifiConnecting && !wifiVerified) stopWifiSession("蓝牙连接已断开");
         clearWritePending();
@@ -854,6 +874,9 @@ public final class MainActivity extends Activity {
                 if (writeInFlight == null) return;
                 log("AA13 写入4秒无回调，结果未知；不自动重发");
                 clearWritePending();
+                if (oneClickActive && oneClickWaitingWrite) {
+                    stopOneClick("遥控拍照指令写入无回执，不能确认拍照，不重试");
+                }
             };
             ui.postDelayed(writeTimeout, 4000);
             return true;
@@ -875,6 +898,19 @@ public final class MainActivity extends Activity {
         clearWritePending();
         log("AA13 写入回执：" + label + "；status=" + code + "；耗时="
                 + elapsed + "ms；这仅代表 BLE 写入结果，需观察 AA14 返回确认设备动作");
+        if (oneClickActive && oneClickWaitingWrite
+                && label.equals(M02sBleWire.outgoingDescription(M02sBleWire.photoThumbnail()))) {
+            oneClickWaitingWrite = false;
+            if (code == 0) {
+                oneClickShutterAt = SystemClock.elapsedRealtime();
+                log("一键流程：AA13写入status=0，开始检查文件列表是否真的产生新照片；不凭回执宣称已拍照");
+                final int run = oneClickGeneration;
+                oneClickTimer = () -> beginOneClickPolling(run);
+                ui.postDelayed(oneClickTimer, 800L);
+            } else {
+                stopOneClick("眼镜拍照命令GATT写入失败，status=" + code + "；不重发");
+            }
+        }
     }
 
     private void requestTargetWifi(WifiMode mode) {
@@ -1431,6 +1467,7 @@ public final class MainActivity extends Activity {
     }
 
     private void clearPhotoUi() {
+        stopOneClick("Wi-Fi会话结束或清除预览，本次一键任务取消");
         photoCandidates = Collections.emptyList();
         photoBusy = false;
         lastPhotoInMemory = null;
@@ -1459,6 +1496,7 @@ public final class MainActivity extends Activity {
     }
 
     private void loadPhotoList(boolean downloadLatest) {
+        if (oneClickActive) { log("一键拍照流程进行中，请勿同时手动读取列表"); return; }
         if (!photoNetworkReady()) return;
         if (photoBusy) { log("正在进行照片实验，请等待当前请求完成"); return; }
         finishHold("执行照片单次查询，停止周期探测");
@@ -1521,6 +1559,7 @@ public final class MainActivity extends Activity {
     }
 
     private void downloadChosenPhoto() {
+        if (oneClickActive) { log("一键拍照流程进行中，请勿同时手动下载"); return; }
         if (!photoNetworkReady()) return;
         if (photoBusy) { log("有照片请求正在进行，请稍等"); return; }
         int index = photoSpinner.getSelectedItemPosition() - 1;
@@ -1578,14 +1617,22 @@ public final class MainActivity extends Activity {
 
     private void beginDownload(M02sPhotoPolicy.Candidate item, int token,
                                String host, Network dedicatedNetwork) {
+        beginDownload(item, token, host, dedicatedNetwork, -1);
+    }
+
+    private void beginDownload(M02sPhotoPolicy.Candidate item, int token,
+                               String host, Network dedicatedNetwork, int oneClickId) {
         if (M02sPhotoPolicy.safePhotoUrl(host, item.remoteName) == null) {
+            if (oneClickId >= 0) stopOneClick("新照片原图路径未通过安全校验");
             photoBusy = false;
             log("原始照片的路径未通过本地安全检查，拒绝下载；不猜测其它地址");
             status.setText("照片下载路径不符合安全约束");
             return;
         }
         if (!wifiVerified || wifiMode != WifiMode.AP ||
-                dedicatedNetwork == null || !host.equals(verifiedHost)) {
+                dedicatedNetwork == null || !host.equals(verifiedHost)
+                || (oneClickId >= 0 && !oneClickReady(oneClickId))) {
+            if (oneClickId >= 0) stopOneClick("原图下载前AP网络或本次任务已失效");
             photoBusy = false;
             log("目标眼镜AP状态发生变化，取消原图下载");
             return;
@@ -1597,8 +1644,10 @@ public final class MainActivity extends Activity {
                         M02sPhotoTransport.getOriginalPhoto(dedicatedNetwork, host, item);
                 if (response.httpCode != 200) {
                     ui.post(() -> {
-                        if (destroyed || token != wifiSessionToken) return;
+                        if (destroyed || token != wifiSessionToken
+                                || (oneClickId >= 0 && !oneClickReady(oneClickId))) return;
                         photoBusy = false;
+                        if (oneClickId >= 0) stopOneClick("新照片原图HTTP请求未成功");
                         log("原图GET返回 HTTP " + response.httpCode
                                 + "；未下载到有效图片，不会重试或猜测URL");
                         status.setText("原始照片HTTP " + response.httpCode);
@@ -1610,13 +1659,15 @@ public final class MainActivity extends Activity {
                 ui.post(() -> {
                     if (destroyed || token != wifiSessionToken ||
                             !wifiVerified || wifiMode != WifiMode.AP
-                            || apNetwork != dedicatedNetwork) {
+                            || apNetwork != dedicatedNetwork
+                            || (oneClickId >= 0 && !oneClickReady(oneClickId))) {
                         image.preview.recycle();
                         return;
                     }
                     lastPhotoInMemory = response.body;
                     photoPreview.setImageBitmap(image.preview);
                     photoBusy = false;
+                    if (oneClickId >= 0) finishOneClickSuccess();
                     log("原图下载并解码成功：HTTP 200；"
                             + response.body.length + "字节；"
                             + image.originalWidth + "×" + image.originalHeight
@@ -1628,16 +1679,20 @@ public final class MainActivity extends Activity {
             } catch (Exception ex) {
                 final String errorType = ex.getClass().getSimpleName();
                 ui.post(() -> {
-                    if (destroyed || token != wifiSessionToken) return;
+                    if (destroyed || token != wifiSessionToken
+                            || (oneClickId >= 0 && !oneClickReady(oneClickId))) return;
                     photoBusy = false;
+                    if (oneClickId >= 0) stopOneClick("刚拍原图下载或解码失败");
                     log("原始图片GET或格式验证失败：" + errorType
                             + "；未保存文件，不输出原始响应或文件名");
                     status.setText("原始照片验证未成功");
                 });
             } catch (OutOfMemoryError error) {
                 ui.post(() -> {
-                    if (destroyed || token != wifiSessionToken) return;
+                    if (destroyed || token != wifiSessionToken
+                            || (oneClickId >= 0 && !oneClickReady(oneClickId))) return;
                     photoBusy = false;
+                    if (oneClickId >= 0) stopOneClick("新照片过大，无法安全解码");
                     lastPhotoInMemory = null;
                     log("图片解码超过手机内存限制，拒绝保留");
                     status.setText("原图过大，已终止预览");
@@ -1646,8 +1701,188 @@ public final class MainActivity extends Activity {
         });
     }
 
+    /** All one-click state mutation stays on the UI thread; network I/O uses io. */
+    private boolean oneClickReady(int id) {
+        if (!oneClickActive || oneClickGeneration != id || destroyed) return false;
+        if (!wifiVerified || wifiMode != WifiMode.AP
+                || apNetwork != oneClickBoundNetwork || verifiedHost == null
+                || !verifiedHost.equals(oneClickBoundHost)) {
+            stopOneClick("目标AP网络已改变，本次一键流程取消");
+            return false;
+        }
+        return true;
+    }
+
+    private void stopOneClick(String reason) {
+        if (!oneClickActive) return;
+        oneClickActive = false;
+        oneClickGeneration++;
+        oneClickWaitingWrite = false;
+        if (oneClickTimer != null) ui.removeCallbacks(oneClickTimer);
+        oneClickTimer = null;
+        oneClickPrevious = null;
+        oneClickBefore = Collections.emptyList();
+        oneClickBoundNetwork = null;
+        oneClickBoundHost = null;
+        photoBusy = false;
+        log("一键取图停止：" + reason);
+        if (status != null) status.setText("一键任务停止：" + reason);
+    }
+
+    private void finishOneClickSuccess() {
+        if (!oneClickActive) return;
+        oneClickActive = false;
+        oneClickGeneration++;
+        if (oneClickTimer != null) ui.removeCallbacks(oneClickTimer);
+        oneClickTimer = null;
+        oneClickPrevious = null;
+        oneClickBefore = Collections.emptyList();
+        oneClickBoundNetwork = null;
+        oneClickBoundHost = null;
+        oneClickWaitingWrite = false;
+        photoBusy = false;
+        log("一键拍照取图完成：相对于拍照前的文件列表，确认新文件出现且连续两次稳定，原图已经验证并显示");
+    }
+
+    private void startOneClick() {
+        if (oneClickActive || photoBusy) {
+            log("已有照片任务进行中，不允许重复启动"); return;
+        }
+        if (!photoNetworkReady()) return;
+        if (!gattConnected || !servicesReady || gatt == null) {
+            log("一键任务需要BLE已连接；请先连接M02S，再使用现有AP");
+            return;
+        }
+        finishHold("开始一键拍照取图，停止周期探测");
+        if (!notificationMonitor) startNotificationMonitor();
+        if (!notificationMonitor) {
+            log("无法重新开启AA14通知监听；本次未发送拍照指令"); return;
+        }
+        oneClickActive = true;
+        photoBusy = true;
+        final int id = ++oneClickGeneration;
+        oneClickBoundNetwork = apNetwork;
+        oneClickBoundHost = verifiedHost;
+        oneClickBefore = Collections.emptyList();
+        oneClickPrevious = null;
+        oneClickPollNumber = 0;
+        oneClickWaitingWrite = false;
+        oneClickShutterAt = 0;
+        lastPhotoInMemory = null;
+        photoPreview.setImageBitmap(null);
+        log("一键任务已启动：先取文件列表快照，再发一次原厂遥控拍照命令；不重新连接眼镜Wi-Fi");
+        status.setText("拍照前读取文件列表基线");
+        final Network network = oneClickBoundNetwork;
+        final String host = oneClickBoundHost;
+        io.execute(() -> {
+            try {
+                M02sPhotoTransport.Response response = M02sPhotoTransport.getList(network, host);
+                if (response.httpCode != 200) {
+                    ui.post(() -> { if (oneClickReady(id))
+                        stopOneClick("拍照前基线列表HTTP " + response.httpCode + "；未发送拍照指令"); });
+                    return;
+                }
+                M02sPhotoListReader.Result list = M02sPhotoListReader.parse(response.body);
+                ui.post(() -> {
+                    if (!oneClickReady(id)) return;
+                    oneClickBefore = list.candidates;
+                    log("拍照前基线获取成功：图片候选=" + list.eligibleImages
+                            + "；只在后续出现新文件时下载，绝不使用原有最新照片");
+                    status.setText("等待AA14通知就绪，准备发送一次拍照命令");
+                    awaitOneClickNotifications(id, 0);
+                });
+            } catch (Exception ex) {
+                final String type = ex.getClass().getSimpleName();
+                ui.post(() -> { if (oneClickReady(id))
+                    stopOneClick("拍照前基线失败：" + type + "；未发送拍照指令"); });
+            }
+        });
+    }
+
+    private void awaitOneClickNotifications(int id, int attempts) {
+        if (!oneClickReady(id)) return;
+        if (!gattConnected || gatt == null || !notificationMonitor) {
+            stopOneClick("蓝牙通知不可用，未发送拍照指令");
+            return;
+        }
+        if (commandNotifyReady && pendingSubscription == null
+                && notificationQueue.isEmpty()) {
+            if (!sendVerifiedCommand(M02sBleWire.photoThumbnail())) {
+                stopOneClick("蓝牙拍照命令未提交，请查看AA13权限/5秒发送间隔");
+                return;
+            }
+            oneClickWaitingWrite = true;
+            log("一键任务：官方拍照指令已提交，等待AA13写入状态；不会重复发拍照命令");
+            status.setText("眼镜拍照指令已发送，等待写入回执");
+            return;
+        }
+        if (attempts >= 30) {
+            stopOneClick("AA14通知6秒内未就绪，未发送拍照指令");
+            return;
+        }
+        oneClickTimer = () -> awaitOneClickNotifications(id, attempts + 1);
+        ui.postDelayed(oneClickTimer, 200);
+    }
+
+    private void beginOneClickPolling(int id) {
+        if (!oneClickReady(id)) return;
+        if (oneClickShutterAt == 0) {
+            stopOneClick("拍照指令未获得成功的GATT写入回执");
+            return;
+        }
+        if (SystemClock.elapsedRealtime() - oneClickShutterAt > 45_000L) {
+            stopOneClick("45秒未检测到可确认的新照片；旧照片未被下载");
+            return;
+        }
+        final int poll = ++oneClickPollNumber;
+        final Network network = oneClickBoundNetwork;
+        final String host = oneClickBoundHost;
+        status.setText("等待新照片：第 " + poll + " 次列表核对（最多45秒）");
+        io.execute(() -> {
+            try {
+                M02sPhotoTransport.Response response = M02sPhotoTransport.getList(network, host);
+                if (response.httpCode != 200) {
+                    ui.post(() -> { if (oneClickReady(id))
+                        stopOneClick("读取新照片列表失败：HTTP " + response.httpCode); });
+                    return;
+                }
+                M02sPhotoListReader.Result list = M02sPhotoListReader.parse(response.body);
+                M02sFreshPhotoPolicy.Selection selected =
+                        M02sFreshPhotoPolicy.select(oneClickBefore, list.candidates);
+                ui.post(() -> {
+                    if (!oneClickReady(id)) return;
+                    if (M02sFreshPhotoPolicy.stablePair(oneClickPrevious, selected)) {
+                        if (SystemClock.elapsedRealtime() - oneClickShutterAt > 45_000L) {
+                            stopOneClick("获取新照片的45秒期限已过");
+                            return;
+                        }
+                        log("新照片已确认：与拍照前文件名不同；两次文件列表均显示同一候选及稳定大小。开始下载原图");
+                        if (oneClickTimer != null) ui.removeCallbacks(oneClickTimer);
+                        oneClickTimer = null;
+                        beginDownload(selected.photo, wifiSessionToken, host, network, id);
+                        return;
+                    }
+                    if (poll <= 2 || poll % 5 == 0 || oneClickPrevious == null
+                            || selected.status != oneClickPrevious.status) {
+                        log("一键新照片轮询 " + poll
+                                + "：状态=" + selected.status
+                                + "；新候选数量=" + selected.freshCount
+                                + "（姓名/时间/内容均不写日志）");
+                    }
+                    oneClickPrevious = selected;
+                    oneClickTimer = () -> beginOneClickPolling(id);
+                    ui.postDelayed(oneClickTimer, 1200L);
+                });
+            } catch (Exception ex) {
+                final String type = ex.getClass().getSimpleName();
+                ui.post(() -> { if (oneClickReady(id))
+                    stopOneClick("新照片列表查询失败：" + type + "；未改用旧照片"); });
+            }
+        });
+    }
+
     private void copyDiagnostic() {
-        String payload = "M02S 原图验证实验 v0.1.6 / Android " + Build.VERSION.RELEASE +
+        String payload = "M02S 一键拍照取图实验 v0.1.7 / Android " + Build.VERSION.RELEASE +
                 "\n" + logData.toString();
         ClipboardManager cb = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         cb.setPrimaryClip(ClipData.newPlainText("M02S diagnostic", payload));
