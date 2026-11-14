@@ -1,44 +1,33 @@
-# M02S 原厂蓝牙指令对照实验 v0.1.3
+# 蓝星 M02S Wi-Fi 精准连接实验 v0.1.4
 
-## 已有真机基础
-用户的 vivo X200 Pro / Android 16：
-- v0.1.1 显式 TRANSPORT_LE + PHY_LE_1M 连接 M02S-3584 成功，GATT 回调 112ms、143ms，返回 1800/AE00/AA12/180F 四个服务。
-- v0.1.2 对 AA14 的 CCCD 订阅成功，按实体拍照键，AA14 重复出现 AC55 / 命令 0x22、0x45、0x42，且 0x42 候选计数从 3 到 4。这些现象**证明眼镜状态通知能够接收**，不能单凭事件推断所有 Wi-Fi 命令已经支持。
+## 已验证的真机结果
+- vivo X200 Pro / Android16：M02S-3584 蓝牙 GATT 显式 LE 1M，93ms 连接成功；AA13 发送原厂 `AB 55 00 03 22 30 52` 后眼镜确实执行了拍照。
+- 用户发送 `AB 55 00 03 39 31 6A`，收到了 `AC 55 ... 39 ...`，再约0.45秒经 AA14 收到**0x25 / 13字节载荷**（日志当时已脱敏）。
+- 用户截图中 Android P2P 发现的 `DIRECT-92-HP M132f LaserJet` **是惠普打印机，不是眼镜**。因此“发现1个P2P设备”不是 M02S 已连接的证据。
 
-## 真实用户上传的原厂 HeyCyan APK 静态核查（v1.0.24-c）
-在 `/mnt/data/70465ff3819258a6218e7871da0a23f8.apk` 的 classes2.dex 与 classes5.dex 中实际解码如下：
+## 官方 HeyCyan APK 源依据
+针对用户上传的 `70465ff3819258a6218e7871da0a23f8.apk` 重新静态核查：
+- `ModBleResponse.onRequestSyncDataResponse` 在 **0x25** 分支，使用 `WifiCmdBean.recoverByBytes(leHeader.payload)`，把整段 payload 按 **UTF-8** 解成 `ssid` 并调用 `OnWifiDataListener.onWifiData(ssid,...)`。
+- `Ldp.connectP2pWifitoReceivePhoto` 根据 `CustomerCmdBean.project` 决定 AP/P2P，随后 `Ldp.connectWifi(ssid,password)` 调对应联网器。官方判断 `project` 包含 `T` 时偏向 AP，否则 P2P，**此用户眼镜的 project 尚未实测**。
+- 原厂 `Ldyh$e.lambda$onPeersAvailable$0` 实际通过 `WifiP2pDevice.deviceName.contains(ssid)` 筛选设备后再 `WifiP2pManager.connect`。本实验以此为匹配依据，同时要求完整SSID长度至少8字符、最多32字节，并拒绝多个同名候选，避免误连普通打印机。
+- 对 AP 路线，原厂代码中走 `WifiNetworkSpecifier/ConnectivityManager.requestNetwork`；本实验使用精确 SSID 和官方 APK 内置连接凭证（仅内存，不打印日志）。系统可能弹连接授权或拒绝无互联网热点。
+- 三条上一版已核实的蓝牙白名单指令和 AA13/AA14 特征不变；本轮**没有添加猜测的厂商命令**。
 
-| 原厂方法/字段 | 经 DEX 字节码追踪确认 |
-|---|---|
-| `SendCommandViaBle.takePhoto(I)` | 调 `configSendCommand(I, 34)`：命令 ID **0x22** |
-| `Command.Param.TAKE_PHOTO_THUMBNAIL` | 十进制 48 = **0x30**，原厂 `DeviceFragment` 使用 |
-| `SendCommandViaBle.getWifiInfo(I)` | 调 `configSendCommand(I, 57)`：命令 ID **0x39** |
-| `Command.Param.GET_WIFI_P2P` | 十进制 49 = **0x31** |
-| `Command.Param.GET_WIFI_AP` | 十进制 48 = **0x30** |
-| `dp.connectP2pWifitoReceivePhoto()` | 视配置分别调用 `getWifiInfo(GET_WIFI_AP)`、`getWifiInfo(GET_WIFI_P2P)` |
-| `BleCore.setupCharacteristics` | 正式指令 GATT 写入服务 AA12／特征 **AA13**；AA14 指令通知，AA15 文件/照片通知 |
-| `Datagram.convertLeHeaderToBytes()` | **AB 55** + 2字节大端长度（命令ID+载荷+1校验） + 命令ID + 载荷 + 命令和载荷字节累加&255 |
-| `ModBleResponse` | 解析 Wi-Fi 返回中的 `WifiCmdBean.ssid`，向连接层传 SSID 与一个常量密码；具体能否连接取决于真实设备及手机网络状况 |
+## 新版使用方式
+1. 退出原厂 HeyCyan，启动独立 **v0.1.4**，扫描选 M02S，点击「连接 LE 1M」。
+2. 点击「开启蓝牙监听（120秒）」，等待 **AA14 CCCD 订阅 status=0**。
+3. 由于设备 `project` 未知，**先测试「P2P 精准连接」一次**（之前使用过0x39/0x31得到0x25）；程序自动发送 `0x39/0x31`，等待0x25，安全解码目标 SSID，在不透露 SSID 的前提下扫描P2P；**只向名称包含完整目标SSID的唯一设备发起系统连接请求**。发现打印机但不匹配会被忽略。
+4. 如果经60～70秒确认 P2P 无目标设备，点「取消 Wi-Fi 连接」，先重新开启监听（如果120秒已到），再单独点「AP 热点精准连接」。自动发送 `0x39/0x30`；收到0x25后通过 Android 发起对应 SSID 的网络请求；如弹出系统授权请确认。
+5. 只有在手机收到了**目标 P2P groupFormed（手机非组主）+ 地址**或 **目标 AP onAvailable + 本地网关IP**，才允许按「只读文件列表」或「保持连接观察120秒」，从真实路由推导目标本地IP，而不盲目测试历史固定IP。
+6. 复制诊断日志发回，只提供：0x25是否有效、目标匹配数量/连接组状态、AP/P2P系统回调、网络可用与 HTTP 响应；日志始终不输出 SSID、密码、照片内容。
+7. 连通后 App **不会主动断开**，除非用户点取消/退出、系统或眼镜主动断开。WiFiLock 不能保证眼镜固件不关 Wi-Fi，故持续连接能力仍待实测。
 
-因此可独立构造的**仅三种白名单数据帧**：
+## 保护范围
+- 从0x25拿到的真实SSIDs仅驻留内存，长度/状态记录而不记录名字；**没有持久化、云上传、照片读取**。
+- 未确认目标网络/IP时禁止 HTTP；只读 `/app/getfilelist`，不会自动遍历图像、下载照片、删除文件或写固件。
+- AP/P2P 互不自动兜底切换，无未授权重试；不连接不匹配/多个同名的设备。
+- 全新独立包名 `com.vobichngan.bluestar.m02swifitargetlab`，不覆盖 v0.1.0~0.1.3、正式 Blue Star Guide RC25、原厂 HeyCyan 或 Windows OCR。
+- Android CI 单测、SDK36构建、APK v2签名、包名/版本和发行产物检查≠真机Wi-Fi已经成功。
 
-- 原厂模式遥控拍照（可能实际生成一张新照片）：`AB 55 00 03 22 30 52`
-- P2P Wi-Fi 信息请求（**不是**保证已经连接 Wi-Fi）：`AB 55 00 03 39 31 6A`
-- AP Wi-Fi 信息请求：`AB 55 00 03 39 30 69`
-
-以上格式已与 APK 字节码结构对照，但**尚未真机验证远程指令响应、远程照片生成或 Wi-Fi 真正建立**。不添加其它未查证的私有指令。
-
-## 安全与操作
-- 首次必须点「扫描眼镜 BLE」选 M02S，点 **连接 LE 1M**。
-- 点「监听眼镜反馈（120秒）」，必须看到 **AA14 CCCD status=0** 后才可以发送指令。
-- 第一次测试建议只点 **“遥控拍照：原厂模式”** 一次，看看眼镜是否拍照以及 AA14 是否返回 `0x22 / 0x42 / 0x45`。
-- 成功后重新开始监听，点 **“请求 P2P Wi-Fi 信息”** 一次，观察 AA14 和手机网络变化；必要时再用下面旧模块点“扫描 P2P 设备”。不要直接点击保持连接或猜测 IP。
-- 若 P2P 失败，可单独再试一次 “请求 AP Wi-Fi 信息”，但**不能把 GATT 写入 status=0 直接当成 AP/P2P 已建立成功**。
-- 发送之间最少间隔 5 秒；最多一个 AA13 写入请求在途，4秒无回调只报“结果未知”并**不自动重发**，避免误拍多张。
-- 所有接收通知日志自动隐藏未识别载荷和 Wi-Fi SSID/凭证。只对已知且不含敏感字段的拍照候选小包记录少量原始载荷。
-- 只有三种写入指令进入白名单；不发出删除文件、恢复出厂、更新固件、Wi-Fi 断开、文件下载完成等指令。没有读取或上传任何照片。
-- 新 Android 包名 `com.vobichngan.bluestar.m02scommandlab`，版本 **0.1.3**，与 v0.1.0、v0.1.1、v0.1.2 和正式版蓝星向导可共存，不修改官方 HeyCyan APK。
-- 仍然只在前台运行。用户如需稳定 Wi-Fi，需后续独立研究联网与保活，不能在本阶段直接宣称实现。
-
-## 检验
-CI：`:app:testDebugUnitTest :app:assembleDebug`、Android 包名与版本、v2 APK 签名、zipalign、权限和 Release 校验。新增单测验证三组原厂帧字节序列、白名单、真实拍照通知的 AC55 帧解析、Wi-Fi 内容脱敏与错误数据拒绝。
+## 风险和下一步
+本版首次进行真实目标 Wi-Fi 联网测试。若 M02S 的P2P广播的 deviceName 与其通过0x25返回的SSID并非 `contains` 关系，将正确拒绝误连接；此时应进一步抓原厂设备广播和连接回调再完善识别，不应宽泛匹配。

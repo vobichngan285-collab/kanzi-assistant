@@ -45,6 +45,27 @@ public final class M02sBleWireTest {
         assertFalse(result.contains("安全预览"));
     }
 
+    @Test public void actualWifiSsidFrameIsDecodedButNeverLogged() {
+        byte[] name = "M02S-TEST-123".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] frame = new byte[name.length + 6];
+        frame[0] = (byte) 0xac;
+        frame[1] = 0x55;
+        frame[2] = 0;
+        frame[3] = (byte) (name.length + 2);
+        frame[4] = 0x25;
+        System.arraycopy(name, 0, frame, 5, name.length);
+        int sum = 0x25;
+        for (byte b : name) sum = (sum + (b & 0xff)) & 0xff;
+        frame[frame.length - 1] = (byte) sum;
+        M02sBleWire.ParsedFrame parsed = M02sBleWire.parseIncoming(frame);
+        assertNotNull(parsed);
+        assertTrue(parsed.checksumOk);
+        assertEquals("M02S-TEST-123", parsed.wifiSsidInMemory());
+        assertFalse(parsed.safeSummary().contains("M02S-TEST-123"));
+        frame[frame.length - 1] ^= 0x01;
+        assertNull(M02sBleWire.parseIncoming(frame).wifiSsidInMemory());
+    }
+
     @Test public void malformedFramesAreNotTrustworthy() {
         assertNull(M02sBleWire.parseIncoming(new byte[]{(byte)0xac,0x55,0,3,0x22,1}));
         assertNull(M02sBleWire.parseIncoming(new byte[]{(byte)0xab,0x55,0,3,0x22,1,0x23}));

@@ -14,7 +14,7 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
 
-    <application android:label="蓝星 M02S 指令实验"
+    <application android:label="蓝星 M02S Wi-Fi 精准实验"
         android:allowBackup="false" android:supportsRtl="true"
         android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">

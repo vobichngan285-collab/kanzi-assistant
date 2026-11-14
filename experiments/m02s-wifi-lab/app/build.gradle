@@ -4,11 +4,11 @@ android {
     namespace 'com.vobichngan.bluestar.m02slab'
     compileSdk 36
     defaultConfig {
-        applicationId 'com.vobichngan.bluestar.m02scommandlab'
+        applicationId 'com.vobichngan.bluestar.m02swifitargetlab'
         minSdk 29
         targetSdk 35
-        versionCode 4
-        versionName '0.1.3'
+        versionCode 5
+        versionName '0.1.4'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

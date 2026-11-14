@@ -23,6 +23,8 @@ import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.net.ConnectivityManager;
+import android.net.LinkProperties;
+import android.net.RouteInfo;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
@@ -32,6 +34,7 @@ import android.net.wifi.p2p.WifiP2pConfig;
 import android.net.wifi.p2p.WifiP2pDevice;
 import android.net.wifi.p2p.WifiP2pDeviceList;
 import android.net.wifi.p2p.WifiP2pInfo;
+import android.net.wifi.WpsInfo;
 import android.net.wifi.p2p.WifiP2pManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -52,6 +55,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.InetAddress;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -105,6 +109,22 @@ public final class MainActivity extends Activity {
     private Runnable writeTimeout;
     private long writeStartedAt;
     private long lastSentAt;
+
+    /** Session-scoped values only: SSID and OEM pairing key never enter logs. */
+    private enum WifiMode { NONE, P2P, AP }
+    private volatile WifiMode wifiMode = WifiMode.NONE;
+    private String targetWifiSsid;
+    private boolean awaitingSsid;
+    private boolean wifiConnecting;
+    private volatile boolean wifiVerified;
+    private boolean matchedPeerConnectStarted;
+    private volatile String verifiedHost;
+    private long wifiStarted;
+    private int wifiSessionToken;
+    private int p2pPollNumber;
+    private Runnable wifiDeadline;
+    private Runnable p2pPoll;
+    private static final String OEM_WIFI_KEY = "12345678"; // observed OEM APK constant
 
     private int gattAttempt = 0;
     private long gattStarted = 0;
@@ -177,16 +197,20 @@ public final class MainActivity extends Activity {
                 finishHold("120 秒观察结束");
                 return;
             }
-            final String host;
-            try { host = ProbePolicy.checkedLocalHost(ipField.getText().toString()); }
-            catch (IllegalArgumentException ex) {
-                finishHold("IP 地址错误：" + ex.getMessage()); return;
+            if (!wifiVerified || verifiedHost == null || wifiMode == WifiMode.NONE) {
+                finishHold("目标网络状态丢失，已停止探测");
+                return;
             }
-            final Network bound = apNetwork;
+            final String host = verifiedHost;
+            final Network bound = wifiMode == WifiMode.AP ? apNetwork : null;
+            final int token = wifiSessionToken;
             final int sequence = ++probes;
             final long seconds = elapsed / 1000;
             status.setText("保持连接中：" + seconds + " / 120 秒；成功 " + successes + " / " + probes);
-            io.execute(() -> probeLocalFileList(host, bound, sequence));
+            io.execute(() -> {
+                if (token != wifiSessionToken || !wifiVerified) return;
+                probeLocalFileList(host, bound, sequence);
+            });
             ui.postDelayed(this, 3000L);
         }
     };
@@ -209,8 +233,8 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(receiver, f);
         receiverRegistered = true;
-        log("M02S v0.1.3 官方指令实验启动：仅手动触发遥控拍照/读取 Wi-Fi 信息；不上传图片或修改眼镜文件。");
-        log("蓝牙发包仅允许 0x22/0x30 拍照、0x39/0x31 P2P 和 0x39/0x30 AP 信息请求；来源官方 App DEX；实际 M02S 结果待验证。");
+        log("v0.1.4 Wi-Fi 精准连接实验：按原厂 BLE 0x25 返回的目标SSID匹配，仅在真实连接后读取本地文件列表");
+        log("仅手动选择 P2P 或 AP 连接路线；不会输出 SSID/连接密码、不会读取照片或上传云端");
         requestPermissionsIfNeeded();
         updateNetworkStatus();
     }
@@ -218,84 +242,59 @@ public final class MainActivity extends Activity {
     private void buildUi() {
         int pad = dp(14);
         ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding(pad, pad, pad, pad);
         body.setBackgroundColor(Color.rgb(245, 248, 252));
         scroll.addView(body);
 
-        TextView heading = text("蓝星 M02S 官方指令验证 v0.1.3", 24, true);
-        body.addView(heading);
-        body.addView(text("独立实验 APK · 只发送从官方 App 核对的指令 · 不修改蓝星向导", 14, false));
-        status = text("状态：等待授权", 17, true);
+        body.addView(text("蓝星 M02S Wi-Fi 精准连接 v0.1.4", 23, true));
+        body.addView(text("独立实验，不修改正式蓝星向导。Wi-Fi 网络名称/密码不会写进日志。", 14, false));
+        status = text("蓝牙未连接 / 眼镜 Wi-Fi 未建立", 17, true);
         status.setPadding(0, dp(12), 0, dp(10));
         body.addView(status);
 
-        section(body, "① 蓝牙设备发现（只读）");
+        section(body, "① 蓝牙：连接眼镜并开启回执监听");
         bleSpinner = new Spinner(this);
         bleAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item);
-        bleAdapter.add("选择扫描到的蓝牙设备");
+        bleAdapter.add("选择扫描到的 M02S 眼镜");
         bleSpinner.setAdapter(bleAdapter);
         body.addView(bleSpinner);
-        addRow(body, button("扫描眼镜 BLE（10秒）", this::scanBle),
-                button("连接 LE 1M（15秒）", () -> connectGattReadOnly(false)));
-        addRow(body, button("兼容连接（15秒）", () -> connectGattReadOnly(true)),
-                button("主动断开 GATT", () -> closeGatt("用户主动断开")));
-        body.addView(text("先选 M02S-3584，再点 LE 1M；只有失败才试兼容连接。", 14, false));
-        section(body, "② AE00 / AA12 蓝牙协议观察（发送前先启动监听）");
-        addRow(body, button("查看特征 UUID/权限", this::inspectGattCharacteristics),
-                button("监听眼镜反馈（120秒）", this::startNotificationMonitor));
-        addRow(body, button("停止通知记录", () -> stopNotificationMonitor("用户停止")),
+        addRow(body, button("扫描 M02S", this::scanBle),
+                button("连接 LE 1M", () -> connectGattReadOnly(false)));
+        addRow(body, button("开启蓝牙监听（120秒）", this::startNotificationMonitor),
+                button("断开蓝牙", () -> closeGatt("用户主动断开")));
+
+        section(body, "② 目标 Wi-Fi：点一次后自动识别 SSID 并尝试连接");
+        addRow(body, button("P2P 精准连接", () -> requestTargetWifi(WifiMode.P2P)),
+                button("AP 热点精准连接", () -> requestTargetWifi(WifiMode.AP)));
+        addRow(body, button("取消 Wi-Fi 连接", () -> stopWifiSession("用户取消")),
+                button("查看网络状态", this::updateNetworkStatus));
+        body.addView(text("先等 AA14 订阅 status=0，再选择一种方式。程序只匹配眼镜蓝牙"
+                + "返回的目标 SSID，绝不连接附近惠普打印机；AP 方式会弹系统授权。"
+                + "当前 M02S 的 AP/P2P 模式未知，两种方式不会自动轮流尝试。", 14, false));
+
+        section(body, "③ 确认 Wi-Fi 已建立后，读取本地文件列表");
+        ipField = field("等待系统确认设备 IP", "");
+        ipField.setEnabled(false);
+        body.addView(ipField);
+        addRow(body, button("只读文件列表", this::readOnceVerified),
+                button("保持连接观察 120秒", this::startHold));
+        addRow(body, button("停止观察", () -> finishHold("用户停止")),
                 button("复制诊断", this::copyDiagnostic));
-        body.addView(text("先完成 LE 1M 连接，再点监听；等 AA14 订阅 status=0，"
-                + "才允许发送下面经过官方 APK 核对的两种命令。"
-                + "Wi-Fi 回复可能包含 SSID，日志自动隐藏数据内容。", 14, false));
+        body.addView(text("只有确认为 M02S 目标的 Wi-Fi 连接成功、获得可用设备地址，"
+                + "才允许请求 /app/getfilelist。不会读取照片或上传云端。", 14, false));
 
-        section(body, "③ 官方指令实验（需要主动点击）");
-        addRow(body, button("遥控拍照：原厂模式", () -> sendVerifiedCommand(M02sBleWire.photoThumbnail())),
-                button("请求 P2P Wi-Fi 信息", () -> sendVerifiedCommand(M02sBleWire.wifiP2pInfo())));
-        addRow(body, button("请求 AP Wi-Fi 信息", () -> sendVerifiedCommand(M02sBleWire.wifiApInfo())),
-                button("查看当前网络", this::updateNetworkStatus));
-        body.addView(text("遥控拍照会真正让眼镜尝试拍摄一张照片；"
-                + "Wi-Fi 按钮会发送原厂读取/唤起 Wi-Fi 信息命令，"
-                + "但回执不代表 Wi-Fi 已连接。每次只点一个按钮，等日志结果。", 14, false));
-
-        section(body, "④ Wi-Fi Direct（仅在 Wi-Fi 请求后测试）");
+        // Retained internally for legacy diagnostics; never displayed, so
+        // unrelated nearby P2P devices cannot be selected accidentally.
         peerSpinner = new Spinner(this);
         peerAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item);
-        peerAdapter.add("选择扫描到的 Wi-Fi Direct 设备");
+        peerAdapter.add("已禁用人工选择附近 P2P 设备");
         peerSpinner.setAdapter(peerAdapter);
-        body.addView(peerSpinner);
-        addRow(body, button("扫描 P2P 设备", this::scanP2p),
-                button("连接所选 P2P", this::connectPeer));
+        ssidField = field("内部网络标识（不显示）", "");
+        passField = field("内部密钥（不显示）", "");
 
-        section(body, "⑤ 如果眼镜使用 Wi-Fi AP 热点");
-        ssidField = field("眼镜热点 SSID（如果知道）", "");
-        passField = field("Wi-Fi 密码（可留空）", "");
-        passField.setInputType(android.text.InputType.TYPE_CLASS_TEXT |
-                android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        body.addView(ssidField);
-        body.addView(passField);
-        addRow(body, button("连接已知 AP", this::connectAccessPoint),
-                button("查看当前网络", this::updateNetworkStatus));
-
-        section(body, "⑥ 连接保持与只读文件列表（需先建立真实 Wi-Fi 连接）");
-        body.addView(text("文件列表地址：默认 192.168.49.207；另一个常见候选 192.168.169.1。"
-                        + "真实地址需通过诊断确认。", 14, false));
-        ipField = field("眼镜 IP", "192.168.49.207");
-        body.addView(ipField);
-        addRow(body, button("读一次文件列表", () -> {
-                    final String host;
-                    try { host = ProbePolicy.checkedLocalHost(ipField.getText().toString()); }
-                    catch (IllegalArgumentException e) { log(e.getMessage()); return; }
-                    io.execute(() -> probeLocalFileList(host, apNetwork, 0));
-                }),
-                button("保持连接 120 秒", this::startHold));
-        addRow(body, button("停止测试", () -> finishHold("用户停止")),
-                button("复制诊断", this::copyDiagnostic));
-
-        section(body, "诊断日志（不包含照片内容）");
+        section(body, "本地诊断日志");
         logView = text("", 14, false);
         logView.setTextIsSelectable(true);
         logView.setPadding(dp(8), dp(8), dp(8), dp(8));
@@ -435,6 +434,7 @@ public final class MainActivity extends Activity {
     /** Only called from the main thread; late GATT callbacks are ignored by token. */
     private void closeGatt(String reason) {
         stopNotificationMonitor("GATT 连接结束");
+        if (wifiConnecting && !wifiVerified) stopWifiSession("蓝牙连接已断开");
         clearWritePending();
         lastSentAt = 0L;
         gattAttempt++;
@@ -729,9 +729,12 @@ public final class MainActivity extends Activity {
         if (c.getService() == null
                 || !GattProtocolPolicy.isVendorService(c.getService().getUuid().toString())) return;
         notificationCount++;
+        M02sBleWire.ParsedFrame parsed = M02sBleWire.parseIncoming(value);
+        if (parsed != null && parsed.command == 0x25 && parsed.checksumOk) {
+            acceptWifiSsidFrame(parsed);
+        }
         if (GattProtocolPolicy.shouldLogPayload(notificationCount)) {
             long elapsed = SystemClock.elapsedRealtime() - notificationStarted;
-            M02sBleWire.ParsedFrame parsed = M02sBleWire.parseIncoming(value);
             String detail = parsed == null
                     ? "未组成完整 AC55 帧（内容隐藏，可能是分片）"
                     : parsed.safeSummary();
@@ -766,36 +769,31 @@ public final class MainActivity extends Activity {
     }
 
     /** A real GATT WRITE to AA13, only from one of three official-app commands. */
-    private void sendVerifiedCommand(byte[] frame) {
+    /** Only a known OEM packet is allowed, and only after AA14 notifications are ready. */
+    private boolean sendVerifiedCommand(byte[] frame) {
         if (!M02sBleWire.isExactAuthorizedCommand(frame)) {
-            log("安全拦截：不在原厂指令白名单内");
-            return;
+            log("安全拦截：不在原厂指令白名单内"); return false;
         }
         if (!gattConnected || !servicesReady || gatt == null) {
-            log("请先扫描 M02S 并连接 LE 1M");
-            return;
+            log("请先扫描 M02S 并连接 LE 1M"); return false;
         }
         if (!notificationMonitor || !commandNotifyReady
                 || pendingSubscription != null || !notificationQueue.isEmpty()) {
-            log("请先开启120秒监听，等待 AA14 CCCD 订阅 status=0 后再发送");
-            return;
+            log("请先开启120秒监听，等 AA14 CCCD status=0"); return false;
         }
         if (writeInFlight != null) {
-            log("上一条命令正在等待 GATT 写入回执；请勿重复点击");
-            return;
+            log("上一条命令仍在等待 GATT 回执"); return false;
         }
         long now = SystemClock.elapsedRealtime();
-        if (lastSentAt != 0L && now - lastSentAt < 5000) {
-            log("命令间隔至少5秒，避免误触和重复拍照");
-            return;
+        if (lastSentAt != 0L && now - lastSentAt < 5000L) {
+            log("指令间隔至少5秒，禁止重复发送"); return false;
         }
         BluetoothGattService service = gatt.getService(COMMAND_SERVICE);
-        BluetoothGattCharacteristic ch = service == null ? null
-                : service.getCharacteristic(COMMAND_WRITE);
-        if (ch == null || (ch.getProperties()
-                & BluetoothGattCharacteristic.PROPERTY_WRITE) == 0) {
-            log("无法验证 AA13 的有回执写入属性；没有发送任何指令");
-            return;
+        BluetoothGattCharacteristic ch = service == null ? null :
+                service.getCharacteristic(COMMAND_WRITE);
+        if (ch == null || (ch.getProperties() &
+                BluetoothGattCharacteristic.PROPERTY_WRITE) == 0) {
+            log("找不到 AA13 有回执写入接口，未发送"); return false;
         }
         String label = M02sBleWire.outgoingDescription(frame);
         try {
@@ -803,34 +801,34 @@ public final class MainActivity extends Activity {
             writeStartedAt = now;
             lastSentAt = now;
             ch.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
-            int resultCode;
+            int result;
             if (Build.VERSION.SDK_INT >= 33) {
-                resultCode = gatt.writeCharacteristic(ch, frame,
+                result = gatt.writeCharacteristic(ch, frame,
                         BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
             } else {
                 @SuppressWarnings("deprecation")
                 boolean accepted = ch.setValue(frame);
                 @SuppressWarnings("deprecation")
-                boolean written = accepted && gatt.writeCharacteristic(ch);
-                resultCode = written ? 0 : -1;
+                boolean queued = accepted && gatt.writeCharacteristic(ch);
+                result = queued ? 0 : -1;
             }
-            if (resultCode != 0) {
+            if (result != 0) {
                 clearWritePending();
-                log("AA13 拒绝提交指令：" + label + "；系统错误码 " + resultCode);
-                return;
+                log("系统拒绝提交蓝牙命令，code=" + result);
+                return false;
             }
-            log("已向 AA13 发出：" + label + "；字节数=" + frame.length
-                    + "。等待 GATT 写入回执和 AA14 响应；"
-                    + "写入成功不等于拍照成功或 Wi-Fi 连通。");
+            log("AA13 已发送：" + label + "；等待设备回执，不能据此判定 Wi-Fi 已连通");
             writeTimeout = () -> {
                 if (writeInFlight == null) return;
-                log("AA13 写入4秒无回调，结果未确定；不自动重试以免重复拍照");
+                log("AA13 写入4秒无回调，结果未知；不自动重发");
                 clearWritePending();
             };
             ui.postDelayed(writeTimeout, 4000);
-        } catch (SecurityException | IllegalStateException | IllegalArgumentException ex) {
+            return true;
+        } catch (SecurityException | IllegalArgumentException | IllegalStateException e) {
             clearWritePending();
-            log("AA13 写入异常：" + ex.getClass().getSimpleName());
+            log("AA13 写入异常：" + e.getClass().getSimpleName());
+            return false;
         }
     }
 
@@ -847,21 +845,312 @@ public final class MainActivity extends Activity {
                 + elapsed + "ms；这仅代表 BLE 写入结果，需观察 AA14 返回确认设备动作");
     }
 
+    private void requestTargetWifi(WifiMode mode) {
+        if (wifiMode != WifiMode.NONE || wifiConnecting || wifiVerified) {
+            log("已有 Wi-Fi 会话或请求；先点「取消 Wi-Fi 连接」再试另一模式");
+            return;
+        }
+        if (mode == WifiMode.NONE) return;
+        byte[] command = mode == WifiMode.P2P ?
+                M02sBleWire.wifiP2pInfo() : M02sBleWire.wifiApInfo();
+        if (!sendVerifiedCommand(command)) return;
+        wifiSessionToken++;
+        wifiMode = mode;
+        wifiConnecting = true;
+        wifiVerified = false;
+        awaitingSsid = true;
+        matchedPeerConnectStarted = false;
+        targetWifiSsid = null;
+        verifiedHost = null;
+        ipField.setText("");
+        wifiStarted = SystemClock.elapsedRealtime();
+        int token = wifiSessionToken;
+        wifiDeadline = () -> {
+            if (token == wifiSessionToken && wifiConnecting && !wifiVerified) {
+                log("目标 Wi-Fi 在70秒内未完成建连；不重试，不连接未知设备");
+                stopWifiSession("等待连接超时");
+            }
+        };
+        ui.postDelayed(wifiDeadline, 70_000L);
+        String label = mode == WifiMode.P2P ? "P2P" : "AP 热点";
+        status.setText("等待 M02S 经蓝牙返回 " + label + " 目标 SSID");
+        log(label + "：已发送原厂 Wi-Fi 信息请求；等待 AA14 的 0x25 SSID 返回");
+    }
+
+    private void acceptWifiSsidFrame(M02sBleWire.ParsedFrame frame) {
+        if (!awaitingSsid || !wifiConnecting || wifiMode == WifiMode.NONE) {
+            log("收到 0x25 SSID 信息，但当前未发起连接实验；内容已隐藏");
+            return;
+        }
+        if (SystemClock.elapsedRealtime() - wifiStarted > 30_000) {
+            log("丢弃过期 SSID 帧，避免误连接旧网络");
+            return;
+        }
+        String value = frame.wifiSsidInMemory();
+        if (!M02sWifiPolicy.isConnectableSsid(value)) {
+            log("0x25 校验成功，但 SSID 格式无效或过短；拒绝自动连接");
+            stopWifiSession("SSID 不可用于安全匹配");
+            return;
+        }
+        awaitingSsid = false;
+        targetWifiSsid = value;
+        log(M02sWifiPolicy.safeSsidReport(value));
+        if (wifiMode == WifiMode.P2P) {
+            log("按原厂模式匹配 Wi-Fi Direct 设备名称（必须包含完整目标SSID）");
+            startMatchedP2pDiscovery();
+        } else {
+            log("只向精确目标 SSID 提交 Android AP 网络请求；请留意系统授权");
+            connectTargetAp();
+        }
+    }
+
+    private void startMatchedP2pDiscovery() {
+        if (!ensurePermission()) {
+            stopWifiSession("缺少 P2P 系统授权");
+            return;
+        }
+        if (p2p == null || channel == null) {
+            stopWifiSession("手机不支持 P2P 发现");
+            return;
+        }
+        int token = wifiSessionToken;
+        p2pPollNumber = 0;
+        try {
+            p2p.discoverPeers(channel, new WifiP2pManager.ActionListener() {
+                @Override public void onSuccess() {
+                    ui.post(() -> {
+                        if (token != wifiSessionToken || wifiMode != WifiMode.P2P) return;
+                        log("P2P 系统扫描已启动：仅连接与眼镜SSID匹配的设备");
+                        scheduleP2pPoll(token);
+                    });
+                }
+                @Override public void onFailure(int reason) {
+                    ui.post(() -> {
+                        if (token == wifiSessionToken) {
+                            log("P2P discoverPeers 被系统拒绝，code=" + reason);
+                            stopWifiSession("P2P 发现失败");
+                        }
+                    });
+                }
+            });
+        } catch (SecurityException | IllegalStateException e) {
+            log("P2P 扫描异常：" + e.getClass().getSimpleName());
+            stopWifiSession("P2P 扫描不可用");
+        }
+    }
+
+    private void scheduleP2pPoll(int token) {
+        if (token != wifiSessionToken || wifiMode != WifiMode.P2P
+                || !wifiConnecting || matchedPeerConnectStarted) return;
+        if (p2pPoll != null) ui.removeCallbacks(p2pPoll);
+        p2pPoll = () -> {
+            if (token != wifiSessionToken || wifiMode != WifiMode.P2P
+                    || !wifiConnecting || matchedPeerConnectStarted) return;
+            p2pPollNumber++;
+            requestPeers();
+            if (p2pPollNumber < 22) scheduleP2pPoll(token);
+        };
+        ui.postDelayed(p2pPoll, 2000L);
+    }
+
+    private void connectMatchedPeer(WifiP2pDevice device) {
+        if (device == null || !M02sWifiPolicy.matchesPeerName(device.deviceName,
+                targetWifiSsid) || matchedPeerConnectStarted || wifiMode != WifiMode.P2P) return;
+        if (!wifiConnecting || !ensurePermission()) return;
+        matchedPeerConnectStarted = true;
+        int token = wifiSessionToken;
+        WifiP2pConfig config = new WifiP2pConfig();
+        config.deviceAddress = device.deviceAddress;
+        config.wps.setup = WpsInfo.PBC;
+        log("只找到 1 台名称匹配眼镜 SSID 的 P2P 设备；尝试建立连接（不显示设备标识）");
+        status.setText("已匹配眼镜 P2P，等待系统确认连接");
+        try {
+            p2p.connect(channel, config, new WifiP2pManager.ActionListener() {
+                @Override public void onSuccess() {
+                    ui.post(() -> {
+                        if (token != wifiSessionToken) return;
+                        log("P2P connect() 请求已被 Android 接受；等待 groupFormed，尚不算连接成功");
+                        ui.postDelayed(() -> { if (token == wifiSessionToken) requestConnectionInfo(); }, 4000L);
+                        ui.postDelayed(() -> { if (token == wifiSessionToken) requestConnectionInfo(); }, 10000L);
+                    });
+                }
+                @Override public void onFailure(int reason) {
+                    ui.post(() -> {
+                        if (token != wifiSessionToken) return;
+                        log("目标设备 P2P 连接请求被拒绝 code=" + reason);
+                        stopWifiSession("目标 P2P 连接失败");
+                    });
+                }
+            });
+        } catch (SecurityException | IllegalArgumentException | IllegalStateException e) {
+            stopWifiSession("P2P 连接异常：" + e.getClass().getSimpleName());
+        }
+    }
+
+    private void connectTargetAp() {
+        if (!ensurePermission() || wifiMode != WifiMode.AP ||
+                !M02sWifiPolicy.isConnectableSsid(targetWifiSsid)) {
+            stopWifiSession("无法申请 AP 连接，权限或SSID无效"); return;
+        }
+        final int token = wifiSessionToken;
+        try {
+            WifiNetworkSpecifier spec = new WifiNetworkSpecifier.Builder()
+                    .setSsid(targetWifiSsid).setWpa2Passphrase(OEM_WIFI_KEY).build();
+            NetworkRequest request = new NetworkRequest.Builder()
+                    .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                    .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    .setNetworkSpecifier(spec).build();
+            apCallback = new ConnectivityManager.NetworkCallback() {
+                @Override public void onAvailable(Network network) {
+                    ui.post(() -> {
+                        if (destroyed || token != wifiSessionToken ||
+                                wifiMode != WifiMode.AP) return;
+                        apNetwork = network;
+                        wifiVerified = true;
+                        wifiConnecting = false;
+                        cancelWifiTimers();
+                        log("Android 已连接到指定的眼镜 AP 网络（非普通手机网络）；等待路由/网关信息");
+                        status.setText("目标 AP 网络已连接，获取设备地址中");
+                        LinkProperties lp = connectivity.getLinkProperties(network);
+                        if (lp != null) updateApGateway(lp);
+                    });
+                }
+                @Override public void onLinkPropertiesChanged(Network network, LinkProperties lp) {
+                    ui.post(() -> {
+                        if (destroyed || token != wifiSessionToken ||
+                                wifiMode != WifiMode.AP ||
+                                apNetwork == null || !apNetwork.equals(network)) return;
+                        updateApGateway(lp);
+                    });
+                }
+                @Override public void onLost(Network network) {
+                    ui.post(() -> {
+                        if (token == wifiSessionToken && apNetwork != null
+                                && apNetwork.equals(network)) {
+                            finishHold("目标 AP 已断线");
+                            apNetwork = null;
+                            wifiVerified = false;
+                            verifiedHost = null;
+                            ipField.setText("");
+                            log("Android 报告目标 AP 连接断开");
+                            status.setText("AP 已断线，需重新发起连接");
+                        }
+                    });
+                }
+                @Override public void onUnavailable() {
+                    ui.post(() -> {
+                        if (token != wifiSessionToken) return;
+                        log("Android 未能连接目标 AP；可能未广播、系统拒绝、密码或模式不匹配");
+                        stopWifiSession("AP 系统连接失败");
+                    });
+                }
+            };
+            connectivity.requestNetwork(request, apCallback, 48_000);
+            log("Android 已请求精确 SSID 的 AP/WPA2 会话；原厂密钥仅在内存中使用");
+        } catch (SecurityException | IllegalArgumentException | IllegalStateException ex) {
+            stopWifiSession("AP 请求异常：" + ex.getClass().getSimpleName());
+        }
+    }
+
+    private void updateApGateway(LinkProperties properties) {
+        if (properties == null) return;
+        for (RouteInfo route : properties.getRoutes()) {
+            InetAddress gateway = route.getGateway();
+            if (gateway == null || gateway.getAddress().length != 4) continue;
+            try {
+                String host = ProbePolicy.checkedLocalHost(gateway.getHostAddress());
+                verifiedHost = host;
+                ipField.setText(host);
+                log("从目标 AP 的 Android 路由发现私有网关IP；只读文件列表可手动测试");
+                status.setText("目标 AP 已建立；网关IP已获取（HTTP 服务待验证）");
+                return;
+            } catch (IllegalArgumentException ignored) { }
+        }
+        log("目标 AP 已连接，但 Android 尚未提供 192.168.x.x 网关，禁止猜测服务地址");
+    }
+
+    private void cancelWifiTimers() {
+        if (wifiDeadline != null) ui.removeCallbacks(wifiDeadline);
+        if (p2pPoll != null) ui.removeCallbacks(p2pPoll);
+        wifiDeadline = null;
+        p2pPoll = null;
+    }
+
+    private void stopWifiSession(String reason) {
+        boolean wasUsed = wifiMode != WifiMode.NONE || wifiConnecting || wifiVerified;
+        boolean wasP2p = wifiMode == WifiMode.P2P && matchedPeerConnectStarted;
+        wifiSessionToken++;
+        cancelWifiTimers();
+        finishHold("Wi-Fi 会话结束");
+        awaitingSsid = false;
+        wifiConnecting = false;
+        wifiVerified = false;
+        targetWifiSsid = null;
+        verifiedHost = null;
+        matchedPeerConnectStarted = false;
+        wifiMode = WifiMode.NONE;
+        if (ipField != null) ipField.setText("");
+        apNetwork = null;
+        if (apCallback != null) {
+            try { connectivity.unregisterNetworkCallback(apCallback); }
+            catch (Exception ignored) { }
+            apCallback = null;
+        }
+        if (wasP2p && p2p != null && channel != null) {
+            try { p2p.removeGroup(channel, new WifiP2pManager.ActionListener() {
+                @Override public void onSuccess() { log("已释放本实验创建的 P2P 连接组"); }
+                @Override public void onFailure(int reasonCode) { log("P2P 释放未完成 code=" + reasonCode); }
+            }); } catch (Exception ignored) { }
+        }
+        if (wasUsed && !destroyed) {
+            log("实验 Wi-Fi 会话已停止：" + reason);
+            status.setText("Wi-Fi 未连接 / " + reason);
+        }
+    }
+
+    private void readOnceVerified() {
+        if (!wifiVerified || verifiedHost == null || wifiMode == WifiMode.NONE) {
+            log("安全拦截：尚未确认眼镜 Wi-Fi 和设备IP，不能发 HTTP 请求");
+            return;
+        }
+        final String host = verifiedHost;
+        final Network network = wifiMode == WifiMode.AP ? apNetwork : null;
+        log("目标网络已确认；只读测试 GET /app/getfilelist，原始文件内容不写日志");
+        io.execute(() -> probeLocalFileList(host, network, 0));
+    }
+
     private void requestPeers() {
         if (!permitted() || p2p == null || channel == null) return;
+        final int token = wifiSessionToken;
         try {
             p2p.requestPeers(channel, (WifiP2pDeviceList list) -> {
+                if (destroyed || token != wifiSessionToken) return;
                 peers.clear();
                 peerAdapter.clear();
-                peerAdapter.add("选择扫描到的 Wi-Fi Direct 设备");
-                for (WifiP2pDevice d : list.getDeviceList()) {
-                    peers.add(d);
-                    peerAdapter.add((d.deviceName == null ? "未命名" : d.deviceName) +
-                            " / " + d.deviceAddress + " / state " + d.status);
+                peerAdapter.add("未展示附近设备，避免误点打印机");
+                WifiP2pDevice target = null;
+                int total = 0, matches = 0;
+                for (WifiP2pDevice device : list.getDeviceList()) {
+                    total++;
+                    if (wifiMode == WifiMode.P2P && targetWifiSsid != null &&
+                            M02sWifiPolicy.matchesPeerName(device.deviceName, targetWifiSsid)) {
+                        matches++;
+                        if (target == null) target = device;
+                    }
                 }
-                log("P2P 发现 " + peers.size() + " 个设备");
+                if (wifiMode == WifiMode.P2P && wifiConnecting && !matchedPeerConnectStarted) {
+                    log("P2P 已发现设备 " + total + " 台；匹配眼镜目标SSID=" + matches
+                            + " 台（不打印附近设备标识）");
+                    if (matches == 1) connectMatchedPeer(target);
+                    else if (matches > 1) {
+                        log("同名目标设备超过1台，拒绝自动连接以避免连错设备");
+                        stopWifiSession("P2P 匹配不唯一");
+                    }
+                }
             });
-        } catch (SecurityException ex) { log("P2P 设备列表需要授权"); }
+        } catch (SecurityException | IllegalStateException ex) {
+            log("读取 P2P 设备列表失败：" + ex.getClass().getSimpleName());
+        }
     }
     private void scanP2p() {
         if (!ensurePermission()) return;
@@ -895,23 +1184,47 @@ public final class MainActivity extends Activity {
     }
     private void requestConnectionInfo() {
         if (!permitted() || p2p == null || channel == null) return;
+        final int token = wifiSessionToken;
         try {
             p2p.requestConnectionInfo(channel, (WifiP2pInfo info) -> {
+                if (destroyed || token != wifiSessionToken) return;
                 if (info == null || !info.groupFormed) {
-                    log("P2P 当前没有活动连接组"); return;
+                    if (wifiMode == WifiMode.P2P) log("P2P 尚未形成连接组");
+                    return;
                 }
-                String owner = info.groupOwnerAddress == null ? "未知" :
-                        info.groupOwnerAddress.getHostAddress();
-                long ms = connectionStarted == 0 ? -1 :
-                        SystemClock.elapsedRealtime() - connectionStarted;
-                log("P2P 已成组；手机是组主=" + info.isGroupOwner +
-                        "；组主 IP=" + owner + "；建连计时=" + ms + "ms");
-                if (owner != null && owner.startsWith("192.168.")) {
-                    ipField.setText(owner);
-                    log("已将组主 IP 填入探测地址；如设备作为客户端，应手动改为设备真实 IP");
+                if (wifiMode != WifiMode.P2P || !matchedPeerConnectStarted) {
+                    log("系统存在 P2P 连接组，但没有本实验的眼镜匹配证据，不使用它");
+                    return;
                 }
+                if (info.isGroupOwner) {
+                    log("P2P 成组，但手机是组主；无法推断眼镜服务器IP，禁止盲目HTTP探测");
+                    return;
+                }
+                if (info.groupOwnerAddress == null) {
+                    log("P2P 成组但组主 IP 未获取，等待系统网络信息");
+                    return;
+                }
+                String host;
+                try { host = ProbePolicy.checkedLocalHost(
+                        info.groupOwnerAddress.getHostAddress()); }
+                catch (IllegalArgumentException ex) {
+                    log("P2P 组主IP不满足本地安全范围，无法开放文件列表测试"); return;
+                }
+                if (wifiVerified && host.equals(verifiedHost)) return;
+                wifiVerified = true;
+                wifiConnecting = false;
+                awaitingSsid = false;
+                verifiedHost = host;
+                ipField.setText(host);
+                cancelWifiTimers();
+                long ms = SystemClock.elapsedRealtime() - wifiStarted;
+                log("M02S 目标 P2P 已成组；手机非组主，设备IP来自Android组主地址；用时="
+                        + ms + "ms。HTTP文件接口尚未验证");
+                status.setText("目标 P2P 已连接，设备IP已取得（HTTP 待测试）");
             });
-        } catch (SecurityException ex) { log("无法读取 P2P 连接状态"); }
+        } catch (SecurityException | IllegalStateException ex) {
+            log("读取 P2P 成组状态失败：" + ex.getClass().getSimpleName());
+        }
     }
 
     private void connectAccessPoint() {
@@ -961,24 +1274,30 @@ public final class MainActivity extends Activity {
             NetworkCapabilities cap = connectivity.getNetworkCapabilities(n);
             if (cap != null && cap.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) wifiCount++;
         }
-        log("系统网络数量 " + all.length + "；Wi-Fi Network " + wifiCount +
-                "；独立 AP 会话 " + (apNetwork == null ? "否" : "是"));
+        log("系统网络数量 " + all.length + "；Wi-Fi Network " + wifiCount
+                + "；实验模式 " + wifiMode + "；眼镜目标连接确认=" + wifiVerified
+                + "；本地设备IP可用=" + (verifiedHost != null));
         requestConnectionInfo();
     }
     private void startHold() {
-        if (keepRunning) { log("120 秒测试已经在运行"); return; }
-        try {
-            lastHost = ProbePolicy.checkedLocalHost(ipField.getText().toString());
-        } catch (IllegalArgumentException e) { log(e.getMessage()); return; }
+        if (keepRunning) { log("120秒观察已经运行"); return; }
+        if (!wifiVerified || verifiedHost == null || wifiMode == WifiMode.NONE) {
+            log("安全拦截：目标眼镜Wi-Fi未连接或IP未验证，不能开始HTTP观察");
+            return;
+        }
+        lastHost = verifiedHost;
         keepRunning = true;
-        probes = 0; successes = 0; lastFingerprint = "";
+        probes = 0;
+        successes = 0;
+        lastFingerprint = "";
         keepStarted = SystemClock.elapsedRealtime();
         try { wifiLock.acquire(); }
-        catch (SecurityException ex) { log("无法获得 WifiLock：" + ex.getMessage()); }
-        log("开始 120 秒连接观察：每 3 秒只读 GET http://" + lastHost + "/app/getfilelist");
-        log("WifiLock 只阻止手机无线电节能休眠，并不能强制眼镜维持 Wi-Fi。");
+        catch (SecurityException ex) { log("无法获得WifiLock"); }
+        log("开始 120秒连接观察：仅访问已确认网络的私有设备地址，每3秒只读文件列表");
+        log("WifiLock 仅影响手机，不保证眼镜固件持续开启Wi-Fi");
         ui.post(holdTick);
     }
+
     private void finishHold(String reason) {
         boolean wasRunning = keepRunning;
         keepRunning = false;
@@ -989,6 +1308,10 @@ public final class MainActivity extends Activity {
     }
 
     private void probeLocalFileList(String host, Network bound, int sequence) {
+        if (!wifiVerified || verifiedHost == null || !verifiedHost.equals(host)) {
+            log("安全拦截：HTTP 请求目标不是已确认眼镜网络地址");
+            return;
+        }
         long begin = SystemClock.elapsedRealtime();
         int code = -1;
         int bytes = 0;
@@ -1044,7 +1367,7 @@ public final class MainActivity extends Activity {
     }
 
     private void copyDiagnostic() {
-        String payload = "M02S 官方指令实验 v0.1.3 / Android " + Build.VERSION.RELEASE +
+        String payload = "M02S Wi-Fi 精准连接实验 v0.1.4 / Android " + Build.VERSION.RELEASE +
                 "\n" + logData.toString();
         ClipboardManager cb = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         cb.setPrimaryClip(ClipData.newPlainText("M02S diagnostic", payload));
@@ -1053,6 +1376,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onDestroy() {
         finishHold("应用关闭");
+        stopWifiSession("应用关闭");
         destroyed = true;
         if (receiverRegistered) unregisterReceiver(receiver);
         if (bleScanner != null) {

@@ -65,12 +65,20 @@ public final class M02sBleWire {
             this.checksumOk = checksumOk;
         }
 
+        /** OEM 0x25: decoded as UTF-8 by WifiCmdBean.recoverByBytes().
+         * Only return in process memory. Never print or persist it. */
+        public String wifiSsidInMemory() {
+            if (command != 0x25 || !checksumOk) return null;
+            return M02sWifiPolicy.decodeSsid(payload);
+        }
+
         /** Only the non-sensitive photo-related status fields are printable. */
         public String safeSummary() {
             String name;
             switch (command) {
                 case 0x22: name = "拍照指令响应"; break;
-                case 0x39: name = "Wi-Fi信息响应（SSID/凭证已隐藏）"; break;
+                case 0x39: name = "Wi-Fi信息请求应答（SSID/凭证已隐藏）"; break;
+                case 0x25: name = "眼镜SSID信息（已隐藏）"; break;
                 case 0x42: name = "照片计数/序号候选"; break;
                 case 0x45: name = "操作状态候选"; break;
                 default: name = "未知事件（内容已隐藏）"; break;
