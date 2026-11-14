@@ -419,6 +419,7 @@ public final class M02sApStarter {
                     targetNetwork = network;
                     targetHost = host;
                     targetReady = true;
+                    cancelEstablishTimeout();
                     callback.log("已复用系统中同SSID且有私有网关的Wi-Fi Network；"
                             + "不再请求新连接，随后必须通过原厂HTTP接口验证眼镜身份");
                     callback.ready(network, host);
@@ -567,9 +568,18 @@ public final class M02sApStarter {
             targetNetwork = net;
             targetHost = host;
             targetReady = true;
+            cancelEstablishTimeout();
             callback.log("Android眼镜专属AP和可信私有网关已建立；下一步用原厂HTTP列表验真");
             callback.ready(net, host);
             return;
+        }
+    }
+
+    /** The initial AP connection deadline must not interrupt 120-second photo watching. */
+    private void cancelEstablishTimeout() {
+        if (overallTimeout != null) {
+            ui.removeCallbacks(overallTimeout);
+            overallTimeout = null;
         }
     }
 
