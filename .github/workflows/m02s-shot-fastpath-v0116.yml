@@ -1,0 +1,114 @@
+name: Blue Star M02S Photo Trigger Fast AP WiFi Original JPEG v0.1.16
+on:
+  workflow_dispatch:
+  push:
+    branches: ['exp/m02s-shot-wifi-fastpath-v0116-20261114']
+    paths:
+      - 'experiments/m02s-wifi-only-lab/**'
+      - '.github/workflows/m02s-shot-fastpath-v0116.yml'
+permissions:
+  contents: write
+
+jobs:
+  test-build-release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -s "$ANDROID_HOME/platforms/android-36/android.jar" ] || [ ! -x "$ANDROID_HOME/build-tools/36.0.0/apksigner" ]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+          fi
+      - name: Prepare Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Verify exact BLE AP-only command; unit tests and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE=experiments/m02s-wifi-only-lab/app/src/main/java
+          WIRE="$SOURCE/com/vobichngan/bluestar/m02slab/M02sApWire.java"
+          grep -Fq '0x39, 0x30, 0x69' "$WIRE"
+          grep -Fq 'Arrays.equals(AP_REQUEST, bytes)' "$WIRE"
+          grep -Fq 'actionSyncPhotoFlag' "$WIRE"
+          grep -Fq 'setSsid(expectedSsid)' "$SOURCE/com/vobichngan/bluestar/m02slab/M02sApStarter.java"
+          if grep -Fq 'wifi.startScan(' "$SOURCE/com/vobichngan/bluestar/m02slab/M02sApStarter.java"; then
+            echo 'v0.1.16 must not perform Android Wi-Fi scan before exact SSID request' >&2
+            exit 1
+          fi
+          if grep -R -E 'M02sBleWire[.]photoThumbnail|e09BlePhoto[(]|[.]removeFile[(]|DELETE_MEDIA' "$SOURCE" ; then
+            echo 'Unauthorized shutter/erase API in one-time AP starter' >&2
+            exit 1
+          fi
+          gradle -p experiments/m02s-wifi-only-lab --no-daemon --no-parallel --max-workers=2 \
+            :app:testDebugUnitTest :app:assembleDebug --stacktrace
+      - name: Verify manifest, standalone APK signing and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=experiments/m02s-wifi-only-lab/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          TOOL="$ANDROID_HOME/build-tools/36.0.0"
+          "$TOOL/apksigner" verify --verbose "$APK" | tee "$RUNNER_TEMP/signature.txt"
+          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' "$RUNNER_TEMP/signature.txt"
+          "$TOOL/zipalign" -c -v 4 "$APK"
+          "$TOOL/aapt" dump badging "$APK" | tee "$RUNNER_TEMP/badging.txt"
+          grep -q "package: name='com.vobichngan.bluestar.m02sshotfastlab' versionCode='17' versionName='0.1.16'" "$RUNNER_TEMP/badging.txt"
+          "$TOOL/aapt" dump permissions "$APK" | tee "$RUNNER_TEMP/permissions.txt"
+          for p in BLUETOOTH_SCAN BLUETOOTH_CONNECT ACCESS_NETWORK_STATE ACCESS_WIFI_STATE CHANGE_NETWORK_STATE CHANGE_WIFI_STATE NEARBY_WIFI_DEVICES ACCESS_FINE_LOCATION INTERNET; do
+            grep -q "android.permission.${p}" "$RUNNER_TEMP/permissions.txt"
+          done
+          if grep -qE 'android.permission.(CAMERA|READ_MEDIA_IMAGES|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE)' "$RUNNER_TEMP/permissions.txt"; then
+            echo 'Unexpected camera or photo storage permission' >&2
+            exit 1
+          fi
+          unzip -t "$APK" | tail -n 2
+          mkdir -p release
+          cp "$APK" release/BlueStar_M02S_Shot_Fast_WiFi_0.1.16_Android.apk
+          sha256sum release/*.apk | tee release/SHA256SUMS.txt
+          echo "Source commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          cat release/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload standalone signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar-M02S-Shot-Fast-WiFi-v0116-APK
+          path: release/BlueStar_M02S_Shot_Fast_WiFi_0.1.16_Android.apk
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish stable browser download URL
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/release-notes.txt" <<'EOF'
+          M02S v0.1.16 speed-first experimental APK. Prior v0.1.15 real device test showed ~12 seconds wasted in Wi-Fi scan before exact SSID request and 2-5 seconds Android Wi-Fi connection. Earlier M02S 3200x2400 original-JPEG GET itself had been measured at 475-758ms. Holding AP open also appeared to block the glasses' physical shutter. This release changes order to standby BLE first (no AP, no remote shutter), physical shutter second, Wi-Fi transfer only after shutter.
+          Trigger: public MIT E09 ACTION_SYNC 0x45 AA14 first payload flag represents isTakePhoto. This app passively parses checksum-valid rising 0->1 as a candidate only, 350ms later attempts the already-verified OEM one-time 0x39/0x30 AP request. IMPORTANT: the 0x45 physical shutter behavior is NOT verified on this particular M02S; a big manual 'I have taken a photo, receive now' button is supplied as an immediate and deterministic fallback without forcing the user to redo BLE/WiFi setup. The app does NOT send BLE shutter commands (0x22), unknown file-finish commands (0x44), delete, OTA, or cloud upload.
+          After 0x39/0x30, wait for AA13 status0 and checksum-valid AA14 0x25 exact SSID; immediately reuse a verified already-connected target WiFi Network or requestNetwork once with the OEM previously-proven WPA2 credentials, WITHOUT Wi-Fi startScan, WITHOUT a 12sec preflight and WITHOUT a 1.8sec settle wait. Actual Android Network onAvailable, real trusted private IPv4 gateway, and OEM HTTP200 /app/getfilelist JSON are all still mandatory. No unknown device connection, no blind retries.
+          Once connected, read only two brief stable list snapshots ~350ms apart and select uniquely newest timestamp-valid image (using the pre-existing safety policy). First shot candidate cannot be guaranteed newly captured because no pre-shot AP list exists; labels explicitly state this and repeated same file in the same app session is not redownloaded. GET original image via dedicated Android Network with filename traversal/32MiB/type/Bitmap safety, show only in RAM, record BLE-trigger-to-WiFi and request-to-decode metrics. One short transfer per user action, at most 39sec deadline. Release phone WiFi request after success, keep BLE standby (glasses firmware exiting AP is NOT yet proven). No 450ms continuous polling. No cloud OCR/TTS yet.
+          Reuses existing successfully tested M02S Android AP+original-JPEG code and public MIT E09 source (AdditionalValidations.swift, Constants.swift, WifiMediaManager.swift); E09 attribution preserved in E09_SOURCE_LICENSE.md. Standalone applicationId com.vobichngan.bluestar.m02sshotfastlab, versionCode17/versionName0.1.16. v0.1.12 through v0.1.15, official Blue Star Guide RC25, Windows OCR, and HeyCyan are untouched. CI success means build/tests pass, NOT real physical shutter notification or sub-3-second timing.
+          EOF
+          gh release create bluestar-m02s-shot-fast-wifi-v0116-20261114 \
+            release/BlueStar_M02S_Shot_Fast_WiFi_0.1.16_Android.apk \
+            release/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Blue Star M02S Shot -> Fast WiFi Original JPEG v0.1.16 — experimental" \
+            --prerelease --notes-file "$RUNNER_TEMP/release-notes.txt"
+      - name: Verify release published and downloadable
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view bluestar-m02s-shot-fast-wifi-v0116-20261114 \
+            --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,assets,url \
+            --jq '{isDraft,isPrerelease,url,assets: [.assets[] | {name: .name, size: .size, url: .url}]}'
