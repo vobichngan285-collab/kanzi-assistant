@@ -25,7 +25,11 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.media.MediaPlayer;
+import org.videolan.libvlc.LibVLC;
+import org.videolan.libvlc.Media;
+import org.videolan.libvlc.MediaPlayer;
+import org.videolan.libvlc.interfaces.IMedia;
+import org.videolan.libvlc.interfaces.IVLCVout;
 import android.provider.MediaStore;
 import android.os.Environment;
 import android.net.Uri;
@@ -210,8 +214,11 @@ public final class MainActivity extends Activity {
     private boolean e09LiveRequested;
     private boolean e09LiveProbing;
     private boolean e09ProcessBound;
+    private LibVLC e09LibVlc;
     private MediaPlayer e09Player;
     private SurfaceView e09Surface;
+    private int e09VlcSession;
+    private boolean e09VlcTrackSizeReported;
     private String e09LiveLastHost;
     /** Only one user-triggered OEM 0x95 capability read may be outstanding. */
     private boolean e09CapabilityPending;
@@ -320,7 +327,7 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(receiver, f);
         receiverRegistered = true;
-        log("v0.1.13：保留已验证AA15/0x95及0x67直播指令；仅在Vivo的E09直播首次Wi-Fi申请使用公开原厂LiteralPatternSSID+BSSID精确绑定");
+        log("v0.1.14：保留v0.1.13已真机成功的BLE/原厂式Vivo AP/RTSP探测；只把系统MediaPlayer换为官方LibVLC RTSP/TCP播放器");
         log("所有传回图片默认只在RAM；仅用户点击保存时写入相册Pictures/BlueStarE09，无缩放和重压缩");
         requestPermissionsIfNeeded();
         updateNetworkStatus();
@@ -335,7 +342,7 @@ public final class MainActivity extends Activity {
         body.setBackgroundColor(Color.rgb(245, 248, 252));
         scroll.addView(body);
 
-        body.addView(text("蓝星 M02S E09 原厂式直播Wi-Fi连接 v0.1.13", 23, true));
+        body.addView(text("蓝星 M02S E09 LibVLC实时预览 v0.1.14", 23, true));
         body.addView(text("独立实验，不修改正式蓝星向导。Wi-Fi 网络名称/密码不会写进日志。", 14, false));
         status = text("蓝牙未连接 / 眼镜 Wi-Fi 未建立", 17, true);
         status.setPadding(0, dp(12), 0, dp(10));
@@ -418,9 +425,10 @@ public final class MainActivity extends Activity {
                 button("播放RTSP画面", this::playE09Preview));
         addRow(body, button("停止直播并安全退出", this::endE09Live),
                 button("单独发送不删除结束指令", this::sendE09SafeFinish));
-        body.addView(text("直播仅访问眼镜专属已验证AP网关 /h264；收到RTSP控制应答不等于能播放画面。"
-                + "结束通知仅允许0x44/0x30/0x01，不提供删除媒体的0x44/0x30/0x00。"
-                + "除用户主动导出蓝牙JPEG外不保存照片；不上传云端、不改固件。", 14, false));
+        body.addView(text("本版直播采用原厂同路线 LibVLC（RTSP/TCP）：只播放眼镜专属AP网关/h264。"
+                + "Playing、视频轨道、Vout分别记录；它们不等于已确认画面，须观察屏幕。"
+                + "结束通知只允许0x44/0x30/0x01，不发送清除文件命令；"
+                + "不录屏、不上传云端、不改固件。", 14, false));
         e09Surface = new SurfaceView(this);
         e09Surface.setMinimumHeight(dp(190));
         body.addView(e09Surface, new LinearLayout.LayoutParams(
@@ -2473,60 +2481,130 @@ public final class MainActivity extends Activity {
         }
     }
 
+    /**
+     * OEM EyevueTLiveActivity uses LibVLC (not android.media.MediaPlayer)
+     * for the T-series rtsp://<verified AP gateway>/h264 video.
+     * This changes ONLY the player; v0.1.13's working BLE/AP path remains.
+     */
     private void playE09Preview() {
         if (!e09LiveRequested || !wifiVerified || wifiMode != WifiMode.AP
                 || apNetwork == null || verifiedHost == null) {
-            log("E09 RTSP：未建立该眼镜的专属AP Network和真实网关，禁止播放"); return;
+            log("E09 LibVLC：未建立眼镜专属AP Network及私有网关，拒绝播放"); return;
         }
         stopE09Preview();
-        // Only this experimental app process is bound temporarily. Other
-        // apps keep their default internet routes. Always unbind on stop.
         try {
+            // The verified Network, rather than the phone's normal Internet,
+            // must be used for all LibVLC native RTSP sockets.
             if (!connectivity.bindProcessToNetwork(apNetwork)) {
-                log("E09 RTSP：Android拒绝应用级网络绑定，未尝试播放"); return;
+                log("E09 LibVLC：Android拒绝应用级网络绑定，未尝试播放"); return;
             }
             e09ProcessBound = true;
             final String host = ProbePolicy.checkedLocalHost(verifiedHost);
-            MediaPlayer player = new MediaPlayer();
+            final int session = ++e09VlcSession;
+            e09VlcTrackSizeReported = false;
+
+            // Official Android LibVLC from Maven Central, matching the OEM's
+            // video rendering engine and its RTSP-over-TCP stream options.
+            LibVLC libVlc = new LibVLC(this);
+            e09LibVlc = libVlc;
+            MediaPlayer player = new MediaPlayer(libVlc);
             e09Player = player;
-            player.setDisplay(e09Surface.getHolder());
-            player.setVolume(0f,0f);
-            player.setDataSource("rtsp://" + host + "/h264");
-            player.setOnVideoSizeChangedListener((mp,w,h) ->
-                    log("E09 RTSP收到视频尺寸回调：" + w + "×" + h
-                            + "（仍须观察画面是否持续）"));
-            player.setOnPreparedListener(mp -> {
-                if (mp != e09Player || !e09LiveRequested) return;
-                try {
-                    mp.start();
-                    log("E09 RTSP播放器已启动；请观察是否确有实时画面及持续帧更新");
-                    status.setText("RTSP播放器已启动，画面效果待人工验证");
-                } catch (IllegalStateException ex) {
-                    log("E09 RTSP播放器无法启动，类型=" + ex.getClass().getSimpleName());
-                }
+
+            IVLCVout vout = player.getVLCVout();
+            vout.setVideoView(e09Surface);
+            vout.attachViews();
+            player.setVolume(0); // OCR preview is visual; don't play camera audio.
+            player.setEventListener(event -> {
+                final int type = event.type;
+                final int outputCount = type == MediaPlayer.Event.Vout
+                        ? event.getVoutCount() : -1;
+                ui.post(() -> {
+                    if (destroyed || session != e09VlcSession
+                            || e09Player != player || !e09LiveRequested) return;
+                    if (type == MediaPlayer.Event.Opening) {
+                        log("E09 LibVLC：开始打开RTSP/TCP视频流");
+                    } else if (type == MediaPlayer.Event.Playing) {
+                        log("E09 LibVLC：已进入Playing状态，等待实际视频输出");
+                        status.setText("LibVLC播放已启动；观察实时画面是否出现");
+                    } else if (type == MediaPlayer.Event.Vout) {
+                        log("E09 LibVLC：视频输出通道数=" + outputCount
+                                + "；仍需肉眼确认真实画面");
+                        if (outputCount > 0 && !e09VlcTrackSizeReported) {
+                            try {
+                                IMedia.VideoTrack track = player.getCurrentVideoTrack();
+                                if (track != null && track.width > 0 && track.height > 0) {
+                                    e09VlcTrackSizeReported = true;
+                                    log("E09 LibVLC：视频轨道分辨率=" + track.width
+                                            + "×" + track.height
+                                            + "（轨道元数据，不代表已解码持续帧）");
+                                    status.setText("LibVLC视频轨道 " + track.width
+                                            + "×" + track.height + "；请核对实时画面");
+                                }
+                            } catch (RuntimeException ex) {
+                                log("E09 LibVLC：视频尺寸读取异常="
+                                        + ex.getClass().getSimpleName());
+                            }
+                        }
+                    } else if (type == MediaPlayer.Event.EncounteredError) {
+                        log("E09 LibVLC：底层媒体流错误；Wi-Fi/RTSP控制层已成功，"
+                                + "但本次视频播放仍未通过真机验证");
+                        status.setText("LibVLC播放器错误；请提交本段诊断日志");
+                        stopE09Preview();
+                    } else if (type == MediaPlayer.Event.EndReached) {
+                        log("E09 LibVLC：直播流已结束，不自动重播");
+                        stopE09Preview();
+                    } else if (type == MediaPlayer.Event.Stopped) {
+                        log("E09 LibVLC：播放器已停止");
+                    }
+                });
             });
-            player.setOnErrorListener((mp,what,extra) -> {
-                log("E09 RTSP播放器报错：what=" + what + "；extra=" + extra
-                        + "；可能不支持该设备或Android媒体栈");
-                ui.post(this::stopE09Preview);
-                return true;
-            });
-            player.prepareAsync();
-            log("E09 RTSP Android MediaPlayer准备中（源仅使用眼镜AP私有网关/h264）");
-        } catch (Exception e) {
-            log("E09 RTSP启动失败，类型=" + e.getClass().getSimpleName()
-                    + "；不推断设备一定不支持");
+
+            Media media = new Media(libVlc, Uri.parse("rtsp://" + host + "/h264"));
+            try {
+                media.setHWDecoderEnabled(true, false);
+                // OEM EyevueTLiveActivity options; do not silently switch to UDP.
+                media.addOption(":network-caching=1000");
+                media.addOption(":rtsp-tcp");
+                media.addOption(":file-caching=1000");
+                media.addOption(":live-caching=100");
+                media.addOption(":drop-late-frames=true");
+                media.addOption(":skip-frames=true");
+                player.setMedia(media);
+            } finally {
+                media.release(); // Player retains its own media reference.
+            }
+            player.play();
+            log("E09 LibVLC已提交单次RTSP/TCP播放；只使用已验证眼镜私有网关/h264；"
+                    + "未修改Wi-Fi/BLE连接流程、不自动重连");
+            status.setText("正在用LibVLC播放眼镜RTSP视频");
+        } catch (Exception | LinkageError ex) {
+            log("E09 LibVLC启动失败：" + ex.getClass().getSimpleName()
+                    + "；保留已有Wi-Fi/RTSP控制层结论");
+            status.setText("LibVLC初始化或播放器启动失败");
             stopE09Preview();
         }
     }
 
     private void stopE09Preview() {
-        if (e09Player != null) {
-            try { e09Player.setOnErrorListener(null); e09Player.stop(); }
-            catch (IllegalStateException ignored) { }
-            try { e09Player.release(); } catch (Exception ignored) { }
-            e09Player = null;
+        // Invalidate delayed VLC events before releasing native resources.
+        ++e09VlcSession;
+        MediaPlayer player = e09Player;
+        e09Player = null;
+        if (player != null) {
+            try { player.setEventListener(null); } catch (Exception ignored) { }
+            try { player.stop(); } catch (Exception | LinkageError ignored) { }
+            try {
+                IVLCVout vout = player.getVLCVout();
+                if (vout.areViewsAttached()) vout.detachViews();
+            } catch (Exception | LinkageError ignored) { }
+            try { player.release(); } catch (Exception | LinkageError ignored) { }
         }
+        LibVLC lib = e09LibVlc;
+        e09LibVlc = null;
+        if (lib != null) {
+            try { lib.release(); } catch (Exception | LinkageError ignored) { }
+        }
+        e09VlcTrackSizeReported = false;
         if (e09ProcessBound) {
             try { connectivity.bindProcessToNetwork(null); }
             catch (Exception ignored) { }
