@@ -2193,6 +2193,164 @@ public final class MainActivity extends Activity {
         }
     }
 
+    /** E09 MIT-source TAKE_PHOTO 0x22/0x31: only AA15 carries the JPEG. */
+    private void startE09BlePhoto() {
+        if (e09BlePhotoActive || oneClickActive || photoBusy || e09LiveRequested
+                || wifiMode != WifiMode.NONE || wifiConnecting) {
+            log("E09 BLE直传：请先停止Wi-Fi/直播和其他拍照任务"); return;
+        }
+        if (!gattConnected || !commandNotifyReady || !notificationMonitor
+                || pendingSubscription != null || !notificationQueue.isEmpty()) {
+            log("E09 BLE直传：需要先连接蓝牙并完成AA14/AA15通知订阅"); return;
+        }
+        BluetoothGattService svc = gatt == null ? null : gatt.getService(COMMAND_SERVICE);
+        if (svc == null || svc.getCharacteristic(PHOTO_NOTIFY) == null) {
+            log("E09 BLE直传：没有AA15特征，M02S不支持此接收路径"); return;
+        }
+        e09Assembler.reset();
+        e09BlePhotoActive = true; // Arm BEFORE triggering: start frame may arrive immediately.
+        e09PhotoStartedAt = SystemClock.elapsedRealtime();
+        if (!sendVerifiedCommand(M02sBleWire.e09BlePhoto())) {
+            e09BlePhotoActive = false;
+            log("E09 BLE直传：写入未提交；不会重发"); return;
+        }
+        lastPhotoInMemory = null;
+        photoPreview.setImageBitmap(null);
+        log("E09 BLE直传：已发送唯一0x22/0x31；只监听AA15 0x97/0x98/0x99，"
+                + "最大2MB、最多15秒，无二次拍照");
+        e09PhotoTimeout = () -> {
+            if (!e09BlePhotoActive) return;
+            log("E09 BLE直传超时：AA15数据已收到=" + e09Assembler.receivedLength()
+                    + "字节；分片=" + e09Assembler.packets()
+                    + "；不把AA14的拍照回执当作图片");
+            stopE09BlePhoto();
+        };
+        ui.postDelayed(e09PhotoTimeout, 15_000L);
+    }
+
+    private void stopE09BlePhoto() {
+        if (e09PhotoTimeout != null) ui.removeCallbacks(e09PhotoTimeout);
+        e09PhotoTimeout = null;
+        boolean was = e09BlePhotoActive;
+        e09BlePhotoActive = false;
+        if (was) log("E09 AA15接收结束；无照片写盘、无云上传");
+    }
+
+    /** APP_LIVE(0x67/0x30), not OPEN_WIFI(0x39/0x30). */
+    private void startE09Live() {
+        if (e09LiveRequested || e09BlePhotoActive || oneClickActive || photoBusy
+                || wifiMode != WifiMode.NONE || wifiConnecting || wifiVerified) {
+            log("E09 RTSP：已有传输任务，先安全退出上一个模式"); return;
+        }
+        if (!gattConnected || !commandNotifyReady || !notificationMonitor) {
+            log("E09 RTSP：先连接蓝牙并订阅AA14反馈"); return;
+        }
+        e09LiveRequested = true;
+        e09LiveProbing = false;
+        e09LiveLastHost = null;
+        // Overrides ONLY the OEM AP-information request with the exact E09
+        // APP_LIVE command. Existing 0x25/SSID handling, dedicated Network
+        // validation and Android16 failure diagnosis remain unchanged.
+        requestTargetWifi(WifiMode.AP, M02sBleWire.e09AppLiveAp());
+        if (!wifiConnecting || wifiMode != WifiMode.AP) {
+            e09LiveRequested = false;
+            log("E09 RTSP：未能提交0x67/0x30，实验未启动");
+        } else {
+            log("E09 RTSP：已提交0x67/0x30直播AP请求；等待AA14 0x25和真实Wi-Fi Network。"
+                    + "与M02S兼容性仍待实际响应判定");
+        }
+    }
+
+    private void playE09Preview() {
+        if (!e09LiveRequested || !wifiVerified || wifiMode != WifiMode.AP
+                || apNetwork == null || verifiedHost == null) {
+            log("E09 RTSP：未建立该眼镜的专属AP Network和真实网关，禁止播放"); return;
+        }
+        stopE09Preview();
+        // Only this experimental app process is bound temporarily. Other
+        // apps keep their default internet routes. Always unbind on stop.
+        try {
+            if (!connectivity.bindProcessToNetwork(apNetwork)) {
+                log("E09 RTSP：Android拒绝应用级网络绑定，未尝试播放"); return;
+            }
+            e09ProcessBound = true;
+            final String host = ProbePolicy.checkedLocalHost(verifiedHost);
+            MediaPlayer player = new MediaPlayer();
+            e09Player = player;
+            player.setDisplay(e09Surface.getHolder());
+            player.setVolume(0f,0f);
+            player.setDataSource("rtsp://" + host + "/h264");
+            player.setOnVideoSizeChangedListener((mp,w,h) ->
+                    log("E09 RTSP收到视频尺寸回调：" + w + "×" + h
+                            + "（仍须观察画面是否持续）"));
+            player.setOnPreparedListener(mp -> {
+                if (mp != e09Player || !e09LiveRequested) return;
+                try {
+                    mp.start();
+                    log("E09 RTSP播放器已启动；请观察是否确有实时画面及持续帧更新");
+                    status.setText("RTSP播放器已启动，画面效果待人工验证");
+                } catch (IllegalStateException ex) {
+                    log("E09 RTSP播放器无法启动，类型=" + ex.getClass().getSimpleName());
+                }
+            });
+            player.setOnErrorListener((mp,what,extra) -> {
+                log("E09 RTSP播放器报错：what=" + what + "；extra=" + extra
+                        + "；可能不支持该设备或Android媒体栈");
+                ui.post(this::stopE09Preview);
+                return true;
+            });
+            player.prepareAsync();
+            log("E09 RTSP Android MediaPlayer准备中（源仅使用眼镜AP私有网关/h264）");
+        } catch (Exception e) {
+            log("E09 RTSP启动失败，类型=" + e.getClass().getSimpleName()
+                    + "；不推断设备一定不支持");
+            stopE09Preview();
+        }
+    }
+
+    private void stopE09Preview() {
+        if (e09Player != null) {
+            try { e09Player.setOnErrorListener(null); e09Player.stop(); }
+            catch (IllegalStateException ignored) { }
+            try { e09Player.release(); } catch (Exception ignored) { }
+            e09Player = null;
+        }
+        if (e09ProcessBound) {
+            try { connectivity.bindProcessToNetwork(null); }
+            catch (Exception ignored) { }
+            e09ProcessBound = false;
+        }
+    }
+
+    /** Explicitly verified NON-DELETING E09/HeyCyan finish packet. */
+    private void sendE09SafeFinish() {
+        if (e09BlePhotoActive || oneClickActive || photoBusy) {
+            log("E09安全结束通知：当前拍照/下载尚在进行，禁止提前发送"); return;
+        }
+        if (sendVerifiedCommand(M02sBleWire.e09SafeTransferFinish())) {
+            log("已提交E09不删除文件结束指令0x44/0x30/0x01；"
+                    + "仅GATT写入，能否恢复M02S拍照需真机验证");
+        } else {
+            log("E09不删除结束指令未发送；检查蓝牙通知订阅与5秒指令间隔");
+        }
+    }
+
+    private void endE09Live() {
+        boolean was = e09LiveRequested;
+        stopE09Preview();
+        e09LiveRequested = false;
+        e09LiveProbing = false;
+        e09LiveLastHost = null;
+        if (was && !oneClickActive) {
+            sendE09SafeFinish();
+        }
+        if (wifiMode == WifiMode.AP && !oneClickActive) {
+            stopWifiSession("E09 RTSP结束；手机已释放专属AP Network");
+        }
+        log("E09 RTSP已停止；不删除眼镜文件。"
+                + "如果安全结束命令因5秒间隔未发送，可稍后单独点击安全结束按钮");
+    }
+
     private void startOneClick() {
         if (oneClickActive || photoBusy || e09BlePhotoActive || e09LiveRequested) {
             log("已有照片或E09直播任务进行中，不允许重复拍照"); return;
