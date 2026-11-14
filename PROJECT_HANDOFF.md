@@ -1,3 +1,15 @@
+# 最新｜M02S v0.1.23 新鲜热点校验 + 单次有条件 Wi-Fi 恢复（2026-11-15，CI/Release 成功，待真机）
+
+- **独立实验，不改旧产品：** 基于已成功发布的 v0.1.22 `exp/m02s-manual-import-compare-v0122-20261115` 源码HEAD `1bceb607359e455ea53e29e6ec7b31b240652fc6`，新增分支 `exp/m02s-oem-fresh-ap-bounded-recovery-v0123-20261115`。只修改实验 `experiments/m02s-wifi-only-lab` 的 Android Wi-Fi 连接路径、UI版本/说明、增加纯Java有界恢复策略及单测、专用CI；未触碰蓝星向导正式版、Windows OCR、官方眼镜App或旧v0.1.22包。
+- **精确保留已验证的媒体链：** 实体快门与 AA14 `0x45` 仅提供拍照结束候选；**用户单独点击导入**后仅一次精确 AA13 `0x39/0x30` 开AP、AA14 `0x25` BLE SSID，沿用原WPA2、私有IPv4网关、原厂HTTP200 JSON `/app/getfilelist`、两次最新候选稳定比对和原始JPEG只读GET到RAM，另保留被动可选 `isImport`、手动只读设备 `0x64` 与匿名日志。不使用 `0x44` 清除/结束、`0x22` 快门、P2P/OTA、删除、相册写入或云端上传。
+- **连接策略唯一实验变量：** 收到本轮准确SSID后，若Android已有完全匹配且有私有网关的Wi-Fi Network则先复用并用原厂HTTP验真；否则Android仅主动扫描一次，必须发现**BLE开AP后时间戳新鲜且目标SSID唯一BSSID**的热点，经过1.8秒观察，再用原有SSID+WPA2请求第一次Android `WifiNetworkSpecifier`；如果 `onUnavailable`，重新检查已有Network，没有则**至多再扫描一次**，仅当新广播确实在失败后产生、仍为唯一BSSID并能改变为BSSID-pinned请求时，才允许总次数不超过2的第二次Android请求。每轮扫描最多7秒，Android请求仍每次25秒，手动导入总体上限80秒。无新鲜广播/扫描受系统限流只报告**未确认**，不把旧缓存/Android onUnavailable当眼镜损坏证明；不无限重复BLE/Android请求。
+- **原厂源码证据边界：** `FerSaiyan/Alternative-HeyCyan-App-and-SDK/android/DATA_SYNC_COMMAND_AUDIT_20260909.md` 可核对媒体AP命令；`EyevueWifiTransport.kt` 可核对Android精准SSID/WPA2连接方式。**新鲜扫描与BSSID单次重试是本实验假设，不是已证实的原厂逐行算法**，也不能宣称当前手机安装的原厂App与公开反编译版本完全一致。仍须与v0.1.22同机A/B测试。
+- **已完成CI和真实发行：** 构建源码HEAD `840b127d218ccaf0aa9071f780e5a00641df6d38`；[Actions 43619585072](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/43619585072) `completed/success`，JUnit/Gradle Android APK、精确BLE白名单、单次手动AP入口、扫描与第二次请求静态断言、APK v2签名、zipalign、版本/权限通过。独立包名 `com.vobichngan.bluestar.m02sfreshaplab`、versionCode24、versionName0.1.23。公开 [Release](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-m02s-fresh-ap-bounded-recovery-v0123-20261115)；[APK直链](https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-m02s-fresh-ap-bounded-recovery-v0123-20261115/BlueStar_M02S_FreshAP_BoundedRecovery_0.1.23_Android.apk)，真实大小109497 bytes、SHA256 `c9eba11ba0f5f994fb7b1781c23f06a61b3d252cf07183151d808758c711e965`；未覆盖旧Release。
+- **待真人验收：** 先拍实体快门→再点击导入，观察连续至多5轮中Android系统扫描是否返回新鲜AP、首次请求是否onAvailable、第二轮是否真的满足恢复策略、HTTP200和原图是否出现。系统可能限流扫描，导致本版比v0.1.22更容易停在“无法验证广播”，这不等于眼镜硬件差；若失败立即停止并复制匿名完整诊断，不连续猛试。不把CI成功等同于真机5轮成功。
+- **接手纪律：** main只更新本交接文字、旧历史保持原样，不自动再次构建或修改正式版。下次先查当前实际HEAD和Release，优先分析用户提供的v0.1.23真机日志。
+
+---
+
 # 最新｜M02S v0.1.22 原厂式「先实体拍照→再手动导入」对照实验（2026-11-15，已发布待真机）
 
 - **用户新证据与授权**：用户多次实测眼镜原厂App**稳定重复导入**：按实体快门，原厂相册先显示一个文件，**手动点「导入」后才开启眼镜网络、下载成功**，没有第二次常失效的问题。v0.1.21曾在真实M02S读取只读设备项目号`TK8`、AA14`0x45`可选`isImport`确有0→1→0转变；曾有一次连续取两张成功，但后来同样操作第二次失败，不能归咎于等待20秒或蓝牙重连。用户授权**采用原厂用户动作顺序，先实验手动导入、随后若稳定再考虑恢复自动化**，不得继续凭猜测改连接超时或加未知协议。
