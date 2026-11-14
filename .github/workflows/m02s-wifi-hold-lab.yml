@@ -1,8 +1,8 @@
-name: Blue Star M02S BLE-First AP-Fetch Lab v0.1.8
+name: Blue Star M02S OEM AP Scan Recovery Lab v0.1.9
 on:
   workflow_dispatch:
   push:
-    branches: ['exp/m02s-ble-first-ap-fetch-v018-20261114']
+    branches: ['exp/m02s-oem-ap-scan-recovery-v019-20261114']
     paths:
       - 'experiments/m02s-wifi-lab/**'
       - '.github/workflows/m02s-wifi-hold-lab.yml'
@@ -48,7 +48,7 @@ jobs:
           grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' "$RUNNER_TEMP/signature.txt"
           "$TOOL/zipalign" -c -v 4 "$APK"
           "$TOOL/aapt" dump badging "$APK" | tee "$RUNNER_TEMP/badging.txt"
-          grep -q "package: name='com.vobichngan.bluestar.m02sblefirstlab' versionCode='9' versionName='0.1.8'" "$RUNNER_TEMP/badging.txt"
+          grep -q "package: name='com.vobichngan.bluestar.m02soemaplab' versionCode='10' versionName='0.1.9'" "$RUNNER_TEMP/badging.txt"
           "$TOOL/aapt" dump permissions "$APK" | tee "$RUNNER_TEMP/permissions.txt"
           grep -q 'android.permission.BLUETOOTH_SCAN' "$RUNNER_TEMP/permissions.txt"
           grep -q 'android.permission.NEARBY_WIFI_DEVICES' "$RUNNER_TEMP/permissions.txt"
@@ -61,15 +61,15 @@ jobs:
           fi
           unzip -t "$APK" | tail -n 2
           mkdir -p release
-          cp "$APK" release/BlueStar_M02S_BLE_First_AP_Fetch_0.1.8_Android.apk
+          cp "$APK" release/BlueStar_M02S_OEM_AP_Recovery_0.1.9_Android.apk
           sha256sum release/*.apk | tee release/SHA256SUMS.txt
           echo "Source commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
           cat release/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
       - name: Upload installation APK
         uses: actions/upload-artifact@v4
         with:
-          name: BlueStar-M02S-BLE-First-v018-APK
-          path: release/BlueStar_M02S_BLE_First_AP_Fetch_0.1.8_Android.apk
+          name: BlueStar-M02S-OEM-AP-v019-APK
+          path: release/BlueStar_M02S_OEM_AP_Recovery_0.1.9_Android.apk
           retention-days: 30
           if-no-files-found: error
       - name: Publish direct-browser APK
@@ -79,24 +79,24 @@ jobs:
         run: |
           set -euo pipefail
           cat > "$RUNNER_TEMP/note.txt" <<'EOF'
-          Blue Star M02S BLE-first capture → AP-fetch experiment v0.1.8 for Android 16, independent standalone package.
-          Verified device baselines: v0.1.3 BLE AA13 0x22/0x30 produced real shutter sound and 0x22/0x42 response; v0.1.6 successfully parsed the AP photo list and downloaded/displayed an original 3200x2400 JPEG (481424B, 532ms). User observed v0.1.7 preconnected-AP shot made no sound and no new photo appeared in 45s; specific causal reason is still unproven.
-          v0.1.8 starts with BLE/AA14 and requires no active app AP session, sends the verified shutter frame once, separately captures prioritized 0x22/0x42 photo-related notifications even after generic notification log throttling, waits at least 5s between BLE writes, then sends verified 0x39/0x30 to request AP information, connects by exact decoded SSID using WifiNetworkSpecifier and the Android-confirmed dedicated Network and real private gateway, checks official /app/getfilelist twice for stable candidate, and fetches one original image into RAM. Auto-releases the phone AP Network request after completion/cancel; eyewear may remain in AP mode and physical follow-up testing is required.
-          No AP pre-shot file-list baseline exists on a fresh launch: the first shot may preview only the uniquely latest candidate, explicitly UNVERIFIED as newly captured. Next successful run compares against the previous in-memory AP list. Never label a static old file a proven fresh shot; reject ambiguous files. No auto-repeat shutter/AP attempts. 256KB AP JSON and 32MB image caps, strict relative name and content checks, no redirects, no cloud, no file writes, no deletes, no speculative firmware commands.
-          Separate app ID com.vobichngan.bluestar.m02sblefirstlab; official Blue Star Guide RC25, Windows OCR, and v0.1.0-v0.1.7 branches and releases unchanged.
-          CI tests, SDK36 build, package/version/permission/signing/zipalign/ZIP validation and browser-downloadable prerelease asset. Hardware shutter/AP interaction and exit from glasses AP mode require one phone field test; no claims of real-device success.
+          Blue Star M02S OEM-style AP scan and limited connection recovery experiment v0.1.9, independent Android16 app.
+          Verified baselines: v0.1.3 real BLE shutter, v0.1.5/0.1.6 real target AP onAvailable+private gateway, original JPEG 3200x2400 / 481424B / 532ms. v0.1.8 real shutter with photo responses 0x22 and 0x42, then repeated Android onUnavailable within 5-6s, no image download. Avoid revisiting successful photo and HTTP tests.
+          Based on user-provided HeyCyan v1.0.24-c APK static analysis: OEM Lxxh performs target scan, scan stability/wait, optional BSSID pinning, and already-connected target handling. v0.1.9 implements a minimal, independent scan/preflight flow instead of copying the entire OEM application. Exact BLE-confirmed SSID only; read Wi-Fi scan results from foreground, reject scans older than 30s; select a unique BSSID only if the exact target is found; when ambiguous/unavailable fall back to the v0.1.6 verified SSID-only WifiNetworkSpecifier request; reuse an already-connected exact target Wi-Fi Network only with verified private gateway. On Android onUnavailable, scan up to 6s and allow at most one different BSSID/SSID-only retry only if the unique exact target is freshly visible. No unbounded retry or repeat shutter. Log only counts, callback stage and strategies; SSID/BSSID, passwords and photos never logged.
+          Reuses intact original BLE 0x22/0x30, 0x39/0x30 and 0x25 parsing, user-confirmed dedicated AP-only HTTP GET, fresh-file selection and in-memory original-image preview. First post-shot latest image remains unverified without pre-shot baseline; user must inspect the scene. AP release on completion is only phone-side; eyewear mode reset is not proven.
+          Separate package com.vobichngan.bluestar.m02soemaplab. No camera/media storage permissions, cloud calls, unknown firmware commands, photos written, or changes to formal Blue Star Guide RC25, Windows OCR, HeyCyan or old v0.1.3-v0.1.8 packages/releases.
+          CI tests/APK compile/zipalign/v2-signature, package/version/permissions, release asset publication. Actual phone test is still REQUIRED; this version makes no claims of fully solved AP state or always-on Wi-Fi.
           EOF
-          gh release create bluestar-m02s-ble-first-ap-fetch-v018-20261114 \
-            release/BlueStar_M02S_BLE_First_AP_Fetch_0.1.8_Android.apk \
+          gh release create bluestar-m02s-oem-ap-recovery-v019-20261114 \
+            release/BlueStar_M02S_OEM_AP_Recovery_0.1.9_Android.apk \
             release/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Blue Star M02S BLE-First Capture then AP Fetch v0.1.8 — standalone experiment" \
+            --title "Blue Star M02S OEM-Style AP Scan Recovery v0.1.9 — independent experiment" \
             --prerelease --notes-file "$RUNNER_TEMP/note.txt"
       - name: Verify release assets
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view bluestar-m02s-ble-first-ap-fetch-v018-20261114 --repo "$GITHUB_REPOSITORY" \
+          gh release view bluestar-m02s-oem-ap-recovery-v019-20261114 --repo "$GITHUB_REPOSITORY" \
             --json isDraft,isPrerelease,assets,url \
             --jq '{isDraft,isPrerelease,url,assets: [.assets[] | {name: .name, size: .size, url: .url}]}'
