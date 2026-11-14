@@ -163,12 +163,14 @@ public final class MainActivity extends Activity {
             }
         });
         makeUi();
-        log("v0.1.22 原厂式手动导入对照：拍照完成只做本地待导入标记，"
+        log("v0.1.23 原厂式手动导入对照：拍照完成只做本地待导入标记，"
                 + "必须用户手动点「导入高清原图」才发送一次开AP并申请Wi-Fi");
         log("保留原已真机验证的0x45监听、0x39/0x30 AP、0x25 SSID、"
                 + "精确WifiNetworkSpecifier、原厂HTTP列表与高清JPEG只读GET");
-        log("照片结束通知只代表候选，不代表已写盘或可查询到真实照片列表；"
-                + "不再250ms自动发BLE/AP；不加人为等待、不自动重试");
+        log("照片结束通知仅为候选，不保证JPEG已写盘；不自动打开AP。");
+        log("Wi-Fi对照：首次仅在新鲜唯一广播后申请SSID+WPA2；"
+                + "失败后复核新鲜唯一广播，条件满足才最多追加一次BSSID匹配。"
+                + "扫描受Android系统节流时只报未知，不假设热点坏了。");
         log("继续保留0x45 isImport被动观察、手动0x64项目号查询、"
                 + "旧Wi-Fi缓存年龄与分段耗时日志，帮助区分第1～5轮导入");
         log("不含0x44结束/清除、0x22遥控拍照、P2P切换或OTA；"
@@ -184,8 +186,8 @@ public final class MainActivity extends Activity {
         scroll.addView(body);
         setContentView(scroll);
 
-        addText(body,"蓝星 M02S 手动导入对照",24,0xff17385b,true);
-        addText(body,"v0.1.22 · 拍照和导入分开；不自动开热点",15,Color.DKGRAY,false);
+        addText(body,"蓝星 M02S 手动导入·Wi-Fi连接对照",24,0xff17385b,true);
+        addText(body,"v0.1.23 · 手动导入+热点新鲜扫描+条件恢复最多一次",15,Color.DKGRAY,false);
         statusText = addText(body,"",18,0xff117458,true);
 
         addText(body,"① 先准备蓝牙待机（这一步不打开Wi-Fi）",17,Color.BLACK,true);
@@ -230,15 +232,16 @@ public final class MainActivity extends Activity {
         addButton(body,"复制诊断日志",() -> {
             ClipboardManager clipboard = (ClipboardManager)
                     getSystemService(Context.CLIPBOARD_SERVICE);
-            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.22 diagnostic",
+            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.23 diagnostic",
                     diagnostics.toString()));
             status("诊断日志已复制");
         });
         logView = addText(body,"",13,0xff26343e,false);
         logView.setGravity(Gravity.START);
 
-        addText(body,"实验目的：按原厂“先拍照→再点导入”的顺序，"
-                + "连续测试最多5次手动导入。成功须以手机连接真实AP、原厂HTTP200和原始JPEG解码为准。"
+        addText(body,"实验目的：先实体拍照、再手动导入；验证新鲜热点广播才建立连接，"
+                + "失败时仅一次有新证据和不同请求策略的恢复。目标连续5轮。"
+                + "成功须以真实AP、原厂HTTP200和原始JPEG解码为准。"
                 + "文件时间排序不是本次快门身份认证，已导入过的同名原图不会重复下载。",
                 13,Color.DKGRAY,false);
     }
