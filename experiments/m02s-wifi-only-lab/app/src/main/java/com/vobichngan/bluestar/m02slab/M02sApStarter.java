@@ -45,6 +45,8 @@ public final class M02sApStarter {
     public interface Callback {
         void log(String message);
         void ready(Network network, String host);
+        void standbyReady();
+        void photoActionCandidate();
         void failed(String message);
         void lost(String message);
     }
@@ -69,6 +71,9 @@ public final class M02sApStarter {
     private ConnectivityManager.NetworkCallback networkCallback;
     private int generation;
     private boolean running;
+    private boolean bleStandbyReady;
+    private boolean lastPhotoFlagHigh;
+    private long lastPhotoActionAtMs;
     private boolean startedApRequest;
     private boolean apWriteAcknowledged;
     private boolean startedWifiNetworkRequest;
@@ -97,7 +102,35 @@ public final class M02sApStarter {
     }
 
     public boolean running() { return running; }
+    public boolean standby() { return running && bleStandbyReady && gatt != null; }
     public boolean ready() { return running && targetReady && targetNetwork != null; }
+
+    /** User has physically pressed shutter, or upstream ACTION_SYNC indicates capture.
+     * No camera-control command ever leaves the phone. */
+    public boolean requestPhotoTransfer() {
+        if (!standby() || startedApRequest || startedWifiNetworkRequest || targetReady)
+            return false;
+        writeApCommand(generation);
+        return startedApRequest;
+    }
+
+    /** Release only the phone Wi-Fi request; keep BLE listening for next shutter.
+     * This does NOT prove the glasses themselves have exited import mode. */
+    public void releasePhotoNetwork() {
+        if (networkCallback != null) {
+            try { connectivity.unregisterNetworkCallback(networkCallback); }
+            catch (IllegalArgumentException | SecurityException ignored) { }
+            networkCallback = null;
+        }
+        targetNetwork = null;
+        targetHost = null;
+        targetReady = false;
+        expectedSsid = null;
+        startedWifiNetworkRequest = false;
+        startedApRequest = false;
+        apWriteAcknowledged = false;
+        if (bleStandbyReady) callback.standbyReady();
+    }
 
     public boolean isActive(Network network, String host) {
         if (!ready() || !targetNetwork.equals(network) || !targetHost.equals(host))
@@ -133,6 +166,9 @@ public final class M02sApStarter {
         final int token = generation;
         startedApRequest = false;
         apWriteAcknowledged = false;
+        bleStandbyReady = false;
+        lastPhotoFlagHigh = false;
+        lastPhotoActionAtMs = 0L;
         startedWifiNetworkRequest = false;
         matchingDevices.clear();
         matchedAddresses.clear();
@@ -154,7 +190,7 @@ public final class M02sApStarter {
                 fail(token, "系统BLE扫描器不可用");
                 return;
             }
-            callback.log("开始发现M02S眼镜：只向唯一匹配目标发送原厂开AP指令，不发送拍照命令");
+            callback.log("开始BLE待机连接：只扫描唯一M02S，先监听实体拍照事件，不开启Wi-Fi");
             scanner.startScan(scanCallback);
             bleTimeout = () -> finishBleScan(token);
             ui.postDelayed(bleTimeout, 8000);
@@ -231,8 +267,9 @@ public final class M02sApStarter {
                                         fail(token, "GATT发现服务权限不足");
                                     }
                                 } else if (state == BluetoothProfile.STATE_DISCONNECTED) {
-                                    if (!targetReady) fail(token, "Wi-Fi建立前眼镜BLE断开");
-                                    else callback.log("Wi-Fi已经建立，BLE断开；只要AP Network仍在线继续HTTP监听");
+                                    bleStandbyReady = false;
+                                    if (!targetReady) fail(token, "眼镜BLE待机/建连状态断开");
+                                    else callback.log("Wi-Fi仍已连接，但蓝牙待机断开；本轮取图后需要重新准备BLE");
                                 }
                             });
                         }
@@ -257,8 +294,10 @@ public final class M02sApStarter {
                                     return;
                                 if (status != 0) fail(token, "AA14通知订阅失败=" + status);
                                 else {
-                                    callback.log("AA14通知订阅成功，准备唯一一次官方0x39/0x30开AP");
-                                    writeApCommand(token);
+                                    bleStandbyReady = true;
+                                    cancelEstablishTimeout();
+                                    callback.log("AA14被动通知监听已就绪；保持BLE待机。请按眼镜实体快门。");
+                                    callback.standbyReady();
                                 }
                             });
                         }
@@ -272,7 +311,10 @@ public final class M02sApStarter {
                                 if (status != 0) fail(token, "AA13开热点写入失败 status=" + status);
                                 else {
                                     apWriteAcknowledged = true;
-                                    callback.log("AA13 0x39/0x30写入成功；等待眼镜AA14 0x25 SSID信息");
+                                    callback.log("AA13唯一一次0x39/0x30写入成功；正在等待眼镜精确SSID");
+                                    if (expectedSsid != null && !startedWifiNetworkRequest && !targetReady) {
+                                        if (!tryReuseConnectedTarget(token)) connectWifi(token, false);
+                                    }
                                 }
                             });
                         }
@@ -334,7 +376,7 @@ public final class M02sApStarter {
     }
 
     private void writeApCommand(int token) {
-        if (!valid(token) || gatt == null || startedApRequest) return;
+        if (!valid(token) || !bleStandbyReady || gatt == null || startedApRequest) return;
         byte[] command = M02sApWire.apRequest();
         if (!M02sApWire.authorized(command)) {
             fail(token, "BLE命令不在精确白名单");
@@ -373,24 +415,37 @@ public final class M02sApStarter {
     private void acceptNotification(int token, BluetoothGatt connection,
                                     BluetoothGattCharacteristic ch, byte[] bytes) {
         if (!valid(token) || connection != gatt || ch == null
-                || !AA14.equals(ch.getUuid()) || expectedSsid != null
-                || !startedApRequest) return;
-        if (SystemClock.elapsedRealtime() - bleCommandAtMs > 30_000L) return;
+                || !AA14.equals(ch.getUuid())) return;
+
+        // E09 public source decodes 0x45 ACTION_SYNC byte0 as isTakePhoto.
+        // On M02S that mapping is unverified, so label explicitly as a candidate.
+        int photoFlag = M02sApWire.actionSyncPhotoFlag(bytes);
+        if (photoFlag >= 0 && bleStandbyReady) {
+            boolean rising = photoFlag == 1 && !lastPhotoFlagHigh;
+            lastPhotoFlagHigh = photoFlag == 1;
+            long now = SystemClock.elapsedRealtime();
+            if (rising && now - lastPhotoActionAtMs > 3500L) {
+                lastPhotoActionAtMs = now;
+                callback.log("被动AA14 0x45拍照状态标志出现0→1（开源E09推断，M02S待验证）");
+                if (!startedApRequest && !targetReady && !startedWifiNetworkRequest) {
+                    callback.photoActionCandidate();
+                }
+            }
+            return;
+        }
+
+        if (!bleStandbyReady || !startedApRequest || expectedSsid != null
+                || SystemClock.elapsedRealtime() - bleCommandAtMs > 30_000L)
+            return;
         String ssid = M02sApWire.decodeWifiSsid(bytes);
         if (ssid == null) return;
-        expectedSsid = ssid; // only in RAM
-        callback.log("收到AA14 0x25准确SSID；先查是否已连接该眼镜网络，未连接则扫描；SSID与凭证不写日志");
-        if (tryReuseConnectedTarget(token)) return;
-        scanRequestedAtUs = SystemClock.elapsedRealtime() * 1000L;
-        firstFreshSeenAtMs = 0;
-        freshBssid = null;
-        scanChecks = 0;
-        try {
-            wifi.startScan();
-        } catch (SecurityException | IllegalStateException ex) {
-            callback.log("Android主动Wi-Fi扫描受限：" + ex.getClass().getSimpleName());
+        expectedSsid = ssid; // RAM only
+        callback.log("AA14 0x25真实SSID校验成功；不扫热点，直接走Android精确Wi-Fi请求");
+        if (!apWriteAcknowledged) {
+            callback.log("SSID先于AA13写入回执到达；待status=0后立即请求网络");
+            return;
         }
-        scanForAp(token);
+        if (!tryReuseConnectedTarget(token)) connectWifi(token, false);
     }
 
     /** If Android is already connected to exactly the BLE-confirmed SSID,
@@ -433,68 +488,6 @@ public final class M02sApStarter {
         return false;
     }
 
-    private void scanForAp(int token) {
-        if (!valid(token) || expectedSsid == null || startedWifiNetworkRequest) return;
-        scanChecks++;
-        List<M02sApScanPolicy.Beacon> beacons = new ArrayList<>();
-        try {
-            List<android.net.wifi.ScanResult> all = wifi.getScanResults();
-            if (all != null) {
-                for (android.net.wifi.ScanResult item : all) {
-                    if (item != null && expectedSsid.equals(item.SSID))
-                        beacons.add(new M02sApScanPolicy.Beacon(
-                                item.SSID, item.BSSID, item.timestamp));
-                }
-            }
-        } catch (SecurityException | IllegalStateException ex) {
-            if (scanChecks == 1)
-                callback.log("系统扫描结果受限：" + ex.getClass().getSimpleName());
-        }
-        long now = SystemClock.elapsedRealtime();
-        M02sApReadinessPolicy.Observation observed =
-                M02sApReadinessPolicy.inspect(expectedSsid, beacons,
-                        scanRequestedAtUs, now * 1000L);
-        if (observed.kind == M02sApReadinessPolicy.Kind.FRESH_AMBIGUOUS) {
-            fail(token, "出现多个不同BSSID但同名的目标热点；为避免误连接已停止");
-            return;
-        }
-        if (observed.kind == M02sApReadinessPolicy.Kind.FRESH_UNIQUE) {
-            if (freshBssid == null
-                    || !freshBssid.equalsIgnoreCase(observed.uniqueBssid)) {
-                freshBssid = observed.uniqueBssid;
-                firstFreshSeenAtMs = now;
-                callback.log("检测到本次启动后的唯一眼镜AP广播，等待短暂稳定");
-            }
-            if (M02sApReadinessPolicy.canConnect(observed, freshBssid,
-                    firstFreshSeenAtMs, now)) {
-                connectWifi(token, true);
-                return;
-            }
-        } else {
-            freshBssid = null;
-            firstFreshSeenAtMs = 0;
-        }
-        long elapsedUs = now * 1000L - scanRequestedAtUs;
-        if (elapsedUs >= M02sApConnectPolicy.SCAN_WAIT_LIMIT_US) {
-            if (M02sApConnectPolicy.allowExactSsidFallback(
-                    apWriteAcknowledged, expectedSsid, startedWifiNetworkRequest,
-                    observed.kind, elapsedUs)) {
-                callback.log("Android扫描12秒未提供持续有效的本次新热点证据；"
-                        + "依据已校验AA14 0x25准确SSID，仅向该目标申请一次系统Wi-Fi连接。"
-                        + "不把旧缓存当热点就绪，不连接其它SSID；以onAvailable、真实网关和原厂HTTP结果为准");
-                connectWifi(token, false);
-            } else {
-                fail(token, "12秒扫描仍不能连接：开AP写入未确认或目标SSID未校验；拒绝未知Wi-Fi请求");
-            }
-            return;
-        }
-        if (scanChecks == 1 || scanChecks % 5 == 0)
-            callback.log("等待本次眼镜AP新扫描，第" + scanChecks
-                    + "次；目标状态=" + observed.kind);
-        scanTimer = () -> scanForAp(token);
-        ui.postDelayed(scanTimer, 650L);
-    }
-
     /**
      * Reuses the OEM-tested exact SSID + WPA2 request path. The caller only
      * changes when the one request is allowed, never its destination.
@@ -508,9 +501,8 @@ public final class M02sApStarter {
             ui.removeCallbacks(scanTimer);
             scanTimer = null;
         }
-        callback.log(observedFreshBeacon
-                ? "检测到目标AP本次新广播并完成稳定等待：申请一次Android精准SSID+WPA2连接"
-                : "仅对BLE证实的精确SSID申请一次Android连接；扫描受限不等于设备已上线，待真实网关和HTTP校验");
+        callback.log("快路径：收到BLE确认SSID后直接申请一次Android精准SSID+WPA2连接；"
+                + "无12秒扫描，无猜测；以onAvailable/网关/原厂HTTP为准");
         try {
             WifiNetworkSpecifier spec = new WifiNetworkSpecifier.Builder()
                     .setSsid(expectedSsid)
@@ -550,7 +542,7 @@ public final class M02sApStarter {
                     ui.post(() -> fail(token, "Android未能连接眼镜AP，拒绝反复申请或猜测热点"));
                 }
             };
-            connectivity.requestNetwork(request, networkCallback, 48_000);
+            connectivity.requestNetwork(request, networkCallback, 25_000);
         } catch (SecurityException | IllegalArgumentException | IllegalStateException ex) {
             fail(token, "Android网络连接请求失败：" + ex.getClass().getSimpleName());
         }
@@ -600,6 +592,8 @@ public final class M02sApStarter {
         generation++;
         running = false;
         targetReady = false;
+        bleStandbyReady = false;
+        lastPhotoFlagHigh = false;
         startedApRequest = false;
         apWriteAcknowledged = false;
         startedWifiNetworkRequest = false;
