@@ -4,11 +4,11 @@ android {
     namespace 'com.vobichngan.bluestar.m02slab'
     compileSdk 36
     defaultConfig {
-        applicationId 'com.vobichngan.bluestar.m02se09livechecklab'
+        applicationId 'com.vobichngan.bluestar.m02se09oemrtsp'
         minSdk 29
         targetSdk 35
-        versionCode 15
-        versionName '0.1.12-livecheck'
+        versionCode 16
+        versionName '0.1.13'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
