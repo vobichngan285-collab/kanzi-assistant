@@ -7,6 +7,8 @@ import java.util.Arrays;
  * M02S real-world successful experiment and E09 open-source protocol.
  *
  * NO TAKE_PHOTO method; no file delete, clear, or OTA commands.
+ * Optional E09-derived 0x44/0x30/0x01 NON_CLEAR finish requires explicit
+ * opt-in and a separate exact whitelist; never 0x44/0x30/0x00.
  * APP -> glasses: AB 55 00 03 39 30 69
  * glasses -> APP: AC 55 ... 25 [SSID UTF-8] checksum
  */
@@ -16,6 +18,22 @@ public final class M02sApWire {
     private static final byte[] AP_REQUEST = {
             (byte) 0xAB, 0x55, 0x00, 0x03, 0x39, 0x30, 0x69
     };
+    /**
+     * Research-only E09 OEM session-close signal, explicitly NOT CLEAR.
+     * Based on iec.java stopP2pWifiConnect and E09 MIT Constants.swift.
+     * Frame: AB 55 00 04 44 30 01 75 (checksum 44+30+01=75).
+     *
+     * This is NOT physically verified on M02S. Only emit on explicit
+     * experimental opt-in / user tap. NEVER expose 44 30 00 (delete).
+     */
+    private static final byte[] FINISH_NOT_CLEAR = {
+            (byte)0xAB, 0x55, 0x00, 0x04, 0x44, 0x30, 0x01, 0x75
+    };
+    public static byte[] nonClearFinishRequest() { return FINISH_NOT_CLEAR.clone(); }
+    public static boolean authorizedNonClearFinish(byte[] frame) {
+        return Arrays.equals(FINISH_NOT_CLEAR, frame);
+    }
+
     public static byte[] apRequest() { return AP_REQUEST.clone(); }
     public static boolean authorized(byte[] bytes) {
         return Arrays.equals(AP_REQUEST, bytes);
