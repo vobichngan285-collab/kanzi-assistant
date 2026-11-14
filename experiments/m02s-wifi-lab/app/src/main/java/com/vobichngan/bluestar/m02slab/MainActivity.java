@@ -307,7 +307,7 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(receiver, f);
         receiverRegistered = true;
-        log("v0.1.11 开源E09实验：AA15蓝牙JPEG直传+APP_LIVE 0x67/0x30 RTSP；旧AP拍照测试保留");
+        log("v0.1.12 E09 JPEG校验修复：不再误拒绝EOI后尾随字节；保留已验证AA15拍照和RTSP入口");
         log("照片只从眼镜AP按原厂接口GET至内存；不保存相册、不上传云端、不删文件");
         requestPermissionsIfNeeded();
         updateNetworkStatus();
@@ -322,7 +322,7 @@ public final class MainActivity extends Activity {
         body.setBackgroundColor(Color.rgb(245, 248, 252));
         scroll.addView(body);
 
-        body.addView(text("蓝星 M02S 开源E09直传实验 v0.1.11", 23, true));
+        body.addView(text("蓝星 M02S 开源E09 JPEG修复 v0.1.12", 23, true));
         body.addView(text("独立实验，不修改正式蓝星向导。Wi-Fi 网络名称/密码不会写进日志。", 14, false));
         status = text("蓝牙未连接 / 眼镜 Wi-Fi 未建立", 17, true);
         status.setPadding(0, dp(12), 0, dp(10));
@@ -856,22 +856,52 @@ public final class MainActivity extends Activity {
                 log("E09 AA15 PHOTO_START：收到宣布长度="
                         + e09Assembler.declaredLength() + "字节（尚未证实可解码）");
             } else if (step == M02sE09PhotoAssembler.Step.ERROR) {
-                log("E09 AA15 JPEG接收中止：" + e09Assembler.lastError());
+                log("E09 AA15 照片分片接收异常：" + e09Assembler.lastError()
+                        + "；" + e09Assembler.safeMetrics());
                 stopE09BlePhoto();
             } else if (step == M02sE09PhotoAssembler.Step.COMPLETE) {
+                log("E09 AA15 PHOTO_END：分片组装完毕；" + e09Assembler.safeMetrics()
+                        + "；正在进行Android真正JPEG解码");
                 byte[] jpeg = e09Assembler.result();
-                Bitmap bitmap = jpeg == null ? null : BitmapFactory.decodeByteArray(jpeg,0,jpeg.length);
+                Bitmap bitmap = jpeg == null ? null
+                        : BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
+                if (bitmap == null && e09Assembler.hasJpegEnd()) {
+                    // Some decoders tolerate data following FF D9. Compare
+                    // actual decoder behavior, never assume a fixed 500B tail.
+                    byte[] full = e09Assembler.rawResult();
+                    if (full != null && full.length != jpeg.length) {
+                        Bitmap other = BitmapFactory.decodeByteArray(full, 0, full.length);
+                        if (other != null) {
+                            jpeg = full;
+                            bitmap = other;
+                            log("E09 AA15：裁剪EOI后的JPEG无法解码，但含尾随数据版本可以解码；"
+                                    + "保留原始长度，仅内存预览");
+                        }
+                    }
+                }
                 if (bitmap != null) {
                     lastPhotoInMemory = jpeg;
                     photoPreview.setImageBitmap(bitmap);
-                    log("E09 AA15 JPEG直传成功："
-                            + bitmap.getWidth() + "×" + bitmap.getHeight()
-                            + "；" + jpeg.length + "字节；分片包数=" + e09Assembler.packets()
-                            + "；用时=" + (SystemClock.elapsedRealtime()-e09PhotoStartedAt)
-                            + "ms；仅内存预览");
-                    status.setText("E09蓝牙JPEG已成功解码；清晰度请人工核对");
+                    long totalMs = SystemClock.elapsedRealtime() - e09PhotoStartedAt;
+                    if (e09Assembler.hasJpegEnd()) {
+                        log("E09 AA15 JPEG直传并解码成功："
+                                + bitmap.getWidth() + "×" + bitmap.getHeight()
+                                + "；JPEG候选长度=" + jpeg.length
+                                + "字节；总耗时=" + totalMs
+                                + "ms；照片仅在手机内存中");
+                        status.setText("E09蓝牙JPEG已解码；请核对画面清晰度");
+                    } else {
+                        log("E09 AA15 JPEG可预览但未发现EOI结束标记："
+                                + bitmap.getWidth() + "×" + bitmap.getHeight()
+                                + "；总耗时=" + totalMs
+                                + "ms；可能不完整，不视作可靠原图");
+                        status.setText("JPEG可预览，但未检测到EOI，请核对内容是否完整");
+                    }
                 } else {
-                    log("E09 AA15 收到完整分片但无法JPEG解码，未宣称照片成功");
+                    log("E09 AA15 JPEG实际解码失败：Android BitmapFactory返回null；"
+                            + e09Assembler.safeMetrics()
+                            + "；不保存无效图片，不把传输完成等同照片成功");
+                    status.setText("AA15数据已组装，但JPEG无法解码；请复制诊断");
                 }
                 stopE09BlePhoto();
             }
