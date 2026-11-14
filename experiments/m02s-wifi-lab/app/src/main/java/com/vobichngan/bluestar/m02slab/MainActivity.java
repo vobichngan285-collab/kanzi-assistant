@@ -136,7 +136,12 @@ public final class MainActivity extends Activity {
     private long apScanStartedAt;
     private int apScanPolls;
     private int apNetworkRequests;
-    private boolean apLastPinnedToBssid;
+    private long apScanRequestedAtUs;
+    private boolean apScanResultsUpdated;
+    private long apFreshFirstSeenAtMs;
+    private String apFreshFirstBssid;
+    private WifiManager.LocalOnlyConnectionFailureListener apFailureListener;
+    private int apLocalFailureReason = -1;
     private static final String OEM_WIFI_KEY = "12345678"; // observed OEM APK constant
 
     private int gattAttempt = 0;
@@ -193,6 +198,17 @@ public final class MainActivity extends Activity {
             } else if (WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION.equals(intent.getAction())) {
                 int state = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1);
                 log("系统 Wi-Fi Direct：" + (state == WifiP2pManager.WIFI_P2P_STATE_ENABLED ? "已启用" : "未启用"));
+            } else if (WifiManager.SCAN_RESULTS_AVAILABLE_ACTION.equals(intent.getAction())) {
+                if (wifiMode == WifiMode.AP && wifiConnecting
+                        && apScanRequestedAtUs > 0 && apNetworkRequests == 0) {
+                    boolean updated = intent.getBooleanExtra(WifiManager.EXTRA_RESULTS_UPDATED, false);
+                    apScanResultsUpdated |= updated;
+                    log(updated
+                            ? "AP阶段1：系统Wi-Fi扫描完成并报告结果更新，核对是否出现请求后的目标时间戳"
+                            : "AP阶段1：系统扫描未更新（可能受限流或硬件影响），旧缓存不算AP就绪");
+                    if (apScanTimer != null) ui.removeCallbacks(apScanTimer);
+                    scanForTargetAp(wifiSessionToken);
+                }
             }
         }
     };
@@ -271,10 +287,11 @@ public final class MainActivity extends Activity {
         f.addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION);
         f.addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION);
         f.addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION);
+        f.addAction(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION);
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(receiver, f);
         receiverRegistered = true;
-        log("v0.1.9 原厂AP流程诊断：先BLE拍照，再检查目标热点扫描结果并连接；不重复拍照");
+        log("v0.1.10 AP就绪诊断：BLE拍照一次→核对拍照后新扫描时间戳→仅一次Android精准连接");
         log("照片只从眼镜AP按原厂接口GET至内存；不保存相册、不上传云端、不删文件");
         requestPermissionsIfNeeded();
         updateNetworkStatus();
@@ -289,7 +306,7 @@ public final class MainActivity extends Activity {
         body.setBackgroundColor(Color.rgb(245, 248, 252));
         scroll.addView(body);
 
-        body.addView(text("蓝星 M02S 一键拍照取图 v0.1.7", 23, true));
+        body.addView(text("蓝星 M02S AP就绪诊断 v0.1.10", 23, true));
         body.addView(text("独立实验，不修改正式蓝星向导。Wi-Fi 网络名称/密码不会写进日志。", 14, false));
         status = text("蓝牙未连接 / 眼镜 Wi-Fi 未建立", 17, true);
         status.setPadding(0, dp(12), 0, dp(10));
@@ -968,9 +985,13 @@ public final class MainActivity extends Activity {
         ipField.setText("");
         wifiStarted = SystemClock.elapsedRealtime();
         apNetworkRequests = 0;
-        apLastPinnedToBssid = false;
         apScanPolls = 0;
         apScanStartedAt = 0L;
+        apScanRequestedAtUs = 0L;
+        apScanResultsUpdated = false;
+        apFreshFirstSeenAtMs = 0L;
+        apFreshFirstBssid = null;
+        apLocalFailureReason = -1;
         int token = wifiSessionToken;
         wifiDeadline = () -> {
             if (token == wifiSessionToken && wifiConnecting && !wifiVerified) {
@@ -1995,7 +2016,7 @@ public final class MainActivity extends Activity {
         oneClickBoundHost = null;
         photoBusy = false;
         releaseOneClickAp();
-        log("v0.1.9 顺序取图停止：" + reason);
+        log("v0.1.10 顺序取图停止：" + reason);
         if (status != null) status.setText("任务停止：" + reason);
     }
 
@@ -2042,7 +2063,7 @@ public final class MainActivity extends Activity {
         if (!gattConnected || !servicesReady || gatt == null) {
             log("请先连接M02S蓝牙LE1M，暂时不要连接AP"); return;
         }
-        finishHold("开始v0.1.8蓝牙先拍照实验");
+        finishHold("开始v0.1.10蓝牙先拍照与AP就绪实验");
         if (!notificationMonitor) startNotificationMonitor();
         if (!notificationMonitor) {
             log("AA14监听不可用，未发送拍照指令"); return;
@@ -2066,7 +2087,7 @@ public final class MainActivity extends Activity {
         oneClickPhotoNotices = 0;
         lastPhotoInMemory = null;
         photoPreview.setImageBitmap(null);
-        log("v0.1.9：蓝牙拍一次，随后先扫描确认目标热点，再执行Android连接");
+        log("v0.1.10：蓝牙拍照一次，等待本次AP请求后的新扫描结果和就绪间隔；只发一次Wi-Fi网络申请");
         log(oneClickHasBaseline
                 ? "已找到本应用上一次成功下载后的内存列表，用于新文件名比对"
                 : "首次没有拍照前基线：后续唯一最新图片只用于人工核对，不自动认定为新拍");
