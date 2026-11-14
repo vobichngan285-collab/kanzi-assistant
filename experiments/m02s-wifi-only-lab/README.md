@@ -1,3 +1,19 @@
+# M02S v0.1.23：手动导入 + 新鲜热点确认 + 最多一次有条件恢复
+
+在已发布 v0.1.22 基础上建立独立分支和包名，不覆盖正式蓝星向导、Windows OCR、v0.1.22 或原厂 App。操作仍是实体快门拍照 -> AA14 0x45 拍照结束候选 -> 用户点击“导入高清原图”，没有自动 250ms 开 AP。
+
+**本轮唯一变化：Android Wi-Fi 连接策略。** 精确 0x39/0x30 BLE 开 AP 和 0x25 BLE 返回 SSID 沿用已在 M02S 真机成功的路径。先复用系统中已有精确 SSID+私有网关的网络（仍需 OEM HTTP 200 验真）；否则进行一次 Android startScan，并以本轮 BLE 开 AP 后的新鲜 ScanResult 时间戳、精确 SSID、唯一 BSSID 与 1.8 秒观察门槛核查热点，然后首次仍用旧版验证的 SSID+WPA2 WifiNetworkSpecifier 连接。Android 第一次 onUnavailable 后，只有再次新扫描观察到失败后出现的唯一目标广播，且改为精确 BSSID pinning 这一实质不同策略时，才允许唯一一次恢复请求；最大总计两次 Android 网络请求，每次扫描上限 7 秒，绝不多次发送 BLE AP 指令。
+
+Android 16 系统可能限制主动扫描，startScan 接受不代表扫到新的 AP，旧缓存/没有结果也不代表眼镜热点关闭。扫描未能证实就停止，不凭猜测连接，不宣称已复刻原厂内部 Wi-Fi 状态机。公开 Eyevue 安卓参考代码仅证明 0x39/0x30 和 Android WifiNetworkSpecifier 路线，不证明原厂必有这个扫描/重试策略。
+
+保留只读 0x64 项目查询、0x45 isImport 被动记录、私有网关确认、OEM GET /app/getfilelist 的 HTTP200 JSON、连续稳定文件列表、安全 JPEG 原图 GET 到手机 RAM、已有源文件去重/尺寸校验/匿名耗时。没有任何 0x44 清理/删除、0x22 遥控拍照、P2P、OTA、云上传、手机相册写入、OCR/TTS；不记录 SSID、BSSID、Wi-Fi 密码、照片名/图像或 BLE 地址。
+
+**真机验收：** 每次先实体拍照，再手动导入，观察新鲜广播、Android requestNetwork 第一/第二次结果、网关、HTTP200、原 JPEG。和原 v0.1.22 对照连续最多五轮；一旦失败先复制匿名日志，不连续猛试。本版独立 applicationId com.vobichngan.bluestar.m02sfreshaplab，v0.1.23 versionCode24。
+
+---
+
+## v0.1.22 历史说明
+
 # M02S v0.1.22 — 原厂式「实体拍照 → 用户手动导入」对照实验
 
 ## 为什么改
