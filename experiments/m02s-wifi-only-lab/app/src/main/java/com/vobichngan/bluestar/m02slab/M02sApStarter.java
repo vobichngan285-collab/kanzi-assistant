@@ -48,6 +48,7 @@ public final class M02sApStarter {
         void standbyReady();
         void photoActionCandidate();
         void photoActionEnded();
+        void deviceProjectReported(String project);
         void failed(String message);
         void lost(String message);
     }
@@ -88,6 +89,10 @@ public final class M02sApStarter {
     private String freshBssid;
     private long bleCommandAtMs;
     private long wifiRequestAtMs;
+    private int lastImportFlag = -1; // -1 = optional E09 field not observed
+    private boolean absentImportReported;
+    private boolean projectQueryPending;
+    private Runnable projectQueryTimeout;
 
     private Runnable bleTimeout;
     private Runnable firstDeviceDelay;
@@ -111,15 +116,110 @@ public final class M02sApStarter {
     /** User has physically pressed shutter, or upstream ACTION_SYNC indicates capture.
      * No camera-control command ever leaves the phone. */
     public boolean requestPhotoTransfer() {
-        if (!standby() || startedApRequest || startedWifiNetworkRequest || targetReady)
+        if (!standby() || projectQueryPending || startedApRequest
+                || startedWifiNetworkRequest || targetReady)
             return false;
         writeApCommand(generation);
         return startedApRequest;
     }
 
+    /**
+     * Explicit user-triggered READ-ONLY OEM 0x64 project query. Never called
+     * automatically and never switches AP/P2P mode based on the result.
+     */
+    public boolean requestReadOnlyProject() {
+        if (!standby() || projectQueryPending || startedApRequest
+                || startedWifiNetworkRequest || targetReady) return false;
+        BluetoothGattService svc = gatt.getService(AA12);
+        BluetoothGattCharacteristic ch = svc == null ? null : svc.getCharacteristic(AA13);
+        if (ch == null || (ch.getProperties()
+                & BluetoothGattCharacteristic.PROPERTY_WRITE) == 0) return false;
+        byte[] frame = M02sApWire.deviceProjectQuery();
+        if (!M02sApWire.authorizedReadOnlyProject(frame)) return false;
+        final int token = generation;
+        projectQueryPending = true;
+        try {
+            int code;
+            if (Build.VERSION.SDK_INT >= 33) {
+                code = gatt.writeCharacteristic(ch, frame,
+                        BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+            } else {
+                @SuppressWarnings("deprecation")
+                boolean set = ch.setValue(frame);
+                @SuppressWarnings("deprecation")
+                boolean ok = set && gatt.writeCharacteristic(ch);
+                code = ok ? 0 : -1;
+            }
+            if (code != 0) {
+                cancelProjectQuery();
+                callback.log("只读0x64设备项目查询未获GATT提交许可；code=" + code);
+                return false;
+            }
+            callback.log("用户主动发送一次只读0x64项目号查询；不改变Wi-Fi模式");
+            projectQueryTimeout = () -> {
+                if (valid(token) && projectQueryPending) {
+                    callback.log("只读项目查询3秒无可解析应答；不代表眼镜不支持AP或P2P");
+                    cancelProjectQuery();
+                }
+            };
+            ui.postDelayed(projectQueryTimeout, 3000L);
+            return true;
+        } catch (SecurityException | IllegalStateException ex) {
+            cancelProjectQuery();
+            callback.log("只读项目查询异常=" + ex.getClass().getSimpleName());
+            return false;
+        }
+    }
+
+    private void cancelProjectQuery() {
+        projectQueryPending = false;
+        if (projectQueryTimeout != null) ui.removeCallbacks(projectQueryTimeout);
+        projectQueryTimeout = null;
+    }
+
+    /** Passive system-state snapshot: no scan, no new Wi-Fi request, no secret logging.
+     * ScanResult.timestamp describes the CACHED scan age, not proof that AP is up. */
+    private void observePhoneWifi(String phase) {
+        int wifiNetworks = 0;
+        try {
+            for (Network net : connectivity.getAllNetworks()) {
+                NetworkCapabilities caps = connectivity.getNetworkCapabilities(net);
+                if (caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI))
+                    wifiNetworks++;
+            }
+        } catch (SecurityException | IllegalStateException ignored) {
+            wifiNetworks = -1;
+        }
+        String cached = "SSID未知或缓存不可读";
+        if (expectedSsid != null && wifi != null) {
+            try {
+                long youngest = Long.MAX_VALUE;
+                List<android.net.wifi.ScanResult> entries = wifi.getScanResults();
+                long nowUs = SystemClock.elapsedRealtimeNanos() / 1000L;
+                if (entries != null) {
+                    for (android.net.wifi.ScanResult e : entries) {
+                        if (e == null || !expectedSsid.equals(e.SSID)) continue;
+                        long ageMs = e.timestamp > 0 && nowUs >= e.timestamp
+                                ? (nowUs - e.timestamp) / 1000L : -1L;
+                        if (ageMs >= 0 && ageMs < youngest) youngest = ageMs;
+                    }
+                    cached = youngest == Long.MAX_VALUE
+                            ? "缓存未见同SSID（不证明热点未广播）"
+                            : "缓存同SSID最小年龄=" + youngest
+                            + "ms（只读旧扫描缓存，不证明当前AP可关联）";
+                }
+            } catch (SecurityException | IllegalStateException ignored) {
+                cached = "扫描缓存受系统权限限制";
+            }
+        }
+        callback.log("Wi-Fi只读快照[" + phase + "]：Android当前WiFi Network数="
+                + wifiNetworks + "；" + cached);
+    }
+
     /** Release only the phone Wi-Fi request; keep BLE listening for next shutter.
      * This does NOT prove the glasses themselves have exited import mode. */
     public void releasePhotoNetwork() {
+        observePhoneWifi("释放前");
         if (networkCallback != null) {
             // Clear ownership BEFORE releasing Android's network request.
             // Any queued callback from this old photo session must be ignored.
@@ -138,6 +238,7 @@ public final class M02sApStarter {
         startedApRequest = false;
         apWriteAcknowledged = false;
         cancelSsidTimeout();
+        observePhoneWifi("解除请求后瞬时状态-非最终断网证明");
         if (bleStandbyReady) callback.standbyReady();
     }
 
@@ -178,6 +279,9 @@ public final class M02sApStarter {
         bleStandbyReady = false;
         lastPhotoFlagHigh = false;
         lastPhotoActionAtMs = 0L;
+        lastImportFlag = -1;
+        absentImportReported = false;
+        cancelProjectQuery();
         startedWifiNetworkRequest = false;
         wifiRequestAtMs = 0L;
         matchingDevices.clear();
@@ -318,6 +422,12 @@ public final class M02sApStarter {
                                 if (!valid(token) || connection != gatt
                                         || characteristic == null
                                         || !AA13.equals(characteristic.getUuid())) return;
+                                if (projectQueryPending) {
+                                    callback.log("只读设备项目号0x64的GATT写回执status=" + status
+                                            + "（不代表已收到设备项目号）");
+                                    if (status != 0) cancelProjectQuery();
+                                    return;
+                                }
                                 if (status != 0) fail(token, "AA13开热点写入失败 status=" + status);
                                 else {
                                     apWriteAcknowledged = true;
@@ -411,6 +521,7 @@ public final class M02sApStarter {
             return;
         }
         try {
+            observePhoneWifi("本轮开AP命令之前");
             startedApRequest = true; // no repeats even if the ACK is lost
             bleCommandAtMs = SystemClock.elapsedRealtime();
             int result;
@@ -439,10 +550,21 @@ public final class M02sApStarter {
         if (!valid(token) || connection != gatt || ch == null
                 || !AA14.equals(ch.getUuid())) return;
 
-        // E09 public source decodes 0x45 ACTION_SYNC byte0 as isTakePhoto.
-        // On M02S that mapping is unverified, so label explicitly as a candidate.
+        // E09 ACTION_SYNC flags: payload[0]=isTakePhoto, optional
+        // payload[9]=isImport. Never infer false from a missing tenth byte.
         int photoFlag = M02sApWire.actionSyncPhotoFlag(bytes);
         if (photoFlag >= 0 && bleStandbyReady) {
+            int importFlag = M02sApWire.actionSyncImportFlag(bytes);
+            if (importFlag >= 0 && importFlag != lastImportFlag) {
+                callback.log("AA14 0x45被动isImport状态="
+                        + importFlag + "（E09含义；M02S固件待实测；"
+                        + "0=仅报告不活跃，1=仅报告活跃）");
+                lastImportFlag = importFlag;
+            } else if (importFlag < 0 && !absentImportReported) {
+                absentImportReported = true;
+                callback.log("AA14 0x45本次未携带合法的第10位isImport；"
+                        + "缺失不等于导入状态=0");
+            }
             boolean rising = photoFlag == 1 && !lastPhotoFlagHigh;
             boolean falling = photoFlag == 0 && lastPhotoFlagHigh;
             lastPhotoFlagHigh = photoFlag == 1;
@@ -461,12 +583,23 @@ public final class M02sApStarter {
             return;
         }
 
+        if (projectQueryPending) {
+            String project = M02sApWire.decodeReadOnlyProject(bytes);
+            if (project != null) {
+                cancelProjectQuery();
+                callback.log("AA14 0x64收到格式/校验合法的设备项目号（只读，不记录客户信息）");
+                callback.deviceProjectReported(project);
+                return;
+            }
+        }
+
         if (!bleStandbyReady || !startedApRequest || expectedSsid != null
                 || SystemClock.elapsedRealtime() - bleCommandAtMs > 30_000L)
             return;
         String ssid = M02sApWire.decodeWifiSsid(bytes);
         if (ssid == null) return;
         expectedSsid = ssid; // RAM only
+        observePhoneWifi("本轮收到眼镜SSID");
         cancelSsidTimeout();
         callback.log("AA14 0x25真实SSID校验成功；开AP指令至SSID耗时="
                 + (SystemClock.elapsedRealtime() - bleCommandAtMs)
@@ -528,6 +661,7 @@ public final class M02sApStarter {
                 || !M02sWifiPolicy.isConnectableSsid(expectedSsid)) return;
         startedWifiNetworkRequest = true;
         wifiRequestAtMs = SystemClock.elapsedRealtime();
+        observePhoneWifi("Android精确SSID申请前");
         if (scanTimer != null) {
             ui.removeCallbacks(scanTimer);
             scanTimer = null;
@@ -549,6 +683,7 @@ public final class M02sApStarter {
                     ui.post(() -> {
                         if (!valid(token) || networkCallback != this) return;
                         targetNetwork = net;
+                        observePhoneWifi("本轮onAvailable");
                         callback.log("Android本轮精确SSID请求→onAvailable耗时="
                                 + (SystemClock.elapsedRealtime() - wifiRequestAtMs)
                                 + "ms；继续确认真实本地路由");
@@ -578,6 +713,7 @@ public final class M02sApStarter {
                         if (!valid(token) || networkCallback != this) return;
                         long elapsed = wifiRequestAtMs > 0L
                                 ? SystemClock.elapsedRealtime() - wifiRequestAtMs : -1L;
+                        observePhoneWifi("本轮onUnavailable");
                         callback.log("Android本轮准确SSID请求onUnavailable；等待="
                                 + elapsed + "ms；仅表示该次网络请求未满足，"
                                 + "不能据此判定系统限制重复连接或眼镜热点坏了");
@@ -616,6 +752,7 @@ public final class M02sApStarter {
             targetReady = true;
             cancelEstablishTimeout();
             callback.log("Android眼镜专属AP和可信私有网关已建立；下一步用原厂HTTP列表验真");
+            observePhoneWifi("已验证网关");
             callback.ready(net, host);
             return;
         }
@@ -666,6 +803,9 @@ public final class M02sApStarter {
         if (overallTimeout != null) ui.removeCallbacks(overallTimeout);
         if (scanTimer != null) ui.removeCallbacks(scanTimer);
         cancelSsidTimeout();
+        cancelProjectQuery();
+        lastImportFlag = -1;
+        absentImportReported = false;
         bleTimeout = null;
         firstDeviceDelay = null;
         overallTimeout = null;
