@@ -30,6 +30,9 @@ import android.net.RouteInfo;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
+import android.net.MacAddress;
+import android.net.wifi.ScanResult;
+import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.net.wifi.WifiNetworkSpecifier;
 import android.net.wifi.p2p.WifiP2pConfig;
@@ -90,6 +93,7 @@ public final class MainActivity extends Activity {
     private WifiP2pManager p2p;
     private WifiP2pManager.Channel channel;
     private ConnectivityManager connectivity;
+    private WifiManager wifiManager;
     private ConnectivityManager.NetworkCallback apCallback;
     private volatile Network apNetwork;
     private WifiManager.WifiLock wifiLock;
@@ -129,6 +133,11 @@ public final class MainActivity extends Activity {
     private int p2pPollNumber;
     private Runnable wifiDeadline;
     private Runnable p2pPoll;
+    private Runnable apScanTimer;
+    private long apScanStartedAt;
+    private int apScanPolls;
+    private int apNetworkRequests;
+    private boolean apLastPinnedToBssid;
     private static final String OEM_WIFI_KEY = "12345678"; // observed OEM APK constant
 
     private int gattAttempt = 0;
@@ -252,6 +261,7 @@ public final class MainActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         connectivity = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
         WifiManager manager = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
+        wifiManager = manager;
         wifiLock = manager.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "BlueStarM02S:Keepalive");
         wifiLock.setReferenceCounted(false);
         p2p = (WifiP2pManager) getSystemService(WIFI_P2P_SERVICE);
@@ -265,7 +275,7 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(receiver, f);
         receiverRegistered = true;
-        log("v0.1.8 顺序实验：先在AP未连接状态下蓝牙拍照，间隔5秒后连接AP，再读取原图");
+        log("v0.1.9 原厂AP流程诊断：先BLE拍照，再检查目标热点扫描结果并连接；不重复拍照");
         log("照片只从眼镜AP按原厂接口GET至内存；不保存相册、不上传云端、不删文件");
         requestPermissionsIfNeeded();
         updateNetworkStatus();
@@ -958,6 +968,10 @@ public final class MainActivity extends Activity {
         verifiedHost = null;
         ipField.setText("");
         wifiStarted = SystemClock.elapsedRealtime();
+        apNetworkRequests = 0;
+        apLastPinnedToBssid = false;
+        apScanPolls = 0;
+        apScanStartedAt = 0L;
         int token = wifiSessionToken;
         wifiDeadline = () -> {
             if (token == wifiSessionToken && wifiConnecting && !wifiVerified) {
@@ -993,8 +1007,8 @@ public final class MainActivity extends Activity {
             log("按原厂模式匹配 Wi-Fi Direct 设备名称（必须包含完整目标SSID）");
             startMatchedP2pDiscovery();
         } else {
-            log("只向精确目标 SSID 提交 Android AP 网络请求；请留意系统授权");
-            connectTargetAp();
+            log("已解析精确目标SSID；先核对原厂式Wi-Fi扫描结果，再请求Android连接；SSID不写日志");
+            startApTargetPreflight();
         }
     }
 
@@ -1198,8 +1212,10 @@ public final class MainActivity extends Activity {
     private void cancelWifiTimers() {
         if (wifiDeadline != null) ui.removeCallbacks(wifiDeadline);
         if (p2pPoll != null) ui.removeCallbacks(p2pPoll);
+        if (apScanTimer != null) ui.removeCallbacks(apScanTimer);
         wifiDeadline = null;
         p2pPoll = null;
+        apScanTimer = null;
     }
 
     private void stopWifiSession(String reason) {
@@ -1785,7 +1801,7 @@ public final class MainActivity extends Activity {
         oneClickBoundHost = null;
         photoBusy = false;
         releaseOneClickAp();
-        log("v0.1.8 顺序取图停止：" + reason);
+        log("v0.1.9 顺序取图停止：" + reason);
         if (status != null) status.setText("任务停止：" + reason);
     }
 
@@ -1856,7 +1872,7 @@ public final class MainActivity extends Activity {
         oneClickPhotoNotices = 0;
         lastPhotoInMemory = null;
         photoPreview.setImageBitmap(null);
-        log("v0.1.8：蓝牙先拍一次，等待AA14响应，至少5秒后再启动眼镜AP");
+        log("v0.1.9：蓝牙拍一次，随后先扫描确认目标热点，再执行Android连接");
         log(oneClickHasBaseline
                 ? "已找到本应用上一次成功下载后的内存列表，用于新文件名比对"
                 : "首次没有拍照前基线：后续唯一最新图片只用于人工核对，不自动认定为新拍");
