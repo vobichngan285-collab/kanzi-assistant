@@ -68,7 +68,7 @@ public final class M02sFreshPhotoPolicy {
         if (chosen.declaredBytes < 32 || chosen.declaredBytes > M02sPhotoPolicy.MAX_IMAGE_BYTES) {
             return new Selection(Status.NEW_FILE_INCOMPLETE, after.size(), null, null);
         }
-        String key = chosen.remoteName + "\\u0000" + chosen.declaredBytes + "\\u0000" + chosen.createdAt;
+        String key = chosen.remoteName + "\u0000" + chosen.declaredBytes + "\u0000" + chosen.createdAt;
         return new Selection(Status.READY, after.size(), chosen, key);
     }
 
