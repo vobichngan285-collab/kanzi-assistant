@@ -1,3 +1,15 @@
+# 最新｜M02S 蓝牙 GATT 连接专项 v0.1.1（2026-11-14，已发布；待真机）
+
+- **用户真机反馈：** M02S-3584（Android 16 / vivo X200 Pro）在独立 v0.1.0 BLE 多次可发现，RSSI 约 -48 至 -50dBm，但主动 `connectGatt` 于 15:56:06 发起，15:57:06 才返回 `newState=0, status=1`；**无任何 GATT UUID**。旧版请求眼镜文件列表均 HTTP 超时，但没建立眼镜 Wi-Fi，不得以此断定固件不可连接。状态1表示失败，具体根因不能仅据该值确定。
+- **本次授权只做连接专项实验**：独立分支 `exp/m02s-gatt-connection-lab-20261114`，HEAD `639cb4db3f15e788baffa284725a79ae1d60e057`。在旧实验 `3c44874f4fdfe43ba5f232e0f193bc1eb7cb4b88` 基础上，修改 `experiments/m02s-wifi-lab`；正式蓝星向导 RC25 与官方 HeyCyan APK、Windows OCR 及旧实验 v0.1.0 **均不变**。新实验独立包名 `com.vobichngan.bluestar.m02sgattlab`，version 0.1.1，跟旧实验并存。
+- **本版实现：** 只显示扫描到的 M02S/HeyCyan/StarGlasses 设备，显示 `isConnectable`；在 BLE GATT 建连前停止扫描；可分别手动发起显式 `TRANSPORT_LE + PHY_LE_1M` 与旧接口默认传输的连接作对照，两者 `autoConnect=false`；15 秒内无成功回调主动关闭 GATT 并释放，无自动重试，记录 `getType/getBondState`、回调状态/耗时；成功后仅做服务发现、列出 UUID/特征数量。旧 Wi-Fi 只读诊断保留。不向眼镜发送拍照/Wi-Fi 开启等未经证实指令，不访问照片原图或云端。
+- **上传的官方 APK 真实静态 DEX 字符串：** `/mnt/data/70465ff3819258a6218e7871da0a23f8.apk` 的 `classes2.dex`、`classes4.dex` 确有 `connectGatt`、`connectGattCompat`、`connectBluetoothGatt` 等名称，但**尚未可靠还原实际调用参数和时序**，不能宣称本版已经移植官方协议。
+- **成功构建：** [Actions 43574046702](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/43574046702) `completed/success`，Java JUnit、Android SDK36 编译、独立包名/版本、APK v2 签名、zipalign、压缩完整性、GitHub Release 完整通过。**真实 BLE 建连是否成功仍待用户在真机验证。**
+- **APK 直接下载：** https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-m02s-gatt-lab-v011-20261114/BlueStar_M02S_GATT_Lab_0.1.1_Android.apk 。大小 **58333 字节**，SHA256 `cf0229a765044a166360c2d6953f610131c63dd7d4d4b9b37437586f45e7b094`。
+- **下一步（用户执行）：** 关闭原厂 HeyCyan App → v0.1.1 扫描 M02S → 选中后先“连接 LE 1M（15秒）”；失败再手动“兼容连接（15秒）”各一次；复制出现眼镜、connectable 标志、设备类型/bond、连接回调或超时、GATT 服务发现的日志。暂时不重复 Wi-Fi 文件列表测试。依据新日志再研究 M02S 实际 BLE 连接/传输协议。
+  
+---
+
 # 最新独立实验｜M02S 眼镜 Wi-Fi 保持连接诊断 v0.1.0（2026-11-14）
 
 - **本次用户授权：** 只制作一个独立实验 APK，研究 HeyCyan/StarGlasses M02S 眼镜的蓝牙扫描、Wi-Fi Direct/AP 连接与持续传输是否可行；**不修改正式蓝星向导、官方 APK 或眼镜固件**。用户实测 HeyCyan 官方 App 点击一次“导入”，不论照片一张两张都需重新建立连接，约7～8秒；同一相册页会自动发现新拍摄文件；手机支持 Wi-Fi 与蜂窝数据同时在线。
