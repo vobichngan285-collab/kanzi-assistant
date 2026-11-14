@@ -239,6 +239,8 @@ public final class M02sApStarter {
         wifiRequestCount = 0;
         previousRequestPinned = false;
         cancelFreshScan();
+        freshBssid = null;
+        firstFreshSeenAtMs = 0L;
         targetNetwork = null;
         targetHost = null;
         targetReady = false;
@@ -766,8 +768,8 @@ public final class M02sApStarter {
     private void cancelFreshScan() {
         if (scanTimer != null) ui.removeCallbacks(scanTimer);
         scanTimer = null;
-        firstFreshSeenAtMs = 0L;
-        freshBssid = null;
+        // Keep the verified BSSID until connectWifi builds its specifier.
+        // The next scan explicitly clears it before checking freshness again.
     }
 
     /**
@@ -932,6 +934,8 @@ public final class M02sApStarter {
         if (firstDeviceDelay != null) ui.removeCallbacks(firstDeviceDelay);
         if (overallTimeout != null) ui.removeCallbacks(overallTimeout);
         cancelFreshScan();
+        freshBssid = null;
+        firstFreshSeenAtMs = 0L;
         cancelSsidTimeout();
         cancelProjectQuery();
         lastImportFlag = -1;
