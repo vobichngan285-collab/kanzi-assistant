@@ -41,8 +41,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * M02S Wi-Fi-only experiment. NEVER sends a Bluetooth command or scans BLE.
- * The user manually presses the physical shutter button on the glasses.
+ * M02S manual physical shutter + Wi-Fi auto-fetch experiment.
+ * One-time verified BLE 0x39/0x30 command enables the glasses AP ONLY.
+ * This app never sends BLE photo/shutter commands.
  *
  * Uses the OEM AP list /app/getfilelist + original-photo read-only GET that
  * already worked on the user's device, with conservative fresh-file policy.
@@ -61,11 +62,10 @@ public final class MainActivity extends Activity {
     private TextView statusView;
     private TextView logView;
     private TextView counterView;
-    private EditText ssidInput;
+    private M02sApStarter apStarter;
     private ImageView photoPreview;
     private Network targetNetwork;
     private String targetHost;
-    private String targetSsid; // RAM only, never logged or persisted.
     private boolean verifying;
     private boolean watching;
     private boolean inFlight;
@@ -83,11 +83,27 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         connectivity = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        android.net.wifi.WifiManager wifi = (android.net.wifi.WifiManager)
+                getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        apStarter = new M02sApStarter(this, ui, connectivity, wifi,
+                new M02sApStarter.Callback() {
+                    @Override public void log(String message) { MainActivity.this.log(message); }
+                    @Override public void ready(Network net, String host) { onApConnected(net, host); }
+                    @Override public void failed(String message) {
+                        MainActivity.this.log("眼镜Wi-Fi建连未成功：" + message);
+                        status("连接失败：" + message);
+                    }
+                    @Override public void lost(String message) {
+                        MainActivity.this.log(message);
+                        stopWatch(message);
+                        targetNetwork = null;
+                        targetHost = null;
+                    }
+                });
         buildUi();
-        log("v0.1.13 纯Wi-Fi手动拍照实验启动；零蓝牙权限、零BLE指令、零云上传、零照片写盘");
-        log("只连接用户在系统中已手动连接的精确SSID；由Android路由取得私有网关并核对原厂照片列表");
-        log("本App无法绕过眼镜固件开启热点：如果手动拍照时热点不存在，会明确显示不可测试");
-        status("先在系统Wi-Fi设置里连接眼镜热点，再填写其精确SSID");
+        log("v0.1.14 手动快门 + 高清Wi-Fi自动取图：BLE仅发送一次原厂0x39/0x30开AP；绝不遥控拍照");
+        log("继承v0.1.13拍前基线/450ms列表比较/高清JPEG下载；不保存相册、上传云端、删除眼镜照片");
+        status("按「连接眼镜并启动Wi-Fi」；无需手动猜热点SSID或密码");
     }
 
     private void buildUi() {
@@ -102,25 +118,18 @@ public final class MainActivity extends Activity {
         addText(body, "v0.1.13 · 手按眼镜拍照键 · 不操作蓝牙", 15, Color.DKGRAY, false);
         statusView = addText(body, "", 18, Color.rgb(12, 99, 75), true);
 
-        addText(body, "1  先用安卓 Wi-Fi 设置连接眼镜热点", 18, Color.BLACK, true);
-        addButton(body, "打开系统 Wi-Fi 设置", () ->
-                startActivity(new Intent(Settings.ACTION_WIFI_SETTINGS)));
-        addText(body, "如果系统里找不到眼镜热点，说明它可能无法独立开启。此实验不发送蓝牙开热点命令，也不提供未知热点密码。", 14, Color.DKGRAY, false);
-
-        addText(body, "2  填写你在系统中看到的眼镜热点完整名称（SSID）", 18, Color.BLACK, true);
-        ssidInput = new EditText(this);
-        ssidInput.setTextSize(17);
-        ssidInput.setSingleLine(true);
-        ssidInput.setHint("输入眼镜热点的完整SSID（不会记录或上传）");
-        body.addView(ssidInput);
-        addButton(body, "验证当前眼镜 Wi-Fi 和原厂照片接口", this::verifyTarget);
-        addText(body, "只有精确SSID匹配、系统提供192.168.x.x私有网关，并且 /app/getfilelist 返回正确原厂JSON，才允许自动读取。", 14, Color.DKGRAY, false);
-
-        addText(body, "3  开始自动取图，再按眼镜实体拍照键", 18, Color.BLACK, true);
-        addButton(body, "开始自动取图（先建立旧照片基线）", this::beginWatch);
-        addButton(body, "停止自动取图", () -> stopWatch("用户手动停止"));
+        addText(body, "① 用蓝牙仅开启眼镜Wi-Fi（不遥控拍照）", 18, Color.BLACK, true);
+        addButton(body, "连接M02S并开启Wi-Fi、自动等待照片", this::connectApAndWatch);
+        addButton(body, "停止监听并断开本次眼镜Wi-Fi连接", this::disconnectAll);
+        addText(body, "程序只对唯一M02S发送一次已验证的0x39/0x30开热点命令，"
+                + "收到眼镜SSID后按此前成功的Wi-Fi连接方法自动建连；不发送任何0x22拍照指令。", 14,
+                Color.DKGRAY, false);
+        addText(body, "② 看到“基线已建立”后，直接按眼镜实体快门", 18, Color.BLACK, true);
+        addText(body, "如果眼镜在Wi-Fi模式下无法实体拍照，说明可能存在固件模式互斥；"
+                + "请直接反馈，不重复发送开热点或拍照命令。", 14, Color.DKGRAY, false);
+        addText(body, "③ 手机Wi-Fi自动读取新的高清原图", 18, Color.BLACK, true);
         counterView = addText(body, "本轮成功 0 / 3 张", 18, Color.rgb(28, 59, 94), true);
-        addText(body, "每450毫秒左右检查新照片列表；两次观察到同一张文件及大小稳定后，自动下载高清原图。最多观察120秒或成功3张。", 14, Color.DKGRAY, false);
+        addText(body, "Wi-Fi保持连接，每约450毫秒检查一次新增文件；连续两次稳定后自动下载原图。最多120秒或成功3张。", 14, Color.DKGRAY, false);
 
         addText(body, "最新高清照片（仅内存预览）", 18, Color.BLACK, true);
         photoPreview = new ImageView(this);
@@ -134,7 +143,7 @@ public final class MainActivity extends Activity {
             log("已清除手机内存照片预览；不会触碰眼镜文件");
         });
 
-        addText(body, "诊断日志（不含照片、SSID、密码或文件名）", 18, Color.BLACK, true);
+        addText(body, "诊断日志（不含照片、SSID、密码、文件名或设备地址）", 18, Color.BLACK, true);
         addButton(body, "复制匿名诊断日志", () -> {
             ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
             cm.setPrimaryClip(ClipData.newPlainText("M02S Wi-Fi-only diagnostics", diagnostics.toString()));
@@ -142,7 +151,7 @@ public final class MainActivity extends Activity {
         });
         logView = addText(body, "", 13, Color.rgb(35,44,50), false);
         logView.setGravity(Gravity.START);
-        addText(body, "注意：新文件出现时间是手机首次发现的时间，不等于实体拍照按钮按下时间；此版仅验证取图，不接OCR/TTS。", 13, Color.DKGRAY, false);
+        addText(body, "注意：手机无法精准获得实体快门按下的时间；报告的“首次发现新文件到解码”并非整个拍照耗时。此版仅测试高清Wi-Fi取图，不接OCR/TTS。", 13, Color.DKGRAY, false);
     }
 
     private TextView addText(LinearLayout body, String value, int sp, int color, boolean strong) {
@@ -186,124 +195,100 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33 &&
                 checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED)
             missing.add(Manifest.permission.NEARBY_WIFI_DEVICES);
+        if (Build.VERSION.SDK_INT >= 31) {
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED)
+                missing.add(Manifest.permission.BLUETOOTH_SCAN);
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED)
+                missing.add(Manifest.permission.BLUETOOTH_CONNECT);
+        }
         if (missing.isEmpty()) return true;
         requestPermissions(missing.toArray(new String[0]), REQUEST_WIFI_PERMISSIONS);
-        status("请授予本地Wi-Fi诊断权限，再点击验证");
+        status("请授予蓝牙与附近Wi-Fi权限，然后再次点击连接");
         return false;
     }
 
-    private static final class Target {
-        final Network network;
-        final String gateway;
-        Target(Network n, String h) { network = n; gateway = h; }
+    /** Active only for the one BLE-confirmed, exact-SSID Android Network. */
+    private boolean targetStillPresent() {
+        return apStarter != null && apStarter.isActive(targetNetwork, targetHost);
     }
 
-    private static String unquote(String text) {
-        if (text == null || text.equals("<unknown ssid>")) return "";
-        if (text.length() >= 2 && text.startsWith("\"") && text.endsWith("\""))
-            return text.substring(1, text.length() - 1);
-        return text;
-    }
-
-    /** No scanning and no guesses: an ALREADY CONNECTED exact Wi-Fi SSID only. */
-    private Target findConnectedTarget(String wanted) {
-        if (wanted == null || wanted.isEmpty() || connectivity == null) return null;
-        try {
-            for (Network net : connectivity.getAllNetworks()) {
-                NetworkCapabilities cap = connectivity.getNetworkCapabilities(net);
-                if (cap == null || !cap.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
-                        || !(cap.getTransportInfo() instanceof WifiInfo)) continue;
-                WifiInfo wifi = (WifiInfo) cap.getTransportInfo();
-                if (!wanted.equals(unquote(wifi.getSSID()))) continue;
-                LinkProperties properties = connectivity.getLinkProperties(net);
-                if (properties == null) continue;
-                for (RouteInfo route : properties.getRoutes()) {
-                    InetAddress gateway = route.getGateway();
-                    if (gateway == null || gateway.getAddress().length != 4) continue;
-                    try {
-                        String safeHost = ProbePolicy.checkedLocalHost(gateway.getHostAddress());
-                        return new Target(net, safeHost);
-                    } catch (IllegalArgumentException ignored) { }
-                }
-            }
-        } catch (SecurityException | IllegalStateException problem) {
-            log("系统读取已连接Wi-Fi信息受限；错误类型="
-                    + problem.getClass().getSimpleName());
-        }
-        return null;
-    }
-
-    private String requestedSsid() {
-        String text = ssidInput.getText().toString().trim();
-        int bytes = text.getBytes(StandardCharsets.UTF_8).length;
-        if (bytes < 8 || bytes > 32 || text.indexOf('\n') >= 0 || text.indexOf('\r') >= 0) {
-            status("请输入系统Wi-Fi设置中完整眼镜SSID（8～32字节）");
-            return null;
-        }
-        return text;
-    }
-
-    private static M02sPhotoListReader.Result readPhotoList(Network net, String host)
-            throws Exception {
-        M02sPhotoTransport.Response response = M02sPhotoTransport.getList(net, host);
-        if (response.httpCode != 200) throw new java.io.IOException("HTTP " + response.httpCode);
-        JSONObject root = new JSONObject(new String(response.body, StandardCharsets.UTF_8));
-        if (root.optInt("result", -1234) != 0 || !root.has("info"))
-            throw new java.io.IOException("不是已验证的M02S原厂JSON照片列表");
-        return M02sPhotoListReader.parse(response.body);
-    }
-
-    private void verifyTarget() {
+    private void connectApAndWatch() {
         if (!ensurePermission()) return;
-        if (watching || inFlight || verifying) {
-            status("有检查任务进行中，请先停止或等上次验证结束"); return;
-        }
-        String wanted = requestedSsid();
-        if (wanted == null) return;
-        Target target = findConnectedTarget(wanted);
-        if (target == null) {
-            targetNetwork = null;
-            targetHost = null;
-            targetSsid = null;
-            log("未发现与输入SSID完全一致、且路由具有安全网关的已连接Wi-Fi Network；未发HTTP请求");
-            status("未发现眼镜热点连接。请在系统Wi-Fi设置连接热点并打开位置服务，再重新验证");
+        if (watching || verifying || inFlight) {
+            status("当前已有照片监听或验证，请勿重复开启眼镜AP");
             return;
         }
+        if (targetStillPresent()) {
+            log("此前已确认的眼镜AP连接仍然存在，直接重新建立拍前基线，不再发送蓝牙命令");
+            beginWatch();
+            return;
+        }
+        if (apStarter != null && apStarter.running()) {
+            status("正在建立眼镜Wi-Fi连接；不重复开热点");
+            return;
+        }
+        apStarter.start();
+        status("正在蓝牙连接眼镜并开启Wi-Fi，请观察连接授权");
+    }
+
+    /** Network is proven BLE-SSID-bound by the starter; double-check OEM list. */
+    private void onApConnected(Network net, String host) {
+        if (destroyed) return;
+        if (watching || verifying) return;
         final long run = ++epoch;
         verifying = true;
-        status("发现精确SSID匹配的Wi-Fi，正在只读验证原厂照片列表");
+        targetNetwork = net;
+        targetHost = host;
+        status("已拿到眼镜真实AP网关，正在验证原厂照片列表");
         io.execute(() -> {
             try {
-                M02sPhotoListReader.Result list = readPhotoList(target.network, target.gateway);
+                M02sPhotoListReader.Result list = readPhotoList(net, host);
                 ui.post(() -> {
                     if (destroyed || run != epoch) return;
                     verifying = false;
-                    targetNetwork = target.network;
-                    targetHost = target.gateway;
-                    targetSsid = wanted;
-                    log("纯Wi-Fi原厂接口验证通过：HTTP200；图片候选=" + list.eligibleImages
-                            + "；未记录SSID、文件名或图片");
-                    status("眼镜Wi-Fi已验证。现在可以开始自动取图");
+                    if (!targetStillPresent()) {
+                        status("验证中眼镜Wi-Fi已断开，不能自动取图");
+                        return;
+                    }
+                    log("BLE唤醒眼镜AP + Android专属Wi-Fi + 原厂HTTP200 JSON验证成功；"
+                            + "旧照片数量=" + list.eligibleImages + "，准备自动建立基线");
+                    beginWatch();
                 });
             } catch (Exception ex) {
                 ui.post(() -> {
                     if (destroyed || run != epoch) return;
                     verifying = false;
+                    log("目标AP连上，但原厂HTTP照片列表校验失败；类型="
+                            + ex.getClass().getSimpleName() + "；不冒认其它设备");
+                    status("原厂照片列表不可用。请复制日志，别重复点击拍照");
+                    // Do not keep a non-validated connection silently.
+                    if (apStarter != null) apStarter.stop();
                     targetNetwork = null;
                     targetHost = null;
-                    targetSsid = null;
-                    log("Wi-Fi已连接，但原厂照片接口验证失败，错误类型="
-                            + ex.getClass().getSimpleName() + "；未冒认眼镜AP");
-                    status("目标热点未通过原厂照片接口验证；纯Wi-Fi取图暂不可用");
                 });
             }
         });
     }
 
-    private boolean targetStillPresent() {
-        Target target = findConnectedTarget(targetSsid);
-        return target != null && target.network.equals(targetNetwork)
-                && target.gateway.equals(targetHost);
+    private static M02sPhotoListReader.Result readPhotoList(Network net, String host)
+            throws Exception {
+        M02sPhotoTransport.Response response = M02sPhotoTransport.getList(net, host);
+        if (response.httpCode != 200)
+            throw new java.io.IOException("照片列表HTTP非200");
+        org.json.JSONObject root = new org.json.JSONObject(
+                new String(response.body, StandardCharsets.UTF_8));
+        if (root.optInt("result", -1234) != 0 || !root.has("info"))
+            throw new java.io.IOException("不是已验证的M02S原厂JSON照片列表");
+        return M02sPhotoListReader.parse(response.body);
+    }
+
+    private void disconnectAll() {
+        stopWatch("用户停止自动取图");
+        if (apStarter != null) apStarter.stop();
+        targetNetwork = null;
+        targetHost = null;
+        log("已释放本次眼镜Wi-Fi网络请求和BLE控制连接；眼镜固件何时关闭热点未知");
+        status("眼镜Wi-Fi控制会话已停止；原图仍只在本机内存预览");
     }
 
     private void beginWatch() {
@@ -311,9 +296,8 @@ public final class MainActivity extends Activity {
         if (watching || verifying || inFlight) {
             status("已有Wi-Fi检查任务运行，请勿重复开始"); return;
         }
-        if (targetNetwork == null || targetHost == null || targetSsid == null
-                || !targetSsid.equals(requestedSsid()) || !targetStillPresent()) {
-            status("请先验证当前已连接眼镜Wi-Fi，不能自动猜测目标");
+        if (targetNetwork == null || targetHost == null || !targetStillPresent()) {
+            status("请先点击连接眼镜并开启Wi-Fi，验证专属网络后才可监听");
             return;
         }
         final long run = ++epoch;
@@ -508,6 +492,7 @@ public final class MainActivity extends Activity {
     @Override protected void onDestroy() {
         destroyed = true;
         stopWatch("应用退出");
+        if (apStarter != null) apStarter.stop();
         io.shutdownNow();
         photoInMemory = null;
         super.onDestroy();
