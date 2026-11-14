@@ -15,6 +15,7 @@ import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
 import android.net.ConnectivityManager;
 import android.net.LinkProperties;
+import android.net.MacAddress;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
@@ -89,6 +90,11 @@ public final class M02sApStarter {
     private String freshBssid;
     private long bleCommandAtMs;
     private long wifiRequestAtMs;
+    private int wifiRequestCount;
+    private boolean previousRequestPinned;
+    private long freshScanStartedAtMs;
+    private static final long FRESH_SCAN_MAX_MS = 7_000L;
+    private static final long FRESH_SCAN_POLL_MS = 500L;
     private int lastImportFlag = -1; // -1 = optional E09 field not observed
     private boolean absentImportReported;
     private boolean projectQueryPending;
@@ -230,6 +236,9 @@ public final class M02sApStarter {
             callback.log("本张照片传输完成/结束：释放手机本轮专属Wi-Fi请求；保留BLE待机");
         }
         wifiRequestAtMs = 0L;
+        wifiRequestCount = 0;
+        previousRequestPinned = false;
+        cancelFreshScan();
         targetNetwork = null;
         targetHost = null;
         targetReady = false;
@@ -445,7 +454,7 @@ public final class M02sApStarter {
                                     ui.postDelayed(ssidTimeout, 5000L);
                                     if (expectedSsid != null && !startedWifiNetworkRequest && !targetReady) {
                                         cancelSsidTimeout();
-                                        if (!tryReuseConnectedTarget(token)) connectWifi(token, false);
+                                        if (!tryReuseConnectedTarget(token)) beginFreshApScan(token, false);
                                     }
                                 }
                             });
@@ -524,6 +533,10 @@ public final class M02sApStarter {
             observePhoneWifi("本轮开AP命令之前");
             startedApRequest = true; // no repeats even if the ACK is lost
             bleCommandAtMs = SystemClock.elapsedRealtime();
+            scanRequestedAtUs = SystemClock.elapsedRealtimeNanos() / 1000L;
+            wifiRequestCount = 0;
+            previousRequestPinned = false;
+            cancelFreshScan();
             int result;
             if (Build.VERSION.SDK_INT >= 33) {
                 result = gatt.writeCharacteristic(ch, command,
@@ -603,12 +616,12 @@ public final class M02sApStarter {
         cancelSsidTimeout();
         callback.log("AA14 0x25真实SSID校验成功；开AP指令至SSID耗时="
                 + (SystemClock.elapsedRealtime() - bleCommandAtMs)
-                + "ms；不扫热点，直接进入准确SSID Wi-Fi建连");
+                + "ms；本实验先检查目标热点新鲜广播（不能单凭SSID判定已就绪）");
         if (!apWriteAcknowledged) {
             callback.log("SSID先于AA13写入回执到达；待status=0后立即请求网络");
             return;
         }
-        if (!tryReuseConnectedTarget(token)) connectWifi(token, false);
+        if (!tryReuseConnectedTarget(token)) beginFreshApScan(token, false);
     }
 
     /** If Android is already connected to exactly the BLE-confirmed SSID,
@@ -651,28 +664,139 @@ public final class M02sApStarter {
         return false;
     }
 
+
     /**
-     * Reuses the OEM-tested exact SSID + WPA2 request path. The caller only
-     * changes when the one request is allowed, never its destination.
+     * Isolated Android-Wi-Fi experiment. The already validated BLE AP command
+     * and original JPEG HTTP path are untouched. A BLE SSID response alone is
+     * not proof that this round's AP is transmitting. Android scan APIs may
+     * be throttled, so inability to observe a fresh scan is UNKNOWN, not OFF.
      */
-    private void connectWifi(int token, boolean observedFreshBeacon) {
+    @SuppressWarnings("deprecation")
+    private void beginFreshApScan(int token, boolean recovery) {
+        if (!valid(token) || !apWriteAcknowledged
+                || !M02sWifiPolicy.isConnectableSsid(expectedSsid)) return;
+        cancelFreshScan();
+        firstFreshSeenAtMs = 0L;
+        freshBssid = null;
+        scanChecks = 0;
+        freshScanStartedAtMs = SystemClock.elapsedRealtime();
+        if (recovery) {
+            // Require another genuine scan timestamp AFTER the first failure.
+            scanRequestedAtUs = SystemClock.elapsedRealtimeNanos() / 1000L;
+        }
+        boolean accepted = false;
+        try {
+            if (wifi != null) accepted = wifi.startScan();
+        } catch (SecurityException | IllegalStateException ignored) {
+            // Permission, OS throttling and location-service policy are not
+            // evidence that the target is switched off.
+        }
+        callback.log((recovery ? "失败后唯一一次恢复检查" : "本轮首次连接前检查")
+                + "：Android主动扫描受理=" + accepted
+                + "；只认本轮BLE精确SSID和新鲜时间戳；"
+                + "系统拒绝扫描不等于眼镜热点关闭");
+        pollFreshApScan(token, recovery);
+    }
+
+    private void pollFreshApScan(int token, boolean recovery) {
+        if (!valid(token) || !apWriteAcknowledged || targetReady
+                || startedWifiNetworkRequest || expectedSsid == null) return;
+        final long nowUs = SystemClock.elapsedRealtimeNanos() / 1000L;
+        final long nowMs = SystemClock.elapsedRealtime();
+        List<M02sApScanPolicy.Beacon> beacons = new ArrayList<>();
+        try {
+            if (wifi != null) {
+                List<android.net.wifi.ScanResult> results = wifi.getScanResults();
+                if (results != null) {
+                    for (android.net.wifi.ScanResult result : results) {
+                        if (result == null || !expectedSsid.equals(result.SSID)) continue;
+                        beacons.add(new M02sApScanPolicy.Beacon(
+                                result.SSID, result.BSSID, result.timestamp));
+                    }
+                }
+            }
+        } catch (SecurityException | IllegalStateException ignored) {
+            // No active re-scan, no guessed BSSID, and no forged fresh beacon.
+        }
+        M02sApReadinessPolicy.Observation observation =
+                M02sApReadinessPolicy.inspect(expectedSsid, beacons,
+                        scanRequestedAtUs, nowUs);
+        scanChecks++;
+        if (observation.kind == M02sApReadinessPolicy.Kind.FRESH_UNIQUE) {
+            if (freshBssid == null || !freshBssid.equalsIgnoreCase(observation.uniqueBssid)) {
+                freshBssid = observation.uniqueBssid;
+                firstFreshSeenAtMs = nowMs;
+            }
+            if (M02sApReadinessPolicy.canConnect(
+                    observation, freshBssid, firstFreshSeenAtMs, nowMs)) {
+                if (recovery && !M02sApRecoveryPolicy.allowOnePinnedRetry(
+                        wifiRequestCount, previousRequestPinned,
+                        observation.kind, freshBssid)) {
+                    fail(token, "未满足唯一恢复条件，拒绝第二次Android网络请求");
+                    return;
+                }
+                callback.log("本轮新鲜目标广播已核实：唯一BSSID，"
+                        + "观察稳定等待=" + (nowMs - firstFreshSeenAtMs)
+                        + "ms；" + (recovery ? "第二次改用BSSID精确匹配" : "第一次保持原SSID-only策略")
+                        + "；未记录SSID/BSSID值");
+                cancelFreshScan();
+                connectWifi(token, recovery);
+                return;
+            }
+        } else {
+            firstFreshSeenAtMs = 0L;
+            freshBssid = null;
+        }
+        if (nowMs - freshScanStartedAtMs >= FRESH_SCAN_MAX_MS) {
+            cancelFreshScan();
+            callback.log("扫描结束：结果=" + observation.kind
+                    + "；缓存匹配数=" + observation.cachedCount
+                    + "；本轮新鲜数=" + observation.freshCount
+                    + "；检查次数=" + scanChecks
+                    + "；未获新鲜广播不等于眼镜AP关闭");
+            fail(token, recovery
+                    ? "首次Wi-Fi申请失败后没有新的、唯一可核实广播；拒绝盲目重试"
+                    : "未确认本轮目标热点新鲜广播，未向Android发起Wi-Fi连接请求");
+            return;
+        }
+        scanTimer = () -> pollFreshApScan(token, recovery);
+        ui.postDelayed(scanTimer, FRESH_SCAN_POLL_MS);
+    }
+
+    private void cancelFreshScan() {
+        if (scanTimer != null) ui.removeCallbacks(scanTimer);
+        scanTimer = null;
+        firstFreshSeenAtMs = 0L;
+        freshBssid = null;
+    }
+
+    /**
+     * Attempt 1 is the verified SSID+WPA2 specifier, but only after a fresh AP
+     * beacon. Attempt 2 is optional: only once and ONLY after a new unique
+     * beacon allows a materially narrower, BSSID-pinned specifier.
+     */
+    private void connectWifi(int token, boolean pinBssid) {
         if (!valid(token) || startedWifiNetworkRequest || expectedSsid == null
                 || !apWriteAcknowledged
-                || !M02sWifiPolicy.isConnectableSsid(expectedSsid)) return;
+                || !M02sWifiPolicy.isConnectableSsid(expectedSsid)
+                || wifiRequestCount >= 2
+                || (pinBssid && (wifiRequestCount != 1
+                        || !M02sApScanPolicy.validBssid(freshBssid)))) return;
         startedWifiNetworkRequest = true;
+        wifiRequestCount++;
+        previousRequestPinned = pinBssid;
         wifiRequestAtMs = SystemClock.elapsedRealtime();
         observePhoneWifi("Android精确SSID申请前");
-        if (scanTimer != null) {
-            ui.removeCallbacks(scanTimer);
-            scanTimer = null;
-        }
-        callback.log("快路径：收到BLE确认SSID后直接申请一次Android精准SSID+WPA2连接；"
-                + "无12秒扫描，无猜测；以onAvailable/网关/原厂HTTP为准");
+        callback.log("准确网络请求第" + wifiRequestCount + "次："
+                + (pinBssid ? "SSID+WPA2+BSSID（仅一次恢复）"
+                             : "原有SSID+WPA2（首次）")
+                + "；Android回调/真实网关/原厂HTTP均需后续验证");
         try {
-            WifiNetworkSpecifier spec = new WifiNetworkSpecifier.Builder()
+            WifiNetworkSpecifier.Builder builder = new WifiNetworkSpecifier.Builder()
                     .setSsid(expectedSsid)
-                    .setWpa2Passphrase(OEM_AP_PASSPHRASE)
-                    .build();
+                    .setWpa2Passphrase(OEM_AP_PASSPHRASE);
+            if (pinBssid) builder.setBssid(MacAddress.fromString(freshBssid));
+            WifiNetworkSpecifier spec = builder.build();
             NetworkRequest request = new NetworkRequest.Builder()
                     .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
                     .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -684,7 +808,8 @@ public final class M02sApStarter {
                         if (!valid(token) || networkCallback != this) return;
                         targetNetwork = net;
                         observePhoneWifi("本轮onAvailable");
-                        callback.log("Android本轮精确SSID请求→onAvailable耗时="
+                        callback.log("Android本轮第" + wifiRequestCount
+                                + "次准确SSID请求→onAvailable耗时="
                                 + (SystemClock.elapsedRealtime() - wifiRequestAtMs)
                                 + "ms；继续确认真实本地路由");
                         considerGateway(token, net, connectivity.getLinkProperties(net));
@@ -708,27 +833,32 @@ public final class M02sApStarter {
                 }
                 @Override public void onUnavailable() {
                     ui.post(() -> {
-                        // A completed/cancelled older request can leave a queued callback.
-                        // Unlike onLost(), v0.1.18 forgot the ownership check here.
                         if (!valid(token) || networkCallback != this) return;
                         long elapsed = wifiRequestAtMs > 0L
                                 ? SystemClock.elapsedRealtime() - wifiRequestAtMs : -1L;
                         observePhoneWifi("本轮onUnavailable");
-                        callback.log("Android本轮准确SSID请求onUnavailable；等待="
-                                + elapsed + "ms；仅表示该次网络请求未满足，"
+                        callback.log("Android本轮第" + wifiRequestCount
+                                + "次准确SSID请求onUnavailable；等待="
+                                + elapsed + "ms；仅表示网络请求未满足，"
                                 + "不能据此判定系统限制重复连接或眼镜热点坏了");
-                        // Android documents onUnavailable as an already-released request.
-                        // No blind second request. Recheck ONLY a currently connected
-                        // exact-SSID Network with a private IPv4 gateway, and require
-                        // the existing OEM HTTP verification afterwards.
+                        // Android releases an unavailable request automatically.
+                        // Its late callbacks cannot control a newer request.
                         networkCallback = null;
                         if (tryReuseConnectedTarget(token)) {
                             callback.log("系统请求失败时发现已有同SSID目标网络；"
                                     + "无需重复申请，交由原厂HTTP验证");
                             return;
                         }
-                        fail(token, "本次Android精准Wi-Fi请求未成功（onUnavailable，耗时="
-                                + elapsed + "ms），未重复申请；无法从回调判定具体系统原因");
+                        if (wifiRequestCount == 1 && !previousRequestPinned) {
+                            startedWifiNetworkRequest = false;
+                            callback.log("首次失败：只做一次重新扫描和策略变更检查；"
+                                    + "无新鲜唯一广播就拒绝第二次申请；不再次发送BLE开AP");
+                            beginFreshApScan(token, true);
+                            return;
+                        }
+                        fail(token, "第" + wifiRequestCount
+                                + "次Android Wi-Fi请求仍未成功（onUnavailable，"
+                                + elapsed + "ms）；已达最大请求次数，停止");
                     });
                 }
             };
@@ -801,7 +931,7 @@ public final class M02sApStarter {
         if (bleTimeout != null) ui.removeCallbacks(bleTimeout);
         if (firstDeviceDelay != null) ui.removeCallbacks(firstDeviceDelay);
         if (overallTimeout != null) ui.removeCallbacks(overallTimeout);
-        if (scanTimer != null) ui.removeCallbacks(scanTimer);
+        cancelFreshScan();
         cancelSsidTimeout();
         cancelProjectQuery();
         lastImportFlag = -1;
@@ -818,6 +948,8 @@ public final class M02sApStarter {
             catch (IllegalArgumentException | SecurityException ignored) { }
         }
         wifiRequestAtMs = 0L;
+        wifiRequestCount = 0;
+        previousRequestPinned = false;
         if (gatt != null) {
             try { gatt.disconnect(); }
             catch (SecurityException | IllegalStateException ignored) { }
