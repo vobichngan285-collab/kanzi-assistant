@@ -135,12 +135,14 @@ public final class MainActivity extends Activity {
             }
         });
         makeUi();
-        log("v0.1.18 最短路径：BLE待机→只等待0x45状态1→0→250ms后开AP"
-                + "→准确SSID直接申请Wi-Fi→高清JPEG");
-        log("已删除强制超时自动开AP，没收到拍照结束信号就绝不自动开AP；"
-                + "可手动确认拍完取图或取消等待");
-        log("保留5秒SSID超时；无12秒Wi-Fi扫描、1.8秒稳定等待和450ms无限轮询");
-        log("本机已观察到0x45 0→1→0，但1→0不一定代表JPEG已写盘");
+        log("v0.1.19 多张连续取图连接稳定性实验：沿用v0.1.18已成功的"
+                + "BLE拍照结束→250ms开AP→精确SSID直连→高清原图GET");
+        log("修复旧Wi-Fi onUnavailable回调可能误终止新会话的问题；"
+                + "旧请求释放时先失效回调归属；绝不盲目重试");
+        log("新增毫秒诊断：开AP→SSID、精确Wi-Fi请求→onAvailable/onUnavailable；"
+                + "无12秒扫描、无2.2秒拍照兜底");
+        log("每张取图后仍释放手机Wi-Fi，避免常连妨碍实体拍照；"
+                + "重复失败是否属于Android系统限制目前没有证据");
         log("照片只到手机RAM；不会删除眼镜文件，不上传云端，也不操作OCR/TTS");
         status("点击「准备蓝牙待机」，成功后直接用眼镜实体键拍照");
     }
@@ -154,7 +156,7 @@ public final class MainActivity extends Activity {
         setContentView(scroll);
 
         addText(body,"蓝星 M02S 极速高清取图",24,0xff17385b,true);
-        addText(body,"v0.1.18 · 等拍照结束后再极速取原图",15,Color.DKGRAY,false);
+        addText(body,"v0.1.19 · 保留成功取图流程，修复Wi-Fi会话回调",15,Color.DKGRAY,false);
         statusText = addText(body,"",18,0xff117458,true);
 
         addText(body,"① 先准备蓝牙待机（这一步不打开Wi-Fi）",17,Color.BLACK,true);
@@ -187,7 +189,7 @@ public final class MainActivity extends Activity {
         addButton(body,"复制诊断日志",() -> {
             ClipboardManager clipboard = (ClipboardManager)
                     getSystemService(Context.CLIPBOARD_SERVICE);
-            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.18 diagnostic",
+            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.19 diagnostic",
                     diagnostics.toString()));
             status("诊断日志已复制");
         });
