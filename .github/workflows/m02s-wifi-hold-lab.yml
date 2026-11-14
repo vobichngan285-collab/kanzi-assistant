@@ -1,8 +1,8 @@
-name: Blue Star M02S E09 BLE JPEG and RTSP Lab v0.1.11
+name: Blue Star M02S E09 JPEG Tail Fix Lab v0.1.12
 on:
   workflow_dispatch:
   push:
-    branches: ['exp/m02s-e09-ble-photo-rtsp-v0111-20261114']
+    branches: ['exp/m02s-e09-jpeg-tail-fix-v0112-20261114']
     paths:
       - 'experiments/m02s-wifi-lab/**'
       - '.github/workflows/m02s-wifi-hold-lab.yml'
@@ -48,7 +48,7 @@ jobs:
           grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' "$RUNNER_TEMP/signature.txt"
           "$TOOL/zipalign" -c -v 4 "$APK"
           "$TOOL/aapt" dump badging "$APK" | tee "$RUNNER_TEMP/badging.txt"
-          grep -q "package: name='com.vobichngan.bluestar.m02se09lab' versionCode='12' versionName='0.1.11'" "$RUNNER_TEMP/badging.txt"
+          grep -q "package: name='com.vobichngan.bluestar.m02se09jpegfixlab' versionCode='13' versionName='0.1.12'" "$RUNNER_TEMP/badging.txt"
           "$TOOL/aapt" dump permissions "$APK" | tee "$RUNNER_TEMP/permissions.txt"
           grep -q 'android.permission.BLUETOOTH_SCAN' "$RUNNER_TEMP/permissions.txt"
           grep -q 'android.permission.NEARBY_WIFI_DEVICES' "$RUNNER_TEMP/permissions.txt"
@@ -61,15 +61,15 @@ jobs:
           fi
           unzip -t "$APK" | tail -n 2
           mkdir -p release
-          cp "$APK" release/BlueStar_M02S_E09_BLE_RTSP_0.1.11_Android.apk
+          cp "$APK" release/BlueStar_M02S_E09_JPEG_Fix_0.1.12_Android.apk
           sha256sum release/*.apk | tee release/SHA256SUMS.txt
           echo "Source commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
           cat release/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
       - name: Upload installation APK
         uses: actions/upload-artifact@v4
         with:
-          name: BlueStar-M02S-E09-BLE-RTSP-v0111-APK
-          path: release/BlueStar_M02S_E09_BLE_RTSP_0.1.11_Android.apk
+          name: BlueStar-M02S-E09-JPEG-Fix-v0112-APK
+          path: release/BlueStar_M02S_E09_JPEG_Fix_0.1.12_Android.apk
           retention-days: 30
           if-no-files-found: error
       - name: Publish direct-browser APK
@@ -79,24 +79,23 @@ jobs:
         run: |
           set -euo pipefail
           cat > "$RUNNER_TEMP/note.txt" <<'EOF'
-          Blue Star M02S v0.1.11 independent protocol experiment using upstream MIT-licensed Eyevue E09 reverse engineering project.
-          Original upstream: https://github.com/sctg-development/ai-smart-glasses-e09-reverse (MIT / Ronan Le Meillat / SCTG Development), source LICENSE retained in experiments/m02s-wifi-lab/E09_SOURCE_LICENSE.md.
-          Directly adapted upstream BleProbe.swift AA15 photo frames: TAKE_PHOTO 0x22/0x31 and AA15 0x52 0x58 start 0x97, offset-indexed chunk 0x98, end 0x99. Android assembler validates JPEG SOI/EOI and contiguous bytes, max 2MB/15 sec, in-memory Bitmap preview only; original E09 hardware often returns small ~12KB preview, not confirmed with M02S.
-          Directly adapted upstream AdditionalValidations.swift APP_LIVE(0x67/0x30), BLE Wi-Fi SSID reply 0x25, and documented RTSP /h264. Android only connects to exact BLE-confirmed AP, verified Android Network and real private gateway. Probe RTSP OPTIONS and DESCRIBE using only Network socket; optional Android MediaPlayer SurfaceView playback uses temporary per-process Network binding and restores on stop.
-          Independent explicitly user-triggered NON-DELETING end-transfer command (0x44/0x30/0x01) matches upstream Constants.swift; destructive variant (0x44/0x30/0x00) is NEVER allowed by exact command whitelist. No OTA. No automatic repetitive probes/photo. No files/photo/SSID/password logged, saved, uploaded, or deleted. Existing v0.1.10 once-successful shot -> AP -> original photo pipeline remains untouched as fallback, not used to misrepresent E09 features.
-          The E09 reverse engineering is for different physical glasses; matching AA12/AA13/AA14/AA15 services and /app/getfilelist does NOT establish that M02S supports high-quality BLE photo, APP_LIVE, or the non-deleting finish effect. Fresh APK is a compatibility experiment, not a claim of low-latency video success. Fully separate package com.vobichngan.bluestar.m02se09lab, v0.1.11, old experiment APKs/Releases, official HeyCyan, Blue Star Guide RC25 and Windows OCR untouched.
+          M02S E09 AA15 JPEG tail fix v0.1.12, independent APK. Previous successful BLE take-photo + AA15 frame reception is preserved.
+          M02S Android16 real test v0.1.11: 19:57:27 E09 0x22/0x31 AA13 write status0 and AA14 0x22 ack; 19:57:29 AA15 PHOTO_START announced 6684 bytes; 19:57:30 v0.1.11 rejected the assembled stream as "JPEG文件头尾校验失败" even after complete contiguous chunks. We cannot assert whether the SOI or EOI check failed because the old error conflated both. The original E09 upstream source doesn't demand EOI exactly in the final two bytes, and notes a 500-byte announced-vs-received mismatch on its own hardware, not yet confirmed on this M02S.
+          This v0.1.12 corrects the Java AA15 offset assembler only, preserves source E09 0x97/0x98/0x99 and permits JPEG EOI followed by extra transport data without guessing fixed padding length. It records non-sensitive declared/actual length, delta, SOI/EOI positions, tail size, contiguous gaps, and Android Bitmap decoding result. It attempts trimmed EOI JPEG decoding first, and raw contiguous bytes as fallback. If EOI is absent but Android decodes, it explicitly flags possible incomplete JPEG. No fake JPEG success without Bitmap decode, no missing chunk padding, no photo bytes logged or saved. Adds JUnit cases for 500-byte trailing data, other trailing sizes, duplicates/out-of-order, missing chunks, SOI/EOI, and bounds.
+          The v0.1.11 E09 RTSP and safe non-deleting exit experiments, and older successfully tested AP original-photo pipeline, remain unchanged. Exact E09 commands allowed: photo 0x22/0x31, APP_LIVE 0x67/0x30, non-deleting finish 0x44/0x30/0x01. Never permits the deleting 0x44/0x30/0x00 or OTA. Upstream MIT license and copyright preserved in experiments/m02s-wifi-lab/E09_SOURCE_LICENSE.md.
+          Independent Android package com.vobichngan.bluestar.m02se09jpegfixlab v0.1.12 does not overwrite official Blue Star Guide RC25, Windows OCR, HeyCyan, or v0.1.11. Build/tests passing does not prove JPEG recovery on the user's eyewear. One real test: BLE LE1M, AA14/AA15 subscriptions status0, click ONLY "E09 蓝牙直传照片" once; inspect AA15 PHOTO_END metadata and real decoded image, do not run slow AP workflow.
           EOF
-          gh release create bluestar-m02s-e09-ble-rtsp-v0111-20261114 \
-            release/BlueStar_M02S_E09_BLE_RTSP_0.1.11_Android.apk \
+          gh release create bluestar-m02s-e09-jpeg-fix-v0112-20261114 \
+            release/BlueStar_M02S_E09_JPEG_Fix_0.1.12_Android.apk \
             release/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Blue Star M02S E09 BLE Photo and RTSP v0.1.11 — open-source-based experiment" \
+            --title "Blue Star M02S E09 AA15 JPEG Tail Repair v0.1.12 — independent experiment" \
             --prerelease --notes-file "$RUNNER_TEMP/note.txt"
       - name: Verify release assets
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view bluestar-m02s-e09-ble-rtsp-v0111-20261114 --repo "$GITHUB_REPOSITORY" \
+          gh release view bluestar-m02s-e09-jpeg-fix-v0112-20261114 --repo "$GITHUB_REPOSITORY" \
             --json isDraft,isPrerelease,assets,url \
             --jq '{isDraft,isPrerelease,url,assets: [.assets[] | {name: .name, size: .size, url: .url}]}'
