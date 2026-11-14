@@ -212,6 +212,9 @@ public final class MainActivity extends Activity {
     private MediaPlayer e09Player;
     private SurfaceView e09Surface;
     private String e09LiveLastHost;
+    /** Only one user-triggered OEM 0x95 capability read may be outstanding. */
+    private boolean e09CapabilityPending;
+    private Runnable e09CapabilityTimeout;
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -316,7 +319,7 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(receiver, f);
         receiverRegistered = true;
-        log("v0.1.12-export：恢复已实测成功的E09 AA15 JPEG直传和原RTSP入口；仅新增手动保存蓝牙JPEG");
+        log("v0.1.12-livecheck：保留原E09蓝牙直传/导出及RTSP；仅加手动只读0x95直播能力查询");
         log("所有传回图片默认只在RAM；仅用户点击保存时写入相册Pictures/BlueStarE09，无缩放和重压缩");
         requestPermissionsIfNeeded();
         updateNetworkStatus();
@@ -331,7 +334,7 @@ public final class MainActivity extends Activity {
         body.setBackgroundColor(Color.rgb(245, 248, 252));
         scroll.addView(body);
 
-        body.addView(text("蓝星 M02S E09 蓝牙图片导出实验 v0.1.12-export", 23, true));
+        body.addView(text("蓝星 M02S E09 直播能力查询 v0.1.12-livecheck", 23, true));
         body.addView(text("独立实验，不修改正式蓝星向导。Wi-Fi 网络名称/密码不会写进日志。", 14, false));
         status = text("蓝牙未连接 / 眼镜 Wi-Fi 未建立", 17, true);
         status.setPadding(0, dp(12), 0, dp(10));
@@ -405,6 +408,9 @@ public final class MainActivity extends Activity {
         body.addView(button("保存刚收到的蓝牙JPEG到手机相册（原始画质）", this::exportE09BleJpeg));
         body.addView(text("先成功接收并显示蓝牙小图，再点保存。原样复制JPEG字节，不缩放、不重新压缩；"
                 + "保存到手机图库 Pictures/BlueStarE09。未点保存时仍只留手机内存。", 14, false));
+        body.addView(button("检测眼镜直播功能支持位（只读 BLE 0x95）", this::probeE09LiveSupport));
+        body.addView(text("先在Wi-Fi未连接时查询。仅发送一次原厂功能读取指令，"
+                + "报告live位支持/不支持/未知；支持标志不代表已成功播放RTSP。", 14, false));
         addRow(body, button("E09 RTSP直播建连", this::startE09Live),
                 button("播放RTSP画面", this::playE09Preview));
         addRow(body, button("停止直播并安全退出", this::endE09Live),
@@ -921,6 +927,25 @@ public final class MainActivity extends Activity {
             return;
         }
         M02sBleWire.ParsedFrame parsed = M02sBleWire.parseIncoming(value);
+        if (COMMAND_NOTIFY.equals(c.getUuid()) && parsed != null && parsed.command == 0x95
+                && e09CapabilityPending) {
+            finishE09CapabilityProbe();
+            Long mask = parsed.e09CapabilityMaskOrNull();
+            if (mask == null) {
+                log("E09直播支持查询：收到0x95响应但校验/4字节长度不合格；结果=未知");
+                status.setText("直播能力：未知（0x95响应不完整或校验失败）");
+            } else {
+                boolean supports = (mask & 1L) != 0L;
+                log("E09直播支持查询：设备能力掩码=0x"
+                        + String.format(Locale.ROOT, "%08X", mask)
+                        + "；bit0 supportLive=" + supports
+                        + "；结果=" + (supports ? "固件报告支持直播" : "固件未报告直播支持")
+                        + "；不代表RTSP视频已实际播放");
+                status.setText(supports
+                        ? "眼镜报告支持直播；可独立测试RTSP连接"
+                        : "眼镜未报告支持直播；不建议继续盲测Wi-Fi");
+            }
+        }
         if (parsed != null && parsed.command == 0x25 && parsed.checksumOk) {
             acceptWifiSsidFrame(parsed);
         }
@@ -949,6 +974,10 @@ public final class MainActivity extends Activity {
     }
 
     private void stopNotificationMonitor(String reason) {
+        if (e09CapabilityPending) {
+            finishE09CapabilityProbe();
+            log("E09直播支持查询已取消：蓝牙通知监听结束；结果未知");
+        }
         if (e09BlePhotoActive) stopE09BlePhoto();
         boolean wasActive = notificationMonitor;
         notificationMonitor = false;
@@ -2357,6 +2386,43 @@ public final class MainActivity extends Activity {
                 });
             }
         });
+    }
+
+    /** Validate actual firmware capability before attempting APP_LIVE.
+     * User-only, read-only 0x95/0x00; no scan, AP, camera, photo or OTA commands.
+     */
+    private void probeE09LiveSupport() {
+        if (e09CapabilityPending) {
+            log("E09直播支持查询已进行中，不重复发送"); return;
+        }
+        if (e09BlePhotoActive || e09LiveRequested || oneClickActive || photoBusy
+                || wifiMode != WifiMode.NONE || wifiConnecting || wifiVerified) {
+            log("E09直播支持查询：先退出Wi-Fi/拍照等传输模式，再查询固件能力"); return;
+        }
+        if (!gattConnected || !commandNotifyReady || !notificationMonitor
+                || pendingSubscription != null || !notificationQueue.isEmpty()) {
+            log("E09直播支持查询：先完成BLE连接并等AA14订阅status=0"); return;
+        }
+        e09CapabilityPending = true; // Arm before sending; a response may be immediate.
+        if (!sendVerifiedCommand(M02sBleWire.e09ReadCapabilities())) {
+            e09CapabilityPending = false; // Command was not submitted.
+            log("E09直播支持查询：0x95未发送，未获得结果"); return;
+        }
+        e09CapabilityTimeout = () -> {
+            if (!e09CapabilityPending) return;
+            finishE09CapabilityProbe();
+            log("E09直播支持查询：5秒内无有效AA14 0x95响应；结果未知，不代表不支持");
+            status.setText("直播能力：未知（设备未回0x95）");
+        };
+        ui.postDelayed(e09CapabilityTimeout, 5000L);
+        log("E09直播支持查询：已发送一次原厂只读0x95/0x00，等待AA14能力掩码");
+        status.setText("正在读取眼镜直播支持位，不连接Wi-Fi");
+    }
+
+    private void finishE09CapabilityProbe() {
+        e09CapabilityPending = false;
+        if (e09CapabilityTimeout != null) ui.removeCallbacks(e09CapabilityTimeout);
+        e09CapabilityTimeout = null;
     }
 
     /** APP_LIVE(0x67/0x30), not OPEN_WIFI(0x39/0x30). */
