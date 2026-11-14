@@ -1,3 +1,15 @@
+# 最新独立实验｜M02S 眼镜 Wi-Fi 保持连接诊断 v0.1.0（2026-11-14）
+
+- **本次用户授权：** 只制作一个独立实验 APK，研究 HeyCyan/StarGlasses M02S 眼镜的蓝牙扫描、Wi-Fi Direct/AP 连接与持续传输是否可行；**不修改正式蓝星向导、官方 APK 或眼镜固件**。用户实测 HeyCyan 官方 App 点击一次“导入”，不论照片一张两张都需重新建立连接，约7～8秒；同一相册页会自动发现新拍摄文件；手机支持 Wi-Fi 与蜂窝数据同时在线。
+- **上传的官方 APK 静态核查：** 在 `/mnt/data/70465ff3819258a6218e7871da0a23f8.apk` 的 DEX 字符串里确实存在 `GET_WIFI_P2P`、`app/getfilelist`、`fileDownloadFinish`、`onTakePhotoState`、`connectP2pWifitoReceivePhoto`、`startDownLoadPhotoByWifi` 等标识。**字符串/方法名不足以证明具体 BLE 指令、固件支持或实际文件服务地址**，所以第一版只做安全、只读连接诊断。
+- **隔离代码：** 原仓库 `vobichngan285-collab/kanzi-assistant` 分支 `exp/m02s-wifi-keepalive-lab-20261114`，源码 HEAD `3c44874f4fdfe43ba5f232e0f193bc1eb7cb4b88`，只新增 `experiments/m02s-wifi-lab/` 和 `.github/workflows/m02s-wifi-hold-lab.yml`。正式安卓 Blue Star Guide RC25、旧照片监听实验和 Windows OCR 均未改动。
+- **实现范围：** 独立原生 Java Android 应用 `com.vobichngan.bluestar.m02slab`，BLE 扫描和手动只读 GATT 服务发现；Wi-Fi Direct 搜索/手动连接设备；知道 SSID 和密码时可以请求 Android 系统连接 AP；120秒内持有 WiFiLock 并每3秒只读访问允许的本地 `192.168.x.x/app/getfilelist`，记录 P2P/网络事件、HTTP 状态、毫秒数和文件列表摘要变化；复制本地诊断。**不会向眼镜发送未验证的遥控快门/开启 Wi-Fi 指令，不上传照片、不读取原图、不删除文件。** 有些 M02S 固件可能必须由官方 BLE 命令先启用 Wi-Fi，第一版可能无法独立启用连接，务必以真机结果判断。
+- **真实 GitHub Actions：** [43567345442](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/43567345442) `completed/success`，Gradle 单测、Android 编译、v2 APK 签名、zipalign、包名/版本/权限、ZIP 结构与上传公开 Release 均通过。此测试**不等于实机成功连接眼镜**。
+- **已发布 APK：** [Release bluestar-m02s-wifi-hold-lab-20261114](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-m02s-wifi-hold-lab-20261114)；直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-m02s-wifi-hold-lab-20261114/BlueStar_M02S_WifiHold_Lab_0.1.0_Android.apk 。文件 49745 bytes，SHA256 `adf5cca266cfc828328461e100eee54b37e180b622413a54f047188f60ade66c`。
+- **下一步由用户真机验证：** vivo X200 Pro 授权蓝牙、附近 Wi-Fi、位置，先扫描 BLE 看是否能发现 M02S，再扫描 P2P。如果 M02S 仅在官方导入期间开启 Wi-Fi，尝试按官方导入时机观察并反馈日志。若已知 AP SSID/密码，也可选择系统 AP 连接。连通后按“保持连接120秒”，观察是否掉线、HTTP 文件列表摘要是否变化；复制诊断。**不要事先声称能让眼镜保持 Wi-Fi。** 根据结果再决定是否从官方 APK 继续提取 BLE 启用 Wi-Fi 的精确协议以及遥控拍照的实现。
+
+---
+
 # 蓝星向导｜当前工作交接（2026-11-09）
 
 ## 2026-11-10 20:40 真机验收｜照片完整读取 v0.1.4 成功（冻结实验成果）
