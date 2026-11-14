@@ -42,6 +42,10 @@ import java.util.concurrent.Executors;
  */
 public final class MainActivity extends Activity {
     private static final int PERMISSION_REQUEST = 1601;
+    // E09 isTakePhoto=1 is "busy" rather than proof that JPEG has been saved.
+    // Wait briefly for a 1->0 event; if M02S never emits it, do not wait forever.
+    private static final long PHOTO_DONE_SETTLE_MS = 250L;
+    private static final long PHOTO_DONE_FALLBACK_MS = 2200L;
     private static final long ONE_SHOT_MAX_MS = 39_000L;
     private static final long LIST_RECHECK_MS = 350L;
     private static final int LIST_MAX_TRIES = 12;
@@ -69,6 +73,9 @@ public final class MainActivity extends Activity {
     private String lastDownloadedRemoteName; // memory only; never log or persist
     private M02sFreshPhotoPolicy.Selection previousList;
     private Runnable transferDeadline;
+    private Runnable pendingPhotoAction;
+    private boolean waitingPhotoDone;
+    private String transferStage = "空闲";
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -77,17 +84,50 @@ public final class MainActivity extends Activity {
         WifiManager wifi = (WifiManager) getApplicationContext()
                 .getSystemService(Context.WIFI_SERVICE);
         starter = new M02sApStarter(this, ui, cm, wifi, new M02sApStarter.Callback() {
-            @Override public void log(String message) { MainActivity.this.log(message); }
+            @Override public void log(String message) {
+                MainActivity.this.log(message);
+                if (!inTransfer) return;
+                if (message.contains("AA13唯一一次0x39/0x30写入成功")) {
+                    transferStage = "蓝牙开AP命令已写入，最多等待5秒的SSID回执";
+                    status(transferStage);
+                } else if (message.contains("AA14 0x25真实SSID校验成功")
+                        || message.contains("快路径：")) {
+                    transferStage = "眼镜SSID已确认，正在等待Android Wi-Fi连接";
+                    status(transferStage);
+                }
+            }
             @Override public void standbyReady() {
                 if (destroyed) return;
                 if (!inTransfer) status("BLE已待机：请直接按眼镜实体快门；若没有自动反应，点取图按钮");
             }
             @Override public void photoActionCandidate() {
-                if (!inTransfer) {
-                    log("上游E09 0x45 isTakePhoto候选事件出现；约350ms后尝试取图，"
-                            + "目前尚未在M02S实机验证该标志一定对应实体快门");
-                    ui.postDelayed(() -> startPhotoTransfer(true), 350L);
-                }
+                if (destroyed || inTransfer || waitingPhotoDone || !starter.standby()) return;
+                waitingPhotoDone = true;
+                log("收到0x45拍照活动开始候选；不再350ms抢先切Wi-Fi，"
+                        + "等待1→0结束通知，最多2.2秒后兜底启动");
+                status("拍照活动可能正在进行：等待结束通知（最多2.2秒）；"
+                        + "也可点「我已经拍照」立即开始");
+                pendingPhotoAction = () -> {
+                    pendingPhotoAction = null;
+                    if (destroyed || !waitingPhotoDone || inTransfer) return;
+                    waitingPhotoDone = false;
+                    log("2.2秒内未收到拍照结束通知；按短超时兜底尝试一次取图");
+                    startPhotoTransfer(true);
+                };
+                ui.postDelayed(pendingPhotoAction, PHOTO_DONE_FALLBACK_MS);
+            }
+            @Override public void photoActionEnded() {
+                if (destroyed || !waitingPhotoDone || inTransfer) return;
+                if (pendingPhotoAction != null) ui.removeCallbacks(pendingPhotoAction);
+                log("收到0x45拍照状态1→0；等待250ms后启动一次开AP（文件写盘仍需实测）");
+                status("拍照结束状态已收到，250ms后打开眼镜Wi-Fi");
+                pendingPhotoAction = () -> {
+                    pendingPhotoAction = null;
+                    if (destroyed || !waitingPhotoDone || inTransfer) return;
+                    waitingPhotoDone = false;
+                    startPhotoTransfer(true);
+                };
+                ui.postDelayed(pendingPhotoAction, PHOTO_DONE_SETTLE_MS);
             }
             @Override public void ready(Network net, String host) {
                 onWifiReady(net, host);
@@ -104,10 +144,12 @@ public final class MainActivity extends Activity {
             }
         });
         makeUi();
-        log("v0.1.16 最短路径：BLE先待机→实体快门→直接0x39/0x30开AP"
-                + "→准确SSID立即请求Android Wi-Fi→GET最新高清候选");
-        log("彻底取消12秒Wi-Fi扫描、1.8秒等待和450ms长时间轮询；只在拍后取图");
-        log("0x45拍照标志来自E09开源推断，在M02S上待验证；提供手动已拍照取图入口");
+        log("v0.1.17 最短路径：蓝牙待机→0x45拍照活动结束或2.2秒兜底"
+                + "→0x39/0x30开AP→准确SSID立即请求Android Wi-Fi→原厂高清GET");
+        log("修复v0.1.16过早开AP：0x45状态1→0后250ms启动；"
+                + "5秒没有SSID明确失败；按钮可显示状态、主动取消");
+        log("无12秒Wi-Fi扫描、无1.8秒稳定等待、无450ms长时间轮询");
+        log("0x45来自E09开源，M02S上仅观察到1标志，结束状态与照片写盘未证实；保留手动已拍照取图");
         log("照片只到手机RAM；不会删除眼镜文件，不上传云端，也不操作OCR/TTS");
         status("点击「准备蓝牙待机」，成功后直接用眼镜实体键拍照");
     }
@@ -121,16 +163,18 @@ public final class MainActivity extends Activity {
         setContentView(scroll);
 
         addText(body,"蓝星 M02S 极速高清取图",24,0xff17385b,true);
-        addText(body,"v0.1.16 · 先拍照，再直接连接Wi-Fi取原图",15,Color.DKGRAY,false);
+        addText(body,"v0.1.17 · 等拍照结束，再极速连接Wi-Fi取原图",15,Color.DKGRAY,false);
         statusText = addText(body,"",18,0xff117458,true);
 
         addText(body,"① 先准备蓝牙待机（这一步不打开Wi-Fi）",17,Color.BLACK,true);
         addButton(body,"准备蓝牙待机",this::prepareStandby);
-        addText(body,"② 眼镜实体按键拍照，监听到0x45拍照状态候选会自动尝试取图",
+        addText(body,"② 用实体按键拍照，监听到结束状态后自动取图",
                 16,Color.BLACK,true);
-        addText(body,"如果你按完眼镜快门手机没有自动反应，直接点下面这个按钮。"
-                + "无需先连Wi-Fi，也不需要等待12秒扫描。",14,Color.DKGRAY,false);
+        addText(body,"如果未收到结束通知，最多等2.2秒后自动尝试。"
+                + "若你确定已拍照，可点下面按钮立即取图；已有任务会显示当前阶段，不会重复发命令。",
+                14,Color.DKGRAY,false);
         addButton(body,"我已经拍照，立即取高清原图",() -> startPhotoTransfer(false));
+        addButton(body,"取消当前取图（不重试、不删除照片）",this::cancelCurrentTransfer);
 
         addText(body,"③ 下载完成后只在内存显示原图",17,Color.BLACK,true);
         resultText = addText(body,"本轮已完成0张；等待实体拍照",16,0xff17385b,true);
@@ -152,7 +196,7 @@ public final class MainActivity extends Activity {
         addButton(body,"复制诊断日志",() -> {
             ClipboardManager clipboard = (ClipboardManager)
                     getSystemService(Context.CLIPBOARD_SERVICE);
-            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.16 diagnostic",
+            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.17 diagnostic",
                     diagnostics.toString()));
             status("诊断日志已复制");
         });
@@ -227,8 +271,44 @@ public final class MainActivity extends Activity {
         status("正在连接M02S BLE并订阅拍照状态；不启动眼镜Wi-Fi");
     }
 
+    private void clearPendingPhotoAction() {
+        if (pendingPhotoAction != null) {
+            ui.removeCallbacks(pendingPhotoAction);
+            pendingPhotoAction = null;
+        }
+        waitingPhotoDone = false;
+    }
+
+    private void cancelCurrentTransfer() {
+        if (waitingPhotoDone) {
+            clearPendingPhotoAction();
+            log("用户取消等待拍照结束：未发送BLE开AP命令，保留蓝牙待机");
+            status("已取消本次自动取图；BLE仍在待机，眼镜照片未触碰");
+            return;
+        }
+        if (inTransfer) {
+            abortTransfer("用户取消本轮Wi-Fi取图；不重发命令");
+            // Discard late 0x25 from the cancelled AP request; one fresh BLE session
+            // is safer than accidentally accepting a previous session's SSID.
+            starter.stop();
+            log("已停止BLE会话，丢弃本轮可能迟到的SSID；下次需点准备蓝牙待机");
+            status("已取消并断开本轮会话；下一次点「准备蓝牙待机」");
+            return;
+        }
+        status("目前没有进行中的取图或等待任务；BLE待机不受影响");
+    }
+
     private void startPhotoTransfer(boolean fromActionSync) {
-        if (destroyed || inTransfer) return;
+        if (destroyed) return;
+        if (inTransfer) {
+            log("重复点击取原图：本轮任务仍在运行，未重复发送开AP；阶段=" + transferStage);
+            status("已有任务进行中：" + transferStage + "。若不想继续，可点「取消当前取图」");
+            return;
+        }
+        if (waitingPhotoDone) {
+            log("用户确认实体照片已经拍好，跳过等待0x45结束状态，立即启动单次取图");
+            clearPendingPhotoAction();
+        }
         if (!starter.standby()) {
             status("请先准备蓝牙待机；未连接眼镜，不发送Wi-Fi请求");
             return;
@@ -243,12 +323,14 @@ public final class MainActivity extends Activity {
         listBusy=false;
         network=null;
         gateway=null;
-        status("已触发取图：立即发送一次开AP指令，收到SSID后直接申请Wi-Fi");
+        transferStage="准备发送原厂开AP命令，随后最多5秒等待SSID";
+        status(transferStage);
         log((fromActionSync?"候选0x45拍照状态自动触发":"用户确认已实体拍照手动触发")
                 +"：取图开始（此时刻不一定等于真实快门时刻）");
 
         if (!starter.requestPhotoTransfer()) {
             inTransfer=false;
+            transferStage="未能提交开AP命令";
             status("无法发送唯一一次开AP指令：检查BLE待机/旧传输状态");
             return;
         }
@@ -265,9 +347,10 @@ public final class MainActivity extends Activity {
         wifiReadyAtMs=SystemClock.elapsedRealtime();
         network=net;
         gateway=host;
+        transferStage="Wi-Fi就绪，正在验证原厂照片列表";
         log("手机收到真实眼镜AP Network和私有网关；触发到Wi-Fi就绪="
                 +(wifiReadyAtMs-captureToWifiStartMs)+"ms，开始原厂只读HTTP");
-        status("眼镜Wi-Fi已就绪，读取最新高清照片列表");
+        status(transferStage);
         readLatestList(runId);
     }
 
@@ -337,7 +420,8 @@ public final class MainActivity extends Activity {
                                   M02sPhotoPolicy.Candidate candidate) {
         if (!inTransfer || id!=runId || candidate==null) return;
         final long begin=SystemClock.elapsedRealtime();
-        status("正在下载原厂最新高清原图（仅内存）");
+        transferStage="正在下载原厂高清原图（仅内存）";
+        status(transferStage);
         io.execute(() -> {
             try {
                 M02sPhotoTransport.Response res=
@@ -401,6 +485,7 @@ public final class MainActivity extends Activity {
 
     private void finishTransfer(boolean success,String reason) {
         inTransfer=false;
+        transferStage=success?"已完成高清取图":"本轮已停止";
         runId++; // invalidate all pending callbacks and old IO completions
         if (transferDeadline!=null) ui.removeCallbacks(transferDeadline);
         transferDeadline=null;
@@ -414,6 +499,7 @@ public final class MainActivity extends Activity {
     }
 
     private void disconnectAll() {
+        if (waitingPhotoDone) clearPendingPhotoAction();
         if (inTransfer) abortTransfer("用户主动结束本轮取图");
         runId++;
         starter.stop();
@@ -424,6 +510,7 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        clearPendingPhotoAction();
         if(inTransfer) finishTransfer(false,"应用退出");
         destroyed=true;
         starter.stop();
