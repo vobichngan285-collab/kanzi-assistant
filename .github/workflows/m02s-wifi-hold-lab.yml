@@ -1,8 +1,8 @@
-name: Blue Star M02S Target WiFi Connector Lab v0.1.4
+name: Blue Star M02S AP Permission Fix Lab v0.1.5
 on:
   workflow_dispatch:
   push:
-    branches: ['exp/m02s-wifi-target-connect-v014-20261114']
+    branches: ['exp/m02s-ap-permission-fix-v015-20261114']
     paths:
       - 'experiments/m02s-wifi-lab/**'
       - '.github/workflows/m02s-wifi-hold-lab.yml'
@@ -48,25 +48,28 @@ jobs:
           grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' "$RUNNER_TEMP/signature.txt"
           "$TOOL/zipalign" -c -v 4 "$APK"
           "$TOOL/aapt" dump badging "$APK" | tee "$RUNNER_TEMP/badging.txt"
-          grep -q "package: name='com.vobichngan.bluestar.m02swifitargetlab' versionCode='5' versionName='0.1.4'" "$RUNNER_TEMP/badging.txt"
+          grep -q "package: name='com.vobichngan.bluestar.m02sapfixlab' versionCode='6' versionName='0.1.5'" "$RUNNER_TEMP/badging.txt"
           "$TOOL/aapt" dump permissions "$APK" | tee "$RUNNER_TEMP/permissions.txt"
           grep -q 'android.permission.BLUETOOTH_SCAN' "$RUNNER_TEMP/permissions.txt"
           grep -q 'android.permission.NEARBY_WIFI_DEVICES' "$RUNNER_TEMP/permissions.txt"
           grep -q 'android.permission.INTERNET' "$RUNNER_TEMP/permissions.txt"
+          grep -q 'android.permission.CHANGE_NETWORK_STATE' "$RUNNER_TEMP/permissions.txt"
+          grep -q 'android.permission.ACCESS_NETWORK_STATE' "$RUNNER_TEMP/permissions.txt"
+          grep -q 'android.permission.CHANGE_WIFI_STATE' "$RUNNER_TEMP/permissions.txt"
           if grep -qE 'android.permission.(CAMERA|READ_MEDIA_IMAGES|READ_EXTERNAL_STORAGE)' "$RUNNER_TEMP/permissions.txt"; then
             echo 'Unexpected camera or media access in transport-only lab' >&2; exit 1
           fi
           unzip -t "$APK" | tail -n 2
           mkdir -p release
-          cp "$APK" release/BlueStar_M02S_Target_WiFi_0.1.4_Android.apk
+          cp "$APK" release/BlueStar_M02S_AP_Permission_Fix_0.1.5_Android.apk
           sha256sum release/*.apk | tee release/SHA256SUMS.txt
           echo "Source commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
           cat release/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
       - name: Upload installation APK
         uses: actions/upload-artifact@v4
         with:
-          name: BlueStar-M02S-TargetWifi-v014-APK
-          path: release/BlueStar_M02S_Target_WiFi_0.1.4_Android.apk
+          name: BlueStar-M02S-ApPermissionFix-v015-APK
+          path: release/BlueStar_M02S_AP_Permission_Fix_0.1.5_Android.apk
           retention-days: 30
           if-no-files-found: error
       - name: Publish direct-browser APK
@@ -76,25 +79,24 @@ jobs:
         run: |
           set -euo pipefail
           cat > "$RUNNER_TEMP/note.txt" <<'EOF'
-          Blue Star M02S Target Wi-Fi Connector Lab v0.1.4 — independent Android APK.
-          Based on real vivo X200 Pro GATT success, remote M02S shutter success, and one 0x25 payload after a verified OEM 0x39 Wi-Fi request. A previous Wi-Fi Direct discovery result was an unrelated HP printer, NOT eyewear.
-          Re-opened the user's official HeyCyan APK v1.0.24-c and verified OEM decoding: AA14 0x25 payload goes via WifiCmdBean.recoverByBytes, which converts all payload bytes into an UTF-8 SSID; response listener then chooses AP or P2P based on CustomerCmdBean.project contains 'T' (project value not yet available for user's M02S). Original P2P matching checks deviceName.contains(ssid); original AP path uses Android Wi-Fi request for target SSID with a vendor-default pairing passphrase.
-          Explicit buttons select ONE path (P2P or AP), sending only previously confirmed OEM 0x39/0x31 or 0x39/0x30 bytes. On checksum-valid AA14 0x25, decode target SSID in memory only. P2P discovery filters by actual SSID and refuses unrelated devices or ambiguous multiple matches; groupFormed + phone not group owner + valid private group-owner IP are needed before treating it as linked. AP requests the exact SSID via Android WifiNetworkSpecifier and requires Android user approval; only onAvailable means AP connection, and local gateway is derived from actual link routes, not guessed.
-          SSID and pairing secret are never added to log, clipboard, or persistent storage. HTTP file-list probes are strictly disabled until target Wi-Fi connection and private device address are confirmed. Read-only fingerprint/size probes; no photo download, media permission, cloud upload, file deletion, firmware update, or automatic retries. Wi-Fi scans/requests do not auto-fallback to the other mode.
-          New independent app package com.vobichngan.bluestar.m02swifitargetlab and branch. Formal Blue Star Guide RC25, OEM APK, v0.1.0-v0.1.3 labs and Windows OCR are untouched.
-          Real Android 16 AP/P2P Wi-Fi connection, exact SSID, device HTTP server and link persistence still require the user's real-device testing; GitHub Actions success only proves compile, tests, APK integrity, signature and release publication.
+          Blue Star M02S AP Permission Fix Lab v0.1.5 — independent Android 16 test APK.
+          Real vivo X200 Pro v0.1.4 log: BLE LE 1M, AA13 0x39/0x30 AP request and AA14 0x25 SSID UTF-8 parsing all succeeded, but Android request of a dedicated AP Wi-Fi network threw SecurityException before any network approval dialog.
+          Root-cause candidate: previous manifest omitted the normal permission android.permission.CHANGE_NETWORK_STATE, which is required for ConnectivityManager.requestNetwork. Added permission; CI checks installed APK declaration. Also checks network state, Wi-Fi state and existing Bluetooth/Wi-Fi permissions.
+          AP request now records three stages (construct WifiNetworkSpecifier, construct NetworkRequest, invoke requestNetwork) plus manifest-grant status. On SecurityException or argument/state failure, log sanitized stage and exception class ONLY; NEVER include Android/OEM exception message, SSID or passphrase. Added unit tests for diagnostic stage reporting and privacy.
+          Reuses verified original BLE GATT handshake, AA14 notification, 0x25 SSID in-memory decoding and unique P2P target matching; no speculative writes, repeat scans, photo download or uploading. Formal Blue Star Guide, HeyCyan APK and earlier v0.1.0-v0.1.4 labs left untouched.
+          Brand-new package com.vobichngan.bluestar.m02sapfixlab for side-by-side installation. Android 16 AP connection, approval dialog, network IP and HTTP remain UNTESTED until the user performs a genuine phone test. CI success proves compile, JUnit, permissions, signature and release only.
           EOF
-          gh release create bluestar-m02s-target-wifi-v014-20261114 \
-            release/BlueStar_M02S_Target_WiFi_0.1.4_Android.apk \
+          gh release create bluestar-m02s-ap-permission-fix-v015-20261114 \
+            release/BlueStar_M02S_AP_Permission_Fix_0.1.5_Android.apk \
             release/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Blue Star M02S Target Wi-Fi Lab v0.1.4 — SSID-matched P2P/AP connection" \
+            --title "Blue Star M02S AP Permission Fix Lab v0.1.5 — Android 16 requestNetwork permission" \
             --prerelease --notes-file "$RUNNER_TEMP/note.txt"
       - name: Verify release assets
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view bluestar-m02s-target-wifi-v014-20261114 --repo "$GITHUB_REPOSITORY" \
+          gh release view bluestar-m02s-ap-permission-fix-v015-20261114 --repo "$GITHUB_REPOSITORY" \
             --json isDraft,isPrerelease,assets,url \
             --jq '{isDraft,isPrerelease,url,assets: [.assets[] | {name: .name, size: .size, url: .url}]}'

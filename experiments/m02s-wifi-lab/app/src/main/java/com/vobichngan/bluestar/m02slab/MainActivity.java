@@ -233,7 +233,7 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(receiver, f);
         receiverRegistered = true;
-        log("v0.1.4 Wi-Fi 精准连接实验：按原厂 BLE 0x25 返回的目标SSID匹配，仅在真实连接后读取本地文件列表");
+        log("v0.1.5 AP系统权限修复：补齐 CHANGE_NETWORK_STATE 并增加调用阶段诊断，不输出SSID和密码");
         log("仅手动选择 P2P 或 AP 连接路线；不会输出 SSID/连接密码、不会读取照片或上传云端");
         requestPermissionsIfNeeded();
         updateNetworkStatus();
@@ -248,7 +248,7 @@ public final class MainActivity extends Activity {
         body.setBackgroundColor(Color.rgb(245, 248, 252));
         scroll.addView(body);
 
-        body.addView(text("蓝星 M02S Wi-Fi 精准连接 v0.1.4", 23, true));
+        body.addView(text("蓝星 M02S AP权限修复 v0.1.5", 23, true));
         body.addView(text("独立实验，不修改正式蓝星向导。Wi-Fi 网络名称/密码不会写进日志。", 14, false));
         status = text("蓝牙未连接 / 眼镜 Wi-Fi 未建立", 17, true);
         status.setPadding(0, dp(12), 0, dp(10));
@@ -987,15 +987,32 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private boolean hasPermission(String permission) {
+        return checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED;
+    }
+
     private void connectTargetAp() {
         if (!ensurePermission() || wifiMode != WifiMode.AP ||
                 !M02sWifiPolicy.isConnectableSsid(targetWifiSsid)) {
             stopWifiSession("无法申请 AP 连接，权限或SSID无效"); return;
         }
         final int token = wifiSessionToken;
+        ApRequestDiagnostic.Stage stage = ApRequestDiagnostic.Stage.PREPARE_SPECIFIER;
+        final boolean changeNetwork = hasPermission(Manifest.permission.CHANGE_NETWORK_STATE);
+        final boolean accessNetwork = hasPermission(Manifest.permission.ACCESS_NETWORK_STATE);
+        final boolean nearbyWifi = Build.VERSION.SDK_INT < 33
+                || hasPermission(Manifest.permission.NEARBY_WIFI_DEVICES);
+        final boolean fineLocation = hasPermission(Manifest.permission.ACCESS_FINE_LOCATION);
+        log(ApRequestDiagnostic.permissionSummary(
+                changeNetwork, accessNetwork, nearbyWifi, fineLocation));
+        if (!changeNetwork || !accessNetwork) {
+            stopWifiSession("AP 权限预检未通过：缺少 CHANGE_NETWORK_STATE 或 ACCESS_NETWORK_STATE");
+            return;
+        }
         try {
             WifiNetworkSpecifier spec = new WifiNetworkSpecifier.Builder()
                     .setSsid(targetWifiSsid).setWpa2Passphrase(OEM_WIFI_KEY).build();
+            stage = ApRequestDiagnostic.Stage.BUILD_NETWORK_REQUEST;
             NetworkRequest request = new NetworkRequest.Builder()
                     .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
                     .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -1045,9 +1062,12 @@ public final class MainActivity extends Activity {
                     });
                 }
             };
+            stage = ApRequestDiagnostic.Stage.REQUEST_NETWORK;
             connectivity.requestNetwork(request, apCallback, 48_000);
             log("Android 已请求精确 SSID 的 AP/WPA2 会话；原厂密钥仅在内存中使用");
         } catch (SecurityException | IllegalArgumentException | IllegalStateException ex) {
+            // Never write exception.getMessage(): Android/OEM may include private SSID.
+            log(ApRequestDiagnostic.safeFailure(stage, ex));
             stopWifiSession("AP 请求异常：" + ex.getClass().getSimpleName());
         }
     }
@@ -1367,7 +1387,7 @@ public final class MainActivity extends Activity {
     }
 
     private void copyDiagnostic() {
-        String payload = "M02S Wi-Fi 精准连接实验 v0.1.4 / Android " + Build.VERSION.RELEASE +
+        String payload = "M02S AP权限修复实验 v0.1.5 / Android " + Build.VERSION.RELEASE +
                 "\n" + logData.toString();
         ClipboardManager cb = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         cb.setPrimaryClip(ClipData.newPlainText("M02S diagnostic", payload));
