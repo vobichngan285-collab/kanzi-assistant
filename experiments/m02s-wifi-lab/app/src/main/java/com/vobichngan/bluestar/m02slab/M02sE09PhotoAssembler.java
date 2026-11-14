@@ -127,9 +127,12 @@ public final class M02sE09PhotoAssembler {
         if (command == 0x99) {
             if (image == null || completed) return Step.IGNORED;
             packetCount++;
-            firstMissingOffset = received.nextClearBit(0);
-            if (highest < 4 || firstMissingOffset < highest)
+            int firstGap = received.nextClearBit(0);
+            if (highest < 4 || firstGap < highest) {
+                firstMissingOffset = firstGap;
                 return fail("PHOTO_END到达时照片分片不连续");
+            }
+            firstMissingOffset = -1;
             jpegStart = (image[0] & 255) == 0xff && (image[1] & 255) == 0xd8;
             if (!jpegStart) return fail("JPEG SOI起始标记缺失");
 
