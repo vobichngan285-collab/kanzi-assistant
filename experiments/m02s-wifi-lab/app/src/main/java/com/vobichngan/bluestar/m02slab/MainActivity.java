@@ -16,6 +16,7 @@ import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
 import android.content.BroadcastReceiver;
 import android.content.ClipData;
+import android.content.ContentValues;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
@@ -25,6 +26,8 @@ import android.graphics.Color;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.media.MediaPlayer;
+import android.provider.MediaStore;
+import android.os.Environment;
 import android.net.Uri;
 import android.net.ConnectivityManager;
 import android.net.LinkProperties;
@@ -61,10 +64,13 @@ import android.widget.TextView;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.InetAddress;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -195,6 +201,9 @@ public final class MainActivity extends Activity {
     /** Experimental E09 family protocol; NOT yet proven on M02S. */
     private boolean e09BlePhotoActive;
     private final M02sE09PhotoAssembler e09Assembler = new M02sE09PhotoAssembler();
+    /** Exact decoder-accepted E09 JPEG bytes, stored only in RAM until user taps export. */
+    private byte[] lastE09PhotoForExport;
+    private boolean e09Exporting;
     private long e09PhotoStartedAt;
     private Runnable e09PhotoTimeout;
     private boolean e09LiveRequested;
@@ -307,8 +316,8 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(receiver, f);
         receiverRegistered = true;
-        log("v0.1.12 E09 JPEG校验修复：不再误拒绝EOI后尾随字节；保留已验证AA15拍照和RTSP入口");
-        log("照片只从眼镜AP按原厂接口GET至内存；不保存相册、不上传云端、不删文件");
+        log("v0.1.12-export：恢复已实测成功的E09 AA15 JPEG直传和原RTSP入口；仅新增手动保存蓝牙JPEG");
+        log("所有传回图片默认只在RAM；仅用户点击保存时写入相册Pictures/BlueStarE09，无缩放和重压缩");
         requestPermissionsIfNeeded();
         updateNetworkStatus();
     }
@@ -322,7 +331,7 @@ public final class MainActivity extends Activity {
         body.setBackgroundColor(Color.rgb(245, 248, 252));
         scroll.addView(body);
 
-        body.addView(text("蓝星 M02S 开源E09 JPEG修复 v0.1.12", 23, true));
+        body.addView(text("蓝星 M02S E09 蓝牙图片导出实验 v0.1.12-export", 23, true));
         body.addView(text("独立实验，不修改正式蓝星向导。Wi-Fi 网络名称/密码不会写进日志。", 14, false));
         status = text("蓝牙未连接 / 眼镜 Wi-Fi 未建立", 17, true);
         status.setPadding(0, dp(12), 0, dp(10));
@@ -393,13 +402,16 @@ public final class MainActivity extends Activity {
                 + "与M02S的兼容性尚未确认，不会自动循环发命令。", 14, false));
         addRow(body, button("E09 蓝牙直传照片", this::startE09BlePhoto),
                 button("取消蓝牙接收", this::stopE09BlePhoto));
+        body.addView(button("保存刚收到的蓝牙JPEG到手机相册（原始画质）", this::exportE09BleJpeg));
+        body.addView(text("先成功接收并显示蓝牙小图，再点保存。原样复制JPEG字节，不缩放、不重新压缩；"
+                + "保存到手机图库 Pictures/BlueStarE09。未点保存时仍只留手机内存。", 14, false));
         addRow(body, button("E09 RTSP直播建连", this::startE09Live),
                 button("播放RTSP画面", this::playE09Preview));
         addRow(body, button("停止直播并安全退出", this::endE09Live),
                 button("单独发送不删除结束指令", this::sendE09SafeFinish));
         body.addView(text("直播仅访问眼镜专属已验证AP网关 /h264；收到RTSP控制应答不等于能播放画面。"
                 + "结束通知仅允许0x44/0x30/0x01，不提供删除媒体的0x44/0x30/0x00。"
-                + "无照片保存、无云上传、无固件命令。", 14, false));
+                + "除用户主动导出蓝牙JPEG外不保存照片；不上传云端、不改固件。", 14, false));
         e09Surface = new SurfaceView(this);
         e09Surface.setMinimumHeight(dp(190));
         body.addView(e09Surface, new LinearLayout.LayoutParams(
@@ -881,6 +893,7 @@ public final class MainActivity extends Activity {
                 }
                 if (bitmap != null) {
                     lastPhotoInMemory = jpeg;
+                    lastE09PhotoForExport = jpeg;
                     photoPreview.setImageBitmap(bitmap);
                     long totalMs = SystemClock.elapsedRealtime() - e09PhotoStartedAt;
                     if (e09Assembler.hasJpegEnd()) {
@@ -1913,6 +1926,7 @@ public final class MainActivity extends Activity {
         photoCandidates = Collections.emptyList();
         photoBusy = false;
         lastPhotoInMemory = null;
+        lastE09PhotoForExport = null;
         if (photoAdapter != null) {
             photoAdapter.clear();
             photoAdapter.add("选择候选照片（自动判断失败时手动选）");
@@ -2107,6 +2121,7 @@ public final class MainActivity extends Activity {
                         return;
                     }
                     lastPhotoInMemory = response.body;
+                    lastE09PhotoForExport = null;
                     photoPreview.setImageBitmap(image.preview);
                     photoBusy = false;
                     log("原图下载并解码成功：HTTP 200；"
@@ -2252,6 +2267,7 @@ public final class MainActivity extends Activity {
             log("E09 BLE直传：写入未提交；不会重发"); return;
         }
         lastPhotoInMemory = null;
+        lastE09PhotoForExport = null;
         photoPreview.setImageBitmap(null);
         log("E09 BLE直传：已发送唯一0x22/0x31；只监听AA15 0x97/0x98/0x99，"
                 + "最大2MB、最多15秒，无二次拍照");
@@ -2271,6 +2287,76 @@ public final class MainActivity extends Activity {
         boolean was = e09BlePhotoActive;
         e09BlePhotoActive = false;
         if (was) log("E09 AA15接收结束；无照片写盘、无云上传");
+    }
+
+
+    /**
+     * An explicit user-only export of the already-decoded E09 AA15 JPEG.
+     * Android 10+ MediaStore writes a byte-for-byte copy, not a recompressed Bitmap.
+     * The upstream transport's non-image trailing bytes, if any, may already
+     * have been trimmed by the proven v0.1.12 JPEG assembler before decoding.
+     */
+    private void exportE09BleJpeg() {
+        if (e09Exporting) {
+            log("E09图片正在保存中，请勿重复点击");
+            return;
+        }
+        if (lastE09PhotoForExport == null || lastE09PhotoForExport.length < 4) {
+            log("还没有可导出的E09蓝牙JPEG：先点「E09 蓝牙直传照片」，等待解码成功");
+            status.setText("先成功接收蓝牙JPEG，再保存到相册");
+            return;
+        }
+        final byte[] jpeg = lastE09PhotoForExport.clone();
+        e09Exporting = true;
+        log("用户主动保存E09蓝牙JPEG：原样复制" + jpeg.length
+                + "字节到手机相册，不重编码、不改变分辨率");
+        io.execute(() -> {
+            Uri inserted = null;
+            try {
+                String name = "M02S_E09_BLE_"
+                        + new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US)
+                          .format(new Date()) + ".jpg";
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.Images.Media.DISPLAY_NAME, name);
+                values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
+                values.put(MediaStore.Images.Media.RELATIVE_PATH,
+                        Environment.DIRECTORY_PICTURES + "/BlueStarE09");
+                values.put(MediaStore.Images.Media.IS_PENDING, 1);
+                inserted = getContentResolver().insert(
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+                if (inserted == null) throw new IOException("MediaStore insert returned null");
+                try (OutputStream out = getContentResolver().openOutputStream(inserted, "w")) {
+                    if (out == null) throw new IOException("MediaStore output is unavailable");
+                    out.write(jpeg);
+                    out.flush();
+                }
+                ContentValues complete = new ContentValues();
+                complete.put(MediaStore.Images.Media.IS_PENDING, 0);
+                if (getContentResolver().update(inserted, complete, null, null) < 1) {
+                    throw new IOException("MediaStore publish failed");
+                }
+                ui.post(() -> {
+                    e09Exporting = false;
+                    if (destroyed) return;
+                    log("E09蓝牙JPEG已保存到图片相册 Pictures/BlueStarE09；"
+                            + jpeg.length + "字节，无缩放、无二次压缩");
+                    status.setText("已保存！请打开手机相册查看 BlueStarE09 文件夹，放大检查文字清晰度");
+                });
+            } catch (Exception ex) {
+                if (inserted != null) {
+                    try { getContentResolver().delete(inserted, null, null); }
+                    catch (Exception ignored) { }
+                }
+                String type = ex.getClass().getSimpleName();
+                ui.post(() -> {
+                    e09Exporting = false;
+                    if (!destroyed) {
+                        log("E09蓝牙JPEG保存失败：" + type + "；没有上传云端");
+                        status.setText("图片保存失败：" + type + "；可重新点击保存");
+                    }
+                });
+            }
+        });
     }
 
     /** APP_LIVE(0x67/0x30), not OPEN_WIFI(0x39/0x30). */
@@ -2422,6 +2508,7 @@ public final class MainActivity extends Activity {
         oneClickShutterAt = 0L;
         oneClickPhotoNotices = 0;
         lastPhotoInMemory = null;
+        lastE09PhotoForExport = null;
         photoPreview.setImageBitmap(null);
         log("v0.1.10：蓝牙拍照一次，等待本次AP请求后的新扫描结果和就绪间隔；只发一次Wi-Fi网络申请");
         log(oneClickHasBaseline
@@ -2546,6 +2633,7 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        lastE09PhotoForExport = null;
         stopE09Preview();
         stopE09BlePhoto();
         e09LiveRequested = false;
