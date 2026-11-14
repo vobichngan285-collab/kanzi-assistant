@@ -1,3 +1,17 @@
+# 最新｜M02S 原厂 BLE 拍照及 Wi-Fi 请求指令专项 v0.1.3（2026-11-14，已发布，待真机）
+
+- **真机既有成功结果（用户亲测）**：v0.1.1/v0.1.2 在 vivo X200 Pro/Android16 上使用 `TRANSPORT_LE + PHY_LE_1M` 对 M02S-3584 GATT 连接成功（112ms、143ms），找到服务 `1800/AE00/AA12/180F`，厂商 AA12 下 `AA13` 为有回执写入、`AA14/AA15` 可通知；原厂协议状态 AA14 的 CCCD 订阅 0 状态成功，拍照实体键试验重复收到 `AC 55 ... 22 01`、`45 01`、`42 00 03/04`、`45 00`，验证接收链路。**这是眼镜实体键事件，不等同于已验证远程控制拍照。**
+- **本次用户授权**：对之前上传的官方 HeyCyan APK `/mnt/data/70465ff3819258a6218e7871da0a23f8.apk`（`com.starglasses.app` v1.0.24-c）做**真实 DEX 指令流/静态字段值检查**，然后在独立 APK 中仅做可确认的遥控拍照/请求 Wi-Fi 参数的小范围实验，不改正式蓝星向导 RC25、旧 v0.1.0～0.1.2、原厂 APK 或眼镜固件。
+- **APK 代码中已经核实，而非猜测**：
+  - `classes2.dex: SendCommandViaBle.takePhoto(I)` 将命令 ID **34/0x22** 和传入参数送入 `configSendCommand`；原厂 `DeviceFragment` 将 `TAKE_PHOTO_THUMBNAIL=48/0x30` 传入。对应**待真机验证**的 AA13 写入帧 `AB 55 00 03 22 30 52`。
+  - `SendCommandViaBle.getWifiInfo(I)` 命令 ID **57/0x39**；`Command.Param.GET_WIFI_P2P=49/0x31`、`GET_WIFI_AP=48/0x30`，`dp.connectP2pWifitoReceivePhoto()` 会依据设置实际调用两种之一。对应**待真机验证**帧分别是 `AB 55 00 03 39 31 6A`（P2P 信息）、`AB 55 00 03 39 30 69`（AP 信息）。这**不能保证眼镜 Wi-Fi 已启动或连通**。
+  - `Datagram.convertLeHeaderToBytes()` 构成 `AB 55` + 长度大端2B（命令+数据+校验） + 命令码 + 参数 + 字节累加模256的校验；`BleCore.setupCharacteristics()` 的官方 `UUID_CMD_WRITE=AA13`、`UUID_CMD_NOTIFY=AA14`、`UUID_PHOTO_NOTIFY=AA15`，与真机发现一致；官方 `WifiCmdBean` 解析 Wi-Fi SSID，存在连接层口令常量（**不要在用户诊断日志中曝光或推断一定适用于 M02S**）。
+- **独立实现**：分支 `exp/m02s-verified-ble-commands-20261114`，源码 HEAD `17d02883f191a2df080c1e9d209845ed8e91c38b`（基于 v0.1.2 HEAD `9355aed1ad5b618a65ec05e4c2197150673f3c0f`），只修改 `experiments/m02s-wifi-lab` 源码/单测/说明和独立 GitHub workflow，不改 RC25。全新包名 `com.vobichngan.bluestar.m02scommandlab` version **0.1.3**，与之前版本共存。验证通信端点只使用 AA13；用户手动发送**仅三条静态白名单指令**，强制先 GATT/AA14 CCCD 订阅成功；5 秒最小发送间隔，4 秒写超时不自动重试，GATT 写入回执与真正拍照/Wi-Fi 行为严格分开，接收通知按 AC55 帧解析，Wi-Fi/不明 payload **脱敏**，仅已知拍照状态小包输出参数。保留旧 Wi-Fi 功能作对照但不自动下载照片/上传云端，不发删除、断开、恢复出厂或其他未验证指令。
+- **发布已完成**：CI [43576429533](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/43576429533) `completed/success`，JUnit、Gradle Android SDK36 编译、签名 v2、zipalign、正确包名/版本、ZIP 检查、GitHub Release 均通过。APK `BlueStar_M02S_Verified_Commands_0.1.3_Android.apk` **80581 bytes**，SHA256 `7c3e16f0ee0b048155c4451df511bb2cde17ce207db2063a6e87a5a3bdd9071a`；[Release](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-m02s-verified-commands-v013-20261114)；[浏览器直链](https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-m02s-verified-commands-v013-20261114/BlueStar_M02S_Verified_Commands_0.1.3_Android.apk)。
+- **下一步用户真机验证**：退出原厂 HeyCyan，打开 v0.1.3 → 扫描选 M02S → 连接 LE1M → 开启 120 秒监听，确认 AA14 CCCD status=0 → **单击一次“遥控拍照：原厂模式”**，观察是否实际生成照片，以及 AA14 回执码。若成功，重开监听，单击**“请求 P2P Wi-Fi 信息”**，查看通知是否包含 0x39 或其他事件，观察系统 P2P 是否发现眼镜；如有必要单独手动试 AP。只需回传相关 GATT/AA14/P2P 日志，不重复以前的低价值扫描/随机 IP 超时实验。**CI 成功不等于真机遥控成功，Wi-Fi 长连接仍未验证。**
+
+---
+
 # 最新｜M02S 蓝牙协议观察 v0.1.2（2026-11-14，已发布，待真机）
 
 - **用户新授权及已确认事实**：用户 vivo X200 Pro / Android 16 的 v0.1.1 实测已经证明 `M02S-3584` 通过 `TRANSPORT_LE + PHY_LE_1M` 成功连接 GATT，`status=0,newState=2`，单次耗时 **112ms**，成功发现服务 `1800`（1特征）、`AE00`（2特征）、`AA12`（3特征）、`180F`（1特征），服务发现 `status=0`。因此**不再测试默认旧连接方式**，下一目标检查厂商特征/只读收取拍照动作通知，仍不碰正式蓝星向导。
