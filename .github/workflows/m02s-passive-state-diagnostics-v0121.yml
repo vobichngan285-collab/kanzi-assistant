@@ -1,0 +1,157 @@
+name: Blue Star M02S Passive Import+Project+WiFi State Diagnostics v0.1.21
+on:
+  workflow_dispatch:
+  push:
+    branches: ['exp/m02s-passive-state-diagnostics-v0121-20261115']
+    paths:
+      - 'experiments/m02s-wifi-only-lab/**'
+      - '.github/workflows/m02s-passive-state-diagnostics-v0121.yml'
+permissions:
+  contents: write
+
+jobs:
+  test-build-release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -s "$ANDROID_HOME/platforms/android-36/android.jar" ] || [ ! -x "$ANDROID_HOME/build-tools/36.0.0/apksigner" ]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+          fi
+      - name: Prepare Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Verify exact BLE AP and read-only device-query whitelists; unit tests and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE=experiments/m02s-wifi-only-lab/app/src/main/java
+          WIRE="$SOURCE/com/vobichngan/bluestar/m02slab/M02sApWire.java"
+          grep -Fq '0x39, 0x30, 0x69' "$WIRE"
+          grep -Fq 'Arrays.equals(AP_REQUEST, bytes)' "$WIRE"
+          grep -Fq 'actionSyncPhotoFlag' "$WIRE"
+          grep -Fq 'actionSyncImportFlag' "$WIRE"
+          grep -Fq 'authorizedReadOnlyProject' "$WIRE"
+          grep -Fq '0x02, 0x64, 0x64' "$WIRE"
+          grep -Fq 'decodeReadOnlyProject' "$WIRE"
+          grep -Fq 'requestReadOnlyProject()' "$SOURCE/com/vobichngan/bluestar/m02slab/M02sApStarter.java"
+          grep -Fq 'observePhoneWifi("本轮onUnavailable")' "$SOURCE/com/vobichngan/bluestar/m02slab/M02sApStarter.java"
+          grep -Fq 'getScanResults()' "$SOURCE/com/vobichngan/bluestar/m02slab/M02sApStarter.java"
+          grep -Fq 'deviceProjectReported' "$SOURCE/com/vobichngan/bluestar/m02slab/MainActivity.java"
+          grep -Fq 'optionalE09IsImportFlagIsStrictAndAbsentIsUnknown' \
+            experiments/m02s-wifi-only-lab/app/src/test/java/com/vobichngan/bluestar/m02slab/M02sApWireTest.java
+          grep -Fq 'onlyExactReadOnlyProjectQueryAllowedAndReplyIsValidated' \
+            experiments/m02s-wifi-only-lab/app/src/test/java/com/vobichngan/bluestar/m02slab/M02sApWireTest.java
+          # Do not accidentally re-introduce any BLE command for cleanup or photo capture.
+          if grep -R -E 'nonClearFinishRequest|requestNonClearFinish|FINISH_NOT_CLEAR' "$SOURCE"; then
+            echo 'Unsafe: cleanup BLE command unexpectedly present in read-only experiment' >&2
+            exit 1
+          fi
+          STARTER="$SOURCE/com/vobichngan/bluestar/m02slab/M02sApStarter.java"
+          MAIN="$SOURCE/com/vobichngan/bluestar/m02slab/MainActivity.java"
+          grep -Fq 'setSsid(expectedSsid)' "$STARTER"
+          grep -Fq 'void photoActionEnded();' "$STARTER"
+          grep -Fq 'if (!valid(token) || networkCallback != this) return;' "$STARTER"
+          grep -Fq 'wifiRequestAtMs' "$STARTER"
+          grep -Fq 'Android本轮准确SSID请求onUnavailable；等待=' "$STARTER"
+          grep -Fq '网络请求未满足' "$STARTER"
+          grep -Fq 'if (tryReuseConnectedTarget(token)) {' "$STARTER"
+          if grep -Fq 'Android未能连接眼镜AP，拒绝反复申请或猜测热点' "$STARTER"; then
+            echo 'Old misleading onUnavailable message and unsafe callback ownership still exist' >&2
+            exit 1
+          fi
+          grep -Fq 'ui.postDelayed(ssidTimeout, 5000L)' "$STARTER"
+          grep -Fq 'if (falling)' "$STARTER"
+          grep -Fq 'PHOTO_DONE_SETTLE_MS = 250L' "$MAIN"
+          grep -Fq 'cancelCurrentTransfer()' "$MAIN"
+          grep -Fq 'waitingPhotoDone = true' "$MAIN"
+          grep -Fq 'ui.postDelayed(pendingPhotoAction, PHOTO_DONE_SETTLE_MS)' "$MAIN"
+          if grep -Fq 'PHOTO_DONE_FALLBACK_MS' "$MAIN" || grep -Fq '2200L' "$MAIN" || grep -Fq '2.2秒' "$MAIN"; then
+            echo 'Forbidden photo-finish timeout fallback remains in v0.1.21' >&2
+            exit 1
+          fi
+          grep -Fq 'clearPendingPhotoAction()' "$MAIN"
+          if grep -Fq 'startPhotoTransfer(true), 350L' "$MAIN"; then
+            echo 'old premature 350ms AP activation still present' >&2
+            exit 1
+          fi
+          if grep -Fq 'wifi.startScan(' "$SOURCE/com/vobichngan/bluestar/m02slab/M02sApStarter.java"; then
+            echo 'v0.1.21 must not perform Android Wi-Fi scan before exact SSID request' >&2
+            exit 1
+          fi
+          if grep -R -E 'M02sBleWire[.]photoThumbnail|e09BlePhoto[(]|[.]removeFile[(]|DELETE_MEDIA' "$SOURCE" ; then
+            echo 'Unauthorized shutter/erase API in one-time AP starter' >&2
+            exit 1
+          fi
+          gradle -p experiments/m02s-wifi-only-lab --no-daemon --no-parallel --max-workers=2 \
+            :app:testDebugUnitTest :app:assembleDebug --stacktrace
+      - name: Verify manifest, standalone APK signing and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=experiments/m02s-wifi-only-lab/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          TOOL="$ANDROID_HOME/build-tools/36.0.0"
+          "$TOOL/apksigner" verify --verbose "$APK" | tee "$RUNNER_TEMP/signature.txt"
+          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' "$RUNNER_TEMP/signature.txt"
+          "$TOOL/zipalign" -c -v 4 "$APK"
+          "$TOOL/aapt" dump badging "$APK" | tee "$RUNNER_TEMP/badging.txt"
+          grep -q "package: name='com.vobichngan.bluestar.m02sstatereadonlylab' versionCode='22' versionName='0.1.21'" "$RUNNER_TEMP/badging.txt"
+          "$TOOL/aapt" dump permissions "$APK" | tee "$RUNNER_TEMP/permissions.txt"
+          for p in BLUETOOTH_SCAN BLUETOOTH_CONNECT ACCESS_NETWORK_STATE ACCESS_WIFI_STATE CHANGE_NETWORK_STATE CHANGE_WIFI_STATE NEARBY_WIFI_DEVICES ACCESS_FINE_LOCATION INTERNET; do
+            grep -q "android.permission.${p}" "$RUNNER_TEMP/permissions.txt"
+          done
+          if grep -qE 'android.permission.(CAMERA|READ_MEDIA_IMAGES|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE)' "$RUNNER_TEMP/permissions.txt"; then
+            echo 'Unexpected camera or photo storage permission' >&2
+            exit 1
+          fi
+          unzip -t "$APK" | tail -n 2
+          mkdir -p release
+          cp "$APK" release/BlueStar_M02S_Passive_State_Diagnostics_0.1.21_Android.apk
+          sha256sum release/*.apk | tee release/SHA256SUMS.txt
+          echo "Source commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          cat release/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload standalone signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar-M02S-Passive-State-Diagnostics-v0121-APK
+          path: release/BlueStar_M02S_Passive_State_Diagnostics_0.1.21_Android.apk
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish stable browser download URL
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/release-notes.txt" <<'EOF'
+          v0.1.21 strictly read-only state diagnostics, not another fix-by-guess. Real M02S v0.1.18/v0.1.20 successfully downloaded 3200x2400 original JPEG, fastest photo-end-to-decode 4584ms, but the second Android exact-SSID Network request often failed (onUnavailable after 3005ms). A prior attempt to finish the first eyewear media import with opt-in E09 44/30/01 GATT write succeeded yet the second transfer still failed; a manual Android WLAN attempt also reported "network refused". Neither the BLE WiFi SSID reply nor a cached scan result proves that the AP is currently usable.
+          This version intentionally branches from successful clean v0.1.19, NOT from the v0.1.20 optional cleanup experiment. There is no 0x44 command anywhere in this lab variant. Existing successful physical shutter state 0x45 0->1->0, 250ms AP start, AA14 0x25 SSID, precise one-shot Android WifiNetworkSpecifier, private gateway, OEM HTTP200 JSON/list and original JPEG RAM download are unchanged. No duplicate Wi-Fi requests, active scan, unknown commands, phone album save, cloud OCR, or deletion.
+          Added: strictly checksum-verified passive E09 ACTION_SYNC 0x45 optional payload[9] isImport flag with transition-only logging, and clearly report an absent tenth byte as "unknown", NOT "import ended". Added user-initiated exact read-only E09 0x64 GET_CUSTOMER project-code query AB 55 00 02 64 64. The reply is verified and only up to four safe ASCII project-code characters are read, never customer ID or BLE MAC/SSID. CyanBridge Eyevue project mapping (SK/T suggests AP; other codes are assigned P2P by the sample) is shown only as unverified context and never switches modes. Added passive Android network snapshots before BLE AP command, after exact SSID, before Android request, onAvailable/onUnavailable, gateway, and before/after unregistering phone network. Snapshots count existing WiFi-capable Network objects and inspect existing OS scan-cache timestamp age for exact BLE-verified SSID; they DO NOT trigger startScan or prove current hotspot reachability. Record which photo attempt # in this app session.
+          Exact code-based whitelist accepts only original AP 39/30 plus user-tapped read-only 0x64 device-query; disallows any remote shutter, destructive 0x44 finish/delete, OTA or P2P switching. Standalone package com.vobichngan.bluestar.m02sstatereadonlylab, versionCode22/versionName0.1.21, independent from every earlier experimental APK and production Blue Star Guide/Windows OCR. CI build/test success is NOT real-device confirmation that M02S includes tenth isImport byte or responds to project query, nor proof of second-connection root cause. Test just one first/second physical-shutter pair, then share the complete anonymous logs.
+          EOF
+          gh release create bluestar-m02s-passive-state-diagnostics-v0121-20261115 \
+            release/BlueStar_M02S_Passive_State_Diagnostics_0.1.21_Android.apk \
+            release/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Blue Star M02S Passive State and WiFi Diagnostics v0.1.21 — experimental" \
+            --prerelease --notes-file "$RUNNER_TEMP/release-notes.txt"
+      - name: Verify release published and downloadable
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view bluestar-m02s-passive-state-diagnostics-v0121-20261115 \
+            --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,assets,url \
+            --jq '{isDraft,isPrerelease,url,assets: [.assets[] | {name: .name, size: .size, url: .url}]}'
