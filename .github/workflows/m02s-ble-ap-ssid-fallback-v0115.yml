@@ -1,0 +1,108 @@
+name: Blue Star M02S AP SSID One-Shot Fallback Manual Shutter v0.1.15
+on:
+  workflow_dispatch:
+  push:
+    branches: ['exp/m02s-ap-ssid-fallback-v0115-20261114']
+    paths:
+      - 'experiments/m02s-wifi-only-lab/**'
+      - '.github/workflows/m02s-ble-ap-ssid-fallback-v0115.yml'
+permissions:
+  contents: write
+
+jobs:
+  test-build-release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -s "$ANDROID_HOME/platforms/android-36/android.jar" ] || [ ! -x "$ANDROID_HOME/build-tools/36.0.0/apksigner" ]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+          fi
+      - name: Prepare Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Verify exact BLE AP-only command; unit tests and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE=experiments/m02s-wifi-only-lab/app/src/main/java
+          WIRE="$SOURCE/com/vobichngan/bluestar/m02slab/M02sApWire.java"
+          grep -Fq '0x39, 0x30, 0x69' "$WIRE"
+          grep -Fq 'Arrays.equals(AP_REQUEST, bytes)' "$WIRE"
+          if grep -R -E 'M02sBleWire[.]photoThumbnail|e09BlePhoto[(]|[.]removeFile[(]|DELETE_MEDIA' "$SOURCE" ; then
+            echo 'Unauthorized shutter/erase API in one-time AP starter' >&2
+            exit 1
+          fi
+          gradle -p experiments/m02s-wifi-only-lab --no-daemon --no-parallel --max-workers=2 \
+            :app:testDebugUnitTest :app:assembleDebug --stacktrace
+      - name: Verify manifest, standalone APK signing and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=experiments/m02s-wifi-only-lab/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          TOOL="$ANDROID_HOME/build-tools/36.0.0"
+          "$TOOL/apksigner" verify --verbose "$APK" | tee "$RUNNER_TEMP/signature.txt"
+          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' "$RUNNER_TEMP/signature.txt"
+          "$TOOL/zipalign" -c -v 4 "$APK"
+          "$TOOL/aapt" dump badging "$APK" | tee "$RUNNER_TEMP/badging.txt"
+          grep -q "package: name='com.vobichngan.bluestar.m02sapfallbacklab' versionCode='16' versionName='0.1.14'" "$RUNNER_TEMP/badging.txt"
+          "$TOOL/aapt" dump permissions "$APK" | tee "$RUNNER_TEMP/permissions.txt"
+          for p in BLUETOOTH_SCAN BLUETOOTH_CONNECT ACCESS_NETWORK_STATE ACCESS_WIFI_STATE CHANGE_NETWORK_STATE CHANGE_WIFI_STATE NEARBY_WIFI_DEVICES ACCESS_FINE_LOCATION INTERNET; do
+            grep -q "android.permission.${p}" "$RUNNER_TEMP/permissions.txt"
+          done
+          if grep -qE 'android.permission.(CAMERA|READ_MEDIA_IMAGES|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE)' "$RUNNER_TEMP/permissions.txt"; then
+            echo 'Unexpected camera or photo storage permission' >&2
+            exit 1
+          fi
+          unzip -t "$APK" | tail -n 2
+          mkdir -p release
+          cp "$APK" release/BlueStar_M02S_AP_SSID_Fallback_0.1.15_Android.apk
+          sha256sum release/*.apk | tee release/SHA256SUMS.txt
+          echo "Source commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          cat release/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload standalone signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar-M02S-AP-SSID-Fallback-v0115-APK
+          path: release/BlueStar_M02S_AP_SSID_Fallback_0.1.15_Android.apk
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish stable browser download URL
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/release-notes.txt" <<'EOF'
+          v0.1.15 independent M02S BLE-AP-only + physical-shutter Wi-Fi high-res autofetch experiment. Addresses real v0.1.14 Android16 failure: 0x39/0x30 AA13 write status0, AA14 0x25 returned exact SSID, a new fresh hotspot beacon was observed, but Android's later scan did not satisfy a repeated fresh result check and v0.1.14 stopped after 12sec without making one connection attempt. Android scanning can be throttled/stale; a scan absence does not prove missing eyewear AP.
+          Fix: after BLE official one-time AP start, validate SSID from AA14 via OEM framing and checksum, first reuse an already connected Wi-Fi Network only if exact SSID and trusted gateway match (OEM GET /app/getfilelist HTTP200 JSON still required); otherwise retain fresh unique beacon + 1.8sec settle fast path. If 12sec passes without usable fresh scans, require AA13 write ACK0 and verified SSID, no conflicting multiple fresh BSSIDs and no prior network request, then issue one Android WifiNetworkSpecifier request for the exact BLE-confirmed SSID using the same previously proven OEM WPA2 passphrase, NEVER for unknown nearby networks. Still requires Android onAvailable, real private IP gateway and actual OEM read-only HTTP response. On failure no repeat command or blind retries.
+          Also correct the stale on-screen v0.1.13 title/subtitle to v0.1.15, fix AndroidManifest/app version, and cancel an initial 90sec AP setup timeout as soon as the verified Network is ready so it cannot interrupt a 120sec observation. Added M02sApConnectPolicy JUnit tests covering no scans, cached scans, premature/duplicate requests, invalid SSID, unacknowledged write and ambiguous same-SSID radios.
+          Manual shutter remains solely on glasses. The app does not send BLE photo, AA15 transfer, delete or OTA commands. It polls OEM /app/getfilelist read-only about every 450ms after pre-shot baseline, requires one stable new file, downloads original via trusted Network to phone RAM, and shows a preview. Max three sequential shots or 120sec, no cloud/photos/gallery writes, logs hide SSID/MAC/password/photo filename/content. The actual 3200x2400 JPEG GET was proven before in v0.1.10, but shutter-in-AP-mode and total elapsed time still require new real tests.
+          Reused this repo's OEM code and referenced MIT sctg-development/ai-smart-glasses-e09-reverse (license retained in E09_SOURCE_LICENSE.md). Standalone APK com.vobichngan.bluestar.m02sapfallbacklab v0.1.15; previous v0.1.14 / v0.1.13 / E09 v0.1.12, official Blue Star Guide RC25, Windows OCR and HeyCyan untouched.
+          EOF
+          gh release create bluestar-m02s-ap-ssid-fallback-v0115-20261114 \
+            release/BlueStar_M02S_AP_SSID_Fallback_0.1.15_Android.apk \
+            release/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Blue Star M02S AP SSID Fallback + Manual Shutter Wi-Fi Photo v0.1.15 — experimental" \
+            --prerelease --notes-file "$RUNNER_TEMP/release-notes.txt"
+      - name: Verify release published and downloadable
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view bluestar-m02s-ap-ssid-fallback-v0115-20261114 \
+            --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,assets,url \
+            --jq '{isDraft,isPrerelease,url,assets: [.assets[] | {name: .name, size: .size, url: .url}]}'
