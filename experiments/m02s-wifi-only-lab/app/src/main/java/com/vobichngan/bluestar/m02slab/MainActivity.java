@@ -56,6 +56,7 @@ public final class MainActivity extends Activity {
     private TextView statusText;
     private TextView logView;
     private TextView resultText;
+    private TextView projectText;
     private ImageView preview;
     private Network network;
     private String gateway;
@@ -68,6 +69,7 @@ public final class MainActivity extends Activity {
     private long wifiReadyAtMs;
     private int listTries;
     private int downloadedCount;
+    private int photoAttempts; // session-local attempt number, including failed attempts
     private byte[] lastJpegInRam;
     private String lastDownloadedRemoteName; // memory only; never log or persist
     private M02sFreshPhotoPolicy.Selection previousList;
@@ -120,6 +122,22 @@ public final class MainActivity extends Activity {
                 };
                 ui.postDelayed(pendingPhotoAction, PHOTO_DONE_SETTLE_MS);
             }
+            @Override public void deviceProjectReported(String project) {
+                if (destroyed) return;
+                String normalized = project.toUpperCase(java.util.Locale.ROOT);
+                String hint;
+                if (normalized.contains("SK")) {
+                    hint="CyanBridge参考：SK系列通常为AP；不代表本机传输协议已验证";
+                } else if (normalized.contains("T")) {
+                    hint="CyanBridge参考：T系列通常为AP；本机实际连接方式不改变";
+                } else {
+                    hint="CyanBridge对其他项目号有P2P默认分支，"
+                            + "但这绝不证明当前M02S支持P2P";
+                }
+                log("只读设备项目标识=" + normalized + "；" + hint);
+                if (projectText != null)
+                    projectText.setText("设备只读项目标识：" + normalized + "。 " + hint);
+            }
             @Override public void ready(Network net, String host) {
                 onWifiReady(net, host);
             }
@@ -135,14 +153,15 @@ public final class MainActivity extends Activity {
             }
         });
         makeUi();
-        log("v0.1.19 多张连续取图连接稳定性实验：沿用v0.1.18已成功的"
-                + "BLE拍照结束→250ms开AP→精确SSID直连→高清原图GET");
-        log("修复旧Wi-Fi onUnavailable回调可能误终止新会话的问题；"
-                + "旧请求释放时先失效回调归属；绝不盲目重试");
-        log("新增毫秒诊断：开AP→SSID、精确Wi-Fi请求→onAvailable/onUnavailable；"
-                + "不扫描12秒、不使用拍照倒计时兜底");
-        log("每张取图后仍释放手机Wi-Fi，避免常连妨碍实体拍照；"
-                + "重复失败是否属于Android系统限制目前没有证据");
+        log("v0.1.21 被动状态诊断：沿用v0.1.18已成功的"
+                + "BLE拍照结束→250ms开AP→精准Wi-Fi→高清原图GET");
+        log("只监听AA14 0x45可选第10位isImport；缺失绝不推断已退出传输模式");
+        log("只有手动点击才发送只读0x64设备项目查询；"
+                + "用CyanBridge项目号规则给参考，不切换AP/P2P");
+        log("添加第一次/第二次取图前后网络只读快照与旧扫描缓存年龄；"
+                + "不触发Wi-Fi扫描，也不把热点缓存当作已连接证据");
+        log("完全不含0x44结束/清除实验、0x22遥控快门或其它未验证指令；"
+                + "继续保留v0.1.19旧网络回调隔离和真实耗时");
         log("照片只到手机RAM；不会删除眼镜文件，不上传云端，也不操作OCR/TTS");
         status("点击「准备蓝牙待机」，成功后直接用眼镜实体键拍照");
     }
@@ -156,11 +175,16 @@ public final class MainActivity extends Activity {
         setContentView(scroll);
 
         addText(body,"蓝星 M02S 极速高清取图",24,0xff17385b,true);
-        addText(body,"v0.1.19 · 保留成功取图流程，修复Wi-Fi会话回调",15,Color.DKGRAY,false);
+        addText(body,"v0.1.21 · 只读诊断眼镜导入状态及Wi-Fi会话",15,Color.DKGRAY,false);
         statusText = addText(body,"",18,0xff117458,true);
 
         addText(body,"① 先准备蓝牙待机（这一步不打开Wi-Fi）",17,Color.BLACK,true);
         addButton(body,"准备蓝牙待机",this::prepareStandby);
+        addText(body,"可选：只读查询眼镜项目号，不改连接模式，不包含个人数据。",
+                14,Color.DKGRAY,false);
+        addButton(body,"只读查询设备项目号（不打开Wi-Fi）",this::requestDeviceProject);
+        projectText=addText(body,"设备项目号：未查询；只有你主动点击才发0x64只读查询",
+                14,0xff17385b,false);
         addText(body,"② 用实体按键拍照，监听到结束状态后自动取图",
                 16,Color.BLACK,true);
         addText(body,"如果没有结束通知就只等待、不自动开启Wi-Fi。"
@@ -189,7 +213,7 @@ public final class MainActivity extends Activity {
         addButton(body,"复制诊断日志",() -> {
             ClipboardManager clipboard = (ClipboardManager)
                     getSystemService(Context.CLIPBOARD_SERVICE);
-            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.19 diagnostic",
+            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.21 diagnostic",
                     diagnostics.toString()));
             status("诊断日志已复制");
         });
@@ -264,6 +288,18 @@ public final class MainActivity extends Activity {
         status("正在连接M02S BLE并订阅拍照状态；不启动眼镜Wi-Fi");
     }
 
+    private void requestDeviceProject() {
+        if (!starter.standby() || inTransfer || waitingPhotoDone) {
+            status("先准备蓝牙待机，且只能在没有拍照/取图任务时查询项目号");
+            return;
+        }
+        if (starter.requestReadOnlyProject()) {
+            status("已提交一次只读设备项目查询，最多等待3秒回应；不触碰Wi-Fi");
+        } else {
+            status("只读查询未提交：等待上一项BLE操作完成，不自动重发");
+        }
+    }
+
     private void clearPendingPhotoAction() {
         if (pendingPhotoAction != null) {
             ui.removeCallbacks(pendingPhotoAction);
@@ -307,6 +343,8 @@ public final class MainActivity extends Activity {
             return;
         }
         final long id=++runId;
+        photoAttempts++;
+        log("本次APP第"+photoAttempts+"次取图；用于区分首次和再次Android建连");
         captureToWifiStartMs=SystemClock.elapsedRealtime();
         apRequestAtMs=captureToWifiStartMs;
         wifiReadyAtMs=0;
