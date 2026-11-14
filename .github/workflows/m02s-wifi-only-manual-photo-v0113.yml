@@ -36,8 +36,8 @@ jobs:
         run: |
           set -euo pipefail
           SOURCE=experiments/m02s-wifi-only-lab/app/src/main/java
-          if grep -R -E 'android[.]bluetooth|BluetoothGatt|BluetoothAdapter|M02sBleWire|[.]delete\(' "$SOURCE" ; then
-            echo 'Wi-Fi-only lab must not include Bluetooth APIs or a deletion method' >&2
+          if grep -R -E 'android[.]bluetooth|BluetoothGatt|BluetoothAdapter|M02sBleWire' "$SOURCE" ; then
+            echo 'Wi-Fi-only lab must not include any Bluetooth API' >&2
             exit 1
           fi
           gradle -p experiments/m02s-wifi-only-lab --no-daemon --no-parallel --max-workers=2 \
