@@ -4,105 +4,173 @@ import java.util.Arrays;
 import java.util.BitSet;
 
 /**
- * Android adaptation of the MIT-licensed E09 BleProbe.swift AA15 framing and
- * PHOTO_START/TRANS/END offset reassembly.
+ * Android adaptation of E09's MIT-licensed BleProbe.swift AA15 PHOTO_START,
+ * PHOTO_TRANS and PHOTO_END reassembly protocol.
  *
- * Based on: https://github.com/sctg-development/ai-smart-glasses-e09-reverse
+ * Upstream: https://github.com/sctg-development/ai-smart-glasses-e09-reverse
  * Copyright (c) 2026 Ronan Le Meillat - SCTG Development (MIT).
  *
- * No photo bytes are persisted or logged. This is an exploratory compatibility
- * probe for M02S, not evidence the M02S implements E09's AA15 photo channel.
+ * E09's reference assembler does NOT demand that the transferred byte stream
+ * end exactly at the JPEG EOI marker. Its real sample hardware sometimes
+ * delivers 500 more bytes than PHOTO_START announces. This class never assumes
+ * that M02S has the same fixed delta, and never invents missing JPEG bytes.
+ *
+ * The assembled photo is memory-only; no packet bytes or files are logged.
  */
 public final class M02sE09PhotoAssembler {
     public enum Step { IGNORED, START, CHUNK, COMPLETE, ERROR }
     private static final int MAX_IMAGE = 2 * 1024 * 1024;
+
     private byte[] image;
     private BitSet received;
     private int highest;
     private int declared;
-    private int packets;
+    private int packetCount;
+    private int firstMissingOffset;
+    private int jpegEndExclusive;
+    private int trailingBytes;
+    private boolean jpegStart;
     private boolean completed;
-    private String lastError = "";
+    private String lastError;
+
+    public M02sE09PhotoAssembler() { reset(); }
 
     public void reset() {
         image = null;
         received = null;
         highest = 0;
         declared = -1;
-        packets = 0;
+        packetCount = 0;
+        firstMissingOffset = -1;
+        jpegEndExclusive = -1;
+        trailingBytes = -1;
+        jpegStart = false;
         completed = false;
         lastError = "";
     }
 
-    public M02sE09PhotoAssembler() { reset(); }
-
     public int declaredLength() { return declared; }
     public int receivedLength() { return highest; }
-    public int packets() { return packets; }
+    public int packets() { return packetCount; }
     public String lastError() { return lastError; }
     public boolean isComplete() { return completed; }
+    public boolean hasJpegStart() { return jpegStart; }
+    public boolean hasJpegEnd() { return jpegEndExclusive >= 4; }
+    public int jpegLength() { return jpegEndExclusive; }
+    public int trailingBytes() { return trailingBytes; }
+    public int firstMissingOffset() { return firstMissingOffset; }
 
-    public Step receive(byte[] value) {
-        if (value == null || value.length < 8
-                || (value[0] & 255) != 0x52 || (value[1] & 255) != 0x58
-                || (value[value.length - 2] & 255) != 0x58
-                || (value[value.length - 1] & 255) != 0x52) {
+    /** Safe diagnostic metadata only; contains no image bytes or photo names. */
+    public String safeMetrics() {
+        return "PHOTO_START声明=" + declared
+                + "字节；AA15实际收齐区间=" + highest
+                + "字节；差值=" + (declared > 0 ? highest - declared : 0)
+                + "；SOI=" + jpegStart
+                + "；EOI已找到=" + hasJpegEnd()
+                + "；EOI末尾位置=" + jpegEndExclusive
+                + "；尾随字节=" + trailingBytes
+                + "；首缺失偏移=" + firstMissingOffset
+                + "；分片包数=" + packetCount;
+    }
+
+    public Step receive(byte[] packet) {
+        if (packet == null || packet.length < 8
+                || (packet[0] & 255) != 0x52 || (packet[1] & 255) != 0x58
+                || (packet[packet.length - 2] & 255) != 0x58
+                || (packet[packet.length - 1] & 255) != 0x52) {
             return Step.IGNORED;
         }
-        int cmd = value[4] & 255;
-        int first = 5;
-        int last = value.length - 3; // CRC byte, then two-byte trailer
-        if (last < first) return Step.IGNORED;
-        if (cmd == 0x97) {
+        int command = packet[4] & 255;
+        int payloadAt = 5;
+        int payloadEnd = packet.length - 3; // crc, RX footer
+        if (payloadEnd < payloadAt) return Step.IGNORED;
+
+        if (command == 0x97) {
             reset();
-            if (last - first < 4) return fail("PHOTO_START长度不足");
-            declared = ((value[first + 2] & 255) << 8) | (value[first + 3] & 255);
-            if (declared <= 0 || declared > MAX_IMAGE) return fail("照片长度异常");
-            image = new byte[MAX_IMAGE];
-            received = new BitSet(MAX_IMAGE);
-            packets = 1;
+            if (payloadEnd - payloadAt < 4) return fail("PHOTO_START长度不足");
+            declared = ((packet[payloadAt + 2] & 255) << 8)
+                    | (packet[payloadAt + 3] & 255);
+            if (declared <= 0 || declared > MAX_IMAGE)
+                return fail("PHOTO_START图片长度无效");
+            // Grow only when actual offset chunks demand more RAM. The
+            // reference hardware sometimes exceeds declared length.
+            image = new byte[Math.min(MAX_IMAGE, Math.max(4096, declared + 1024))];
+            received = new BitSet();
+            packetCount = 1;
             return Step.START;
         }
-        if (cmd == 0x98) {
-            if (image == null || completed || last - first <= 4) return Step.IGNORED;
-            long rawOffset = ((long)(value[first] & 255) << 24)
-                    | ((long)(value[first + 1] & 255) << 16)
-                    | ((long)(value[first + 2] & 255) << 8)
-                    | (value[first + 3] & 255);
-            int chunk = last - first - 4;
-            if (rawOffset > MAX_IMAGE || rawOffset + chunk > MAX_IMAGE)
-                return fail("照片分片越界");
-            int offset = (int) rawOffset;
-            System.arraycopy(value, first + 4, image, offset, chunk);
-            received.set(offset, offset + chunk);
-            highest = Math.max(highest, offset + chunk);
-            packets++;
+
+        if (command == 0x98) {
+            if (image == null || completed || payloadEnd - payloadAt <= 4)
+                return Step.IGNORED;
+            long offset = ((long) (packet[payloadAt] & 255) << 24)
+                    | ((long) (packet[payloadAt + 1] & 255) << 16)
+                    | ((long) (packet[payloadAt + 2] & 255) << 8)
+                    | (packet[payloadAt + 3] & 255);
+            int count = payloadEnd - payloadAt - 4;
+            if (offset > MAX_IMAGE || offset + count > MAX_IMAGE)
+                return fail("PHOTO_TRANS分片偏移超出2MB上限");
+            int start = (int) offset;
+            int end = start + count;
+            if (end > image.length)
+                image = Arrays.copyOf(image,
+                        (int) Math.min(MAX_IMAGE, Math.max((long)end, (long)image.length * 2)));
+            // E09 places an absolute big-endian byte offset in each frame.
+            // Duplicate or out-of-order chunks are deliberately idempotent.
+            System.arraycopy(packet, payloadAt + 4, image, start, count);
+            received.set(start, end);
+            highest = Math.max(highest, end);
+            packetCount++;
             return Step.CHUNK;
         }
-        if (cmd == 0x99) {
+
+        if (command == 0x99) {
             if (image == null || completed) return Step.IGNORED;
-            packets++;
-            if (highest < 4 || received.nextClearBit(0) < highest) return fail("照片分片缺失");
-            // E09 field tests report a fixed discrepancy (+500B) between
-            // PHOTO_START's length and the fully transferred JPEG. Do not
-            // require an equality check; validate actual JPEG envelope.
-            if ((image[0] & 255) != 0xff || (image[1] & 255) != 0xd8
-                    || (image[highest - 2] & 255) != 0xff
-                    || (image[highest - 1] & 255) != 0xd9)
-                return fail("JPEG文件头尾校验失败");
+            packetCount++;
+            firstMissingOffset = received.nextClearBit(0);
+            if (highest < 4 || firstMissingOffset < highest)
+                return fail("PHOTO_END到达时照片分片不连续");
+            jpegStart = (image[0] & 255) == 0xff && (image[1] & 255) == 0xd8;
+            if (!jpegStart) return fail("JPEG SOI起始标记缺失");
+
+            // Do not demand FF D9 at the very last two transported bytes.
+            // An EOI followed by firmware-added padding/metadata is valid for
+            // decode once the contiguous JPEG portion is identified.
+            for (int i = highest - 2; i >= 2; --i) {
+                if ((image[i] & 255) == 0xff && (image[i + 1] & 255) == 0xd9) {
+                    jpegEndExclusive = i + 2;
+                    break;
+                }
+            }
+            trailingBytes = jpegEndExclusive < 0 ? -1
+                    : highest - jpegEndExclusive;
+
+            // EOI may be absent in a valid transport but an incomplete JPEG.
+            // Let Android's real Bitmap decoder decide whether this candidate
+            // is usable, while UI explicitly reports EOI absence (not a
+            // verified complete image). Never report success from AA15 only.
             completed = true;
             return Step.COMPLETE;
         }
         return Step.IGNORED;
     }
 
+    /** Decode candidate (trims only after the last observed JPEG EOI). */
     public byte[] result() {
-        if (!completed || image == null) return null;
+        if (!completed || image == null || !jpegStart) return null;
+        return Arrays.copyOf(image,
+                jpegEndExclusive >= 4 ? jpegEndExclusive : highest);
+    }
+
+    /** Fallback only for Android decode if the EOI-trim candidate fails. */
+    public byte[] rawResult() {
+        if (!completed || image == null || !jpegStart) return null;
         return Arrays.copyOf(image, highest);
     }
 
-    private Step fail(String reason) {
-        lastError = reason;
+    private Step fail(String description) {
+        lastError = description;
+        // Keep non-sensitive metrics, release potentially private image bytes.
         image = null;
         received = null;
         completed = false;
