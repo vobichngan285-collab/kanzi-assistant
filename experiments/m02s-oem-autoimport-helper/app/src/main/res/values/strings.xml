@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="service_description">只在原厂相册前台发现新的一张待导入文件及“导入”按钮时点击一次；不会访问其他应用，不读照片，不连接Wi-Fi。须用户手动启用无障碍权限。</string>
+</resources>
