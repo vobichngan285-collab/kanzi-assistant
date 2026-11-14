@@ -1,3 +1,15 @@
+# 最新｜M02S 原厂式 AP 扫描连接 v0.1.9（2026-11-14，已发布；待真机验证）
+
+- **本次授权/边界**：用户批准继续制作独立 v0.1.9，修复 v0.1.8 拍照后 AP 网络连接失败；保留此前真机验证的 BLE 快门、官方 AP 图片列表和原图 GET，不改正式蓝星向导 RC25、Windows OCR、原厂 HeyCyan、旧实验分支与已发布 APK。
+- **用户 v0.1.8 最新真机日志（不能混淆两次时间）**：18:51:40 单次 AA13 `0x22/0x30` 成功、用户听到拍照声，AA14 `0x22`、`0x42=00 08`；18:51:46 AP SSID（13 UTF-8字节）返回，Android `requestNetwork`，18:51:52 `onUnavailable`。第二次 **18:55:46** 单次拍照成功，AA14 `0x42=00 09`，18:55:52 再次获取目标 SSID 并提交 Android 网络请求，**18:55:57** 再次 `onUnavailable`，未得到真实AP网关，更未执行原图GET；18:56 手机 WLAN 截图与第二次失败仅间隔几秒，不可错用第一次日志说成过了4分钟。两次照片候选计数递增支持拍照执行，但 `0x42` 未最终解码；**不能**归因于家庭 Wi-Fi、未授权、密码、AP禁拍或照片下载错误，确切失败原因仍未知。用户已明确要求**不重复 v0.1.5/0.1.6 的成功连接/下载实验**。
+- **本轮原厂对照依据**：用户上传原厂 APK `70465ff3819258a6218e7871da0a23f8.apk`（`com.starglasses.app v1.0.24-c`），`classes3.dex` 可直接找到 `findTargetScanResult` / `shouldWaitForStableTargetScan` / `connectWithSpecifier` / `notifyIfAlreadyConnectedToTarget` 等连接辅助方法；这是静态方法存在性及已有研究线索，不表示复制了原厂源码全套内部逻辑。原厂后续相册导入有缩略图/原图和主动断开 AP，不适合不加筛选地复制到低延迟常驻目标。
+- **v0.1.9 新增范围（只改独立实验）**：按用户要求在 v0.1.8 上建立分支 `exp/m02s-oem-ap-scan-recovery-v019-20261114`，HEAD `01e3b5337f951a1a62331fc4cca88aecf1ae7c0c`，独立包 `com.vobichngan.bluestar.m02soemaplab`、versionCode10/name0.1.9。保留蓝牙一次性拍照 `0x22/0x30`、至少5秒 AA13 间隔和 `0x39/0x30`→`0x25` SSID；与原厂类似先检查精确目标Wi-Fi是否已连接并有私有网关，再做一次 Android 前台扫描、最多10秒观察精确匹配 SSID 的30秒内新鲜热点。唯一BSSID→可锁定BSSID申请 `WifiNetworkSpecifier`；多同名/扫描数据不可用→保留 v0.1.6 已验证 SSID-only 请求。Android `onUnavailable` 后最多观察6秒，**仅在确认精确目标唯一BSSID可见**时，允许一次切换 BSSID-pin ↔ SSID-only 的不同连接策略；绝不重发拍照或厂商Wi-Fi命令、无限重试、猜IP、连接邻近P2P/打印机。只有专属 `Network` `onAvailable` 且获真实私有网关才下载；失败日志匿名记录AP阶段1/2/3、连接请求序号、是否BSSID锁定，不打印SSID/BSSID/口令。首次没有拍前列表基线只显示最新候选供人工核对，不能宣称新拍已证明；图像只存内存。
+- **CI/Release 经回查证实**：[Actions 43589236152](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/43589236152) `completed/success`，Gradle JUnit + Android SDK36 编译、APK package/version/permissions/v2签名/zipalign/ZIP结构、发布资产确认成功。Tag `bluestar-m02s-oem-ap-recovery-v019-20261114`，APK `BlueStar_M02S_OEM_AP_Recovery_0.1.9_Android.apk` **155321字节**，SHA256 `4c21934114185fcedbb5b7fde856fc27439a6710d8ca27bf6a6489107d5301f9`，浏览器直链：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-m02s-oem-ap-recovery-v019-20261114/BlueStar_M02S_OEM_AP_Recovery_0.1.9_Android.apk 。
+- **下一步只需一次真机串联**：关闭 HeyCyan，确保眼镜可正常拍照；v0.1.9 连 BLE、订阅 AA14，**不预先连接AP**，点一次「拍照→扫描AP→取原图」，保持 App 前台，听快门、查看AP阶段1/2/3、`onAvailable`/网关，若有预览人工核对新场景。若失败只需脱敏日志；不再建议用户切换家庭Wi-Fi或重测已证实的基础接口。正式常驻BLE+Wi-Fi并存/快速循环尚未实现，不能用本次CI结果冒充真机成功。
+- **交接纪律**：main 此项只追加新记录，保留历史；不合并入正式蓝星向导，也不覆盖 v0.1.8 及以前的分支/Release；后续修改需另行授权。
+
+---
+
 # 最新｜M02S 先蓝牙拍照再AP取图 v0.1.8（2026-11-14，已发布，待首次真机验证）
 
 - **最新用户实测结论**：v0.1.3 单独 BLE AA13 拍照确有快门声/AA14 0x22/0x42；v0.1.6 单独 AP 原图下载成功（3200×2400、532ms）；**v0.1.7 用户真机失败：预先连接AP时拍照无声，45秒没有新照片**。AP 抑制拍照仅是假设，不能当作已证实原因。
