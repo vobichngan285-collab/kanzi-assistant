@@ -43,9 +43,8 @@ import java.util.concurrent.Executors;
 public final class MainActivity extends Activity {
     private static final int PERMISSION_REQUEST = 1601;
     // E09 isTakePhoto=1 is "busy" rather than proof that JPEG has been saved.
-    // Wait briefly for a 1->0 event; if M02S never emits it, do not wait forever.
+    // No auto-AP timer: only observed end of shutter activity or explicit user action.
     private static final long PHOTO_DONE_SETTLE_MS = 250L;
-    private static final long PHOTO_DONE_FALLBACK_MS = 2200L;
     private static final long ONE_SHOT_MAX_MS = 39_000L;
     private static final long LIST_RECHECK_MS = 350L;
     private static final int LIST_MAX_TRIES = 12;
@@ -103,18 +102,10 @@ public final class MainActivity extends Activity {
             @Override public void photoActionCandidate() {
                 if (destroyed || inTransfer || waitingPhotoDone || !starter.standby()) return;
                 waitingPhotoDone = true;
-                log("收到0x45拍照活动开始候选；不再350ms抢先切Wi-Fi，"
-                        + "等待1→0结束通知，最多2.2秒后兜底启动");
-                status("拍照活动可能正在进行：等待结束通知（最多2.2秒）；"
-                        + "也可点「我已经拍照」立即开始");
-                pendingPhotoAction = () -> {
-                    pendingPhotoAction = null;
-                    if (destroyed || !waitingPhotoDone || inTransfer) return;
-                    waitingPhotoDone = false;
-                    log("2.2秒内未收到拍照结束通知；按短超时兜底尝试一次取图");
-                    startPhotoTransfer(true);
-                };
-                ui.postDelayed(pendingPhotoAction, PHOTO_DONE_FALLBACK_MS);
+                log("收到AA14 0x45拍照活动0→1；只等待1→0结束信号；"
+                        + "没有倒计时自动开热点");
+                status("等待0x45状态1→0；没结束信号就保持BLE待机。"
+                        + "若确认已拍完，可点「我已经拍照」手动取图");
             }
             @Override public void photoActionEnded() {
                 if (destroyed || !waitingPhotoDone || inTransfer) return;
@@ -144,12 +135,12 @@ public final class MainActivity extends Activity {
             }
         });
         makeUi();
-        log("v0.1.17 最短路径：蓝牙待机→0x45拍照活动结束或2.2秒兜底"
-                + "→0x39/0x30开AP→准确SSID立即请求Android Wi-Fi→原厂高清GET");
-        log("修复v0.1.16过早开AP：0x45状态1→0后250ms启动；"
-                + "5秒没有SSID明确失败；按钮可显示状态、主动取消");
-        log("无12秒Wi-Fi扫描、无1.8秒稳定等待、无450ms长时间轮询");
-        log("0x45来自E09开源，M02S上仅观察到1标志，结束状态与照片写盘未证实；保留手动已拍照取图");
+        log("v0.1.18 最短路径：BLE待机→只等待0x45状态1→0→250ms后开AP"
+                + "→准确SSID直接申请Wi-Fi→高清JPEG");
+        log("已删除强制超时自动开AP，没收到拍照结束信号就绝不自动开AP；"
+                + "可手动确认拍完取图或取消等待");
+        log("保留5秒SSID超时；无12秒Wi-Fi扫描、1.8秒稳定等待和450ms无限轮询");
+        log("本机已观察到0x45 0→1→0，但1→0不一定代表JPEG已写盘");
         log("照片只到手机RAM；不会删除眼镜文件，不上传云端，也不操作OCR/TTS");
         status("点击「准备蓝牙待机」，成功后直接用眼镜实体键拍照");
     }
@@ -163,15 +154,15 @@ public final class MainActivity extends Activity {
         setContentView(scroll);
 
         addText(body,"蓝星 M02S 极速高清取图",24,0xff17385b,true);
-        addText(body,"v0.1.17 · 等拍照结束，再极速连接Wi-Fi取原图",15,Color.DKGRAY,false);
+        addText(body,"v0.1.18 · 等拍照结束后再极速取原图",15,Color.DKGRAY,false);
         statusText = addText(body,"",18,0xff117458,true);
 
         addText(body,"① 先准备蓝牙待机（这一步不打开Wi-Fi）",17,Color.BLACK,true);
         addButton(body,"准备蓝牙待机",this::prepareStandby);
         addText(body,"② 用实体按键拍照，监听到结束状态后自动取图",
                 16,Color.BLACK,true);
-        addText(body,"如果未收到结束通知，最多等2.2秒后自动尝试。"
-                + "若你确定已拍照，可点下面按钮立即取图；已有任务会显示当前阶段，不会重复发命令。",
+        addText(body,"如果没有结束通知就只等待、不自动开启Wi-Fi。"
+                + "若已确认拍完，可点下面按钮立即取图；正在取图时只显示当前阶段，不重复发命令。",
                 14,Color.DKGRAY,false);
         addButton(body,"我已经拍照，立即取高清原图",() -> startPhotoTransfer(false));
         addButton(body,"取消当前取图（不重试、不删除照片）",this::cancelCurrentTransfer);
@@ -196,7 +187,7 @@ public final class MainActivity extends Activity {
         addButton(body,"复制诊断日志",() -> {
             ClipboardManager clipboard = (ClipboardManager)
                     getSystemService(Context.CLIPBOARD_SERVICE);
-            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.17 diagnostic",
+            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.18 diagnostic",
                     diagnostics.toString()));
             status("诊断日志已复制");
         });
