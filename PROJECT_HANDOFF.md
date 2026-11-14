@@ -1,3 +1,15 @@
+# 最新｜M02S Android 16 AP 权限修复 v0.1.5（2026-11-14，已发布；待真机验证）
+
+- **此次用户明确授权**：修复 v0.1.4 AP 热点精准连接中出现的 `SecurityException`，提供可独立安装 APK，不碰正式蓝星向导、官方 HeyCyan、旧实验及 Windows OCR。使用原仓库 `vobichngan285-collab/kanzi-assistant`，**新独立分支** `exp/m02s-ap-permission-fix-v015-20261114`，源码 HEAD `7914087ddd4cc97f8be01382b419f41d243e944a`（基于 v0.1.4 `f65932bea53b36b7bd04960c468cde89c6b5bd10`）。只改实验文件 `experiments/m02s-wifi-lab` + 该实验专用 workflow。
+- **原始手机实测**：v0.1.4 / vivo X200 Pro / Android 16：17:17:31 GATT LE 1M 147ms 成功，17:17:34 AA14 CCCD `status=0`，17:17:40 AA13 原厂AP指令 `0x39/0x30` 写入 `status=0`、AA14 收到 `0x39` 和 `0x25`（**SSID UTF-8 13字节，已成功本地解析**），紧接着**“AP 请求异常：SecurityException”**并停止会话，未弹 Android 网络授权、未建立 Wi-Fi。P2P 已单独实测找不到眼镜，不能再次误将附近 HP `DIRECT-92-HP M132f LaserJet` 打印机当眼镜。
+- **静态代码查到确切漏项，但根因仍需真机确认**：v0.1.4 `AndroidManifest.xml` 已包含 `ACCESS_NETWORK_STATE`、`CHANGE_WIFI_STATE`、`ACCESS_FINE_LOCATION`、`NEARBY_WIFI_DEVICES` 等，**缺少 `android.permission.CHANGE_NETWORK_STATE`**。调用 `ConnectivityManager.requestNetwork` 时该权限通常必需；本轮只将缺失权限定为首要嫌疑，**不能宣称已完全确定手机安全异常的唯一原因**。
+- **v0.1.5 修改**：Manifest 新增标准普通权限 `CHANGE_NETWORK_STATE`。在 `connectTargetAp` 请求前诊断 `CHANGE_NETWORK_STATE`、`ACCESS_NETWORK_STATE`、`NEARBY_WIFI_DEVICES`、`ACCESS_FINE_LOCATION` 的授权状态；缺少关键网络权限立即安全停止。记录三个独立出错阶段（构建 `WifiNetworkSpecifier` / `NetworkRequest` / 提交 `requestNetwork`），捕获 SecurityException / IllegalArgumentException / IllegalStateException 时仅记录类型及阶段，**不记录原始异常消息**，避免 SSID/密码泄露。独立单测覆盖阶段、权限状态及敏感消息不泄露。保留之前成功的 BLE 拍照和AA14/0x25解码、AP/P2P独立目标连接、非眼镜设备拦截、未建立Wi-Fi禁止 HTTP 的逻辑，**没有增添其他未证实的厂商命令**。
+- **独立新包与真实CI核验**：包名 `com.vobichngan.bluestar.m02sapfixlab`，versionCode 6 / `0.1.5`，与正式版和旧 v0.1.0~0.1.4 版本共存；CI [43580262307](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/43580262307) `completed/success`，Gradle Java JUnit、Android SDK36 构建、APK v2 签名、zipalign、ZIP完整性、实际产物Manifest的 `CHANGE_NETWORK_STATE/ACCESS_NETWORK_STATE/CHANGE_WIFI_STATE` 等权限、包名/版本核验通过。GitHub Release tag `bluestar-m02s-ap-permission-fix-v015-20261114`，APK `BlueStar_M02S_AP_Permission_Fix_0.1.5_Android.apk` **99833 bytes**，SHA256 `5ddc0359a64c2b995507e1dd703d8da3c362931dfb05fee1cb4644dc36d06ad4`；**浏览器直链** https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-m02s-ap-permission-fix-v015-20261114/BlueStar_M02S_AP_Permission_Fix_0.1.5_Android.apk 。
+- **下一步测试仅 AP，不再重复 P2P/拍照**：用户关闭官方 HeyCyan → 安装启动 v0.1.5 → 扫描并连接 M02S LE 1M → 开启蓝牙反馈 120秒直到 AA14 CCCD status=0 → 点击一次 **「AP 热点精准连接」**。检查日志是否显示 `CHANGE_NETWORK_STATE=已授权`，并观察 Android 是否弹出联网许可及 `onAvailable`；若弹系统窗口由用户确认。若仍失败，要求只回传“AP系统权限预检”及“AP系统调用失败：阶段=... 类型=...”，**不得推定已连接 Wi-Fi**。只有 Android 确认目标网络并由该网络路由获得私有设备地址后，才能单次只读文件列表。照片自动传输、Wi-Fi 长连接仍未实现。
+- **交接纪律**：必须先看 main 此文及 RELEASE_STATUS 等实际仓库状态；后续修改先取得用户授权。重要进展追加保留旧历史，不覆盖旧版本/源码。该次文档只增新章节，旧内容原样保留。
+
+---
+
 # 最新｜M02S Wi-Fi 目标精确连接 v0.1.4（2026-11-14，已发布，待真机）
 
 - **用户批准执行，本次新增重点**：v0.1.3 已由用户亲测 **AA13 BLE 遥控 M02S-3584 眼镜确实拍照**，GATT LE 1M 连接93ms，写入58ms，回执 `0x22`，计数候选 `0x42` 由4到5；P2P Wi-Fi 信息请求 `AB 55 00 03 39 31 6A` 收到 `0x39` 和约0.45秒后的 `0x25`（13字节负载），但**没有建立 M02S Wi-Fi**。系统先前“发现1台P2P设备”经用户截图确认为 `DIRECT-92-HP M132f LaserJet` **HP打印机**，必须避免误连。
