@@ -5,6 +5,8 @@ import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
+import android.bluetooth.BluetoothGattCharacteristic;
+import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattCallback;
 import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothManager;
@@ -50,11 +52,13 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -83,6 +87,16 @@ public final class MainActivity extends Activity {
     private BluetoothLeScanner bleScanner;
     private BluetoothGatt gatt;
     private boolean gattConnecting = false;
+    private boolean gattConnected = false;
+    private boolean servicesReady = false;
+    private boolean notificationMonitor = false;
+    private int notificationCount = 0;
+    private long notificationStarted = 0L;
+    private Runnable notificationTimeout;
+    private Runnable descriptorTimeout;
+    private BluetoothGattCharacteristic pendingSubscription;
+    private final ArrayDeque<BluetoothGattCharacteristic> notificationQueue = new ArrayDeque<>();
+    private static final UUID CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
     private int gattAttempt = 0;
     private long gattStarted = 0;
     private Runnable gattTimeout;
@@ -186,7 +200,7 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(receiver, f);
         receiverRegistered = true;
-        log("M02S v0.1.0 实验已启动。不会遥控拍照、上传图片或修改眼镜文件。");
+        log("M02S v0.1.2 蓝牙协议实验启动：不会遥控拍照、上传图片或修改眼镜文件。");
         log("仅执行 BLE 只读探测、系统 P2P/AP 连接和本地 HTTP 文件列表请求。");
         requestPermissionsIfNeeded();
         updateNetworkStatus();
@@ -219,10 +233,18 @@ public final class MainActivity extends Activity {
                 button("连接 LE 1M（15秒）", () -> connectGattReadOnly(false)));
         addRow(body, button("兼容连接（15秒）", () -> connectGattReadOnly(true)),
                 button("主动断开 GATT", () -> closeGatt("用户主动断开")));
-        body.addView(text("先选 M02S-3584，再点 LE 1M。只做蓝牙服务发现；"
-                + "如果失败可手动试兼容连接。两种方式均不会发送眼镜控制指令。", 14, false));
+        body.addView(text("先选 M02S-3584，再点 LE 1M；只有失败才试兼容连接。", 14, false));
+        section(body, "② AE00 / AA12 蓝牙协议观察");
+        addRow(body, button("查看特征 UUID/权限", this::inspectGattCharacteristics),
+                button("监听拍照通知（60秒）", this::startNotificationMonitor));
+        addRow(body, button("停止通知记录", () -> stopNotificationMonitor("用户停止")),
+                button("复制诊断", this::copyDiagnostic));
+        body.addView(text("先连接成功、发现4个服务，再点监听，期间按眼镜上的实体拍照键。"
+                + "只对 AE00/AA12 可通知特征写入标准 CCCD 订阅配置；"
+                + "不发送拍照、开 Wi-Fi 或任何厂商控制命令。"
+                + "日志最多记录每条通知前20字节，请分享前检查敏感信息。", 14, false));
 
-        section(body, "② Wi-Fi Direct");
+        section(body, "③ Wi-Fi Direct（本轮可跳过）");
         peerSpinner = new Spinner(this);
         peerAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item);
         peerAdapter.add("选择扫描到的 Wi-Fi Direct 设备");
@@ -231,7 +253,7 @@ public final class MainActivity extends Activity {
         addRow(body, button("扫描 P2P 设备", this::scanP2p),
                 button("连接所选 P2P", this::connectPeer));
 
-        section(body, "③ 如果眼镜使用 Wi-Fi AP 热点");
+        section(body, "④ 如果眼镜使用 Wi-Fi AP 热点");
         ssidField = field("眼镜热点 SSID（如果知道）", "");
         passField = field("Wi-Fi 密码（可留空）", "");
         passField.setInputType(android.text.InputType.TYPE_CLASS_TEXT |
@@ -241,7 +263,7 @@ public final class MainActivity extends Activity {
         addRow(body, button("连接已知 AP", this::connectAccessPoint),
                 button("查看当前网络", this::updateNetworkStatus));
 
-        section(body, "④ 连接保持与只读文件列表");
+        section(body, "⑤ 连接保持与只读文件列表（本轮可跳过）");
         body.addView(text("文件列表地址：默认 192.168.49.207；另一个常见候选 192.168.169.1。"
                         + "真实地址需通过诊断确认。", 14, false));
         ipField = field("眼镜 IP", "192.168.49.207");
@@ -395,8 +417,11 @@ public final class MainActivity extends Activity {
 
     /** Only called from the main thread; late GATT callbacks are ignored by token. */
     private void closeGatt(String reason) {
+        stopNotificationMonitor("GATT 连接结束");
         gattAttempt++;
         gattConnecting = false;
+        gattConnected = false;
+        servicesReady = false;
         if (gattTimeout != null) {
             ui.removeCallbacks(gattTimeout);
             gattTimeout = null;
@@ -453,6 +478,7 @@ public final class MainActivity extends Activity {
                             return;
                         }
                         if (state == BluetoothProfile.STATE_CONNECTED) {
+                            gattConnected = true;
                             gattConnecting = false;
                             if (gattTimeout != null) ui.removeCallbacks(gattTimeout);
                             gattTimeout = null;
@@ -480,17 +506,37 @@ public final class MainActivity extends Activity {
                         }
                         try {
                             List<BluetoothGattService> services = connection.getServices();
+                            servicesReady = true;
                             log("GATT 服务发现成功，总数 " + services.size());
                             for (BluetoothGattService svc : services) {
                                 log("服务 UUID " + svc.getUuid()
                                         + "；特征数量 " + svc.getCharacteristics().size());
                             }
                             status.setText("蓝牙已连接：GATT 服务 " + services.size() + " 个");
-                            log("BLE 只读测试成功。请复制 GATT 日志，勿继续盲目尝试 Wi-Fi");
+                            log("BLE 只读测试成功。可点击「查看特征」和「监听拍照通知」进行下一步。");
+                            inspectGattCharacteristics();
                         } catch (SecurityException ex) {
                             closeGatt("无法读取 GATT 服务列表");
                         }
                     });
+                }
+                @Override public void onDescriptorWrite(BluetoothGatt connection,
+                                                        BluetoothGattDescriptor descriptor,
+                                                        int code) {
+                    ui.post(() -> handleDescriptorWrite(connection, descriptor, code, token));
+                }
+                @Override public void onCharacteristicChanged(BluetoothGatt connection,
+                                               BluetoothGattCharacteristic characteristic,
+                                               byte[] value) {
+                    final byte[] copy = value == null ? new byte[0] : value.clone();
+                    ui.post(() -> onGattNotification(connection, characteristic, copy, token));
+                }
+                @Override @SuppressWarnings("deprecation")
+                public void onCharacteristicChanged(BluetoothGatt connection,
+                                               BluetoothGattCharacteristic characteristic) {
+                    final byte[] value = characteristic.getValue();
+                    final byte[] copy = value == null ? new byte[0] : value.clone();
+                    ui.post(() -> onGattNotification(connection, characteristic, copy, token));
                 }
             };
             BluetoothGatt created = compat
@@ -514,6 +560,171 @@ public final class MainActivity extends Activity {
             closeGatt("无法发起连接");
         }
     }
+    private void inspectGattCharacteristics() {
+        if (!gattConnected || !servicesReady || gatt == null) {
+            log("请先连接 M02S 并等待 GATT 服务发现成功");
+            return;
+        }
+        try {
+            for (BluetoothGattService service : gatt.getServices()) {
+                String serviceId = service.getUuid().toString();
+                if (!GattProtocolPolicy.isVendorService(serviceId)) continue;
+                log("---- 厂商服务 " + serviceId + " ----");
+                for (BluetoothGattCharacteristic c : service.getCharacteristics()) {
+                    String p = GattProtocolPolicy.properties(c.getProperties());
+                    boolean hasCccd = c.getDescriptor(CCCD) != null;
+                    log("特征 UUID " + c.getUuid() + "；能力 " + p
+                            + "；CCCD=" + hasCccd + "；描述符数="
+                            + c.getDescriptors().size());
+                    for (BluetoothGattDescriptor d : c.getDescriptors()) {
+                        log("  描述符 " + d.getUuid()
+                                + (CCCD.equals(d.getUuid()) ? "（标准订阅配置）" : ""));
+                    }
+                }
+            }
+            log("特征权限检查完成。仅列举元数据，未读取或写入厂商特征值。");
+        } catch (SecurityException ex) {
+            log("读取特征元数据失败：权限不足");
+        }
+    }
+
+    private void startNotificationMonitor() {
+        if (!gattConnected || !servicesReady || gatt == null) {
+            log("无法开始监听：请先完成 LE 1M 连接和服务发现");
+            return;
+        }
+        if (notificationMonitor) {
+            log("已经在监听；无需重复订阅");
+            return;
+        }
+        notificationQueue.clear();
+        for (BluetoothGattService service : gatt.getServices()) {
+            if (!GattProtocolPolicy.isVendorService(service.getUuid().toString())) continue;
+            for (BluetoothGattCharacteristic c : service.getCharacteristics()) {
+                if (GattProtocolPolicy.canSubscribe(
+                        c.getProperties(), c.getDescriptor(CCCD) != null)) {
+                    notificationQueue.addLast(c);
+                }
+            }
+        }
+        if (notificationQueue.isEmpty()) {
+            log("AE00/AA12 没有带标准 CCCD 的 NOTIFY/INDICATE 特征；仅能记录属性");
+            return;
+        }
+        notificationMonitor = true;
+        notificationCount = 0;
+        notificationStarted = SystemClock.elapsedRealtime();
+        log("监听开始：等待按眼镜实体拍照键；可订阅特征 " + notificationQueue.size()
+                + " 个。60秒后自动停止记录。");
+        status.setText("蓝牙监听中：按眼镜拍照键");
+        notificationTimeout = () -> stopNotificationMonitor("60秒监听期结束");
+        ui.postDelayed(notificationTimeout, 60_000);
+        subscribeNextCharacteristic();
+    }
+
+    private void subscribeNextCharacteristic() {
+        if (!notificationMonitor || gatt == null) return;
+        if (descriptorTimeout != null) {
+            ui.removeCallbacks(descriptorTimeout);
+            descriptorTimeout = null;
+        }
+        while (!notificationQueue.isEmpty()) {
+            BluetoothGattCharacteristic c = notificationQueue.removeFirst();
+            BluetoothGattDescriptor descriptor = c.getDescriptor(CCCD);
+            if (descriptor == null) continue;
+            try {
+                if (!gatt.setCharacteristicNotification(c, true)) {
+                    log("本机拒绝通知订阅：" + c.getUuid());
+                    continue;
+                }
+                byte[] value = (c.getProperties() &
+                        BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0
+                        ? BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                        : BluetoothGattDescriptor.ENABLE_INDICATION_VALUE;
+                pendingSubscription = c;
+                boolean queued;
+                if (Build.VERSION.SDK_INT >= 33) {
+                    queued = gatt.writeDescriptor(descriptor, value) == 0; // BluetoothStatusCodes.SUCCESS
+                } else {
+                    @SuppressWarnings("deprecation")
+                    boolean accepted = descriptor.setValue(value);
+                    @SuppressWarnings("deprecation")
+                    boolean written = accepted && gatt.writeDescriptor(descriptor);
+                    queued = written;
+                }
+                if (!queued) {
+                    log("CCCD 订阅写入未受理：" + c.getUuid());
+                    pendingSubscription = null;
+                    continue;
+                }
+                log("申请标准 CCCD 通知订阅：" + c.getUuid());
+                final BluetoothGattCharacteristic expected = c;
+                descriptorTimeout = () -> {
+                    if (!notificationMonitor || pendingSubscription != expected) return;
+                    pendingSubscription = null;
+                    notificationQueue.clear(); // avoid overlapping GATT descriptor operations
+                    log("CCCD 写入 5 秒没有回调；停止后续订阅，避免并发 GATT 操作");
+                };
+                ui.postDelayed(descriptorTimeout, 5000);
+                return;
+            } catch (SecurityException | IllegalStateException e) {
+                pendingSubscription = null;
+                log("标准通知订阅失败：" + c.getUuid() + " / "
+                        + e.getClass().getSimpleName());
+            }
+        }
+        log("订阅申请已结束；请在监听期间按一次眼镜实体拍照键。");
+    }
+
+    private void handleDescriptorWrite(BluetoothGatt connection,
+                                       BluetoothGattDescriptor descriptor, int code, int token) {
+        if (destroyed || token != gattAttempt || connection != gatt
+                || !notificationMonitor || pendingSubscription == null) return;
+        if (descriptor == null || !CCCD.equals(descriptor.getUuid())
+                || descriptor.getCharacteristic() != pendingSubscription) return;
+        if (descriptorTimeout != null) ui.removeCallbacks(descriptorTimeout);
+        descriptorTimeout = null;
+        log("CCCD 订阅回调：" + pendingSubscription.getUuid() + " status=" + code);
+        pendingSubscription = null;
+        if (code != BluetoothGatt.GATT_SUCCESS) {
+            log("当前特征订阅失败，不推断眼镜固件故障");
+        }
+        subscribeNextCharacteristic();
+    }
+
+    private void onGattNotification(BluetoothGatt connection,
+                                    BluetoothGattCharacteristic c, byte[] value, int token) {
+        if (destroyed || token != gattAttempt || connection != gatt
+                || !notificationMonitor || c == null) return;
+        if (c.getService() == null
+                || !GattProtocolPolicy.isVendorService(c.getService().getUuid().toString())) return;
+        notificationCount++;
+        if (GattProtocolPolicy.shouldLogPayload(notificationCount)) {
+            long elapsed = SystemClock.elapsedRealtime() - notificationStarted;
+            log("通知#" + notificationCount + " +" + elapsed + "ms；特征 "
+                    + c.getUuid() + "；长度 " + value.length
+                    + "；HEX " + GattProtocolPolicy.shortHex(value));
+        } else if (notificationCount == 41) {
+            log("通知数量较多，后续只计数不打印，避免大量日志/敏感数据");
+        }
+    }
+
+    private void stopNotificationMonitor(String reason) {
+        boolean wasActive = notificationMonitor;
+        notificationMonitor = false;
+        notificationQueue.clear();
+        pendingSubscription = null;
+        if (notificationTimeout != null) ui.removeCallbacks(notificationTimeout);
+        if (descriptorTimeout != null) ui.removeCallbacks(descriptorTimeout);
+        notificationTimeout = null;
+        descriptorTimeout = null;
+        if (wasActive && !destroyed) {
+            log("通知监听结束：" + reason + "；收到 " + notificationCount
+                    + " 次通知。停止本地记录；断开 GATT 时取消订阅。");
+            status.setText("蓝牙通知监听已停止；共 " + notificationCount + " 次");
+        }
+    }
+
     private void requestPeers() {
         if (!permitted() || p2p == null || channel == null) return;
         try {
