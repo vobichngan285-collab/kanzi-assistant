@@ -70,4 +70,35 @@ public final class M02sFreshPhotoPolicyTest {
         assertEquals("NEW2.jpg",selection.photo.remoteName);
         assertEquals(2,selection.freshCount);
     }
+    @Test public void firstShotWithoutPreApBaselineIsOnlyUnverifiedLatest() {
+        M02sFreshPhotoPolicy.Selection first =
+                M02sFreshPhotoPolicy.selectLatestUnverified(Arrays.asList(
+                    c("DCIM/old.jpg",450,"2026-11-14 16:00:00"),
+                    c("DCIM/newest.jpg",850,"2026-11-14 18:00:00")));
+        M02sFreshPhotoPolicy.Selection second =
+                M02sFreshPhotoPolicy.selectLatestUnverified(Arrays.asList(
+                    c("DCIM/old.jpg",450,"2026-11-14 16:00:00"),
+                    c("DCIM/newest.jpg",850,"2026-11-14 18:00:00")));
+        assertEquals(M02sFreshPhotoPolicy.Status.READY, first.status);
+        assertEquals("DCIM/newest.jpg", first.photo.remoteName);
+        assertTrue(M02sFreshPhotoPolicy.stablePair(first,second));
+        // Caller must label it "unverified", never claim first-shot freshness.
+    }
+
+    @Test public void unverifiedLatestRequiresUniqueTimestamp() {
+        M02sFreshPhotoPolicy.Selection result =
+                M02sFreshPhotoPolicy.selectLatestUnverified(Arrays.asList(
+                    c("A.jpg",300,""),c("B.jpg",500,"")));
+        assertEquals(M02sFreshPhotoPolicy.Status.AMBIGUOUS,result.status);
+        assertNull(result.photo);
+    }
+
+    @Test public void noInitialPhotosAndPartialPhotoAreNotDownloadable() {
+        assertEquals(M02sFreshPhotoPolicy.Status.NO_NEW_FILE,
+                M02sFreshPhotoPolicy.selectLatestUnverified(Collections.emptyList()).status);
+        assertEquals(M02sFreshPhotoPolicy.Status.NEW_FILE_INCOMPLETE,
+                M02sFreshPhotoPolicy.selectLatestUnverified(Collections.singletonList(
+                    c("DCIM/new.jpg",0,"2026-11-14 18:00:00"))).status);
+    }
+
 }
