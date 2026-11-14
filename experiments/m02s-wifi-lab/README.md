@@ -1,3 +1,32 @@
+# v0.1.14 E09 RTSP LibVLC 播放专项实验（2026-11-15）
+
+## 为什么只换播放器
+
+v0.1.13 已经被用户 M02S-3584 / vivo Android16 真机证实：E09 `0x67/0x30` 与 `0x25` BLE 回应；原厂式 LiteralPatternSSID+新鲜BSSID 首次 AP 网络申请成功，02:09:22 获得 Android `onAvailable` 和专属私有网关，02:09:23 RTSP `OPTIONS200=true / DESCRIBE200=true / SDP含video=true`，探测 75ms。但自带 Android `android.media.MediaPlayer` 两次报 `what=1 extra=-2147483648`，从未确认屏幕有持续视频帧。**不回退已经成功的Wi-Fi匹配。**
+
+公开 OEM [EyevueTLiveActivity.java](https://github.com/sctg-development/ai-smart-glasses-e09/blob/main/reverse/com.eyevue.glassapp/sources/com/eyevue/glassapp/view/live/EyevueTLiveActivity.java) 的 `playLive()` (230-251) 直接使用 `LibVLC`、`org.videolan.libvlc.MediaPlayer`、`rtsp://192.168.169.1/h264`、`:rtsp-tcp`、`:network-caching=1000`、`:file-caching=1000`、`:live-caching=100`、`:drop-late-frames=true`、`:skip-frames=true`。这与我们原先系统 MediaPlayer 的技术路线不同；但原厂公开反编译与用户上传App未证实完全相同。
+
+## 本次唯一实验变量
+
+- 从 v0.1.13 完成版新建隔离分支 `exp/m02s-e09-libvlc-rtsp-player-v0114-20261115`。保留已经实机成功的 BLE/RTSP 控制链、Vivo首次LiteralPattern+BSSID、RTSP OPTIONS/DESCRIBE 请求、0x95只读能力查询、AA15低清JPEG及其手动相册导出。
+- 将第⑥板块「播放RTSP画面」背后的系统`android.media.MediaPlayer`更换为官方稳定`org.videolan.android:libvlc-all:3.7.7`，使用 `LibVLC` + `SurfaceView` + `IVLCVout`，显式 `:rtsp-tcp` 和公开原厂全部缓存/丢帧参数。
+- 继续使用已确认`apNetwork`的`bindProcessToNetwork`路由，严格用先验白名单验证的私有网关构造`rtsp://.../h264`；一次用户点击只启动一次播放，不加重连、不碰 WLAN 或蓝牙扫描时序。
+- 增加 LibVLC `Opening/Playing/Vout/EncounteredError/EndReached` 的匿名日志及第一个有效视频轨道宽高（如VLC提供）；**轨道尺寸和Playing/Vout不代表真正有持续画面**。若看到连续画面，还需由用户判断文字清晰度。退出或错误时卸载媒体、VLC原生资源、视频 Surface 并解绑进程私有Wi-Fi路由；任何后续异步事件由session token拦截。
+- 官方完整 LibVLC LGPL-2.1 许可包含在 APK `assets/LICENSE-LGPL-2.1.txt`，归属及源码地址在 `assets/LIBVLC_THIRD_PARTY_NOTICE.txt`。用户设备 vivo X200 Pro 是 arm64，所以本实验只打包 arm64-v8a ABI（旧版 APK 互不覆盖）；这不影响其他正式软件。
+- 严禁自动删除眼镜照片、OTA、录屏、云上传、自动拍照。除手动导出 BLE 小JPEG，不保存视频。
+
+## 一次真机验收
+
+1. 安装独立 v0.1.14，关闭 HeyCyan/其它旧实验APP；LE1M连接M02S并等AA14订阅status=0。
+2. **跳过第②普通相册AP连接**，只点第⑥「E09 RTSP直播建连」。应再次出现 `onAvailable` 和 `E09 RTSP探测完成 OPTIONS200/DESCRIBE200/SDP含video`。若这一步失败，不要把它记成LibVLC失败。
+3. 点一次「播放RTSP画面」，检查 `E09 LibVLC已提交单次RTSP/TCP播放`，以及`Playing`、`Vout`、`视频轨道分辨率`或`底层媒体流错误`。
+4. **只有真正出现连续的眼镜实时视频且能看清菜单文字**，才能认为可向OCR路线推进；空白屏、Playing或SDP视频描述都不能算视频验证成功。退出用「停止直播并安全退出」。
+5. 若LibVLC仍失败，优先核查RTSP SETUP/PLAY网络交互和SDP轨道/媒体格式，不再盲改已实测成功的BLE/Android Wi-Fi。
+
+本版APK构建/签名/依赖解析/许可校验只证实可安装，不能替代M02S真机视频解码验收。
+
+---
+
 # M02S v0.1.13｜Vivo 直播AP首次连接采用公开原厂匹配策略（2026-11-15）
 
 **不再盲目试时序：经过实际源代码对比后，只改变一个连接策略。**
