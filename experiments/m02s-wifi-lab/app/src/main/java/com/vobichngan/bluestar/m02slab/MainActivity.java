@@ -850,6 +850,33 @@ public final class MainActivity extends Activity {
         if (c.getService() == null
                 || !GattProtocolPolicy.isVendorService(c.getService().getUuid().toString())) return;
         notificationCount++;
+        if (PHOTO_NOTIFY.equals(c.getUuid()) && e09BlePhotoActive) {
+            M02sE09PhotoAssembler.Step step = e09Assembler.receive(value);
+            if (step == M02sE09PhotoAssembler.Step.START) {
+                log("E09 AA15 PHOTO_START：收到宣布长度="
+                        + e09Assembler.declaredLength() + "字节（尚未证实可解码）");
+            } else if (step == M02sE09PhotoAssembler.Step.ERROR) {
+                log("E09 AA15 JPEG接收中止：" + e09Assembler.lastError());
+                stopE09BlePhoto();
+            } else if (step == M02sE09PhotoAssembler.Step.COMPLETE) {
+                byte[] jpeg = e09Assembler.result();
+                Bitmap bitmap = jpeg == null ? null : BitmapFactory.decodeByteArray(jpeg,0,jpeg.length);
+                if (bitmap != null) {
+                    lastPhotoInMemory = jpeg;
+                    photoPreview.setImageBitmap(bitmap);
+                    log("E09 AA15 JPEG直传成功："
+                            + bitmap.getWidth() + "×" + bitmap.getHeight()
+                            + "；" + jpeg.length + "字节；分片包数=" + e09Assembler.packets()
+                            + "；用时=" + (SystemClock.elapsedRealtime()-e09PhotoStartedAt)
+                            + "ms；仅内存预览");
+                    status.setText("E09蓝牙JPEG已成功解码；清晰度请人工核对");
+                } else {
+                    log("E09 AA15 收到完整分片但无法JPEG解码，未宣称照片成功");
+                }
+                stopE09BlePhoto();
+            }
+            return;
+        }
         M02sBleWire.ParsedFrame parsed = M02sBleWire.parseIncoming(value);
         if (parsed != null && parsed.command == 0x25 && parsed.checksumOk) {
             acceptWifiSsidFrame(parsed);
@@ -997,6 +1024,11 @@ public final class MainActivity extends Activity {
     }
 
     private void requestTargetWifi(WifiMode mode) {
+        requestTargetWifi(mode, null);
+    }
+
+    private void requestTargetWifi(WifiMode mode, byte[] sourceCommand) {
+        if (e09BlePhotoActive) { log("E09蓝牙照片传输中，不能切换Wi-Fi模式"); return; }
         if (oneClickActive && (!oneClickAwaitingAp || mode != WifiMode.AP)) {
             log("拍照任务中禁止手动改变Wi-Fi顺序"); return;
         }
@@ -1005,8 +1037,9 @@ public final class MainActivity extends Activity {
             return;
         }
         if (mode == WifiMode.NONE) return;
-        byte[] command = mode == WifiMode.P2P ?
-                M02sBleWire.wifiP2pInfo() : M02sBleWire.wifiApInfo();
+        byte[] command = sourceCommand != null ? sourceCommand
+                : (mode == WifiMode.P2P
+                ? M02sBleWire.wifiP2pInfo() : M02sBleWire.wifiApInfo());
         if (!sendVerifiedCommand(command)) return;
         wifiSessionToken++;
         wifiMode = mode;
@@ -1475,6 +1508,38 @@ public final class MainActivity extends Activity {
                 ipField.setText(host);
                 log("从目标 AP 的 Android 路由发现私有网关IP；只读文件列表可手动测试");
                 status.setText("目标 AP 已建立；网关IP已获取（HTTP 服务待验证）");
+                if (e09LiveRequested && !e09LiveProbing
+                        && apNetwork != null && wifiMode == WifiMode.AP && wifiVerified
+                        && !host.equals(e09LiveLastHost)) {
+                    e09LiveProbing = true;
+                    e09LiveLastHost = host;
+                    final Network net = apNetwork;
+                    log("E09 APP_LIVE AP已连通，开始只读RTSP OPTIONS/DESCRIBE诊断");
+                    io.execute(() -> {
+                        try {
+                            M02sE09RtspProbe.Result r = M02sE09RtspProbe.probe(net,host);
+                            ui.post(() -> {
+                                if (destroyed || !e09LiveRequested
+                                        || apNetwork != net || !host.equals(verifiedHost)) return;
+                                log("E09 RTSP探测完成：OPTIONS200=" + r.optionsOk
+                                        + "；DESCRIBE200=" + r.describeOk
+                                        + "；SDP含video=" + r.videoSdp
+                                        + "；耗时=" + r.durationMs
+                                        + "ms；视频帧是否可解码须点播放验证");
+                                status.setText(r.describeOk && r.videoSdp
+                                        ? "RTSP会话描述可读取；可尝试播放实时画面"
+                                        : "RTSP未确认视频流，具体码流未验证");
+                            });
+                        } catch (Exception ex) {
+                            ui.post(() -> {
+                                if (!destroyed && e09LiveRequested)
+                                    log("E09 RTSP探测失败，类型="
+                                            + ex.getClass().getSimpleName()
+                                            + "；不能断定M02S支持RTSP");
+                            });
+                        }
+                    });
+                }
                 if (oneClickActive && oneClickAwaitingAp) {
                     oneClickAwaitingAp = false;
                     oneClickBoundNetwork = apNetwork;
@@ -2129,8 +2194,8 @@ public final class MainActivity extends Activity {
     }
 
     private void startOneClick() {
-        if (oneClickActive || photoBusy) {
-            log("已有照片任务进行中，不允许重复拍照"); return;
+        if (oneClickActive || photoBusy || e09BlePhotoActive || e09LiveRequested) {
+            log("已有照片或E09直播任务进行中，不允许重复拍照"); return;
         }
         if (wifiMode != WifiMode.NONE || wifiConnecting || wifiVerified) {
             log("本实验必须在手机AP未连接时启动；先取消现有Wi-Fi连接并检查眼镜状态");
