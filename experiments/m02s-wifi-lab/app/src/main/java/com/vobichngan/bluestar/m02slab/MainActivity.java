@@ -346,13 +346,13 @@ public final class MainActivity extends Activity {
         photoPreview.setScaleType(ImageView.ScaleType.FIT_CENTER);
         body.addView(photoPreview);
 
-        section(body, "⑤ v0.1.8 蓝牙先拍照 → AP取图");
-        addRow(body, button("蓝牙拍照 → AP取图", this::startOneClick),
+        section(body, "⑤ v0.1.9 原厂AP连接实验：拍照→取图");
+        addRow(body, button("拍照→扫描AP→取原图", this::startOneClick),
                 button("取消本次实验", () -> stopOneClick("用户取消本次拍照取图")));
-        body.addView(text("先连蓝牙并开启AA14通知，不要提前连接AP。点击后仅发一次原厂拍照指令，"
-                + "记录0x22/0x42通知，遵守5秒蓝牙命令间隔，再自动连接目标AP。"
-                + "AP连通后核对两次稳定列表并在内存预览。首次无拍照前列表基线，"
-                + "只能显示“最新图片待人工核对”，不宣称必然拍到新图；下载后释放手机AP请求。", 14, false));
+        body.addView(text("先连蓝牙、开启AA14通知，暂不连接AP。一次点击只拍一次，"
+                + "随后核对眼镜的目标热点扫描记录，再调用Android专属Network连接。"
+                + "首次连接不可用时，只有扫描确认唯一目标热点存在才允许一次不同策略恢复；"
+                + "不重复拍照，不猜热点或IP。首次照片仍需人工核对；完成后释放手机AP请求。", 14, false));
 
         // Retained internally for legacy diagnostics; never displayed, so
         // unrelated nearby P2P devices cannot be selected accidentally.
@@ -2181,7 +2181,7 @@ public final class MainActivity extends Activity {
     }
 
     private void copyDiagnostic() {
-        String payload = "M02S BLE先拍照再AP取图实验 v0.1.8 / Android " + Build.VERSION.RELEASE +
+        String payload = "M02S 原厂AP连接实验 v0.1.9 / Android " + Build.VERSION.RELEASE +
                 "\n" + logData.toString();
         ClipboardManager cb = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         cb.setPrimaryClip(ClipData.newPlainText("M02S diagnostic", payload));
