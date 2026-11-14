@@ -1,0 +1,104 @@
+name: Blue Star M02S Pure Wi-Fi Manual Shutter AutoFetch Lab v0.1.13
+on:
+  workflow_dispatch:
+  push:
+    branches: ['exp/m02s-wifi-only-manual-shutter-v0113-20261114']
+    paths:
+      - 'experiments/m02s-wifi-only-lab/**'
+      - '.github/workflows/m02s-wifi-only-manual-photo-v0113.yml'
+permissions:
+  contents: write
+
+jobs:
+  test-build-release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -s "$ANDROID_HOME/platforms/android-36/android.jar" ] || [ ! -x "$ANDROID_HOME/build-tools/36.0.0/apksigner" ]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+          fi
+      - name: Prepare Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Validate transport-only source; unit tests and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE=experiments/m02s-wifi-only-lab/app/src/main/java
+          if grep -R -E 'android[.]bluetooth|BluetoothGatt|BluetoothAdapter|M02sBleWire|[.]delete\(' "$SOURCE" ; then
+            echo 'Wi-Fi-only lab must not include Bluetooth APIs or a deletion method' >&2
+            exit 1
+          fi
+          gradle -p experiments/m02s-wifi-only-lab --no-daemon --no-parallel --max-workers=2 \
+            :app:testDebugUnitTest :app:assembleDebug --stacktrace
+      - name: Verify manifest, standalone APK signing and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=experiments/m02s-wifi-only-lab/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          TOOL="$ANDROID_HOME/build-tools/36.0.0"
+          "$TOOL/apksigner" verify --verbose "$APK" | tee "$RUNNER_TEMP/signature.txt"
+          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' "$RUNNER_TEMP/signature.txt"
+          "$TOOL/zipalign" -c -v 4 "$APK"
+          "$TOOL/aapt" dump badging "$APK" | tee "$RUNNER_TEMP/badging.txt"
+          grep -q "package: name='com.vobichngan.bluestar.m02swifionlylab' versionCode='14' versionName='0.1.13'" "$RUNNER_TEMP/badging.txt"
+          "$TOOL/aapt" dump permissions "$APK" | tee "$RUNNER_TEMP/permissions.txt"
+          for p in ACCESS_NETWORK_STATE ACCESS_WIFI_STATE NEARBY_WIFI_DEVICES ACCESS_FINE_LOCATION INTERNET; do
+            grep -q "android.permission.${p}" "$RUNNER_TEMP/permissions.txt"
+          done
+          if grep -qE 'android.permission.(BLUETOOTH|CAMERA|READ_MEDIA_IMAGES|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE|CHANGE_WIFI_STATE|CHANGE_NETWORK_STATE)' "$RUNNER_TEMP/permissions.txt"; then
+            echo 'Unexpected Bluetooth/camera/storage/network-modification permission' >&2
+            exit 1
+          fi
+          unzip -t "$APK" | tail -n 2
+          mkdir -p release
+          cp "$APK" release/BlueStar_M02S_WiFi_Only_AutoPhoto_0.1.13_Android.apk
+          sha256sum release/*.apk | tee release/SHA256SUMS.txt
+          echo "Source commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          cat release/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload standalone signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar-M02S-WiFi-Only-v0113-APK
+          path: release/BlueStar_M02S_WiFi_Only_AutoPhoto_0.1.13_Android.apk
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish stable browser download URL
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/release-notes.txt" <<'EOF'
+          M02S v0.1.13 pure Wi-Fi/manual physical shutter experimental APK: no BLE control, no Bluetooth permission, no BLE commands or scans, no OTA, no deletion, no media writing, no cloud upload.
+          User first enables/joins eyewear Wi-Fi MANUALLY in Android Wi-Fi settings, enters its exact real SSID into app, then app verifies already-connected Wi-Fi Network, its trusted 192.168.x.x gateway and the real OEM /app/getfilelist HTTP200 JSON endpoint. Start monitor establishes pre-shot existing-file baseline, then user physically presses eyewear shutter. App polls read-only JSON list about every 450ms, requires a uniquely new filename and two identical stable observations, and only then GETs the new original photo through its dedicated Android Network. Supports up to three sequential photos/120 seconds. Checks URL safety, image signature, maximum 32MB, Bitmap decoding and image size. Displays original JPEG only in phone RAM; never logs filenames, SSID, Wi-Fi password or photo bytes.
+          Reused already-proven OEM M02S AP JSON/photo transport and safe photo selection. Consulted MIT-licensed upstream sctg-development/ai-smart-glasses-e09-reverse (WifiMediaManager.swift); license retained with attribution in experiments/m02s-wifi-only-lab/E09_SOURCE_LICENSE.md. This upstream starts camera Wi-Fi via BLE; it does NOT prove that M02S can open its hotspot without BLE. If no manual Wi-Fi hotspot is possible, this strict no-BLE experiment correctly cannot start. If Wi-Fi connection blocks physical shutter, firmware may be mode-exclusive; no promise of success or 3-second total latency. Timing reported excludes the unobservable physical-shutter-to-file interval. OCR/TTS are intentionally excluded until transport is actually proven.
+          Separate Android package com.vobichngan.bluestar.m02swifionlylab v0.1.13, does not replace M02S E09 v0.1.12, old AP experiments, official Blue Star Guide RC25, Windows OCR or HeyCyan.
+          EOF
+          gh release create bluestar-m02s-manual-wifi-autofetch-v0113-20261114 \
+            release/BlueStar_M02S_WiFi_Only_AutoPhoto_0.1.13_Android.apk \
+            release/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Blue Star M02S Wi-Fi-Only Manual Shutter AutoFetch v0.1.13 — experimental" \
+            --prerelease --notes-file "$RUNNER_TEMP/release-notes.txt"
+      - name: Verify release published and downloadable
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view bluestar-m02s-manual-wifi-autofetch-v0113-20261114 \
+            --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,assets,url \
+            --jq '{isDraft,isPrerelease,url,assets: [.assets[] | {name: .name, size: .size, url: .url}]}'
