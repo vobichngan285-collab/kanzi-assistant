@@ -24,6 +24,8 @@ public final class OemAutoImportService extends AccessibilityService {
     private boolean clickedCurrentCandidate;
     private long firstCandidateSeenAt;
     private boolean serviceEnabledLastCheck;
+    private boolean oneShotConsumed;
+    private long observedArmSequence = -1L;
 
     @Override protected void onServiceConnected() {
         super.onServiceConnected();
@@ -31,6 +33,8 @@ public final class OemAutoImportService extends AccessibilityService {
         clickedCurrentCandidate = false;
         firstCandidateSeenAt = 0;
         serviceEnabledLastCheck = false;
+        oneShotConsumed = false;
+        observedArmSequence = -1L;
         state("无障碍服务已开启。先到原厂相册观察无待导入状态，再新拍一张。");
     }
 
@@ -117,10 +121,21 @@ public final class OemAutoImportService extends AccessibilityService {
             return;
         }
         serviceEnabledLastCheck = true;
+        long arm = getSharedPreferences(PREF, MODE_PRIVATE)
+                .getLong("arm_sequence", 0L);
+        if (arm != observedArmSequence) {
+            observedArmSequence = arm;
+            oneShotConsumed = false;
+            observedAbsentInOemAlbum = false;
+            clickedCurrentCandidate = false;
+            firstCandidateSeenAt = 0L;
+            state("本次单张导入已重新准备；先观察原厂相册空候选");
+        }
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null || !AutoImportPolicy.isOemPackage(root.getPackageName())) {
             return;
         }
+        if (oneShotConsumed) return; // No second auto click until opt-in toggled again.
         Snapshot s = observe(root);
         if (s.pendingCount < 0) {
             firstCandidateSeenAt = 0L;
@@ -172,11 +187,12 @@ public final class OemAutoImportService extends AccessibilityService {
         // Android emits multiple fast content-changed notifications.
         observedAbsentInOemAlbum = false;
         clickedCurrentCandidate = true;
+        oneShotConsumed = true;
         handler.removeCallbacks(checkAgain);
         boolean clicked = s.importButton.performAction(
                 AccessibilityNodeInfo.ACTION_CLICK);
         state(clicked
-                ? "已在原厂相册点击一次「导入」，等待原厂执行高清Wi-Fi下载（未确认完成）"
-                : "尝试点击失败；本轮不重试，避免误触");
+                ? "已在原厂相册点击一次「导入」，等待原厂下载（未确认完成）；本轮不会再次点击"
+                : "尝试点击失败；本轮不会再次点击，请手动检查");
     }
 }
