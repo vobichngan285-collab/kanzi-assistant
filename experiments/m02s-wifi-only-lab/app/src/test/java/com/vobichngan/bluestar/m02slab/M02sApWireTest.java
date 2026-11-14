@@ -44,4 +44,20 @@ public final class M02sApWireTest {
         frame[3] = 0x00;
         assertNull(M02sApWire.decodeWifiSsid(frame));
     }
+    @Test public void e09ActionSyncPhotoFlagChecksChecksumAndState() {
+        byte[] payload = new byte[9];
+        payload[0] = 1;
+        byte[] event = response(0x45, payload);
+        assertEquals(1, M02sApWire.actionSyncPhotoFlag(event));
+        payload[0] = 0;
+        assertEquals(0, M02sApWire.actionSyncPhotoFlag(response(0x45, payload)));
+        event[5] = 9;
+        assertEquals(-1, M02sApWire.actionSyncPhotoFlag(event));
+        event = response(0x45, new byte[9]);
+        event[event.length-1] ^= 1;
+        assertEquals(-1, M02sApWire.actionSyncPhotoFlag(event));
+        assertEquals(-1, M02sApWire.actionSyncPhotoFlag(response(0x25,payload)));
+        assertEquals(-1, M02sApWire.actionSyncPhotoFlag(response(0x45,new byte[]{1})));
+        assertEquals(-1, M02sApWire.actionSyncPhotoFlag(null));
+    }
 }
