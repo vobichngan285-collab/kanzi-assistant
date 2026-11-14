@@ -1704,7 +1704,6 @@ public final class MainActivity extends Activity {
                     lastPhotoInMemory = response.body;
                     photoPreview.setImageBitmap(image.preview);
                     photoBusy = false;
-                    if (oneClickId >= 0) finishOneClickSuccess();
                     log("原图下载并解码成功：HTTP 200；"
                             + response.body.length + "字节；"
                             + image.originalWidth + "×" + image.originalHeight
@@ -1712,6 +1711,7 @@ public final class MainActivity extends Activity {
                             + response.durationMs + "ms；摘要=" + digest
                             + "。仅在手机内存预览，无相册文件/云上传");
                     status.setText("眼镜原图已下载至内存并显示预览");
+                    if (oneClickId >= 0) finishOneClickSuccess();
                 });
             } catch (Exception ex) {
                 final String errorType = ex.getClass().getSimpleName();
