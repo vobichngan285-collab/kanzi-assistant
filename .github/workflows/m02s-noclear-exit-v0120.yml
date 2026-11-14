@@ -1,0 +1,157 @@
+name: Blue Star M02S Opt-In Non-Clear Session Exit v0.1.20
+on:
+  workflow_dispatch:
+  push:
+    branches: ['exp/m02s-optin-noclear-exit-v0120-20261114']
+    paths:
+      - 'experiments/m02s-wifi-only-lab/**'
+      - '.github/workflows/m02s-noclear-exit-v0120.yml'
+permissions:
+  contents: write
+
+jobs:
+  test-build-release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -s "$ANDROID_HOME/platforms/android-36/android.jar" ] || [ ! -x "$ANDROID_HOME/build-tools/36.0.0/apksigner" ]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+          fi
+      - name: Prepare Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Verify exact BLE AP-only command; unit tests and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE=experiments/m02s-wifi-only-lab/app/src/main/java
+          WIRE="$SOURCE/com/vobichngan/bluestar/m02slab/M02sApWire.java"
+          grep -Fq '0x39, 0x30, 0x69' "$WIRE"
+          grep -Fq 'Arrays.equals(AP_REQUEST, bytes)' "$WIRE"
+          grep -Fq 'actionSyncPhotoFlag' "$WIRE"
+          STARTER="$SOURCE/com/vobichngan/bluestar/m02slab/M02sApStarter.java"
+          MAIN="$SOURCE/com/vobichngan/bluestar/m02slab/MainActivity.java"
+          grep -Fq 'setSsid(expectedSsid)' "$STARTER"
+          grep -Fq 'void photoActionEnded();' "$STARTER"
+          grep -Fq 'if (!valid(token) || networkCallback != this) return;' "$STARTER"
+          grep -Fq 'wifiRequestAtMs' "$STARTER"
+          grep -Fq 'Android本轮准确SSID请求onUnavailable；等待=' "$STARTER"
+          grep -Fq '网络请求未满足' "$STARTER"
+          grep -Fq 'if (tryReuseConnectedTarget(token)) {' "$STARTER"
+          grep -Fq 'authorizedNonClearFinish' "$WIRE"
+          grep -Fq 'nonClearFinishRequest()' "$WIRE"
+          grep -Fq '0x44, 0x30, 0x01, 0x75' "$WIRE"
+          grep -Fq 'requestNonClearFinish' "$STARTER"
+          grep -Fq 'completeNonClearFinish' "$STARTER"
+          grep -Fq 'ui.postDelayed(nonClearFinishTimeout, 3000L)' "$STARTER"
+          grep -Fq 'nonClearCheckbox.setChecked(false)' "$MAIN"
+          grep -Fq 'if (success && nonClearExperimentEnabled && starter.standby())' "$MAIN"
+          grep -Fq '手动尝试退出眼镜传输模式' "$MAIN"
+          grep -Fq 'nonClearFinishIsExplicitlyExactAndDeleteNeverAllowed' \
+            experiments/m02s-wifi-only-lab/app/src/test/java/com/vobichngan/bluestar/m02slab/M02sApWireTest.java
+          # Never accept the destructive [44,30,00] variant, including changed checksum.
+          if grep -E 'FINISH_NOT_CLEAR[[:space:]]*=.*0x00' "$WIRE"; then
+            echo 'Unsafe finish packet constant' >&2
+            exit 1
+          fi
+          if grep -Fq 'Android未能连接眼镜AP，拒绝反复申请或猜测热点' "$STARTER"; then
+            echo 'Old misleading onUnavailable message and unsafe callback ownership still exist' >&2
+            exit 1
+          fi
+          grep -Fq 'ui.postDelayed(ssidTimeout, 5000L)' "$STARTER"
+          grep -Fq 'if (falling)' "$STARTER"
+          grep -Fq 'PHOTO_DONE_SETTLE_MS = 250L' "$MAIN"
+          grep -Fq 'cancelCurrentTransfer()' "$MAIN"
+          grep -Fq 'waitingPhotoDone = true' "$MAIN"
+          grep -Fq 'ui.postDelayed(pendingPhotoAction, PHOTO_DONE_SETTLE_MS)' "$MAIN"
+          if grep -Fq 'PHOTO_DONE_FALLBACK_MS' "$MAIN" || grep -Fq '2200L' "$MAIN" || grep -Fq '2.2秒' "$MAIN"; then
+            echo 'Forbidden photo-finish timeout fallback remains in v0.1.20' >&2
+            exit 1
+          fi
+          grep -Fq 'clearPendingPhotoAction()' "$MAIN"
+          if grep -Fq 'startPhotoTransfer(true), 350L' "$MAIN"; then
+            echo 'old premature 350ms AP activation still present' >&2
+            exit 1
+          fi
+          if grep -Fq 'wifi.startScan(' "$SOURCE/com/vobichngan/bluestar/m02slab/M02sApStarter.java"; then
+            echo 'v0.1.20 must not perform Android Wi-Fi scan before exact SSID request' >&2
+            exit 1
+          fi
+          if grep -R -E 'M02sBleWire[.]photoThumbnail|e09BlePhoto[(]|[.]removeFile[(]|DELETE_MEDIA' "$SOURCE" ; then
+            echo 'Unauthorized shutter/erase API in one-time AP starter' >&2
+            exit 1
+          fi
+          gradle -p experiments/m02s-wifi-only-lab --no-daemon --no-parallel --max-workers=2 \
+            :app:testDebugUnitTest :app:assembleDebug --stacktrace
+      - name: Verify manifest, standalone APK signing and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=experiments/m02s-wifi-only-lab/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          TOOL="$ANDROID_HOME/build-tools/36.0.0"
+          "$TOOL/apksigner" verify --verbose "$APK" | tee "$RUNNER_TEMP/signature.txt"
+          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' "$RUNNER_TEMP/signature.txt"
+          "$TOOL/zipalign" -c -v 4 "$APK"
+          "$TOOL/aapt" dump badging "$APK" | tee "$RUNNER_TEMP/badging.txt"
+          grep -q "package: name='com.vobichngan.bluestar.m02snoclearexitlab' versionCode='21' versionName='0.1.20'" "$RUNNER_TEMP/badging.txt"
+          "$TOOL/aapt" dump permissions "$APK" | tee "$RUNNER_TEMP/permissions.txt"
+          for p in BLUETOOTH_SCAN BLUETOOTH_CONNECT ACCESS_NETWORK_STATE ACCESS_WIFI_STATE CHANGE_NETWORK_STATE CHANGE_WIFI_STATE NEARBY_WIFI_DEVICES ACCESS_FINE_LOCATION INTERNET; do
+            grep -q "android.permission.${p}" "$RUNNER_TEMP/permissions.txt"
+          done
+          if grep -qE 'android.permission.(CAMERA|READ_MEDIA_IMAGES|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE)' "$RUNNER_TEMP/permissions.txt"; then
+            echo 'Unexpected camera or photo storage permission' >&2
+            exit 1
+          fi
+          unzip -t "$APK" | tail -n 2
+          mkdir -p release
+          cp "$APK" release/BlueStar_M02S_OptIn_NoClear_Exit_0.1.20_Android.apk
+          sha256sum release/*.apk | tee release/SHA256SUMS.txt
+          echo "Source commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          cat release/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload standalone signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar-M02S-OptIn-NoClear-Exit-v0120-APK
+          path: release/BlueStar_M02S_OptIn_NoClear_Exit_0.1.20_Android.apk
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish stable browser download URL
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/release-notes.txt" <<'EOF'
+          Blue Star M02S v0.1.20 opt-in non-clear transfer-session exit experiment. Based on actual v0.1.18 full-res 3200x2400 JPG success (photo-end trigger to decode 6.188 sec) followed by intermittent Android onUnavailable. v0.1.19 hardware logs show AA14 0x25 SSID obtained 511/505ms after AP start yet Android onUnavailable 6761/4182ms later; the precise root cause remains unproven. Simply unregistering the phone's WifiNetworkSpecifier request does not tell the glasses firmware to close its media-import mode.
+          Inspected upstream MIT E09 reverse-engineering source Sources/e09_reverse/Constants.swift and WifiMediaManager.swift. The decompiled OEM iec.java:stopP2pWifiConnect uses CMD_FILE_DOWNLOAD_FINISH 0x44, PARAM_WIFI_FILE_DOWNLOAD_FINISH 0x30 and NOT_CLEAR 0x01 to finish an import WITHOUT clearing on-device media when zero files downloaded. The dangerous CLEAR 0x00 variant is used to delete previously imported eyewear media, so this app NEVER issues any 44/30/00 packet. On this specific M02S firmware, 44/30/01 has NOT been physically verified, so the mode is OFF by default and requires explicit user opt-in, not a silent production change. Full raw frame for sole nonclear opcode: AB 55 00 04 44 30 01 75, strict byte-for-byte whitelist and JUnit rejection of all alternate variants.
+          When explicitly opted in, only after a valid high-resolution JPEG has been downloaded, verified and decoded, send exactly one 44/30/01 AA13 GATT write, await its status0 or a maximum 3sec write timeout, then unregister the dedicated phone Wi-Fi Network request. GATT write success is NOT proof that eyewear firmware actually left AP mode; a real second physical shutter/connection trial must establish that. New manual recovery button requires the same checkbox and BLE standby state, can send this exact non-clear finish once after an earlier failed transfer, with NO extra Wi-Fi requests, clearing, or unknown commands. Default unchecked is identical to the v0.1.19 hardware path; checkbox isn't persisted.
+          Preserve v0.1.18 physical shutter 0x45 1->0 then 250ms AP command 0x39/0x30; preserve v0.1.19 network callback ownership checks and phase timings; only precise AA14 0x25 SSID, exact Android Wi-Fi specifier, real onAvailable/private gateway/OEM HTTP 200 JSON and two 350ms-stable list reads; GET original JPEG to RAM only. No BLE remote shutter, no cloud upload, no photo album writes, no deletion or OTA, no 12sec scan, no retries. Separate CyanBridge HeyCyan/P2P sample has a different BLE protocol ([02 01 04] etc); it was researched but those commands were NOT copied or sent.
+          Isolated branch and app com.vobichngan.bluestar.m02snoclearexitlab, versionCode21/versionName0.1.20; prior M02S v0.1.12-v0.1.19 releases, production Blue Star Guide, Windows OCR and other open source projects remain unmodified. CI success proves compilation/tests/signature/asset existence only; does NOT prove the optional no-clear packet is safe/effective on this M02S, so please test cautiously with no irreplaceable pictures on the glasses.
+          EOF
+          gh release create bluestar-m02s-optin-noclear-exit-v0120-20261114 \
+            release/BlueStar_M02S_OptIn_NoClear_Exit_0.1.20_Android.apk \
+            release/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Blue Star M02S Opt-In No-Clear Exit v0.1.20 — experimental" \
+            --prerelease --notes-file "$RUNNER_TEMP/release-notes.txt"
+      - name: Verify release published and downloadable
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view bluestar-m02s-optin-noclear-exit-v0120-20261114 \
+            --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,assets,url \
+            --jq '{isDraft,isPrerelease,url,assets: [.assets[] | {name: .name, size: .size, url: .url}]}'
