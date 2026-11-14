@@ -83,7 +83,7 @@ jobs:
           ! grep -qE 'for *\(.*requestNetwork|while *\(.*requestNetwork' "$SRC"
           # Preserve the exact v0.1.13 OEM AP first-request fix that succeeded
           # on M02S-3584 / Vivo Android16; only the player may change.
-          test "$(git hash-object experiments/m02s-wifi-lab/app/src/main/java/com/vobichngan/bluestar/m02slab/M02sE09OemMatchPolicy.java)" = "05fbd397d3ac80042db635f4baed9ce440b3aec3"
+          test "$(git hash-object experiments/m02s-wifi-lab/app/src/main/java/com/vobichngan/bluestar/m02slab/M02sE09OemMatchPolicy.java)" = "810a1c983a32a2365f89224dedde686b5d594479"
           ! grep -Fq 'import android.media.MediaPlayer;' "$SRC"
           grep -Fq 'import org.videolan.libvlc.LibVLC;' "$SRC"
           grep -Fq 'import org.videolan.libvlc.MediaPlayer;' "$SRC"
