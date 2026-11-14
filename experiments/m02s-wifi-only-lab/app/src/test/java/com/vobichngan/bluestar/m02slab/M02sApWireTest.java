@@ -60,4 +60,54 @@ public final class M02sApWireTest {
         assertEquals(-1, M02sApWire.actionSyncPhotoFlag(response(0x45,new byte[]{1})));
         assertEquals(-1, M02sApWire.actionSyncPhotoFlag(null));
     }
+
+    @Test public void optionalE09IsImportFlagIsStrictAndAbsentIsUnknown() {
+        byte[] nine = new byte[9];
+        nine[0] = 1;
+        assertEquals(-1, M02sApWire.actionSyncImportFlag(response(0x45, nine)));
+        byte[] ten = new byte[10];
+        ten[0] = 1;
+        ten[9] = 1;
+        assertEquals(1, M02sApWire.actionSyncImportFlag(response(0x45, ten)));
+        assertEquals(1, M02sApWire.actionSyncPhotoFlag(response(0x45, ten)));
+        ten[9] = 0;
+        assertEquals(0, M02sApWire.actionSyncImportFlag(response(0x45, ten)));
+        ten[9] = 2;
+        assertEquals(-1, M02sApWire.actionSyncImportFlag(response(0x45, ten)));
+        ten[9] = 1;
+        byte[] corrupt = response(0x45,ten);
+        corrupt[corrupt.length - 1] ^= 1;
+        assertEquals(-1, M02sApWire.actionSyncImportFlag(corrupt));
+        assertEquals(-1, M02sApWire.actionSyncImportFlag(response(0x64,ten)));
+        assertEquals(-1, M02sApWire.actionSyncImportFlag(null));
+    }
+
+    @Test public void onlyExactReadOnlyProjectQueryAllowedAndReplyIsValidated() {
+        byte[] query = M02sApWire.deviceProjectQuery();
+        assertArrayEquals(new byte[]{(byte)0xAB,0x55,0,2,0x64,0x64},query);
+        assertTrue(M02sApWire.authorizedReadOnlyProject(query));
+        assertFalse(M02sApWire.authorized(query)); // AP whitelist remains AP only
+        assertFalse(M02sApWire.authorizedReadOnlyProject(M02sApWire.apRequest()));
+        byte[] mutated = query.clone();
+        mutated[4]=0x44;
+        assertFalse(M02sApWire.authorizedReadOnlyProject(mutated));
+        assertFalse(M02sApWire.authorizedReadOnlyProject(
+                new byte[]{(byte)0xAB,0x55,0,4,0x44,0x30,0,0x74}));
+        query[4]=0x39;
+        assertArrayEquals(new byte[]{(byte)0xAB,0x55,0,2,0x64,0x64},
+                M02sApWire.deviceProjectQuery());
+        assertFalse(M02sApWire.authorizedReadOnlyProject(null));
+        byte[] projectResponse=response(0x64,new byte[]{
+                'T',0,0,0,'D','E','M','O'});
+        assertEquals("T",M02sApWire.decodeReadOnlyProject(projectResponse));
+        projectResponse[projectResponse.length-1] ^= 1;
+        assertNull(M02sApWire.decodeReadOnlyProject(projectResponse));
+        byte[] notProject=response(0x25,new byte[]{
+                'T',0,0,0,'D','E','M','O'});
+        assertNull(M02sApWire.decodeReadOnlyProject(notProject));
+        byte[] invalidProject=response(0x64,new byte[]{
+                1,0,0,0,'D','E','M','O'});
+        assertNull(M02sApWire.decodeReadOnlyProject(invalidProject));
+        assertNull(M02sApWire.decodeReadOnlyProject(response(0x64,new byte[]{'T'})));
+    }
 }
