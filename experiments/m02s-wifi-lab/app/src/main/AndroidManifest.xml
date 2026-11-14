@@ -15,7 +15,7 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
 
-    <application android:label="蓝星 M02S 原厂AP连接实验"
+    <application android:label="蓝星 M02S AP就绪诊断 v0.1.10"
         android:allowBackup="false" android:supportsRtl="true"
         android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
