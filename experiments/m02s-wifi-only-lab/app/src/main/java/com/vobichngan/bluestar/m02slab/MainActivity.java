@@ -20,6 +20,7 @@ import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -62,6 +63,8 @@ public final class MainActivity extends Activity {
     private boolean destroyed;
     private boolean inTransfer;
     private boolean listBusy;
+    private boolean nonClearExperimentEnabled; // always OFF at app startup
+    private boolean closingSession;
     private long runId;
     private long captureToWifiStartMs;
     private long apRequestAtMs;
@@ -100,7 +103,7 @@ public final class MainActivity extends Activity {
                 if (!inTransfer) status("BLE已待机：请直接按眼镜实体快门；若没有自动反应，点取图按钮");
             }
             @Override public void photoActionCandidate() {
-                if (destroyed || inTransfer || waitingPhotoDone || !starter.standby()) return;
+                if (destroyed || inTransfer || closingSession || waitingPhotoDone || !starter.standby()) return;
                 waitingPhotoDone = true;
                 log("收到AA14 0x45拍照活动0→1；只等待1→0结束信号；"
                         + "没有倒计时自动开热点");
@@ -125,24 +128,29 @@ public final class MainActivity extends Activity {
             }
             @Override public void failed(String message) {
                 log("BLE或眼镜Wi-Fi阶段失败：" + message);
-                if (inTransfer) abortTransfer("取图失败：" + message);
+                if (closingSession) {
+                    closingSession=false;
+                    status("实验结束过程中断，固件是否退出AP未知");
+                } else if (inTransfer) abortTransfer("取图失败：" + message);
                 else status("蓝牙准备失败：" + message);
             }
             @Override public void lost(String message) {
                 log(message);
-                if (inTransfer) abortTransfer("眼镜网络断开");
+                if (closingSession) {
+                    closingSession=false;
+                    status("实验结束过程中连接断开，固件退出状态未知");
+                } else if (inTransfer) abortTransfer("眼镜网络断开");
                 else status("眼镜Wi-Fi已断开：" + message);
             }
         });
         makeUi();
-        log("v0.1.19 多张连续取图连接稳定性实验：沿用v0.1.18已成功的"
-                + "BLE拍照结束→250ms开AP→精确SSID直连→高清原图GET");
-        log("修复旧Wi-Fi onUnavailable回调可能误终止新会话的问题；"
-                + "旧请求释放时先失效回调归属；绝不盲目重试");
-        log("新增毫秒诊断：开AP→SSID、精确Wi-Fi请求→onAvailable/onUnavailable；"
-                + "不扫描12秒、不使用拍照倒计时兜底");
-        log("每张取图后仍释放手机Wi-Fi，避免常连妨碍实体拍照；"
-                + "重复失败是否属于Android系统限制目前没有证据");
+        log("v0.1.20 E09不删除退出指令对照实验；保留已成功实体快门"
+                + "0x45结束→250ms开AP→精确Wi-Fi→高清JPEG流程");
+        log("GitHub E09逆向：0x44/0x30/0x01是不清除结束帧；"
+                + "M02S未验证，默认关闭，必须主动勾选实验");
+        log("实验完成后GATT写回执不等于眼镜已退出Wi-Fi；"
+                + "绝不会发送删除参数或未知P2P指令");
+        log("沿用v0.1.19的连接超时与回调诊断，不扫描12秒、不自动重试");
         log("照片只到手机RAM；不会删除眼镜文件，不上传云端，也不操作OCR/TTS");
         status("点击「准备蓝牙待机」，成功后直接用眼镜实体键拍照");
     }
@@ -156,7 +164,7 @@ public final class MainActivity extends Activity {
         setContentView(scroll);
 
         addText(body,"蓝星 M02S 极速高清取图",24,0xff17385b,true);
-        addText(body,"v0.1.19 · 保留成功取图流程，修复Wi-Fi会话回调",15,Color.DKGRAY,false);
+        addText(body,"v0.1.20 · 可选不删除退出实验（默认关闭）",15,Color.DKGRAY,false);
         statusText = addText(body,"",18,0xff117458,true);
 
         addText(body,"① 先准备蓝牙待机（这一步不打开Wi-Fi）",17,Color.BLACK,true);
@@ -169,7 +177,24 @@ public final class MainActivity extends Activity {
         addButton(body,"我已经拍照，立即取高清原图",() -> startPhotoTransfer(false));
         addButton(body,"取消当前取图（不重试、不删除照片）",this::cancelCurrentTransfer);
 
-        addText(body,"③ 下载完成后只在内存显示原图",17,Color.BLACK,true);
+        addText(body,"③ 实验：下载后让眼镜退出传输模式",17,Color.BLACK,true);
+        addText(body,"E09开源称0x44/0x30/0x01为不删除结束帧；"
+                + "M02S未验证。默认关闭；如需对比连续拍照，请主动开启。"
+                + "绝不发送清除照片参数。",14,Color.DKGRAY,false);
+        CheckBox nonClearCheckbox = new CheckBox(this);
+        nonClearCheckbox.setText("启用实验：每次高清取图成功后发送一次不删除结束帧");
+        nonClearCheckbox.setTextSize(15);
+        nonClearCheckbox.setChecked(false);
+        nonClearCheckbox.setOnCheckedChangeListener((button,checked) -> {
+            nonClearExperimentEnabled=checked;
+            log(checked ? "用户主动开启不删除结束帧实验：仅本次运行生效"
+                    : "不删除结束帧实验已关闭，不会自动发送该指令");
+        });
+        body.addView(nonClearCheckbox,new LinearLayout.LayoutParams(-1,-2));
+        addButton(body,"手动尝试退出眼镜传输模式（需先勾选；不删除）",
+                this::manualNonClearFinish);
+
+        addText(body,"④ 下载完成后只在内存显示原图",17,Color.BLACK,true);
         resultText = addText(body,"本轮已完成0张；等待实体拍照",16,0xff17385b,true);
         preview = new ImageView(this);
         preview.setAdjustViewBounds(true);
@@ -189,7 +214,7 @@ public final class MainActivity extends Activity {
         addButton(body,"复制诊断日志",() -> {
             ClipboardManager clipboard = (ClipboardManager)
                     getSystemService(Context.CLIPBOARD_SERVICE);
-            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.19 diagnostic",
+            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.20 diagnostic",
                     diagnostics.toString()));
             status("诊断日志已复制");
         });
@@ -273,6 +298,13 @@ public final class MainActivity extends Activity {
     }
 
     private void cancelCurrentTransfer() {
+        if (closingSession) {
+            closingSession=false;
+            starter.stop();
+            status("已取消未确认的退出实验，蓝牙及Wi-Fi请求均已释放；不删除照片");
+            log("用户终止未确认的结束帧实验；不再发送BLE指令");
+            return;
+        }
         if (waitingPhotoDone) {
             clearPendingPhotoAction();
             log("用户取消等待拍照结束：未发送BLE开AP命令，保留蓝牙待机");
@@ -293,6 +325,10 @@ public final class MainActivity extends Activity {
 
     private void startPhotoTransfer(boolean fromActionSync) {
         if (destroyed) return;
+        if (closingSession) {
+            status("上一张正在完成实验退出；不能重复发新开AP指令");
+            return;
+        }
         if (inTransfer) {
             log("重复点击取原图：本轮任务仍在运行，未重复发送开AP；阶段=" + transferStage);
             status("已有任务进行中：" + transferStage + "。若不想继续，可点「取消当前取图」");
@@ -486,13 +522,69 @@ public final class MainActivity extends Activity {
         network=null;
         gateway=null;
         listBusy=false;
+        if (success && nonClearExperimentEnabled && starter.standby()) {
+            closingSession=true;
+            transferStage="实验：发送不删除结束帧，等待一次GATT回执";
+            status("原图已下载成功，正在尝试E09不删除结束帧（M02S未验证）");
+            log("用户已主动启用实验：成功下载原图后先发送0x44/0x30/0x01，"
+                    + "再释放Android Wi-Fi请求；无清除参数");
+            boolean submitted=starter.requestNonClearFinish(ok -> {
+                if (destroyed || !closingSession) return;
+                closingSession=false;
+                log(ok ? "不删除结束帧GATT写成功，但眼镜退出传输模式尚待下一张验证"
+                        : "不删除结束帧没有可靠GATT写回执，退出状态未知；不重发");
+                starter.releasePhotoNetwork();
+                status(reason+(ok
+                        ? "；实验结束帧GATT已写入，眼镜是否退出AP仍待验证"
+                        : "；结束帧未获可靠写入回执，已释放手机Wi-Fi"));
+            });
+            if (submitted) return;
+            closingSession=false;
+            log("不删除结束帧没有提交：BLE写接口未就绪；保持原版释放手机网络方式");
+        }
         starter.releasePhotoNetwork();
         status(reason+(starter.standby()?"。BLE仍在待机":"。BLE已断开"));
         if (!success) log("失败后不自动重发开AP指令，需用户主动触发");
     }
 
+    private void manualNonClearFinish() {
+        if (destroyed || closingSession) {
+            status("目前有未完成的结束实验，不重复发指令");
+            return;
+        }
+        if (!nonClearExperimentEnabled) {
+            status("实验默认关闭：请先主动勾选，才可以发送不删除结束帧");
+            return;
+        }
+        if (inTransfer || waitingPhotoDone) {
+            status("正在拍照/下载过程中，不允许手动发送退出指令");
+            return;
+        }
+        if (!starter.standby()) {
+            status("请先点「准备蓝牙待机」，蓝牙就绪后才能手动尝试退出");
+            return;
+        }
+        closingSession=true;
+        status("手动实验：正在提交一次不删除结束帧，等待3秒内GATT写回执");
+        log("用户主动点击手动不删除退出；只发一次0x44/0x30/0x01");
+        boolean submitted=starter.requestNonClearFinish(ok -> {
+            if (!closingSession || destroyed) return;
+            closingSession=false;
+            starter.releasePhotoNetwork();
+            log(ok ? "手动不删除结束帧GATT写成功；需实测眼镜下一次能否拍照和连接"
+                    : "手动不删除结束帧GATT未确认；不重发");
+            status(ok ? "手动结束帧已GATT写入，眼镜退出传输模式仍待验证"
+                    : "手动结束帧未获可靠回执，固件是否退出未知");
+        });
+        if (!submitted) {
+            closingSession=false;
+            status("不删除结束帧未提交：眼镜AA13写接口未就绪");
+        }
+    }
+
     private void disconnectAll() {
         if (waitingPhotoDone) clearPendingPhotoAction();
+        closingSession=false;
         if (inTransfer) abortTransfer("用户主动结束本轮取图");
         runId++;
         starter.stop();
@@ -504,6 +596,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onDestroy() {
         clearPendingPhotoAction();
+        closingSession=false;
         if(inTransfer) finishTransfer(false,"应用退出");
         destroyed=true;
         starter.stop();
