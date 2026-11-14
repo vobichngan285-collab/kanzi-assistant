@@ -1,8 +1,8 @@
-name: Blue Star M02S Wi-Fi Keepalive Diagnostic APK
+name: Blue Star M02S GATT Connection Diagnostic v0.1.1
 on:
   workflow_dispatch:
   push:
-    branches: ['exp/m02s-wifi-keepalive-lab-20261114']
+    branches: ['exp/m02s-gatt-connection-lab-20261114']
     paths:
       - 'experiments/m02s-wifi-lab/**'
       - '.github/workflows/m02s-wifi-hold-lab.yml'
@@ -48,7 +48,7 @@ jobs:
           grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' "$RUNNER_TEMP/signature.txt"
           "$TOOL/zipalign" -c -v 4 "$APK"
           "$TOOL/aapt" dump badging "$APK" | tee "$RUNNER_TEMP/badging.txt"
-          grep -q "package: name='com.vobichngan.bluestar.m02slab' versionCode='1' versionName='0.1.0'" "$RUNNER_TEMP/badging.txt"
+          grep -q "package: name='com.vobichngan.bluestar.m02sgattlab' versionCode='2' versionName='0.1.1'" "$RUNNER_TEMP/badging.txt"
           "$TOOL/aapt" dump permissions "$APK" | tee "$RUNNER_TEMP/permissions.txt"
           grep -q 'android.permission.BLUETOOTH_SCAN' "$RUNNER_TEMP/permissions.txt"
           grep -q 'android.permission.NEARBY_WIFI_DEVICES' "$RUNNER_TEMP/permissions.txt"
@@ -58,15 +58,15 @@ jobs:
           fi
           unzip -t "$APK" | tail -n 2
           mkdir -p release
-          cp "$APK" release/BlueStar_M02S_WifiHold_Lab_0.1.0_Android.apk
+          cp "$APK" release/BlueStar_M02S_GATT_Lab_0.1.1_Android.apk
           sha256sum release/*.apk | tee release/SHA256SUMS.txt
           echo "Source commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
           cat release/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
       - name: Upload installation APK
         uses: actions/upload-artifact@v4
         with:
-          name: BlueStar-M02S-WifiKeepalive-Standalone-APK
-          path: release/BlueStar_M02S_WifiHold_Lab_0.1.0_Android.apk
+          name: BlueStar-M02S-GattDiagnostic-v011-APK
+          path: release/BlueStar_M02S_GATT_Lab_0.1.1_Android.apk
           retention-days: 30
           if-no-files-found: error
       - name: Publish direct-browser APK
@@ -76,25 +76,25 @@ jobs:
         run: |
           set -euo pipefail
           cat > "$RUNNER_TEMP/note.txt" <<'EOF'
-          Blue Star M02S Wi-Fi Hold Lab v0.1.0 — independent Android APK.
-          Standalone non-destructive network diagnostic for HeyCyan/StarGlasses M02S on vivo X200 Pro.
-          Bluetooth LE scan and optional read-only GATT service discovery. Manual Wi-Fi Direct peer scan/connection, optional manual AP SSID/password connection through Android network request, 120-second Wi-Fi lock observation and read-only HTTP GET /app/getfilelist (limited to 192.168.x.x).
+          Blue Star M02S GATT Connection Lab v0.1.1 — independent Android APK.
+          Standalone non-destructive GATT diagnostic for M02S: previous GATT attempt received status=1 after 60s; this build adds 15-second bounded attempts.
+          BLE scan focuses on M02S/HeyCyan candidates, reports advertisement connectable bit and stops scanning before connectGatt. Manual LE + 1M vs default compatible GATT transport, both autoConnect=false; each 15s maximum; logs device bond/type, callback status/newState/elapsed, safe cancel and GATT service UUID discovery. No vendor characteristic writes. Original Wi-Fi tools are present, but not meaningful without a connected glasses network.
           Logs timestamps, P2P connection, network availability, HTTP response codes and local SHA-256 file-list fingerprint, NOT image contents or cloud submissions.
           No BLE shutter or Wi-Fi wake command is sent; exact M02S command values still need verification. In particular, a scan may not find P2P devices until the genuine glasses firmware enables transfer. A Wi-Fi lock cannot prevent the glasses firmware from closing Wi-Fi.
           Requests BT, nearby Wi-Fi and local network permissions. No camera, media or photo access; never deletes photos or touches original HeyCyan APK or Blue Star Guide RC25.
           Requires real device testing to verify any connection or 120-second keepalive claim. GitHub Actions only compiles and runs local unit tests.
           EOF
-          gh release create bluestar-m02s-wifi-hold-lab-20261114 \
-            release/BlueStar_M02S_WifiHold_Lab_0.1.0_Android.apk \
+          gh release create bluestar-m02s-gatt-lab-v011-20261114 \
+            release/BlueStar_M02S_GATT_Lab_0.1.1_Android.apk \
             release/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Blue Star M02S Wi-Fi Hold Lab v0.1.0 — standalone diagnostic" \
+            --title "Blue Star M02S BLE GATT Lab v0.1.1 — 15s connection diagnostics" \
             --prerelease --notes-file "$RUNNER_TEMP/note.txt"
       - name: Verify release assets
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view bluestar-m02s-wifi-hold-lab-20261114 --repo "$GITHUB_REPOSITORY" \
+          gh release view bluestar-m02s-gatt-lab-v011-20261114 --repo "$GITHUB_REPOSITORY" \
             --json isDraft,isPrerelease,assets,url \
             --jq '{isDraft,isPrerelease,url,assets: [.assets[] | {name: .name, size: .size, url: .url}]}'

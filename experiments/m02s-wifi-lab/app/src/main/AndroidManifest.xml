@@ -14,11 +14,11 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
 
-    <application android:label="蓝星 M02S 连接实验"
+    <application android:label="蓝星 M02S 蓝牙诊断"
         android:allowBackup="false" android:supportsRtl="true"
         android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
-        <activity android:name=".MainActivity" android:exported="true"
+        <activity android:name="com.vobichngan.bluestar.m02slab.MainActivity" android:exported="true"
             android:screenOrientation="portrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>

@@ -70,6 +70,7 @@ public final class MainActivity extends Activity {
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final List<WifiP2pDevice> peers = new ArrayList<>();
     private final List<BluetoothDevice> bleDevices = new ArrayList<>();
+    private final List<Boolean> bleCanConnect = new ArrayList<>();
     private final Set<String> seenBle = new HashSet<>();
     private final StringBuilder logData = new StringBuilder();
 
@@ -81,6 +82,11 @@ public final class MainActivity extends Activity {
     private WifiManager.WifiLock wifiLock;
     private BluetoothLeScanner bleScanner;
     private BluetoothGatt gatt;
+    private boolean gattConnecting = false;
+    private int gattAttempt = 0;
+    private long gattStarted = 0;
+    private Runnable gattTimeout;
+    private static final long GATT_TIMEOUT_MS = 15_000L;
     private boolean receiverRegistered = false;
     private boolean keepRunning = false;
     private volatile boolean destroyed = false;
@@ -117,13 +123,22 @@ public final class MainActivity extends Activity {
             try {
                 if ((name == null || name.isEmpty()) && permitted()) name = device.getName();
             } catch (SecurityException ignored) { }
-            if (name == null || name.isEmpty()) name = "(未广播名称)";
-            final String label = name + " / " + address + " / RSSI " + result.getRssi();
+            if (name == null) name = "";
+            name = name.trim();
+            // Keep the diagnostic focused: the previous version listed >30 unrelated
+            // nearby appliances and made selecting the actual glasses difficult.
+            String upper = name.toUpperCase(Locale.ROOT);
+            if (!(upper.startsWith("M02S") || upper.startsWith("HEYCYAN")
+                    || upper.startsWith("STARGLASSES"))) return;
+            final boolean connectable = result.isConnectable();
+            final String label = name + " / " + address + " / RSSI " + result.getRssi()
+                    + " / 可连接=" + connectable;
             ui.post(() -> {
                 if (destroyed || !seenBle.add(address)) return;
                 bleDevices.add(device);
+                bleCanConnect.add(connectable);
                 bleAdapter.add(label);
-                log("发现蓝牙设备：" + label);
+                log("发现目标眼镜：" + label);
             });
         }
         @Override public void onScanFailed(int errorCode) {
@@ -200,8 +215,12 @@ public final class MainActivity extends Activity {
         bleAdapter.add("选择扫描到的蓝牙设备");
         bleSpinner.setAdapter(bleAdapter);
         body.addView(bleSpinner);
-        addRow(body, button("扫描 BLE（10秒）", this::scanBle),
-                button("读取 GATT 服务", this::connectGattReadOnly));
+        addRow(body, button("扫描眼镜 BLE（10秒）", this::scanBle),
+                button("连接 LE 1M（15秒）", () -> connectGattReadOnly(false)));
+        addRow(body, button("兼容连接（15秒）", () -> connectGattReadOnly(true)),
+                button("主动断开 GATT", () -> closeGatt("用户主动断开")));
+        body.addView(text("先选 M02S-3584，再点 LE 1M。只做蓝牙服务发现；"
+                + "如果失败可手动试兼容连接。两种方式均不会发送眼镜控制指令。", 14, false));
 
         section(body, "② Wi-Fi Direct");
         peerSpinner = new Spinner(this);
@@ -333,6 +352,10 @@ public final class MainActivity extends Activity {
 
     private void scanBle() {
         if (!ensurePermission()) return;
+        if (gattConnecting) {
+            log("已有 GATT 连接尝试，先等待结果或点主动断开");
+            return;
+        }
         BluetoothManager bm = (BluetoothManager) getSystemService(BLUETOOTH_SERVICE);
         BluetoothAdapter a = bm == null ? null : bm.getAdapter();
         if (a == null || !a.isEnabled()) {
@@ -344,10 +367,11 @@ public final class MainActivity extends Activity {
             if (bleScanner == null) { log("当前设备没有 BLE Scanner"); return; }
             seenBle.clear();
             bleDevices.clear();
+            bleCanConnect.clear();
             bleAdapter.clear();
             bleAdapter.add("选择扫描到的蓝牙设备");
             bleScanner.startScan(bleCallback);
-            log("开始 BLE 扫描 10 秒；只记录广播信息，不发送命令");
+            log("开始目标眼镜 BLE 扫描 10 秒；隐藏无关设备，不发送命令");
             ui.postDelayed(() -> {
                 if (bleScanner == null) return;
                 try { bleScanner.stopScan(bleCallback); }
@@ -359,32 +383,136 @@ public final class MainActivity extends Activity {
             log("BLE 扫描异常：" + ex.getClass().getSimpleName());
         }
     }
-    private void connectGattReadOnly() {
+    private void stopBleScanForConnection() {
+        if (bleScanner == null) return;
+        try { bleScanner.stopScan(bleCallback); }
+        catch (SecurityException | IllegalStateException ex) {
+            log("停止 BLE 扫描返回：" + ex.getClass().getSimpleName());
+        }
+        bleScanner = null;
+        log("扫描已停止；避免和 GATT 建连竞争");
+    }
+
+    /** Only called from the main thread; late GATT callbacks are ignored by token. */
+    private void closeGatt(String reason) {
+        gattAttempt++;
+        gattConnecting = false;
+        if (gattTimeout != null) {
+            ui.removeCallbacks(gattTimeout);
+            gattTimeout = null;
+        }
+        BluetoothGatt prior = gatt;
+        gatt = null;
+        if (prior != null) {
+            try { prior.disconnect(); } catch (Exception ignored) { }
+            try { prior.close(); } catch (Exception ignored) { }
+        }
+        if (!destroyed) {
+            log("GATT 释放：" + reason);
+            status.setText("蓝牙：" + reason);
+        }
+    }
+
+    /**
+     * First try explicit BLE/1M. Optional manual control compares legacy
+     * Android default transport, without automatic retries or vendor writes.
+     */
+    private void connectGattReadOnly(boolean compat) {
         if (!ensurePermission()) return;
         int index = bleSpinner.getSelectedItemPosition() - 1;
-        if (index < 0 || index >= bleDevices.size()) { log("请先选中一个蓝牙设备"); return; }
-        if (gatt != null) { gatt.close(); gatt = null; }
+        if (index < 0 || index >= bleDevices.size()) {
+            log("先扫描并选中 M02S 眼镜");
+            return;
+        }
+        BluetoothDevice device = bleDevices.get(index);
+        if (!bleCanConnect.get(index)) {
+            log("注意：该设备广播不标记为可连接；GATT 可能失败");
+        }
+        stopBleScanForConnection();
+        closeGatt("准备新建连");
+        int token = ++gattAttempt;
+        gattConnecting = true;
+        gattStarted = SystemClock.elapsedRealtime();
+        String mode = compat ? "Android 默认传输（兼容）" : "TRANSPORT_LE + PHY_LE_1M";
         try {
-            log("尝试 GATT 连接，只发现服务、不读取账号或写入特征");
-            gatt = bleDevices.get(index).connectGatt(this, false, new BluetoothGattCallback() {
-                @Override public void onConnectionStateChange(BluetoothGatt g, int status, int next) {
-                    log("GATT 连接状态 " + next + "，结果代码 " + status);
-                    if (status == BluetoothGatt.GATT_SUCCESS && next == BluetoothProfile.STATE_CONNECTED) {
-                        try { g.discoverServices(); } catch (SecurityException ex) { log("GATT 服务发现无权限"); }
-                    }
+            log("GATT 发起：" + mode + "；autoConnect=false；仅发现服务");
+            log("设备类型=" + device.getType() + "；配对状态=" + device.getBondState()
+                    + "；扫描广播可连接=" + bleCanConnect.get(index));
+            status.setText("蓝牙连接中：" + mode + "（最多15秒）");
+            BluetoothGattCallback cb = new BluetoothGattCallback() {
+                @Override public void onConnectionStateChange(BluetoothGatt connection,
+                                                               int code, int state) {
+                    long cost = SystemClock.elapsedRealtime() - gattStarted;
+                    ui.post(() -> {
+                        if (destroyed || token != gattAttempt || connection != gatt) return;
+                        log("GATT 回调：status=" + code + "（"
+                                + GattDiagnosticPolicy.statusDescription(code) + "），newState="
+                                + state + "，耗时=" + cost + "ms");
+                        if (code != BluetoothGatt.GATT_SUCCESS) {
+                            closeGatt("连接失败 status=" + code);
+                            return;
+                        }
+                        if (state == BluetoothProfile.STATE_CONNECTED) {
+                            gattConnecting = false;
+                            if (gattTimeout != null) ui.removeCallbacks(gattTimeout);
+                            gattTimeout = null;
+                            status.setText("蓝牙已连接，正在发现服务");
+                            log("GATT 已连接；开始只读发现服务，不发送特征写入");
+                            try {
+                                if (!connection.discoverServices()) {
+                                    closeGatt("系统拒绝启动服务发现");
+                                }
+                            } catch (SecurityException ex) {
+                                closeGatt("服务发现权限被拒绝");
+                            }
+                        } else if (state == BluetoothProfile.STATE_DISCONNECTED) {
+                            closeGatt("设备已断开");
+                        }
+                    });
                 }
-                @Override public void onServicesDiscovered(BluetoothGatt g, int status) {
-                    if (status != BluetoothGatt.GATT_SUCCESS) {
-                        log("GATT 服务读取失败 " + status); return;
-                    }
-                    List<BluetoothGattService> services = g.getServices();
-                    log("GATT 服务个数：" + services.size());
-                    for (BluetoothGattService s : services) {
-                        log("服务 " + s.getUuid() + "，特征个数 " + s.getCharacteristics().size());
-                    }
+                @Override public void onServicesDiscovered(BluetoothGatt connection, int code) {
+                    ui.post(() -> {
+                        if (destroyed || token != gattAttempt || connection != gatt) return;
+                        log("GATT 服务发现：status=" + code);
+                        if (code != BluetoothGatt.GATT_SUCCESS) {
+                            closeGatt("服务发现失败 " + code);
+                            return;
+                        }
+                        try {
+                            List<BluetoothGattService> services = connection.getServices();
+                            log("GATT 服务发现成功，总数 " + services.size());
+                            for (BluetoothGattService svc : services) {
+                                log("服务 UUID " + svc.getUuid()
+                                        + "；特征数量 " + svc.getCharacteristics().size());
+                            }
+                            status.setText("蓝牙已连接：GATT 服务 " + services.size() + " 个");
+                            log("BLE 只读测试成功。请复制 GATT 日志，勿继续盲目尝试 Wi-Fi");
+                        } catch (SecurityException ex) {
+                            closeGatt("无法读取 GATT 服务列表");
+                        }
+                    });
                 }
-            });
-        } catch (SecurityException ex) { log("GATT 连接权限不足"); }
+            };
+            BluetoothGatt created = compat
+                    ? device.connectGatt(this, false, cb)
+                    : device.connectGatt(this, false, cb,
+                                         BluetoothDevice.TRANSPORT_LE, BluetoothDevice.PHY_LE_1M);
+            if (created == null) {
+                closeGatt("connectGatt 立即返回 null");
+                return;
+            }
+            gatt = created;
+            gattTimeout = () -> {
+                if (token != gattAttempt || !gattConnecting) return;
+                long ms = SystemClock.elapsedRealtime() - gattStarted;
+                log("GATT 15秒超时，至今没有成功连接回调；实际耗时=" + ms + "ms");
+                closeGatt("15秒超时（与此前60秒等待相比提前结束）");
+            };
+            ui.postDelayed(gattTimeout, GATT_TIMEOUT_MS);
+        } catch (SecurityException | IllegalArgumentException | IllegalStateException e) {
+            log("GATT 建连立即抛错：" + e.getClass().getSimpleName() + " " + e.getMessage());
+            closeGatt("无法发起连接");
+        }
     }
     private void requestPeers() {
         if (!permitted() || p2p == null || channel == null) return;
@@ -597,9 +725,8 @@ public final class MainActivity extends Activity {
         if (bleScanner != null) {
             try { bleScanner.stopScan(bleCallback); } catch (SecurityException ignored) {}
         }
-        if (gatt != null) {
-            try { gatt.close(); } catch (Exception ignored) {}
-        }
+        closeGatt("应用关闭");
+        ui.removeCallbacksAndMessages(null);
         if (apCallback != null) {
             try { connectivity.unregisterNetworkCallback(apCallback); }
             catch (Exception ignored) {}
