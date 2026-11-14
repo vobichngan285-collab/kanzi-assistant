@@ -31,7 +31,6 @@ import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
 import android.net.MacAddress;
-import android.net.wifi.ScanResult;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.net.wifi.WifiNetworkSpecifier;
@@ -1174,10 +1173,10 @@ public final class MainActivity extends Activity {
         if (wifiManager == null) return M02sApScanPolicy.choose(
                 targetWifiSsid, Collections.emptyList(), SystemClock.elapsedRealtime() * 1000L);
         try {
-            List<ScanResult> results = wifiManager.getScanResults();
+            List<android.net.wifi.ScanResult> results = wifiManager.getScanResults();
             List<M02sApScanPolicy.Beacon> safe = new ArrayList<>();
             if (results != null) {
-                for (ScanResult item : results) {
+                for (android.net.wifi.ScanResult item : results) {
                     if (item == null) continue;
                     // Only the exact, BLE-confirmed target SSID is considered.
                     if (!targetWifiSsid.equals(item.SSID)) continue;
