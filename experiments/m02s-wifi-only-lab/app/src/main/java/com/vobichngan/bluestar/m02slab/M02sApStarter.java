@@ -20,6 +20,7 @@ import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
 import android.net.RouteInfo;
 import android.net.wifi.WifiManager;
+import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiNetworkSpecifier;
 import android.os.Build;
 import android.os.Handler;
@@ -69,6 +70,7 @@ public final class M02sApStarter {
     private int generation;
     private boolean running;
     private boolean startedApRequest;
+    private boolean apWriteAcknowledged;
     private boolean startedWifiNetworkRequest;
     private boolean targetReady;
     private int scanChecks;
@@ -130,6 +132,7 @@ public final class M02sApStarter {
         running = true;
         final int token = generation;
         startedApRequest = false;
+        apWriteAcknowledged = false;
         startedWifiNetworkRequest = false;
         matchingDevices.clear();
         matchedAddresses.clear();
@@ -267,7 +270,10 @@ public final class M02sApStarter {
                                         || characteristic == null
                                         || !AA13.equals(characteristic.getUuid())) return;
                                 if (status != 0) fail(token, "AA13开热点写入失败 status=" + status);
-                                else callback.log("AA13 0x39/0x30写入成功；等待眼镜AA14 0x25 SSID信息");
+                                else {
+                                    apWriteAcknowledged = true;
+                                    callback.log("AA13 0x39/0x30写入成功；等待眼镜AA14 0x25 SSID信息");
+                                }
                             });
                         }
                         @Override public void onCharacteristicChanged(
@@ -373,7 +379,8 @@ public final class M02sApStarter {
         String ssid = M02sApWire.decodeWifiSsid(bytes);
         if (ssid == null) return;
         expectedSsid = ssid; // only in RAM
-        callback.log("收到AA14 0x25准确SSID，开始验证眼镜热点是否真正广播；凭证不写日志");
+        callback.log("收到AA14 0x25准确SSID；先查是否已连接该眼镜网络，未连接则扫描；SSID与凭证不写日志");
+        if (tryReuseConnectedTarget(token)) return;
         scanRequestedAtUs = SystemClock.elapsedRealtime() * 1000L;
         firstFreshSeenAtMs = 0;
         freshBssid = null;
@@ -384,6 +391,45 @@ public final class M02sApStarter {
             callback.log("Android主动Wi-Fi扫描受限：" + ex.getClass().getSimpleName());
         }
         scanForAp(token);
+    }
+
+    /** If Android is already connected to exactly the BLE-confirmed SSID,
+     * reuse that Network, but NEVER assume SSID alone proves real eyewear:
+     * MainActivity performs an OEM HTTP200 /app/getfilelist check next.
+     */
+    private boolean tryReuseConnectedTarget(int token) {
+        if (!valid(token) || !M02sWifiPolicy.isConnectableSsid(expectedSsid)) return false;
+        try {
+            for (Network network : connectivity.getAllNetworks()) {
+                NetworkCapabilities cap = connectivity.getNetworkCapabilities(network);
+                if (cap == null
+                        || !cap.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                        || !(cap.getTransportInfo() instanceof WifiInfo)) continue;
+                WifiInfo info = (WifiInfo) cap.getTransportInfo();
+                if (!expectedSsid.equals(M02sApScanPolicy.unquoteWifiSsid(info.getSSID())))
+                    continue;
+                LinkProperties properties = connectivity.getLinkProperties(network);
+                if (properties == null) continue;
+                for (RouteInfo route : properties.getRoutes()) {
+                    InetAddress gateway = route.getGateway();
+                    if (gateway == null || gateway.getAddress().length != 4) continue;
+                    String host;
+                    try { host = ProbePolicy.checkedLocalHost(gateway.getHostAddress()); }
+                    catch (IllegalArgumentException ignored) { continue; }
+                    targetNetwork = network;
+                    targetHost = host;
+                    targetReady = true;
+                    callback.log("已复用系统中同SSID且有私有网关的Wi-Fi Network；"
+                            + "不再请求新连接，随后必须通过原厂HTTP接口验证眼镜身份");
+                    callback.ready(network, host);
+                    return true;
+                }
+            }
+        } catch (SecurityException | IllegalStateException ex) {
+            callback.log("无法复用现有目标Wi-Fi，按原厂AP精准建连方式继续；原因类型="
+                    + ex.getClass().getSimpleName());
+        }
+        return false;
     }
 
     private void scanForAp(int token) {
@@ -420,15 +466,25 @@ public final class M02sApStarter {
             }
             if (M02sApReadinessPolicy.canConnect(observed, freshBssid,
                     firstFreshSeenAtMs, now)) {
-                connectWifi(token);
+                connectWifi(token, true);
                 return;
             }
         } else {
             freshBssid = null;
             firstFreshSeenAtMs = 0;
         }
-        if (now * 1000L - scanRequestedAtUs > 12_000_000L) {
-            fail(token, "12秒内未扫描到本次新的眼镜Wi-Fi热点；不连接旧缓存或邻居设备");
+        long elapsedUs = now * 1000L - scanRequestedAtUs;
+        if (elapsedUs >= M02sApConnectPolicy.SCAN_WAIT_LIMIT_US) {
+            if (M02sApConnectPolicy.allowExactSsidFallback(
+                    apWriteAcknowledged, expectedSsid, startedWifiNetworkRequest,
+                    observed.kind, elapsedUs)) {
+                callback.log("Android扫描12秒未提供持续有效的本次新热点证据；"
+                        + "依据已校验AA14 0x25准确SSID，仅向该目标申请一次系统Wi-Fi连接。"
+                        + "不把旧缓存当热点就绪，不连接其它SSID；以onAvailable、真实网关和原厂HTTP结果为准");
+                connectWifi(token, false);
+            } else {
+                fail(token, "12秒扫描仍不能连接：开AP写入未确认或目标SSID未校验；拒绝未知Wi-Fi请求");
+            }
             return;
         }
         if (scanChecks == 1 || scanChecks % 5 == 0)
@@ -438,10 +494,22 @@ public final class M02sApStarter {
         ui.postDelayed(scanTimer, 650L);
     }
 
-    private void connectWifi(int token) {
-        if (!valid(token) || startedWifiNetworkRequest || expectedSsid == null) return;
+    /**
+     * Reuses the OEM-tested exact SSID + WPA2 request path. The caller only
+     * changes when the one request is allowed, never its destination.
+     */
+    private void connectWifi(int token, boolean observedFreshBeacon) {
+        if (!valid(token) || startedWifiNetworkRequest || expectedSsid == null
+                || !apWriteAcknowledged
+                || !M02sWifiPolicy.isConnectableSsid(expectedSsid)) return;
         startedWifiNetworkRequest = true;
-        callback.log("新AP就绪：使用先前已成功的原厂SSID+WPA2方式，申请一次Android专属Wi-Fi");
+        if (scanTimer != null) {
+            ui.removeCallbacks(scanTimer);
+            scanTimer = null;
+        }
+        callback.log(observedFreshBeacon
+                ? "检测到目标AP本次新广播并完成稳定等待：申请一次Android精准SSID+WPA2连接"
+                : "仅对BLE证实的精确SSID申请一次Android连接；扫描受限不等于设备已上线，待真实网关和HTTP校验");
         try {
             WifiNetworkSpecifier spec = new WifiNetworkSpecifier.Builder()
                     .setSsid(expectedSsid)
@@ -523,6 +591,7 @@ public final class M02sApStarter {
         running = false;
         targetReady = false;
         startedApRequest = false;
+        apWriteAcknowledged = false;
         startedWifiNetworkRequest = false;
         expectedSsid = null;
         targetNetwork = null;
