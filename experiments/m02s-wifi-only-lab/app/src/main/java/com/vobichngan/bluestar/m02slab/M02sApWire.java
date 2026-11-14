@@ -35,4 +35,27 @@ public final class M02sApWire {
         String ssid = M02sWifiPolicy.decodeSsid(raw);
         return M02sWifiPolicy.isConnectableSsid(ssid) ? ssid : null;
     }
+    /**
+     * Upstream MIT E09 ACTION_SYNC(0x45) payload[0] is isTakePhoto boolean.
+     * -1 = not a validated photo-state event; 0 = inactive; 1 = active.
+     *
+     * On M02S this is a *candidate* physical-shutter notification only:
+     * it must be checked on the user's hardware, not assumed guaranteed.
+     */
+    public static int actionSyncPhotoFlag(byte[] frame) {
+        if (frame == null || frame.length < 15 || frame.length > 64
+                || (frame[0] & 255) != 0xAC || (frame[1] & 255) != 0x55)
+            return -1;
+        int len = ((frame[2] & 255) << 8) | (frame[3] & 255);
+        if (len != frame.length - 4 || (frame[4] & 255) != 0x45
+                || len < 11)
+            return -1;
+        int sum = 0;
+        for (int i = 4; i < frame.length - 1; i++)
+            sum = (sum + (frame[i] & 255)) & 255;
+        if (sum != (frame[frame.length - 1] & 255)) return -1;
+        int flag = frame[5] & 255;
+        return flag <= 1 ? flag : -1;
+    }
+
 }
