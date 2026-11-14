@@ -154,15 +154,24 @@ public final class MainActivity extends Activity {
     /** The original image is held in RAM only, never saved to disk or cloud. */
     private byte[] lastPhotoInMemory;
     private boolean photoBusy;
-    /** One-click flow does not start until AP + BLE are both ready. */
+    /** v0.1.8: shutter first without AP, then request AP for read-only transfer. */
     private boolean oneClickActive;
     private int oneClickGeneration;
     private int oneClickPollNumber;
     private boolean oneClickWaitingWrite;
+    private boolean oneClickAwaitingAp;
+    private boolean oneClickApOwned;
+    private boolean oneClickHasBaseline;
+    private int oneClickPhotoNotices;
+    private long oneClickPollStartedAt;
     private long oneClickShutterAt;
     private Runnable oneClickTimer;
     private M02sFreshPhotoPolicy.Selection oneClickPrevious;
     private List<M02sPhotoPolicy.Candidate> oneClickBefore = Collections.emptyList();
+    private List<M02sPhotoPolicy.Candidate> oneClickCapturedList = Collections.emptyList();
+    /** In-RAM only: the previous successful AP snapshot can be NEXT shot's baseline. */
+    private List<M02sPhotoPolicy.Candidate> previousFinishedList = Collections.emptyList();
+    private boolean previousFinishedListValid;
     private Network oneClickBoundNetwork;
     private String oneClickBoundHost;
 
@@ -256,7 +265,7 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(receiver, f);
         receiverRegistered = true;
-        log("v0.1.7 一键拍照取图实验：先记录列表基线，再发一次原厂拍照指令，只下载新出现且稳定的原图");
+        log("v0.1.8 顺序实验：先在AP未连接状态下蓝牙拍照，间隔5秒后连接AP，再读取原图");
         log("照片只从眼镜AP按原厂接口GET至内存；不保存相册、不上传云端、不删文件");
         requestPermissionsIfNeeded();
         updateNetworkStatus();
@@ -328,13 +337,13 @@ public final class MainActivity extends Activity {
         photoPreview.setScaleType(ImageView.ScaleType.FIT_CENTER);
         body.addView(photoPreview);
 
-        section(body, "⑤ 一键新拍照并自动获取（只用已连通AP）");
-        addRow(body, button("一键拍照并获取新照片", this::startOneClick),
-                button("取消本次拍照任务", () -> stopOneClick("用户取消本次一键任务")));
-        body.addView(text("先连接眼镜蓝牙和AP一次；按此按钮后先读取当前列表作基线，"
-                + "仅发送一次已经真机验证的原厂拍照命令，等待新文件出现并连续两次稳定后下载。"
-                + "最多等待45秒；绝不会用旧的最新照片冒充新拍照片。"
-                + "不自动重新连接Wi-Fi，不保存相册，不上传云端。", 14, false));
+        section(body, "⑤ v0.1.8 蓝牙先拍照 → AP取图");
+        addRow(body, button("蓝牙拍照 → AP取图", this::startOneClick),
+                button("取消本次实验", () -> stopOneClick("用户取消本次拍照取图")));
+        body.addView(text("先连蓝牙并开启AA14通知，不要提前连接AP。点击后仅发一次原厂拍照指令，"
+                + "记录0x22/0x42通知，遵守5秒蓝牙命令间隔，再自动连接目标AP。"
+                + "AP连通后核对两次稳定列表并在内存预览。首次无拍照前列表基线，"
+                + "只能显示“最新图片待人工核对”，不宣称必然拍到新图；下载后释放手机AP请求。", 14, false));
 
         // Retained internally for legacy diagnostics; never displayed, so
         // unrelated nearby P2P devices cannot be selected accidentally.
@@ -785,7 +794,19 @@ public final class MainActivity extends Activity {
         if (parsed != null && parsed.command == 0x25 && parsed.checksumOk) {
             acceptWifiSsidFrame(parsed);
         }
-        if (GattProtocolPolicy.shouldLogPayload(notificationCount)) {
+        // Never hide shot-related responses behind the generic first-40 log limit.
+        boolean importantPhotoNotice = oneClickActive && parsed != null && parsed.checksumOk
+                && (parsed.command == 0x22 || parsed.command == 0x42)
+                && (oneClickWaitingWrite || oneClickShutterAt > 0);
+        if (importantPhotoNotice) {
+            oneClickPhotoNotices++;
+            if (oneClickPhotoNotices <= 8) {
+                log("拍照阶段AA14照片通知#" + oneClickPhotoNotices
+                        + "：" + parsed.safeSummary()
+                        + "（设备响应不等于实际拍照，需核对实物）");
+            }
+        }
+        if (GattProtocolPolicy.shouldLogPayload(notificationCount) && !importantPhotoNotice) {
             long elapsed = SystemClock.elapsedRealtime() - notificationStarted;
             String detail = parsed == null
                     ? "未组成完整 AC55 帧（内容隐藏，可能是分片）"
@@ -903,10 +924,12 @@ public final class MainActivity extends Activity {
             oneClickWaitingWrite = false;
             if (code == 0) {
                 oneClickShutterAt = SystemClock.elapsedRealtime();
-                log("一键流程：AA13写入status=0，开始检查文件列表是否真的产生新照片；不凭回执宣称已拍照");
+                log("拍照AA13写入status=0；尚不能断言真实快门成功，等待拍照相关AA14通知");
                 final int run = oneClickGeneration;
-                oneClickTimer = () -> beginOneClickPolling(run);
-                ui.postDelayed(oneClickTimer, 800L);
+                long cooldown = Math.max(0L,
+                        (lastSentAt + 5500L) - SystemClock.elapsedRealtime());
+                oneClickTimer = () -> beginOneClickApStage(run);
+                ui.postDelayed(oneClickTimer, cooldown);
             } else {
                 stopOneClick("眼镜拍照命令GATT写入失败，status=" + code + "；不重发");
             }
@@ -914,6 +937,9 @@ public final class MainActivity extends Activity {
     }
 
     private void requestTargetWifi(WifiMode mode) {
+        if (oneClickActive && (!oneClickAwaitingAp || mode != WifiMode.AP)) {
+            log("拍照任务中禁止手动改变Wi-Fi顺序"); return;
+        }
         if (wifiMode != WifiMode.NONE || wifiConnecting || wifiVerified) {
             log("已有 Wi-Fi 会话或请求；先点「取消 Wi-Fi 连接」再试另一模式");
             return;
@@ -1152,6 +1178,17 @@ public final class MainActivity extends Activity {
                 ipField.setText(host);
                 log("从目标 AP 的 Android 路由发现私有网关IP；只读文件列表可手动测试");
                 status.setText("目标 AP 已建立；网关IP已获取（HTTP 服务待验证）");
+                if (oneClickActive && oneClickAwaitingAp) {
+                    oneClickAwaitingAp = false;
+                    oneClickBoundNetwork = apNetwork;
+                    oneClickBoundHost = host;
+                    oneClickPollStartedAt = SystemClock.elapsedRealtime();
+                    final int id = oneClickGeneration;
+                    log("拍照后AP连接成功，开始核对照片列表；此前AA14拍照通知数="
+                            + oneClickPhotoNotices);
+                    oneClickTimer = () -> beginOneClickPolling(id);
+                    ui.postDelayed(oneClickTimer, 300L);
+                }
                 return;
             } catch (IllegalArgumentException ignored) { }
         }
@@ -1882,7 +1919,7 @@ public final class MainActivity extends Activity {
     }
 
     private void copyDiagnostic() {
-        String payload = "M02S 一键拍照取图实验 v0.1.7 / Android " + Build.VERSION.RELEASE +
+        String payload = "M02S BLE先拍照再AP取图实验 v0.1.8 / Android " + Build.VERSION.RELEASE +
                 "\n" + logData.toString();
         ClipboardManager cb = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         cb.setPrimaryClip(ClipData.newPlainText("M02S diagnostic", payload));
