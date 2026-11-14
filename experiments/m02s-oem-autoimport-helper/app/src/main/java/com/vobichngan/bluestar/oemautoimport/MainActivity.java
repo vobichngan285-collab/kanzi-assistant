@@ -54,7 +54,10 @@ public final class MainActivity extends Activity {
         enabled.setTextSize(16);
         enabled.setChecked(getSharedPreferences(PREF, MODE_PRIVATE).getBoolean(ENABLED, false));
         enabled.setOnCheckedChangeListener((CompoundButton b, boolean checked) -> {
-            getSharedPreferences(PREF, MODE_PRIVATE).edit().putBoolean(ENABLED,checked).apply();
+            long arm = getSharedPreferences(PREF, MODE_PRIVATE).getLong("arm_sequence",0L);
+            getSharedPreferences(PREF, MODE_PRIVATE).edit()
+                    .putBoolean(ENABLED,checked)
+                    .putLong("arm_sequence", checked ? arm+1L : arm).apply();
             state.setText(checked
                     ? "实验开关已开启；仍须在系统无障碍设置中开启对应服务。"
                     : "已暂停；不会再执行自动导入点击。");
@@ -92,7 +95,7 @@ public final class MainActivity extends Activity {
                 + "② 打开原厂相册，确认当前没有待导入。\n"
                 + "③ 返回本程序打开开关和无障碍服务，再回到原厂相册。\n"
                 + "④ 佩戴眼镜拍一张新照片；相册出现「发现1个文件」与「导入」按钮时，等待自动点击。\n"
-                + "⑤ 检查高清照片是否真正导入成功；失败时只提交匿名状态。\n\n"
+                + "⑤ 检查高清照片是否真正导入成功；失败时只提交匿名状态。本测试每次打开开关最多自动点一次，下张需关掉开关再打开。\n\n"
                 + "不支持删除眼镜文件、自动处理多个旧文件或操作别的App。"
                 + "需要停用时关闭上方开关或系统无障碍服务。");
         guide.setTextSize(16);
