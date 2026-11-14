@@ -1135,9 +1135,12 @@ public final class MainActivity extends Activity {
             stopWifiSession("手机WLAN未开启，无法连接眼镜AP"); return;
         }
         apScanPolls = 0;
+        apFreshFirstSeenAtMs = 0L;
+        apFreshFirstBssid = null;
         apScanStartedAt = SystemClock.elapsedRealtime();
         requestOneAndroidWifiScan();
-        log("AP阶段1：等待目标SSID的实际热点扫描结果（最长10秒，绝不猜测其它SSID）");
+        log("AP阶段1：仅接受本次AP信息请求后产生的目标热点扫描记录；"
+                + "旧缓存即使只有几秒也不能当作已就绪；最多等待12秒");
         scanForTargetAp(token);
     }
 
@@ -1180,110 +1183,135 @@ public final class MainActivity extends Activity {
     }
 
     private void requestOneAndroidWifiScan() {
+        apScanRequestedAtUs = SystemClock.elapsedRealtime() * 1000L;
+        apScanResultsUpdated = false;
         try {
             boolean accepted = wifiManager.startScan();
-            log(accepted ? "Android已接受一次前台Wi-Fi扫描请求（不等于热点已出现）"
-                    : "系统限制主动扫描，改为读取可用的近期扫描缓存");
+            log(accepted
+                    ? "AP阶段1：已请求新的Android Wi-Fi扫描；等待本次请求后的ScanResult时间戳"
+                    : "AP阶段1：Android拒绝主动扫描（可能限流）；旧缓存不能作为新热点证据");
         } catch (SecurityException | IllegalStateException ex) {
-            log("Android主动扫描受限，继续使用只读扫描缓存；类型="
-                    + ex.getClass().getSimpleName());
+            log("AP阶段1：主动扫描不可用，类型=" + ex.getClass().getSimpleName()
+                    + "；只接受系统随后产生的新扫描结果");
         }
     }
 
-    private M02sApScanPolicy.Choice currentTargetApScan() {
-        if (wifiManager == null) return M02sApScanPolicy.choose(
-                targetWifiSsid, Collections.emptyList(), SystemClock.elapsedRealtime() * 1000L);
+    private M02sApReadinessPolicy.Observation currentTargetApScan() {
+        long nowUs = SystemClock.elapsedRealtime() * 1000L;
+        if (wifiManager == null) return M02sApReadinessPolicy.inspect(
+                targetWifiSsid, Collections.emptyList(), apScanRequestedAtUs, nowUs);
         try {
             List<android.net.wifi.ScanResult> results = wifiManager.getScanResults();
-            List<M02sApScanPolicy.Beacon> safe = new ArrayList<>();
+            List<M02sApScanPolicy.Beacon> exact = new ArrayList<>();
             if (results != null) {
                 for (android.net.wifi.ScanResult item : results) {
-                    if (item == null) continue;
-                    // Only the exact, BLE-confirmed target SSID is considered.
-                    if (!targetWifiSsid.equals(item.SSID)) continue;
-                    safe.add(new M02sApScanPolicy.Beacon(
+                    if (item == null || !targetWifiSsid.equals(item.SSID)) continue;
+                    exact.add(new M02sApScanPolicy.Beacon(
                             item.SSID, item.BSSID, item.timestamp));
                 }
             }
-            return M02sApScanPolicy.choose(targetWifiSsid, safe,
-                    SystemClock.elapsedRealtime() * 1000L);
+            return M02sApReadinessPolicy.inspect(
+                    targetWifiSsid, exact, apScanRequestedAtUs, nowUs);
         } catch (SecurityException | IllegalStateException ex) {
-            if (apScanPolls < 2) {
-                log("读取目标扫描缓存受Android限制，类型="
-                        + ex.getClass().getSimpleName() + "；不输出任何SSID或BSSID");
+            if (apScanPolls <= 2) {
+                log("AP阶段1：读取扫描结果受Android限制，类型="
+                        + ex.getClass().getSimpleName()
+                        + "；不记录SSID/BSSID，不能认定热点就绪");
             }
-            return M02sApScanPolicy.choose(targetWifiSsid, Collections.emptyList(),
-                    SystemClock.elapsedRealtime() * 1000L);
+            return M02sApReadinessPolicy.inspect(
+                    targetWifiSsid, Collections.emptyList(), apScanRequestedAtUs, nowUs);
         }
     }
 
     private void scanForTargetAp(int token) {
         if (destroyed || token != wifiSessionToken || wifiMode != WifiMode.AP
-                || !wifiConnecting) return;
+                || !wifiConnecting || apNetworkRequests != 0) return;
         apScanPolls++;
-        M02sApScanPolicy.Choice target = currentTargetApScan();
-        if (target.kind == M02sApScanPolicy.Kind.UNIQUE) {
-            log("AP阶段1：近期扫描发现唯一目标热点，使用其BSSID精准请求Android连接（地址不记录）");
-            connectTargetAp(target.uniqueBssid);
+        long nowMs = SystemClock.elapsedRealtime();
+        M02sApReadinessPolicy.Observation sample = currentTargetApScan();
+        if (sample.kind == M02sApReadinessPolicy.Kind.FRESH_AMBIGUOUS) {
+            log("AP阶段1：本次新扫描存在多个不同BSSID的同名热点，"
+                    + "为避免连接错误设备，不进行Wi-Fi连接");
+            stopWifiSession("同名目标热点不唯一");
             return;
         }
-        if (target.kind == M02sApScanPolicy.Kind.MULTIPLE) {
-            log("AP阶段1：目标SSID有多个不同热点，不能任意猜BSSID；改走原v0.1.6的SSID-only连接");
-            connectTargetAp(null);
+        if (sample.kind == M02sApReadinessPolicy.Kind.FRESH_UNIQUE) {
+            if (apFreshFirstBssid == null
+                    || !apFreshFirstBssid.equalsIgnoreCase(sample.uniqueBssid)) {
+                apFreshFirstSeenAtMs = nowMs;
+                apFreshFirstBssid = sample.uniqueBssid;
+                log("AP阶段1：已看到BLE目标SSID在本次请求后的新扫描记录；"
+                        + "不记录BSSID，保守等待1.8秒后使用v0.1.6已成功的SSID-only方式");
+            }
+            if (M02sApReadinessPolicy.canConnect(sample,
+                    apFreshFirstBssid, apFreshFirstSeenAtMs, nowMs)) {
+                log("AP阶段1：已完成新扫描证据及1.8秒等待；扫描完成回调="
+                        + apScanResultsUpdated
+                        + "；只发一次Android精准SSID网络请求；"
+                        + "注意扫描成功并不保证AP会接受连接");
+                connectTargetAp();
+                return;
+            }
+        } else {
+            apFreshFirstBssid = null;
+            apFreshFirstSeenAtMs = 0L;
+        }
+        if (nowMs - apScanStartedAt >= 12_000L) {
+            log("AP阶段1：12秒内没有持续有效的本次新扫描目标证据；旧缓存候选="
+                    + sample.cachedCount
+                    + "；系统扫描完成回调=" + apScanResultsUpdated
+                    + "；不盲目发起Wi-Fi连接，不能据此断定眼镜未广播");
+            stopWifiSession("没有拍照后新扫描证据，停止AP申请");
             return;
         }
-        long elapsed = SystemClock.elapsedRealtime() - apScanStartedAt;
-        if (elapsed >= 10_000L) {
-            log("AP阶段1：10秒内未见新鲜目标热点扫描记录；"
-                    + "为兼容v0.1.6已验证方法，仅提交一次准确SSID的连接请求");
-            connectTargetAp(null);
-            return;
-        }
-        if (apScanPolls == 1 || apScanPolls % 4 == 0) {
-            log("AP扫描尚未发现目标热点：第" + apScanPolls
-                    + "次检查；不代表热点一定未广播");
+        if (apScanPolls == 1 || apScanPolls % 5 == 0) {
+            log("AP阶段1：第" + apScanPolls
+                    + "次观察；目标状态=" + sample.kind
+                    + "；旧缓存数=" + sample.cachedCount
+                    + "；本次新扫描数=" + sample.freshCount);
         }
         apScanTimer = () -> scanForTargetAp(token);
-        ui.postDelayed(apScanTimer, 1200L);
+        ui.postDelayed(apScanTimer, 650L);
     }
 
-    /**
-     * onUnavailable does not tell us whether the user declined, the AP was
-     * absent, or authentication failed. Recheck for the EXACT target, and at
-     * most once switch SSID-only <-> BSSID-pinned if the target is visible.
-     * Never reissue BLE shutter or the OEM 0x39/0x30 request here.
-     */
-    private void scanLimitedApRecovery(int token) {
-        if (destroyed || token != wifiSessionToken || wifiMode != WifiMode.AP
-                || !wifiConnecting) return;
-        apScanPolls++;
-        M02sApScanPolicy.Choice target = currentTargetApScan();
-        if (M02sApScanPolicy.allowChangedStrategyRetry(
-                apNetworkRequests, apLastPinnedToBssid, target)) {
-            String fallbackBssid = apLastPinnedToBssid ? null : target.uniqueBssid;
-            log("AP阶段3：确认同一目标热点仍可见；改用另一种SSID/BSSID锁定方式"
-                    + "做最后一次Android网络请求，之后绝不自动重试");
-            connectTargetAp(fallbackBssid);
-            return;
+    private String apFailureDescription(int code) {
+        if (Build.VERSION.SDK_INT < 34) return "不支持细分诊断";
+        switch (code) {
+            case WifiManager.STATUS_LOCAL_ONLY_CONNECTION_FAILURE_ASSOCIATION:
+                return "关联阶段失败";
+            case WifiManager.STATUS_LOCAL_ONLY_CONNECTION_FAILURE_AUTHENTICATION:
+                return "认证阶段失败";
+            case WifiManager.STATUS_LOCAL_ONLY_CONNECTION_FAILURE_IP_PROVISIONING:
+                return "IP地址分配失败";
+            case WifiManager.STATUS_LOCAL_ONLY_CONNECTION_FAILURE_NOT_FOUND:
+                return "Android未找到匹配目标";
+            case WifiManager.STATUS_LOCAL_ONLY_CONNECTION_FAILURE_NO_RESPONSE:
+                return "目标AP连接无响应";
+            case WifiManager.STATUS_LOCAL_ONLY_CONNECTION_FAILURE_USER_REJECT:
+                return "系统用户拒绝连接";
+            case WifiManager.STATUS_LOCAL_ONLY_CONNECTION_FAILURE_UNKNOWN:
+            default:
+                return "未知或未分类";
         }
-        if (SystemClock.elapsedRealtime() - apScanStartedAt >= 6_000L) {
-            log("AP阶段3：Android连接失败且没有新的唯一目标热点证据；"
-                    + "不再尝试连接，需进一步区分热点广播/系统拒绝/认证原因");
-            stopWifiSession("目标AP系统连接失败，重试条件不满足");
-            return;
-        }
-        apScanTimer = () -> scanLimitedApRecovery(token);
-        ui.postDelayed(apScanTimer, 1200L);
     }
 
-    private void connectTargetAp(String bssid) {
+    private void detachApFailureListener() {
+        if (apFailureListener == null) return;
+        try {
+            if (Build.VERSION.SDK_INT >= 34 && wifiManager != null) {
+                wifiManager.removeLocalOnlyConnectionFailureListener(apFailureListener);
+            }
+        } catch (SecurityException | IllegalStateException ignored) { }
+        apFailureListener = null;
+    }
+
+    private void connectTargetAp() {
         if (!ensurePermission() || wifiMode != WifiMode.AP ||
                 !M02sWifiPolicy.isConnectableSsid(targetWifiSsid)) {
-            stopWifiSession("无法申请 AP 连接，权限或SSID无效"); return;
+            stopWifiSession("无法申请AP连接，权限或SSID无效"); return;
         }
-        if (apNetworkRequests >= 2) {
-            stopWifiSession("AP最多允许两次不同策略的网络请求；禁止无限重试");
-            return;
+        if (apNetworkRequests != 0) {
+            log("AP阶段2：已申请过本次目标网络；不重复请求，不重发拍照"); return;
         }
         final int token = wifiSessionToken;
         ApRequestDiagnostic.Stage stage = ApRequestDiagnostic.Stage.PREPARE_SPECIFIER;
@@ -1295,34 +1323,53 @@ public final class MainActivity extends Activity {
         log(ApRequestDiagnostic.permissionSummary(
                 changeNetwork, accessNetwork, nearbyWifi, fineLocation));
         if (!changeNetwork || !accessNetwork) {
-            stopWifiSession("AP权限预检未通过：缺少CHANGE_NETWORK_STATE或ACCESS_NETWORK_STATE");
-            return;
+            stopWifiSession("缺少Android精准连接所需权限"); return;
         }
-        // Ensure the first failed NetworkCallback cannot affect the second
-        // request or accidentally consume Android resources.
         if (apCallback != null) {
             try { connectivity.unregisterNetworkCallback(apCallback); }
             catch (Exception ignored) { }
             apCallback = null;
         }
+        detachApFailureListener();
+        apLocalFailureReason = -1;
         try {
-            WifiNetworkSpecifier.Builder specBuilder = new WifiNetworkSpecifier.Builder()
-                    .setSsid(targetWifiSsid).setWpa2Passphrase(OEM_WIFI_KEY);
-            if (bssid != null) {
-                if (!M02sApScanPolicy.validBssid(bssid)) {
-                    stopWifiSession("目标BSSID不符合校验条件"); return;
-                }
-                specBuilder.setBssid(MacAddress.fromString(bssid));
-            }
-            WifiNetworkSpecifier spec = specBuilder.build();
+            // The v0.1.6 SSID-only configuration already worked on this phone.
+            // This experiment adjusts scan readiness and records *why* Android
+            // fails; it does not change passwords, invent AP modes or pin BSSID.
+            WifiNetworkSpecifier spec = new WifiNetworkSpecifier.Builder()
+                    .setSsid(targetWifiSsid).setWpa2Passphrase(OEM_WIFI_KEY).build();
             stage = ApRequestDiagnostic.Stage.BUILD_NETWORK_REQUEST;
             NetworkRequest request = new NetworkRequest.Builder()
                     .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
                     .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                     .setNetworkSpecifier(spec).build();
-            apNetworkRequests++;
-            apLastPinnedToBssid = bssid != null;
-            final int attempt = apNetworkRequests;
+
+            if (Build.VERSION.SDK_INT >= 34 && wifiManager != null) {
+                try {
+                    final WifiManager.LocalOnlyConnectionFailureListener listener =
+                            new WifiManager.LocalOnlyConnectionFailureListener() {
+                        @Override public void onConnectionFailed(
+                                WifiNetworkSpecifier failed, int reason) {
+                            if (destroyed || token != wifiSessionToken
+                                    || wifiMode != WifiMode.AP
+                                    || apFailureListener != this) return;
+                            apLocalFailureReason = reason;
+                            log("AP阶段2：Android报告本地设备网络失败原因="
+                                    + apFailureDescription(reason) + "；状态码=" + reason
+                                    + "；SSID/BSSID/口令不记录");
+                        }
+                    };
+                    apFailureListener = listener;
+                    wifiManager.addLocalOnlyConnectionFailureListener(
+                            getMainExecutor(), listener);
+                    log("AP阶段2：已开启Android 14+本地设备连接失败原因监听");
+                } catch (SecurityException | IllegalStateException ex) {
+                    apFailureListener = null;
+                    log("AP阶段2：失败原因监听不可用，类型="
+                            + ex.getClass().getSimpleName() + "；仍以Network回调为准");
+                }
+            }
+            apNetworkRequests = 1;
             apCallback = new ConnectivityManager.NetworkCallback() {
                 @Override public void onAvailable(Network network) {
                     ui.post(() -> {
@@ -1332,10 +1379,8 @@ public final class MainActivity extends Activity {
                         wifiVerified = true;
                         wifiConnecting = false;
                         cancelWifiTimers();
-                        log("AP阶段2：Android目标Network已连接；请求序号=" + attempt
-                                + "；BSSID锁定=" + apLastPinnedToBssid
-                                + "；等待系统提供网关");
-                        status.setText("目标AP已连接，正在获取实际网关");
+                        log("AP阶段2：Android目标网络onAvailable；单次SSID-only申请成功，待真实网关");
+                        status.setText("目标AP网络已连接；获取真实网关中");
                         LinkProperties lp = connectivity.getLinkProperties(network);
                         if (lp != null) updateApGateway(lp);
                     });
@@ -1352,45 +1397,34 @@ public final class MainActivity extends Activity {
                     ui.post(() -> {
                         if (token != wifiSessionToken || apCallback != this
                                 || apNetwork == null || !apNetwork.equals(network)) return;
-                        log("Android报告目标AP网络断开；请求序号=" + attempt);
-                        if (oneClickActive) stopOneClick("AP下载阶段网络断开");
-                        else stopWifiSession("已连接的目标AP网络断开");
+                        log("AP阶段2：已连接目标Network后来断开");
+                        if (oneClickActive) stopOneClick("AP网络在下载阶段断开");
+                        else stopWifiSession("已连接目标AP网络断开");
                     });
                 }
                 @Override public void onUnavailable() {
                     ui.post(() -> {
-                        if (token != wifiSessionToken || apCallback != this
+                        if (destroyed || token != wifiSessionToken || apCallback != this
                                 || wifiMode != WifiMode.AP) return;
-                        log("AP阶段2：Android onUnavailable；请求序号=" + attempt
-                                + "；本次使用BSSID锁定=" + apLastPinnedToBssid
-                                + "；无法从此回调确定是热点/认证/用户授权哪种原因");
-                        if (apNetworkRequests > 1) {
-                            stopWifiSession("Android第二次AP连接请求失败；不再重试");
-                            return;
-                        }
-                        // The old request is no longer active; Android may have
-                        // already closed it, so unregister errors are harmless.
-                        if (apCallback != null) {
-                            try { connectivity.unregisterNetworkCallback(apCallback); }
-                            catch (Exception ignored) { }
-                            apCallback = null;
-                        }
-                        apScanPolls = 0;
-                        apScanStartedAt = SystemClock.elapsedRealtime();
-                        log("AP阶段3：第一次连接失败，仅观察目标热点6秒；"
-                                + "只有看到准确且唯一的目标BSSID才允许最后一次不同策略连接");
-                        requestOneAndroidWifiScan();
-                        scanLimitedApRecovery(token);
+                        log("AP阶段2：Android onUnavailable；只申请过一次网络；"
+                                + "稍后读取本地连接失败原因，不再立即用旧缓存重新连接");
+                        ui.postDelayed(() -> {
+                            if (destroyed || token != wifiSessionToken || apCallback != this
+                                    || wifiMode != WifiMode.AP || wifiVerified) return;
+                            log("AP阶段3：最终未连接；本地失败原因="
+                                    + (apLocalFailureReason < 0 ? "系统未提供细分原因"
+                                    : apFailureDescription(apLocalFailureReason))
+                                    + "；本轮不自动重试、不重新拍照、不下载旧图");
+                            stopWifiSession("单次AP连接未成功");
+                        }, 1000L);
                     });
                 }
             };
             stage = ApRequestDiagnostic.Stage.REQUEST_NETWORK;
             connectivity.requestNetwork(request, apCallback, 48_000);
-            log("AP阶段2：已向Android提交精准SSID网络请求 #" + attempt
-                    + "；锁定BSSID=" + (bssid != null)
-                    + "；已授予权限仍须等待真正onAvailable");
+            log("AP阶段2：已提交单次精确SSID、原厂WPA2密钥的Android连接请求；等待系统授权和onAvailable");
         } catch (SecurityException | IllegalArgumentException | IllegalStateException ex) {
-            // The OEM may include SSID/BSSID in exception messages; never print them.
+            // Exception messages may contain private credentials or SSID.
             log(ApRequestDiagnostic.safeFailure(stage, ex));
             stopWifiSession("AP请求异常：" + ex.getClass().getSimpleName());
         }
