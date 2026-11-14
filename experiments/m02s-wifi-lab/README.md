@@ -1,27 +1,34 @@
-# 蓝星 M02S AP 权限修复实验 v0.1.5（Android 16）
+# 蓝星 M02S 原始照片内存下载验证实验 v0.1.6
 
-## 来自 vivo X200 Pro 的真实故障
-v0.1.4 已经验证：GATT LE 1M 成功、AA14 订阅成功、用户点击“AP 热点精准连接”后向 AA13 发送官方 0x39/0x30，收到 0x39 回执和 0x25 SSID（13 字节、校验通过、UTF-8 已解析）；随后程序在调用 Android 连接网络阶段出现 **`SecurityException`**，日志为：
-`17:17:40 实验 Wi-Fi 会话已停止：AP 请求异常：SecurityException`
-**系统并未弹 Wi-Fi 许可框，也未成功连接 AP。**
+## 已经核实的手机真机基础
+- vivo X200 Pro / Android 16：M02S-3584 蓝牙 GATT LE1M、AA14 通知、原厂 AP Wi-Fi 信息请求、0x25 SSID 解析、Android AP onAvailable、私有网关均成功。
+- GET /app/getfilelist：HTTP 200 / 99ms / 635字节，后续16次连续访问全部HTTP 200（29～278ms）。
+- 应用切换到 ChatGPT 后出现约63秒调度空档，恢复访问仍然成功；不能由此推断每3秒后台请求持续运行。
+- 原厂 BLE 遥控拍照用户已经亲测。原始照片内容此前没有下载或验证成功。
 
-## 修复
-- 在 `AndroidManifest.xml` 新增标准普通权限 `android.permission.CHANGE_NETWORK_STATE`；原版本已有 `ACCESS_NETWORK_STATE`、`CHANGE_WIFI_STATE`、`NEARBY_WIFI_DEVICES` 等。此权限用于 Android `ConnectivityManager.requestNetwork()`，是上次异常的**优先排查原因，不把它假定为已经真机修复**。
-- 在准备 AP 请求时先读取并记录四项授权状态：`CHANGE_NETWORK_STATE`、`ACCESS_NETWORK_STATE`、`NEARBY_WIFI_DEVICES`、`ACCESS_FINE_LOCATION`。缺少关键网络权限会安全停止，不再盲目发起网络连接。
-- 出错时只记录调用阶段：构建 `WifiNetworkSpecifier`、构建 `NetworkRequest`、提交 `ConnectivityManager.requestNetwork`，以及异常类型（`SecurityException` 等）。**不输出 Android 异常原文**，因为某些系统异常可能包含私有 SSID/密码；任何 Wi-Fi SSID、配对口令与 0x25 原始载荷均未输出/持久化。
-- 保留 v0.1.4 目标SSID精确匹配、P2P只连接唯一匹配设备（不会连惠普打印机）、原版成功的 BLE 连接/0x25 解码和禁止未确认网络上进行 HTTP 探测的保护逻辑；不新增厂商未知指令。
+## 官方 HeyCyan APK 核查
+- 原厂 APK com.starglasses.app v1.0.24-c 的 classes5.dex 已实际核对包含 app/getfilelist、app/getthumbnail?file=、PhotoApBean、FilesDTO 与 createtimestr，具体方法链见原仓库 PROJECT_HANDOFF.md。
+- AP 模式列表接口 GET /app/getfilelist，JSON 使用 info[] → files[] → name、size、createtimestr、type；旧 P2P 模式才使用 FileListParser.parseXml，不能混淆。
+- AP 原图下载使用设备根地址加 FileItem.getName()，缩略图是 /app/getthumbnail?file=...；本实验仅研究单张原图，不要求缩略图。
+- 本版不发送 fileDownloadFinish 或其它未经真机验证的蓝牙私有指令，也不主动断开 AP。
 
-## 安装与单次测试
-- 新包名 `com.vobichngan.bluestar.m02sapfixlab`，版本 `0.1.5`，与 v0.1.4/早期实验、正式 Blue Star Guide RC25 和原厂 HeyCyan **共存，不覆盖**。
-- 退出 HeyCyan，打开独立实验APK。先点扫描眼镜→选 M02S-3584→连接 LE 1M→开启 120秒 BLE 监听，等 AA14 CCCD 状态0。
-- **只点击一次 AP 热点精准连接**。程序发送官方 0x39/0x30 并监听 AA14 0x25/SSID；看到新日志中的 `AP系统权限预检：CHANGE_NETWORK_STATE=已授权`。随后：
-  - 如 Android 提示连接专用 Wi-Fi 网络，请在系统弹窗里确认；
-  - 若成功，日志应显示“Android 已连接到指定的眼镜 AP 网络”及“网关IP已获取”。**Wi-Fi 成功之前，切勿尝试文件列表或保活**；
-  - 如再失败，复制从“AP系统权限预检”至异常和“会话已停止”的日志即可，不需再次测试 P2P/拍照或反复扫描。
-- 对照意义：若 `CHANGE_NETWORK_STATE=已授权`，但在 `提交 requestNetwork` 阶段仍是 `SecurityException`，则应进一步定位 Vivo/Android 16 特定系统限制或调用条件，**不能继续宣称只缺一个权限**。
+## 实验程序
+- 在独立版本 v0.1.5 代码基础上开发 v0.1.6；独立包名 com.vobichngan.bluestar.m02sphotolab，正式蓝星向导、官方 APK 和旧实验不更改。
+- 保留蓝牙 LE1M → AA14 status=0 → AP热点精准连接 → onAvailable+真实私有网关 的已验证链路。
+- 新增“只解析照片列表”：通过已验证的眼镜 AP Network 请求官方JSON，大小上限256KB，不打印照片名、时间或JSON，只显示候选数和能否判断时间。
+- 新增“获取最新照片（自动）”：先读取列表，只有唯一候选或能确认唯一最新时间才下载。多个候选且时间缺失或并列时拒绝猜测，用户可从匿名序号下拉框手动选一张点击“下载选中照片（手动）”。
+- 原图URL遵循官方 root+name 规则，但限制必须为实际AP Network + 私有网关地址 + 安全相对图片路径（拒绝绝对路径、上级路径、URL/查询/片段等）。不跟随重定向，不切换到其他网络，严格只读HTTP GET。
+- JSON限256KB，原图限32MB；校验 JPEG/PNG/WebP 文件头、扩展名与Android BitmapFactory解码尺寸；压缩比例只针对预览缩放，原始图片字节保留在当前APP进程内存。退出、取消网络或点“清除内存预览”即丢弃。
+- 不保存相册、不写磁盘、不读取其他照片、不上传云、不删除眼镜文件、不碰固件，不自动发蓝牙完成通知或断开Wi-Fi。
+- 新增单测覆盖官方AP结构的合成JSON、路径防穿越、图片头检查、最新图片歧义拒绝、重复记录与超大图片拒绝。
 
-## 自动验证
-GitHub Actions 执行 Java 单元测试、Android Gradle SDK36 编译、APK v2 签名、zipalign、ZIP完整性、应用包名与版本校验，并**额外核查 APK 实际声明 CHANGE_NETWORK_STATE、ACCESS_NETWORK_STATE、CHANGE_WIFI_STATE**。测试覆盖调用阶段诊断、权限状态和异常信息隐私保护。
+## 单次真机测试说明
+1. 退出官方HeyCyan，打开v0.1.6，扫描M02S，连接LE1M，开启AA14监听等待订阅status=0。
+2. 点“AP热点精准连接”，等待Android onAvailable和私有网关就绪。
+3. 先点一次“只解析照片列表”，若JSON解析失败请直接发诊断日志，不要重复扫描。
+4. 如果列表解析成功，点“获取最新照片（自动）”；若显示最新时间无法确定，可手动选择匿名候选序号并只下载一张。
+5. 成功会在实验APP中显示照片预览，日志显示原图尺寸、文件大小、耗时和摘要。HTTP200列表本身不代表照片下载成功。
+6. 不需要提供原始照片、完整文件名、网络SSID、连接密码或全部JSON；发送自动脱敏的诊断日志即可。
 
-## 限制
-这次只修复 Android 网络权限候选问题，没有证据证实眼镜已经连接热点。照片自动传输、Wi-Fi 保活仍未实现。正式安卓/Windows项目原代码、旧实验分支、官方 APK 均保持不变。
+## 当前未解决
+原厂 AP JSON 的真实635字节内容仍未知，可能与假设的字段形状不同；实际M02S原图远程路径和图片字节尚未真机验证。后台自动监控、长期AP连通和云端AI朗读未进入本实验。

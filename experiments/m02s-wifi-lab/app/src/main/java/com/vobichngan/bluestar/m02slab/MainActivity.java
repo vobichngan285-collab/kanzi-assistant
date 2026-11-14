@@ -22,6 +22,8 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.ConnectivityManager;
 import android.net.LinkProperties;
 import android.net.RouteInfo;
@@ -46,6 +48,7 @@ import android.view.WindowManager;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
@@ -53,11 +56,13 @@ import android.widget.TextView;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.InetAddress;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -142,6 +147,13 @@ public final class MainActivity extends Activity {
     private EditText ipField, ssidField, passField;
     private Spinner peerSpinner, bleSpinner;
     private ArrayAdapter<String> peerAdapter, bleAdapter;
+    private Spinner photoSpinner;
+    private ArrayAdapter<String> photoAdapter;
+    private ImageView photoPreview;
+    private List<M02sPhotoPolicy.Candidate> photoCandidates = Collections.emptyList();
+    /** The original image is held in RAM only, never saved to disk or cloud. */
+    private byte[] lastPhotoInMemory;
+    private boolean photoBusy;
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -233,8 +245,8 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(receiver, f);
         receiverRegistered = true;
-        log("v0.1.5 AP系统权限修复：补齐 CHANGE_NETWORK_STATE 并增加调用阶段诊断，不输出SSID和密码");
-        log("仅手动选择 P2P 或 AP 连接路线；不会输出 SSID/连接密码、不会读取照片或上传云端");
+        log("v0.1.6 原始照片实验：保留已验证BLE+AP网络，新增内存JSON列表解析和安全原图预览");
+        log("照片只从眼镜AP按原厂接口GET至内存；不保存相册、不上传云端、不删文件");
         requestPermissionsIfNeeded();
         updateNetworkStatus();
     }
@@ -248,7 +260,7 @@ public final class MainActivity extends Activity {
         body.setBackgroundColor(Color.rgb(245, 248, 252));
         scroll.addView(body);
 
-        body.addView(text("蓝星 M02S AP权限修复 v0.1.5", 23, true));
+        body.addView(text("蓝星 M02S 原图验证 v0.1.6", 23, true));
         body.addView(text("独立实验，不修改正式蓝星向导。Wi-Fi 网络名称/密码不会写进日志。", 14, false));
         status = text("蓝牙未连接 / 眼镜 Wi-Fi 未建立", 17, true);
         status.setPadding(0, dp(12), 0, dp(10));
@@ -282,8 +294,28 @@ public final class MainActivity extends Activity {
                 button("保持连接观察 120秒", this::startHold));
         addRow(body, button("停止观察", () -> finishHold("用户停止")),
                 button("复制诊断", this::copyDiagnostic));
-        body.addView(text("只有确认为 M02S 目标的 Wi-Fi 连接成功、获得可用设备地址，"
-                + "才允许请求 /app/getfilelist。不会读取照片或上传云端。", 14, false));
+        body.addView(text("仅在目标 AP 系统确认连通后才能访问文件接口；不读未知地址、不自动断开Wi-Fi。", 14, false));
+
+        section(body, "④ 原始照片下载（内存中验证，不保存相册）");
+        addRow(body, button("获取最新照片（自动）", () -> loadPhotoList(true)),
+                button("只解析照片列表", () -> loadPhotoList(false)));
+        photoSpinner = new Spinner(this);
+        photoAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item);
+        photoAdapter.add("选择候选照片（自动判断失败时手动选）");
+        photoSpinner.setAdapter(photoAdapter);
+        body.addView(photoSpinner);
+        addRow(body, button("下载选中照片（手动）", this::downloadChosenPhoto),
+                button("清除内存预览", this::clearPhotoUi));
+        body.addView(text("优先按官方JSON列表的创建时间选最新照片；时间不可靠时不猜，"
+                + "可手动选候选编号。仅用已连接的眼镜AP下载JPEG/PNG/WebP原图，"
+                + "检查图片格式与分辨率，限制最大32MB。不发完成通知、不删照片、不上传。", 14, false));
+        photoPreview = new ImageView(this);
+        photoPreview.setContentDescription("下载到内存的眼镜照片预览");
+        photoPreview.setAdjustViewBounds(true);
+        photoPreview.setMinimumHeight(dp(90));
+        photoPreview.setMaxHeight(dp(280));
+        photoPreview.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        body.addView(photoPreview);
 
         // Retained internally for legacy diagnostics; never displayed, so
         // unrelated nearby P2P devices cannot be selected accidentally.
@@ -1048,6 +1080,7 @@ public final class MainActivity extends Activity {
                             apNetwork = null;
                             wifiVerified = false;
                             verifiedHost = null;
+                            clearPhotoUi();
                             ipField.setText("");
                             log("Android 报告目标 AP 连接断开");
                             status.setText("AP 已断线，需重新发起连接");
@@ -1102,6 +1135,7 @@ public final class MainActivity extends Activity {
         wifiSessionToken++;
         cancelWifiTimers();
         finishHold("Wi-Fi 会话结束");
+        clearPhotoUi();
         awaitingSsid = false;
         wifiConnecting = false;
         wifiVerified = false;
@@ -1386,8 +1420,234 @@ public final class MainActivity extends Activity {
         }
     }
 
+    /** File/photo experiments are bound to the already authenticated AP Network. */
+    private boolean photoNetworkReady() {
+        if (!wifiVerified || wifiMode != WifiMode.AP || verifiedHost == null
+                || apNetwork == null) {
+            log("照片操作被拦截：必须先由Android确认M02S AP连接并获取设备网关");
+            return false;
+        }
+        return true;
+    }
+
+    private void clearPhotoUi() {
+        photoCandidates = Collections.emptyList();
+        photoBusy = false;
+        lastPhotoInMemory = null;
+        if (photoAdapter != null) {
+            photoAdapter.clear();
+            photoAdapter.add("选择候选照片（自动判断失败时手动选）");
+        }
+        if (photoPreview != null) photoPreview.setImageBitmap(null);
+    }
+
+    private void fillPhotoCandidates(M02sPhotoListReader.Result list) {
+        photoCandidates = list.candidates;
+        photoAdapter.clear();
+        photoAdapter.add("选择候选照片（不展示文件名）");
+        int dates = 0;
+        for (int i = 0; i < list.candidates.size(); i++) {
+            M02sPhotoPolicy.Candidate item = list.candidates.get(i);
+            if (item.sortableTime != null) dates++;
+            photoAdapter.add("照片候选 " + (i + 1) + " · 时间"
+                    + (item.sortableTime == null ? "不明确" : "可排序")
+                    + " · 文件大小" + (item.declaredBytes < 0 ? "未知" : "已知"));
+        }
+        log("AP JSON文件列表解析成功：总条目=" + list.entriesObserved
+                + "；可安全识别的图片候选=" + list.eligibleImages
+                + "；可排序时间=" + dates + "（内容、名称和时间值不进日志）");
+    }
+
+    private void loadPhotoList(boolean downloadLatest) {
+        if (!photoNetworkReady()) return;
+        if (photoBusy) { log("正在进行照片实验，请等待当前请求完成"); return; }
+        finishHold("执行照片单次查询，停止周期探测");
+        photoBusy = true;
+        final int token = wifiSessionToken;
+        final Network dedicatedNetwork = apNetwork;
+        final String host = verifiedHost;
+        status.setText("读取眼镜AP的JSON照片列表中");
+        log("开始读取官方AP JSON列表 /app/getfilelist（最多256KB）；不会打印任何文件名");
+        io.execute(() -> {
+            try {
+                M02sPhotoTransport.Response response =
+                        M02sPhotoTransport.getList(dedicatedNetwork, host);
+                if (response.httpCode != 200) {
+                    ui.post(() -> {
+                        if (destroyed || token != wifiSessionToken) return;
+                        photoBusy = false;
+                        log("AP JSON列表HTTP状态=" + response.httpCode + "；停止，不尝试原图");
+                        status.setText("照片列表HTTP失败 " + response.httpCode);
+                    });
+                    return;
+                }
+                M02sPhotoListReader.Result list =
+                        M02sPhotoListReader.parse(response.body);
+                M02sPhotoPolicy.Candidate latest =
+                        M02sPhotoPolicy.uniqueLatestOrNull(list.candidates);
+                ui.post(() -> {
+                    if (destroyed || token != wifiSessionToken || !photoNetworkReady()) return;
+                    fillPhotoCandidates(list);
+                    if (!downloadLatest) {
+                        photoBusy = false;
+                        status.setText("照片列表已解析，待手动选择或自动下载");
+                        return;
+                    }
+                    if (latest == null) {
+                        photoBusy = false;
+                        if (list.eligibleImages == 0) {
+                            log("没有符合安全图片规则的候选；原图未下载");
+                            status.setText("未找到可安全下载的图片");
+                        } else {
+                            log("无法唯一确定最新照片（时间缺失或相同）；拒绝按列表顺序猜测。可选择候选编号手动下载");
+                            status.setText("无法确认最新照片，请手动选择候选编号");
+                        }
+                        return;
+                    }
+                    log("已唯一确认最新图像候选，准备只读下载原图；不会保存相册");
+                    beginDownload(latest, token, host, dedicatedNetwork);
+                });
+            } catch (Exception ex) {
+                final String kind = ex.getClass().getSimpleName();
+                ui.post(() -> {
+                    if (destroyed || token != wifiSessionToken) return;
+                    photoBusy = false;
+                    log("AP文件列表读取/解析失败：" + kind
+                            + "；为隐私不记录响应内容和原始异常消息");
+                    status.setText("文件列表解析未通过验证");
+                });
+            }
+        });
+    }
+
+    private void downloadChosenPhoto() {
+        if (!photoNetworkReady()) return;
+        if (photoBusy) { log("有照片请求正在进行，请稍等"); return; }
+        int index = photoSpinner.getSelectedItemPosition() - 1;
+        if (index < 0 || index >= photoCandidates.size()) {
+            log("先点击「只解析照片列表」，再手动选择一个候选编号");
+            return;
+        }
+        M02sPhotoPolicy.Candidate item = photoCandidates.get(index);
+        log("用户手动选择了候选序号 " + (index + 1)
+                + "；仅下载这一张，不认定它一定是最新照片");
+        photoBusy = true;
+        finishHold("开始选中照片下载");
+        beginDownload(item, wifiSessionToken, verifiedHost, apNetwork);
+    }
+
+    private static final class CheckedImage {
+        final Bitmap preview;
+        final int originalWidth;
+        final int originalHeight;
+        final M02sPhotoPolicy.ImageKind kind;
+
+        CheckedImage(Bitmap bmp, int w, int h, M02sPhotoPolicy.ImageKind k) {
+            preview = bmp;
+            originalWidth = w;
+            originalHeight = h;
+            kind = k;
+        }
+    }
+
+    private static CheckedImage checkImage(byte[] bytes,
+                                           M02sPhotoPolicy.Candidate selected)
+            throws IOException {
+        if (bytes == null || bytes.length < 24 ||
+                bytes.length > M02sPhotoPolicy.MAX_IMAGE_BYTES)
+            throw new IOException("Image byte length failed validation");
+        M02sPhotoPolicy.ImageKind kind = M02sPhotoPolicy.imageKind(bytes);
+        if (!M02sPhotoPolicy.extensionMatches(selected.remoteName, kind))
+            throw new IOException("Image signature and extension disagree");
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.length, bounds);
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0
+                || (long) bounds.outWidth * bounds.outHeight > 80_000_000L) {
+            throw new IOException("Image dimensions failed validation");
+        }
+        int sample = 1;
+        while (bounds.outWidth / sample > 1200 ||
+                bounds.outHeight / sample > 1200) sample *= 2;
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = sample;
+        Bitmap preview = BitmapFactory.decodeByteArray(bytes, 0, bytes.length, options);
+        if (preview == null) throw new IOException("Image could not be decoded");
+        return new CheckedImage(preview, bounds.outWidth, bounds.outHeight, kind);
+    }
+
+    private void beginDownload(M02sPhotoPolicy.Candidate item, int token,
+                               String host, Network dedicatedNetwork) {
+        if (M02sPhotoPolicy.safePhotoUrl(host, item.remoteName) == null) {
+            photoBusy = false;
+            log("原始照片的路径未通过本地安全检查，拒绝下载；不猜测其它地址");
+            status.setText("照片下载路径不符合安全约束");
+            return;
+        }
+        if (!wifiVerified || wifiMode != WifiMode.AP ||
+                dedicatedNetwork == null || !host.equals(verifiedHost)) {
+            photoBusy = false;
+            log("目标眼镜AP状态发生变化，取消原图下载");
+            return;
+        }
+        status.setText("正从眼镜AP只读下载一张原始图片");
+        io.execute(() -> {
+            try {
+                M02sPhotoTransport.Response response =
+                        M02sPhotoTransport.getOriginalPhoto(dedicatedNetwork, host, item);
+                if (response.httpCode != 200) {
+                    ui.post(() -> {
+                        if (destroyed || token != wifiSessionToken) return;
+                        photoBusy = false;
+                        log("原图GET返回 HTTP " + response.httpCode
+                                + "；未下载到有效图片，不会重试或猜测URL");
+                        status.setText("原始照片HTTP " + response.httpCode);
+                    });
+                    return;
+                }
+                CheckedImage image = checkImage(response.body, item);
+                String digest = ProbePolicy.fingerprint(response.body);
+                ui.post(() -> {
+                    if (destroyed || token != wifiSessionToken ||
+                            !wifiVerified || wifiMode != WifiMode.AP
+                            || apNetwork != dedicatedNetwork) {
+                        image.preview.recycle();
+                        return;
+                    }
+                    lastPhotoInMemory = response.body;
+                    photoPreview.setImageBitmap(image.preview);
+                    photoBusy = false;
+                    log("原图下载并解码成功：HTTP 200；"
+                            + response.body.length + "字节；"
+                            + image.originalWidth + "×" + image.originalHeight
+                            + "；格式=" + image.kind + "；下载="
+                            + response.durationMs + "ms；摘要=" + digest
+                            + "。仅在手机内存预览，无相册文件/云上传");
+                    status.setText("眼镜原图已下载至内存并显示预览");
+                });
+            } catch (Exception ex) {
+                final String errorType = ex.getClass().getSimpleName();
+                ui.post(() -> {
+                    if (destroyed || token != wifiSessionToken) return;
+                    photoBusy = false;
+                    log("原始图片GET或格式验证失败：" + errorType
+                            + "；未保存文件，不输出原始响应或文件名");
+                    status.setText("原始照片验证未成功");
+                });
+            } catch (OutOfMemoryError error) {
+                ui.post(() -> {
+                    if (destroyed || token != wifiSessionToken) return;
+                    photoBusy = false;
+                    lastPhotoInMemory = null;
+                    log("图片解码超过手机内存限制，拒绝保留");
+                    status.setText("原图过大，已终止预览");
+                });
+            }
+        });
+    }
+
     private void copyDiagnostic() {
-        String payload = "M02S AP权限修复实验 v0.1.5 / Android " + Build.VERSION.RELEASE +
+        String payload = "M02S 原图验证实验 v0.1.6 / Android " + Build.VERSION.RELEASE +
                 "\n" + logData.toString();
         ClipboardManager cb = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         cb.setPrimaryClip(ClipData.newPlainText("M02S diagnostic", payload));

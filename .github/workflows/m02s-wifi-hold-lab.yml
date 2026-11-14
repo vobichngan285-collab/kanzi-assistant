@@ -1,8 +1,8 @@
-name: Blue Star M02S AP Permission Fix Lab v0.1.5
+name: Blue Star M02S Original Photo Verification Lab v0.1.6
 on:
   workflow_dispatch:
   push:
-    branches: ['exp/m02s-ap-permission-fix-v015-20261114']
+    branches: ['exp/m02s-photo-direct-download-v016-20261114']
     paths:
       - 'experiments/m02s-wifi-lab/**'
       - '.github/workflows/m02s-wifi-hold-lab.yml'
@@ -48,7 +48,7 @@ jobs:
           grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' "$RUNNER_TEMP/signature.txt"
           "$TOOL/zipalign" -c -v 4 "$APK"
           "$TOOL/aapt" dump badging "$APK" | tee "$RUNNER_TEMP/badging.txt"
-          grep -q "package: name='com.vobichngan.bluestar.m02sapfixlab' versionCode='6' versionName='0.1.5'" "$RUNNER_TEMP/badging.txt"
+          grep -q "package: name='com.vobichngan.bluestar.m02sphotolab' versionCode='7' versionName='0.1.6'" "$RUNNER_TEMP/badging.txt"
           "$TOOL/aapt" dump permissions "$APK" | tee "$RUNNER_TEMP/permissions.txt"
           grep -q 'android.permission.BLUETOOTH_SCAN' "$RUNNER_TEMP/permissions.txt"
           grep -q 'android.permission.NEARBY_WIFI_DEVICES' "$RUNNER_TEMP/permissions.txt"
@@ -61,15 +61,15 @@ jobs:
           fi
           unzip -t "$APK" | tail -n 2
           mkdir -p release
-          cp "$APK" release/BlueStar_M02S_AP_Permission_Fix_0.1.5_Android.apk
+          cp "$APK" release/BlueStar_M02S_Photo_Verification_0.1.6_Android.apk
           sha256sum release/*.apk | tee release/SHA256SUMS.txt
           echo "Source commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
           cat release/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
       - name: Upload installation APK
         uses: actions/upload-artifact@v4
         with:
-          name: BlueStar-M02S-ApPermissionFix-v015-APK
-          path: release/BlueStar_M02S_AP_Permission_Fix_0.1.5_Android.apk
+          name: BlueStar-M02S-PhotoVerify-v016-APK
+          path: release/BlueStar_M02S_Photo_Verification_0.1.6_Android.apk
           retention-days: 30
           if-no-files-found: error
       - name: Publish direct-browser APK
@@ -79,24 +79,25 @@ jobs:
         run: |
           set -euo pipefail
           cat > "$RUNNER_TEMP/note.txt" <<'EOF'
-          Blue Star M02S AP Permission Fix Lab v0.1.5 — independent Android 16 test APK.
-          Real vivo X200 Pro v0.1.4 log: BLE LE 1M, AA13 0x39/0x30 AP request and AA14 0x25 SSID UTF-8 parsing all succeeded, but Android request of a dedicated AP Wi-Fi network threw SecurityException before any network approval dialog.
-          Root-cause candidate: previous manifest omitted the normal permission android.permission.CHANGE_NETWORK_STATE, which is required for ConnectivityManager.requestNetwork. Added permission; CI checks installed APK declaration. Also checks network state, Wi-Fi state and existing Bluetooth/Wi-Fi permissions.
-          AP request now records three stages (construct WifiNetworkSpecifier, construct NetworkRequest, invoke requestNetwork) plus manifest-grant status. On SecurityException or argument/state failure, log sanitized stage and exception class ONLY; NEVER include Android/OEM exception message, SSID or passphrase. Added unit tests for diagnostic stage reporting and privacy.
-          Reuses verified original BLE GATT handshake, AA14 notification, 0x25 SSID in-memory decoding and unique P2P target matching; no speculative writes, repeat scans, photo download or uploading. Formal Blue Star Guide, HeyCyan APK and earlier v0.1.0-v0.1.4 labs left untouched.
-          Brand-new package com.vobichngan.bluestar.m02sapfixlab for side-by-side installation. Android 16 AP connection, approval dialog, network IP and HTTP remain UNTESTED until the user performs a genuine phone test. CI success proves compile, JUnit, permissions, signature and release only.
+          Blue Star M02S Original Photo Verification Lab v0.1.6 — independent Android 16 experiment.
+          User physically confirmed M02S BLE shutter, AA14 0x25 SSID, Android AP Wi-Fi onAvailable and private gateway, then GET /app/getfilelist HTTP 200 in 99 ms, 635 bytes. Sixteen further GET requests all returned HTTP 200 (29-278 ms). A 63-second gap occurred when app was backgrounded, so uninterrupted 120-second interval polling is not proven.
+          Real OEM HeyCyan v1.0.24-c APK DEX traced: AP file list uses GET /app/getfilelist and PhotoApBean.info[].files[] JSON fields name/size/createtimestr/type; legacy P2P instead parses XML and is not used. OEM AP original image download uses root URL + FileItem.name, thumbnail is a separate /app/getthumbnail?file= endpoint and not required for this experiment. This APK only tests one original image at a time, never sends fileDownloadFinish or disconnect commands.
+          New button to parse AP JSON list; one-shot auto-download of latest photo only if latest is unambiguous using trustworthy parsed timestamps or a sole candidate. If the timestamps are missing or tied, only explicit user selection of an anonymously numbered candidate can trigger one download. No guessed list ordering.
+          Remote URL is constrained to the verified AP Network and its actual private gateway (no fallback network, no redirects). Filenames must be safe relative image paths, and HTTP requests are read-only GET. Maximum JSON size 256 KiB; maximum image 32 MiB; check JPEG/PNG/WebP magic and extension match, limit decoded dimensions, show preview in RAM. No media library writes, cloud upload, photo deletion, firmware change, or automatic Wi-Fi disconnect.
+          New independent appId com.vobichngan.bluestar.m02sphotolab, keeps formal Blue Star Guide RC25, HeyCyan and all prior v0.1.x labs untouched.
+          NOTE: Actual original-photo download has not been tested on physical glasses yet, so only the Android build, local tests and integrity checks are validated by CI. User must still supply real photo-list schema / HTTP results.
           EOF
-          gh release create bluestar-m02s-ap-permission-fix-v015-20261114 \
-            release/BlueStar_M02S_AP_Permission_Fix_0.1.5_Android.apk \
+          gh release create bluestar-m02s-photo-verification-v016-20261114 \
+            release/BlueStar_M02S_Photo_Verification_0.1.6_Android.apk \
             release/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Blue Star M02S AP Permission Fix Lab v0.1.5 — Android 16 requestNetwork permission" \
+            --title "Blue Star M02S Original Photo Verification v0.1.6 — AP file list and one-photo RAM preview" \
             --prerelease --notes-file "$RUNNER_TEMP/note.txt"
       - name: Verify release assets
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view bluestar-m02s-ap-permission-fix-v015-20261114 --repo "$GITHUB_REPOSITORY" \
+          gh release view bluestar-m02s-photo-verification-v016-20261114 --repo "$GITHUB_REPOSITORY" \
             --json isDraft,isPrerelease,assets,url \
             --jq '{isDraft,isPrerelease,url,assets: [.assets[] | {name: .name, size: .size, url: .url}]}'
