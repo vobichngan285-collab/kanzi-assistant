@@ -1,8 +1,8 @@
-name: Blue Star M02S One-Click Capture & Fetch Lab v0.1.7
+name: Blue Star M02S BLE-First AP-Fetch Lab v0.1.8
 on:
   workflow_dispatch:
   push:
-    branches: ['exp/m02s-oneclick-shot-fetch-v017-20261114']
+    branches: ['exp/m02s-ble-first-ap-fetch-v018-20261114']
     paths:
       - 'experiments/m02s-wifi-lab/**'
       - '.github/workflows/m02s-wifi-hold-lab.yml'
@@ -48,7 +48,7 @@ jobs:
           grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' "$RUNNER_TEMP/signature.txt"
           "$TOOL/zipalign" -c -v 4 "$APK"
           "$TOOL/aapt" dump badging "$APK" | tee "$RUNNER_TEMP/badging.txt"
-          grep -q "package: name='com.vobichngan.bluestar.m02soneclicklab' versionCode='8' versionName='0.1.7'" "$RUNNER_TEMP/badging.txt"
+          grep -q "package: name='com.vobichngan.bluestar.m02sblefirstlab' versionCode='9' versionName='0.1.8'" "$RUNNER_TEMP/badging.txt"
           "$TOOL/aapt" dump permissions "$APK" | tee "$RUNNER_TEMP/permissions.txt"
           grep -q 'android.permission.BLUETOOTH_SCAN' "$RUNNER_TEMP/permissions.txt"
           grep -q 'android.permission.NEARBY_WIFI_DEVICES' "$RUNNER_TEMP/permissions.txt"
@@ -61,15 +61,15 @@ jobs:
           fi
           unzip -t "$APK" | tail -n 2
           mkdir -p release
-          cp "$APK" release/BlueStar_M02S_OneClick_Capture_0.1.7_Android.apk
+          cp "$APK" release/BlueStar_M02S_BLE_First_AP_Fetch_0.1.8_Android.apk
           sha256sum release/*.apk | tee release/SHA256SUMS.txt
           echo "Source commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
           cat release/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
       - name: Upload installation APK
         uses: actions/upload-artifact@v4
         with:
-          name: BlueStar-M02S-OneClick-v017-APK
-          path: release/BlueStar_M02S_OneClick_Capture_0.1.7_Android.apk
+          name: BlueStar-M02S-BLE-First-v018-APK
+          path: release/BlueStar_M02S_BLE_First_AP_Fetch_0.1.8_Android.apk
           retention-days: 30
           if-no-files-found: error
       - name: Publish direct-browser APK
@@ -79,24 +79,24 @@ jobs:
         run: |
           set -euo pipefail
           cat > "$RUNNER_TEMP/note.txt" <<'EOF'
-          Blue Star M02S One-Click Capture & Fetch Lab v0.1.7 — standalone Android 16 experiment.
-          The user's v0.1.6 vivo X200 Pro + M02S-3584 real-world success: BLE LE1M 85ms, OEM AP Wi-Fi command 0x39/0x30 and SSID 0x25, Android onAvailable + actual private gateway, AP JSON /app/getfilelist parsed 5 eligible photos, and an unambiguous newest JPEG successfully downloaded: HTTP 200, 481424 bytes, original 3200x2400, 532ms, rendered in memory. This verified download is not yet an automated capture-fetch cycle.
-          This v0.1.7 adds a single button used only after BLE+AP are connected. It reads a pre-shot AP JSON file list snapshot, subscribes AA14 if the monitor has expired, sends the previously verified *one* OEM remote-shutter frame 0x22/0x30 via GATT AA13 (5-second cooldown; no repeat if uncertain), and only after successful GATT write acknowledgement checks the local AP list for a filename absent from the pre-shot snapshot. It rejects unchanged old photos and ambiguous multiple fresh files. New image file size must be positive and identical across two consecutive list observations; then it reuses the verified local-only HTTP original-image download and in-RAM preview. Polling has a 45-second elapsed-time deadline; user can cancel, and Wi-Fi loss or BLE disconnection aborts. BLE success alone cannot be claimed as photo capture, and AP is not reconnected unnecessarily.
-          All list/photo HTTP GETs are pinned to the known verified dedicated AP Android Network and private actual gateway; no redirects/guessed URLs. Strict filename constraints, 256KB list/32MB original-photo caps, JPEG/PNG/WebP signature+extension/dimension checks. Zero media file writes, photo uploads, firmware commands, OEM download-finish commands or auto Wi-Fi shutdowns. Names/timestamps/SSID/secret/raw data are not logged; diagnostics contain only anonymized counts and status. Existing v0.1.6 manual list/photo controls remain.
-          Independent package com.vobichngan.bluestar.m02soneclicklab. Formal Blue Star Guide RC25, OEM HeyCyan, Windows OCR, and v0.1.0-v0.1.6 experimental code/release remain untouched.
-          CI unit tests (including new fresh-file/no-old-photo/stability policy), Android SDK36 build, APK package and permissions checks, v2 signature, zipalign, archive integrity and prerelease asset publication. CI cannot prove end-to-end real shutter + new photo: physical user test is required.
+          Blue Star M02S BLE-first capture → AP-fetch experiment v0.1.8 for Android 16, independent standalone package.
+          Verified device baselines: v0.1.3 BLE AA13 0x22/0x30 produced real shutter sound and 0x22/0x42 response; v0.1.6 successfully parsed the AP photo list and downloaded/displayed an original 3200x2400 JPEG (481424B, 532ms). User observed v0.1.7 preconnected-AP shot made no sound and no new photo appeared in 45s; specific causal reason is still unproven.
+          v0.1.8 starts with BLE/AA14 and requires no active app AP session, sends the verified shutter frame once, separately captures prioritized 0x22/0x42 photo-related notifications even after generic notification log throttling, waits at least 5s between BLE writes, then sends verified 0x39/0x30 to request AP information, connects by exact decoded SSID using WifiNetworkSpecifier and the Android-confirmed dedicated Network and real private gateway, checks official /app/getfilelist twice for stable candidate, and fetches one original image into RAM. Auto-releases the phone AP Network request after completion/cancel; eyewear may remain in AP mode and physical follow-up testing is required.
+          No AP pre-shot file-list baseline exists on a fresh launch: the first shot may preview only the uniquely latest candidate, explicitly UNVERIFIED as newly captured. Next successful run compares against the previous in-memory AP list. Never label a static old file a proven fresh shot; reject ambiguous files. No auto-repeat shutter/AP attempts. 256KB AP JSON and 32MB image caps, strict relative name and content checks, no redirects, no cloud, no file writes, no deletes, no speculative firmware commands.
+          Separate app ID com.vobichngan.bluestar.m02sblefirstlab; official Blue Star Guide RC25, Windows OCR, and v0.1.0-v0.1.7 branches and releases unchanged.
+          CI tests, SDK36 build, package/version/permission/signing/zipalign/ZIP validation and browser-downloadable prerelease asset. Hardware shutter/AP interaction and exit from glasses AP mode require one phone field test; no claims of real-device success.
           EOF
-          gh release create bluestar-m02s-oneclick-capture-v017-20261114 \
-            release/BlueStar_M02S_OneClick_Capture_0.1.7_Android.apk \
+          gh release create bluestar-m02s-ble-first-ap-fetch-v018-20261114 \
+            release/BlueStar_M02S_BLE_First_AP_Fetch_0.1.8_Android.apk \
             release/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Blue Star M02S One-Click Capture & Fetch Lab v0.1.7 — verified fresh photo only" \
+            --title "Blue Star M02S BLE-First Capture then AP Fetch v0.1.8 — standalone experiment" \
             --prerelease --notes-file "$RUNNER_TEMP/note.txt"
       - name: Verify release assets
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view bluestar-m02s-oneclick-capture-v017-20261114 --repo "$GITHUB_REPOSITORY" \
+          gh release view bluestar-m02s-ble-first-ap-fetch-v018-20261114 --repo "$GITHUB_REPOSITORY" \
             --json isDraft,isPrerelease,assets,url \
             --jq '{isDraft,isPrerelease,url,assets: [.assets[] | {name: .name, size: .size, url: .url}]}'
