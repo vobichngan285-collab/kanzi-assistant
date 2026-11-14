@@ -1,26 +1,27 @@
-# M02S v0.1.19 — 连续取图的 Android Wi-Fi 会话回调修复（隔离实验）
+# M02S v0.1.20 — 明确结束传输模式的“不删除”对照实验（默认关闭）
 
-## 真实故障、确认的源码漏洞与未知原因
-- 用户2026-11-14曾在v0.1.18成功完成 **从实体拍照到3200×2400原图解码** 的一次完整路径，拍照结束触发到解码6188ms、其中开AP+Wi-Fi就绪4648ms。截图随后显示本App已成功下载2张3200×2400原图，但再拍后发生「取图失败：Android未能连接眼镜AP，拒绝反复申请或猜测热点。BLE已断开」。**截图没有那次失败的完整时间日志**，不能据此声称Android限制了连接次数、眼镜损坏、热点失效，或固件必定没退出传输模式。
-- 严格核查v0.1.18现有源码后确认一个具体漏洞：`ConnectivityManager.NetworkCallback.onLost` 检查 `networkCallback == this` 归属，但 `onUnavailable` 缺少同一检查，直接 `fail(token,...)` 会`stop()`蓝牙及网络。因`releasePhotoNetwork()`在每张下载后撤销NetworkRequest、**BLE generation保持不变**，旧请求延迟派发的`onUnavailable`可能误终止新一轮，即使新请求正常工作。**这是潜在的竞态漏洞，不等于已经证明截图中的实际故障必定由此导致。**
-- 另外，每张照片完成后依用户明确要求立刻解除手机Wi-Fi的 `NetworkRequest`、保留BLE待机以免眼镜在AP模式下实体快门失效。下一次拍照需重新由已验证蓝牙 `0x39/0x30`打开AP，经`AA14 0x25`准确SSID申请系统Wi-Fi。这个模式是保留正常实体拍照所必需的折中，**本版不为减少申请次数而强行持续占用AP，不擅自改变拍照/传图模式切换逻辑**。
+## 目标：解决前两张成功、后续 Android Wi-Fi 无法重新连接
+v0.1.18 用户已真机成功取过3200×2400原图，取图触发→解码6188ms；但v0.1.18有两张成功后第三次Android连接失败现象，v0.1.19在本次连续两轮都收到眼镜真实SSID（开启AP→0x25分别511ms和505ms）却收到`onUnavailable`（6761ms和4182ms），均无onAvailable/原厂HTTP。**蓝牙回SSID并不等于眼镜AP真实广播或Android一定能关联，onUnavailable也不证明被系统限流。** 既有代码只是`unregisterNetworkCallback`释放**手机**网络，会继续保留BLE待机；**没有证据证明眼镜固件同步退出了传输模式**，可能影响下次AP行为。
 
-## v0.1.19 本轮最小修复
-1. `onUnavailable()`也必须同时核对当前 `generation token` 和同一具体 `NetworkCallback` 对象；旧回调被忽略，不能影响下一张照片。这个判断与`onAvailable`、`onLost`、`onLinkPropertiesChanged`等已有防护对齐。
-2. `releasePhotoNetwork()`与`stop()`中**先置空当前回调归属，再调用系统`unregisterNetworkCallback`**；已注销请求不再允许旧事件影响在途请求。
-3. 对本次BLE发AP→收到准确SSID、Android `requestNetwork`→`onAvailable` / `onUnavailable`分别记录毫秒耗时；不打印SSID/密码/MAC。正常失败状态文字改为「本次Android精准Wi-Fi请求未成功（onUnavailable，耗时xxms），未重复申请」，不再把用户误导成Android对反复连接实行限制。Android官方`onUnavailable`表示`requestNetwork`未被满足或达到超时，**不能仅凭该事件认定具体根因**。
-4. 如本次 `onUnavailable`后系统其实已连接同一已由BLE校验过的SSID且有真实私有IPv4网关，允许**仅检查一次当前已存在Network** 并复用（不发送第二次系统请求），仍须由原厂HTTP200/JSON result0和info字段验真；如果不存在就停止、等待用户下一次明确操作。**绝不反复Wi-Fi申请、暴力重试、猜测热点或扩大目标网络。**
+## 已验证的开源来源（不要把不同厂商BLE协议混用）
+- MIT公开 [sctg-development/ai-smart-glasses-e09-reverse](https://github.com/sctg-development/ai-smart-glasses-e09-reverse) `Sources/e09_reverse/Constants.swift`和`WifiMediaManager.swift`明确指出原厂反编译`iec.java:stopP2pWifiConnect()`有 `CMD_FILE_DOWNLOAD_FINISH = 0x44`、`PARAM_WIFI_FILE_DOWNLOAD_FINISH = 0x30`、`PARAM_WIFI_FILE_DOWNLOAD_NOT_CLEAR = 0x01`。参数`0x00`会清除/删除眼镜照片；**绝对不能发0x44/0x30/0x00**。E09公开代码显示`[0x44,0x30,0x01]`为不删除结束通知，发送到AA13的完整帧`AB 55 00 04 44 30 01 75`，校验值`0x75=0x44+0x30+0x01`。
+- 这个`0x44 0x30 0x01`在**本用户M02S尚未实机验证**，也不保证GATT ACK后眼镜真的关闭AP。甚至“不删除”的含义也来源于E09而不是这副M02S，因此默认关闭，让用户明确选择才使用，防止误操作。
+- 开源 [FerSaiyan/Alternative-HeyCyan-App-and-SDK](https://github.com/FerSaiyan/Alternative-HeyCyan-App-and-SDK) `android/AGENTS.md`和`android/CyanBridge`中有`WifiP2pManager`、P2P WPS连接、BLE`glassesControl([0x02,0x01,0x04])`启动传输和`[0x02,0x01,0x09]`退出的成熟实现。但这不是本用户已验证`AA12/AA13/AA14`+原厂`0x39/0x30`方案的同一BLE帧，不能盲发这些命令。
+- 开源 [pepebot-space/nisaetus](https://github.com/pepebot-space/nisaetus) `ARCHITECTURE.md`针对M02S/A02S的另一套`02 01 04` P2P控制。**没有证据证明用户当前固件支持以这组原始指令替换成功的AP路径**；本版不修改已成功Wi-Fi的连接类型、端口、密码或下载协议。
 
-## 明确保留的已成功基线
-- 严格等待`AA14 0x45`拍照状态`1→0`后250ms发送仅一次白名单 `AB 55 00 03 39 30 69`，没结束事件不会倒计时自动发。人工确认已拍好可手动触发。
-- 已有AA13写回执、AA14 `0x25`校验及5秒SSID超时、无需12秒扫描的精确`WifiNetworkSpecifier`，请求本身25秒上限原样保留以便观察是否真实超时。绝不通过BLE遥控拍照 `0x22`，不发可能删除文件的`0x44`或OTA。
-- Wi-Fi专属`Network` + 私有网关 + 原厂只读`GET /app/getfilelist`严格校验；两次稳定最新候选相差350ms、原始JPEG只读GET、32MB限制与路径/格式/尺寸检查，照片仅RAM显示，不上传云端、不保存相册、不删除眼镜照片，不接OCR/TTS。
-- 首轮未建立拍前照片基线，唯一时间排序的最新候选尚不能严格证明是本次实体快门拍摄；无新增风险。
-- 本轮除增强连接诊断及竞态保护外，**不更改 Wi-Fi 建连方式、不更改已测成功的拍照状态处理或JPEG取图，不以猜测条件延长/缩短延时**。
+## 本版功能：唯一一个协议实验，前后两次对照
+1. 完全保留v0.1.18已成功的逻辑：BLE预连接→严格等AA14`0x45 0→1→0`照片活动结束→250ms后唯一一次`0x39/0x30`开AP→验证`AA14 0x25`准确SSID→立即Android`WifiNetworkSpecifier`请求→`onAvailable`与真实私有网关→原厂`GET /app/getfilelist` HTTP200/result0/info→两次350ms稳定候选→JPEG原图只读GET到RAM。保留v0.1.19的onUnavailable旧回调归属防护、分段毫秒计时，没有12秒扫描、没有2.2秒强制AP兜底、没有无限轮询。
+2. 新增`M02sApWire.nonClearFinishRequest()`，只返回严格字节帧`AB 55 00 04 44 30 01 75`。新增独立白名单`authorizedNonClearFinish`，保留原`authorized`只能发既有`39 30`开AP；**不添加任何可输入任意0x44参数/删除功能**。JUnit明确验证删除变体`44 30 00 74`、部分下载`44 31`和其它变化全部拒绝。
+3. 新增**默认未勾选**的“启用实验：每次高清取图成功后发送一次不删除结束帧”。勾选后，且**只有真实JPEG经所有检查下载并解码成功**，在释放手机Network请求之前经BLE AA13提交**唯一一次不删除结束帧**，等待GATT成功回执或最多3秒，再释放手机Wi-Fi请求、回到BLE待机。无GATT回执不重发，不宣称固件已退出。勾选状态不存盘、不跨进程保留。
+4. 新增“手动尝试退出眼镜传输模式（需先勾选；不删除）”。如果旧固件AP状态仍残留，用户可主动重连BLE待机（不打开新AP）、勾选实验并点一次按钮；只发送同一个精确不删除帧、等待一次回执、释放手机网请求。**不保证一次能真正使固件恢复拍照**。
+5. 不勾选时行为和v0.1.19完全相同；只释放手机网络请求，**根本不会发0x44**。如果BLE关闭、正在拍照/取图、正在写其它命令，则拒绝发送退出帧。自动退出只在本张JPEG已经成功下载/解码时才尝试，失败不自动发送实验指令。
+6. 本版不发送`0x22`拍照、`0x44 0x30 0x00`删除/清除、0x31未知计数、OTA，也不写相册、不上传云端、不保存文件内容在诊断，不修改正式蓝星向导。
 
-## 真机验证
-1. 安装独立v0.1.19，点`准备蓝牙待机`，按实体快门，一次次观察。Android 16授权窗口出现时按系统引导操作。
-2. 复制一轮完整日志：`0x45 1→0`→AA13开AP写回执→AA14 `0x25` SSID及「开AP指令至SSID耗时」→「精确SSID请求→onAvailable耗时」→网关→GET、3200×2400解码；如果`onUnavailable`，新日志会给出本次精确SSID申请耗时，可区分接近25s的请求超时或短时间即不满足。
-3. 可连续拍两张验证旧回调不会影响新一轮，但若发生失败**不要循环重复按钮试运气**；反馈一次日志。失败时上张高清内存预览保留，并不意味着本张也已下载。
+## 设备真机的最短对照
+1. 安装v0.1.20独立包，**保持实验开关关闭**，蓝牙待机后实体拍照一次，观察是否仍然不能连接Wi-Fi，复制日志。**失败就不要暴力重复开AP**。
+2. 若只看到SSID但Android连不上，想验证“遗留传输状态”假设：重新点准备蓝牙待机（不能有活跃取图），**手动勾选实验**，点**“手动尝试退出眼镜传输模式（不删除）”**一次；留意AA13 GATT写入回执，但不能直接当作眼镜已退出。再按眼镜实体快门，测试能否成功建立Android Wi-Fi/GET原图。
+3. 若第一次成功，并想比较连续两张，在开启实验状态下拍一张，等图片显示及“结束帧GATT写入”后再按实体快门一次。重点比较旧模式 vs 开启退出实验后的`onAvailable/onUnavailable`、单次连接耗时；**切勿在手机未验证原图成功时反复发送清理命令**。
+4. 如果有任何照片数量异常、不能拍照或状态不稳定，立即关实验并回退v0.1.18/0.1.19成功基线，不要靠盲发更多命令补救。
 
-隔离分支 `exp/m02s-network-callback-guard-v0119-20261114`从v0.1.18成功发布HEAD `de927a30174d542484f73e1d06e2ffc268bc32a7`新建；独立包名`com.vobichngan.bluestar.m02scallbackguardlab`，versionCode20/versionName0.1.19。正式蓝星向导、Windows OCR、HeyCyan与v0.1.12-v0.1.18旧实验/发布均不修改。公开MIT E09协议来源保留在`E09_SOURCE_LICENSE.md`。
+## 代码、隔离与边界
+本版从`exp/m02s-network-callback-guard-v0119-20261114`成功发布HEAD`d6befdb9343d4e55e8f34d85904b1769c94f8805` 创建`exp/m02s-optin-noclear-exit-v0120-20261114`。独立`com.vobichngan.bluestar.m02snoclearexitlab`、versionCode21/versionName0.1.20，仅实验目录及独立CI修改。原v0.1.12～0.1.19实验分支/Release、正式蓝星向导RC25、Windows OCR、HeyCyan原厂及开源项目都不修改。是否真正加速或稳定下次Wi-Fi仍需M02S真机实测，不能从CI推断。开源E09 MIT归属见`E09_SOURCE_LICENSE.md`。
