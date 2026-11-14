@@ -1,3 +1,15 @@
+# 最新｜M02S 蓝牙协议观察 v0.1.2（2026-11-14，已发布，待真机）
+
+- **用户新授权及已确认事实**：用户 vivo X200 Pro / Android 16 的 v0.1.1 实测已经证明 `M02S-3584` 通过 `TRANSPORT_LE + PHY_LE_1M` 成功连接 GATT，`status=0,newState=2`，单次耗时 **112ms**，成功发现服务 `1800`（1特征）、`AE00`（2特征）、`AA12`（3特征）、`180F`（1特征），服务发现 `status=0`。因此**不再测试默认旧连接方式**，下一目标检查厂商特征/只读收取拍照动作通知，仍不碰正式蓝星向导。
+- **眼镜原厂 APK 静态交叉核对**：已实际读取会话上传的 `/mnt/data/70465ff3819258a6218e7871da0a23f8.apk` 的 DEX：`classes2.dex` 包含 `0000aa12-...`、`0000aa13-...`、`UUID_CMD_NOTIFY`、`UUID_PHOTO_NOTIFY`，`classes4.dex` 包含 `0000ae00-...`、`0000ae01-...`、`0000ae02-...`，与真机实际服务 UUID 具相关性。**静态字符串不等于已逆向成功，不能把特征功能或 Wi-Fi/快门命令内容当成确证**。本次代码不发送任何猜测指令。
+- **独立分支/提交**：仓库 `vobichngan285-collab/kanzi-assistant`，只改 `experiments/m02s-wifi-lab` 实验子项目及其独立 workflow；分支 `exp/m02s-ble-protocol-lab-20261114`，源码 HEAD `9355aed1ad5b618a65ec05e4c2197150673f3c0f`，基于成功 v0.1.1 的 `639cb4db3f15e788baffa284725a79ae1d60e057`；**独立新包名** `com.vobichngan.bluestar.m02sprotolab`，versionCode 3、versionName 0.1.2，与 v0.1.0、v0.1.1 共存。正式安卓 Blue Star Guide RC25、HeyCyan APK、旧实验、Windows OCR 均未修改或覆盖。
+- **实现功能**：保留已验证的 GATT LE 1M 连接，连接成功后列表显示 AE00/AA12 各特征的 UUID、读写/通知/指示属性、标准 CCCD 描述符及其他描述符 UUID；只列举元数据不读取厂商特征值。用户手动点「监听拍照通知（60秒）」后，仅对带 NOTIFY/INDICATE 且 CCCD(0x2902) 的厂商特征顺序执行**标准订阅描述符写入**（不是厂商控制命令），5 秒超时保护；回调记录来源 UUID、长度、距监听开始毫秒数和**最多20字节** HEX（前40条），60秒自动停止日志。用户可按眼镜实体快门测试新照片状态是否经蓝牙通知；不主动遥控拍照、不开启眼镜 Wi-Fi、不下载/上传照片、不改固件；HEX 日志可能含敏感字节，分享前应自行检查。
+- **GitHub Actions 构建**：[43574820781](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/43574820781) `completed/success`，Gradle 单元测试、Android编译、APK v2签名/zipalign、正确包名与版本、ZIP完整性和公开 Release 均通过。**仅证明代码能编译并通过构建检查；没有证明实际设备会产生通知**。
+- **Release 及直链**：https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-m02s-ble-protocol-v012-20261114 ，APK https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-m02s-ble-protocol-v012-20261114/BlueStar_M02S_BLE_Protocol_Lab_0.1.2_Android.apk ，文件 **71333 bytes**，SHA256 `8cbee4d8820cd08a2e059261089dc96a099f0475b7bdea747d35fa2258430399`。
+- **待用户测试**：退出官方 HeyCyan → 新版扫描 M02S → 选中并连接 LE 1M →「查看特征 UUID/权限」→「监听拍照通知（60秒）」→**等 CCCD 订阅回调 status=0** → 轻按一次眼镜实体拍照键 → 复制最近的特征/订阅/通知日志；无需测试 Wi-Fi 部分。如果无通知，不等于眼镜不支持遥控拍照或 Wi-Fi，只是这个订阅测试没收到事件，应依据 GATT 属性进一步研究官方私有协议。
+
+---
+
 # 最新｜M02S 蓝牙 GATT 连接专项 v0.1.1（2026-11-14，已发布；待真机）
 
 - **用户真机反馈：** M02S-3584（Android 16 / vivo X200 Pro）在独立 v0.1.0 BLE 多次可发现，RSSI 约 -48 至 -50dBm，但主动 `connectGatt` 于 15:56:06 发起，15:57:06 才返回 `newState=0, status=1`；**无任何 GATT UUID**。旧版请求眼镜文件列表均 HTTP 超时，但没建立眼镜 Wi-Fi，不得以此断定固件不可连接。状态1表示失败，具体根因不能仅据该值确定。
