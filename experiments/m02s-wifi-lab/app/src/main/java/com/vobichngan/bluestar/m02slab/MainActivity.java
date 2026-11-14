@@ -49,6 +49,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PatternMatcher;
 import android.os.SystemClock;
 import android.view.View;
 import android.view.WindowManager;
@@ -319,7 +320,7 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(receiver, f);
         receiverRegistered = true;
-        log("v0.1.12-livecheck：保留原E09蓝牙直传/导出及RTSP；仅加手动只读0x95直播能力查询");
+        log("v0.1.13：保留已验证AA15/0x95及0x67直播指令；仅在Vivo的E09直播首次Wi-Fi申请使用公开原厂LiteralPatternSSID+BSSID精确绑定");
         log("所有传回图片默认只在RAM；仅用户点击保存时写入相册Pictures/BlueStarE09，无缩放和重压缩");
         requestPermissionsIfNeeded();
         updateNetworkStatus();
@@ -334,7 +335,7 @@ public final class MainActivity extends Activity {
         body.setBackgroundColor(Color.rgb(245, 248, 252));
         scroll.addView(body);
 
-        body.addView(text("蓝星 M02S E09 直播能力查询 v0.1.12-livecheck", 23, true));
+        body.addView(text("蓝星 M02S E09 原厂式直播Wi-Fi连接 v0.1.13", 23, true));
         body.addView(text("独立实验，不修改正式蓝星向导。Wi-Fi 网络名称/密码不会写进日志。", 14, false));
         status = text("蓝牙未连接 / 眼镜 Wi-Fi 未建立", 17, true);
         status.setPadding(0, dp(12), 0, dp(10));
@@ -353,7 +354,7 @@ public final class MainActivity extends Activity {
 
         section(body, "② 目标 Wi-Fi：点一次后自动识别 SSID 并尝试连接");
         addRow(body, button("P2P 精准连接", () -> requestTargetWifi(WifiMode.P2P)),
-                button("AP 热点精准连接", () -> requestTargetWifi(WifiMode.AP)));
+                button("普通AP相册连接（非直播）", () -> requestTargetWifi(WifiMode.AP)));
         addRow(body, button("取消 Wi-Fi 连接", () -> stopWifiSession("用户取消")),
                 button("查看网络状态", this::updateNetworkStatus));
         body.addView(text("先等 AA14 订阅 status=0，再选择一种方式。程序只匹配眼镜蓝牙"
@@ -411,6 +412,8 @@ public final class MainActivity extends Activity {
         body.addView(button("检测眼镜直播功能支持位（只读 BLE 0x95）", this::probeE09LiveSupport));
         body.addView(text("先在Wi-Fi未连接时查询。仅发送一次原厂功能读取指令，"
                 + "报告live位支持/不支持/未知；支持标志不代表已成功播放RTSP。", 14, false));
+        body.addView(text("直播模式请直接点下方「E09 RTSP直播建连」，不要先点第②项普通AP。"
+                + "本版仅改变Vivo设备的直播Wi-Fi匹配方式，仍可能受Android关联兼容性限制。", 14, false));
         addRow(body, button("E09 RTSP直播建连", this::startE09Live),
                 button("播放RTSP画面", this::playE09Preview));
         addRow(body, button("停止直播并安全退出", this::endE09Live),
@@ -1381,13 +1384,13 @@ public final class MainActivity extends Activity {
                 apFreshFirstSeenAtMs = nowMs;
                 apFreshFirstBssid = sample.uniqueBssid;
                 log("AP阶段1：已看到BLE目标SSID在本次请求后的新扫描记录；"
-                        + "不记录BSSID，保守等待1.8秒后使用v0.1.6已成功的SSID-only方式");
+                        + "不记录BSSID，保守等待1.8秒后再按当前模式申请一次网络");
             }
             if (M02sApReadinessPolicy.canConnect(sample,
                     apFreshFirstBssid, apFreshFirstSeenAtMs, nowMs)) {
                 log("AP阶段1：已完成新扫描证据及1.8秒等待；扫描完成回调="
                         + apScanResultsUpdated
-                        + "；只发一次Android精准SSID网络请求；"
+                        + "；仅一次Android网络请求；"
                         + "注意扫描成功并不保证AP会接受连接");
                 connectTargetAp();
                 return;
@@ -1473,11 +1476,31 @@ public final class MainActivity extends Activity {
         detachApFailureListener();
         apLocalFailureReason = -1;
         try {
-            // The v0.1.6 SSID-only configuration already worked on this phone.
-            // This experiment adjusts scan readiness and records *why* Android
-            // fails; it does not change passwords, invent AP modes or pin BSSID.
-            WifiNetworkSpecifier spec = new WifiNetworkSpecifier.Builder()
-                    .setSsid(targetWifiSsid).setWpa2Passphrase(OEM_WIFI_KEY).build();
+            // The public OEM Eyevue WifiApConnector for Vivo's ROM family uses
+            // setSsidPattern(PATTERN_LITERAL) + BSSID, unlike our old setSsid-only.
+            // Only APP_LIVE on Vivo uses this experiment; photo-AP is unchanged.
+            M02sE09OemMatchPolicy.Choice strategy = M02sE09OemMatchPolicy.choose(
+                    e09LiveRequested, Build.BRAND, currentTargetApScan(),
+                    apFreshFirstBssid, apFreshFirstSeenAtMs, SystemClock.elapsedRealtime());
+            if (strategy == M02sE09OemMatchPolicy.Choice.TARGET_NOT_READY) {
+                log("E09直播原厂式AP：本轮新鲜目标BSSID证据已失效或不唯一，"
+                        + "未申请网络，禁止回退旧缓存或不明热点");
+                stopWifiSession("直播目标BSSID证据失效"); return;
+            }
+            WifiNetworkSpecifier.Builder builder = new WifiNetworkSpecifier.Builder()
+                    .setWpa2Passphrase(OEM_WIFI_KEY);
+            if (strategy == M02sE09OemMatchPolicy.Choice.OEM_LITERAL_PATTERN_PINNED) {
+                builder.setSsidPattern(new PatternMatcher(
+                        targetWifiSsid, PatternMatcher.PATTERN_LITERAL));
+                builder.setBssid(MacAddress.fromString(apFreshFirstBssid));
+                log("E09直播原厂式AP：Vivo首次请求采用"
+                        + "SSID字面量PatternMatcher + 本轮唯一新鲜BSSID；"
+                        + "一次请求，无重试，无凭证/地址日志");
+            } else {
+                builder.setSsid(targetWifiSsid);
+                log("AP阶段2：保留旧SSID-only匹配（普通相册AP或非Vivo设备）");
+            }
+            WifiNetworkSpecifier spec = builder.build();
             stage = ApRequestDiagnostic.Stage.BUILD_NETWORK_REQUEST;
             NetworkRequest request = new NetworkRequest.Builder()
                     .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
@@ -1519,7 +1542,7 @@ public final class MainActivity extends Activity {
                         wifiVerified = true;
                         wifiConnecting = false;
                         cancelWifiTimers();
-                        log("AP阶段2：Android目标网络onAvailable；单次SSID-only申请成功，待真实网关");
+                        log("AP阶段2：Android目标网络onAvailable；本轮匹配方式已由前述日志标明，待真实网关");
                         status.setText("目标AP网络已连接；获取真实网关中");
                         LinkProperties lp = connectivity.getLinkProperties(network);
                         if (lp != null) updateApGateway(lp);
@@ -1562,7 +1585,7 @@ public final class MainActivity extends Activity {
             };
             stage = ApRequestDiagnostic.Stage.REQUEST_NETWORK;
             connectivity.requestNetwork(request, apCallback, 48_000);
-            log("AP阶段2：已提交单次精确SSID、原厂WPA2密钥的Android连接请求；等待系统授权和onAvailable");
+            log("AP阶段2：已提交单次Android Wi-Fi请求，匹配策略见上方日志；等待系统授权和onAvailable");
         } catch (SecurityException | IllegalArgumentException | IllegalStateException ex) {
             // Exception messages may contain private credentials or SSID.
             log(ApRequestDiagnostic.safeFailure(stage, ex));
@@ -2437,9 +2460,9 @@ public final class MainActivity extends Activity {
         e09LiveRequested = true;
         e09LiveProbing = false;
         e09LiveLastHost = null;
-        // Overrides ONLY the OEM AP-information request with the exact E09
-        // APP_LIVE command. Existing 0x25/SSID handling, dedicated Network
-        // validation and Android16 failure diagnosis remain unchanged.
+        // Existing APP_LIVE command/0x25/SSID/RTSP unchanged.
+        // Only Vivo's first AP network specifier mirrors the public OEM
+        // literal SSID pattern with its uniquely confirmed fresh BSSID.
         requestTargetWifi(WifiMode.AP, M02sBleWire.e09AppLiveAp());
         if (!wifiConnecting || wifiMode != WifiMode.AP) {
             e09LiveRequested = false;
