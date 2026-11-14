@@ -60,4 +60,26 @@ public final class M02sApWireTest {
         assertEquals(-1, M02sApWire.actionSyncPhotoFlag(response(0x45,new byte[]{1})));
         assertEquals(-1, M02sApWire.actionSyncPhotoFlag(null));
     }
+
+    @Test public void nonClearFinishIsExplicitlyExactAndDeleteNeverAllowed() {
+        byte[] allowed=M02sApWire.nonClearFinishRequest();
+        assertArrayEquals(new byte[]{(byte)0xAB,0x55,0,4,0x44,0x30,0x01,0x75},allowed);
+        assertTrue(M02sApWire.authorizedNonClearFinish(allowed));
+        // Original AP command validator remains strictly AP-only.
+        assertFalse(M02sApWire.authorized(allowed));
+        assertFalse(M02sApWire.authorizedNonClearFinish(M02sApWire.apRequest()));
+        // This is the dangerous clear/delete variant, unconditionally refused.
+        byte[] delete=(byte[])allowed.clone();
+        delete[6]=0x00;
+        delete[7]=0x74;
+        assertFalse(M02sApWire.authorizedNonClearFinish(delete));
+        byte[] partial=(byte[])allowed.clone();
+        partial[5]=0x31; partial[7]=0x76;
+        assertFalse(M02sApWire.authorizedNonClearFinish(partial));
+        allowed[5]=(byte)0x99;
+        assertFalse(M02sApWire.authorizedNonClearFinish(allowed));
+        assertArrayEquals(new byte[]{(byte)0xAB,0x55,0,4,0x44,0x30,0x01,0x75},
+                M02sApWire.nonClearFinishRequest());
+        assertFalse(M02sApWire.authorizedNonClearFinish(null));
+    }
 }
