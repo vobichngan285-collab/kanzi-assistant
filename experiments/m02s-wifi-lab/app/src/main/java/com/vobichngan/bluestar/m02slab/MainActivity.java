@@ -906,6 +906,7 @@ public final class MainActivity extends Activity {
     }
 
     private void stopNotificationMonitor(String reason) {
+        if (e09BlePhotoActive) stopE09BlePhoto();
         boolean wasActive = notificationMonitor;
         notificationMonitor = false;
         commandNotifyReady = false;
@@ -1567,6 +1568,12 @@ public final class MainActivity extends Activity {
     }
 
     private void stopWifiSession(String reason) {
+        if (e09LiveRequested) {
+            stopE09Preview();
+            e09LiveRequested = false;
+            e09LiveProbing = false;
+            e09LiveLastHost = null;
+        }
         boolean wasUsed = wifiMode != WifiMode.NONE || wifiConnecting || wifiVerified;
         boolean wasP2p = wifiMode == WifiMode.P2P && matchedPeerConnectStarted;
         wifiSessionToken++;
@@ -2509,6 +2516,9 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        stopE09Preview();
+        stopE09BlePhoto();
+        e09LiveRequested = false;
         finishHold("应用关闭");
         stopWifiSession("应用关闭");
         destroyed = true;
