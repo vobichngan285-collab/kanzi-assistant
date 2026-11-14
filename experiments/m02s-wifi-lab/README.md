@@ -1,3 +1,29 @@
+# M02S v0.1.13｜Vivo 直播AP首次连接采用公开原厂匹配策略（2026-11-15）
+
+**不再盲目试时序：经过实际源代码对比后，只改变一个连接策略。**
+
+## 实测依据
+
+- 用户M02S-3584在v0.1.12-livecheck真机成功查询原厂`0x95/0x00`，获得4字节能力掩码`0x000012AB`，其中bit0=1，**固件报告支持直播**（不是证实RTSP已播放）。
+- 此前v0.1.12-export下 `APP_LIVE 0x67/0x30` 收到AA14 `0x67`和`0x25` SSID；Android已看到直播AP新鲜扫描广播，但用`setSsid(ssid)`的`WifiNetworkSpecifier`在Android16上得到关联阶段失败code=1，完全没有进入RTSP OPTIONS/DESCRIBE。
+- 公开原厂EyeVue APK反编译 `sctg-development/ai-smart-glasses-e09:reverse/com.eyevue.glassapp/sources/com/eyevue/glassapp/helper/WifiApConnector.java`，具体行340-380的`connectWithSpecifier`与行853-900的`connectApwifi`：对于非Harmony/ColorOS/Xiaomi设备（例如Vivo），初次使用`setSsidPattern(new PatternMatcher(ssid, 0))` **literal pattern** + 扫描得到的目标`BSSID`，指定WPA2。该公开代码不能保证与用户上传的另一原厂APK完全一致；但**我们的旧程序确实仅用了`setSsid(ssid)`、不pin BSSID**。它是可核对的、未经测试的具体实现差异。
+- 用户已在此前v0.1.23试过「SSID-only首次失败后有条件 BSSID 重试」，这个版本不是重复该方案：**首次、唯一一次直播AP请求即使用公开OEM的LiteralPattern+BSSID组合**，没有后置重试、没有新增延迟。静态读取与实机是否奏效须分开表述。
+
+## 唯一代码修改
+
+1. 在此前独立v0.1.12-livecheck分支基础上新建独立`exp/m02s-e09-vivo-oem-ap-matcher-20261115`。第⑥区仍按原`0x67/0x30`启动直播；只在`e09LiveRequested && Build.BRAND == "vivo"`时，要求本轮BLE触发后的Android扫描中出现**唯一、新鲜且1.8秒稳定**的真实目标BSSID，并将其传入`WifiNetworkSpecifier.Builder.setBssid(...)`，同时`setSsidPattern(PATTERN_LITERAL)`和原厂WPA2口令。保留一次Android`requestNetwork`，不自动重发BLE、扫描或替换连接。
+2. 普通AP相册连接和其他手机品牌继续旧`setSsid()`单次方式，无行为变更。Android已经连上目标AP的原网络复用路径仍然只读验证私有网关。若BSSID不新鲜/不唯一/校验失效，**不连接**而报原因，避免误连旁边热点。连接成功后仍是同一`apNetwork`、路由网关检测、RTSP OPTIONS/DESCRIBE和`MediaPlayer`播放链；不会提前声明RTSP有帧。
+3. UI第②普通AP按钮明确标记「非直播」，第⑥ RTSP按钮和0x95只读查询及蓝牙JPEG导出都保留。没有照片删除、眼镜媒体写入、OTA、云上传。
+4. 新增纯Java策略类`M02sE09OemMatchPolicy`与JUnit测试，覆盖vivo直播唯一BSSID、普通相册不变、非vivo不变、缓存/歧义/不足1.8s/BSSID不一致均拦截。旧E09 JPEG组包及RTSP探测文件**保持原blob**。
+
+## 一次真机测试
+
+先退出原厂HeyCyan/其他控制APP→安装独立v0.1.13→扫描BLE / LE1M→开启AA14和AA15订阅→**不点第②普通AP**，直接点击第⑥「E09 RTSP直播建连」一次。观察日志是否出现`E09直播原厂式AP：Vivo首次请求采用SSID字面量PatternMatcher + 本轮唯一新鲜BSSID`，其后`onAvailable`还是关联失败`code=1`。如果onAvailable且从网关看到`E09 RTSP探测完成`，再点击「播放RTSP画面」。若再遇关联失败，则明确这个公开原厂匹配差异**并未解决**Android16关联；停止本路线继续试超时或无限重试，下一步先对照Android系统连接与真实硬件AP安全协商。不要连续高频尝试。
+
+本包和旧v0.1.12 JPEG、0.1.12-export、0.1.12-livecheck、正式蓝星向导、Windows OCR、眼镜原厂APP互不覆盖。
+
+---
+
 # M02S E09 实时直播能力只读查询 v0.1.12-livecheck（2026-11-15）
 
 **为什么做这个检查**：用户2026-11-15真机发送 `0x67/0x30` 后收到AA14 `0x67`、`0x25`有效SSID，手机看见眼镜新AP广播，但Android 16 `WifiNetworkSpecifier` 返回本地失败原因=1（**association关联阶段失败**）。没有真实AP Network/私有网关，也没有尝试RTSP播放器/视频解码，**不能把关联失败当成RTSP无画面或不支持的证明**。
