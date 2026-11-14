@@ -87,6 +87,7 @@ public final class M02sApStarter {
     private long firstFreshSeenAtMs;
     private String freshBssid;
     private long bleCommandAtMs;
+    private long wifiRequestAtMs;
 
     private Runnable bleTimeout;
     private Runnable firstDeviceDelay;
@@ -120,10 +121,15 @@ public final class M02sApStarter {
      * This does NOT prove the glasses themselves have exited import mode. */
     public void releasePhotoNetwork() {
         if (networkCallback != null) {
-            try { connectivity.unregisterNetworkCallback(networkCallback); }
-            catch (IllegalArgumentException | SecurityException ignored) { }
+            // Clear ownership BEFORE releasing Android's network request.
+            // Any queued callback from this old photo session must be ignored.
+            ConnectivityManager.NetworkCallback oldCallback = networkCallback;
             networkCallback = null;
+            try { connectivity.unregisterNetworkCallback(oldCallback); }
+            catch (IllegalArgumentException | SecurityException ignored) { }
+            callback.log("本张照片传输完成/结束：释放手机本轮专属Wi-Fi请求；保留BLE待机");
         }
+        wifiRequestAtMs = 0L;
         targetNetwork = null;
         targetHost = null;
         targetReady = false;
@@ -173,6 +179,7 @@ public final class M02sApStarter {
         lastPhotoFlagHigh = false;
         lastPhotoActionAtMs = 0L;
         startedWifiNetworkRequest = false;
+        wifiRequestAtMs = 0L;
         matchingDevices.clear();
         matchedAddresses.clear();
 
@@ -461,7 +468,9 @@ public final class M02sApStarter {
         if (ssid == null) return;
         expectedSsid = ssid; // RAM only
         cancelSsidTimeout();
-        callback.log("AA14 0x25真实SSID校验成功；不扫热点，直接走Android精确Wi-Fi请求");
+        callback.log("AA14 0x25真实SSID校验成功；开AP指令至SSID耗时="
+                + (SystemClock.elapsedRealtime() - bleCommandAtMs)
+                + "ms；不扫热点，直接进入准确SSID Wi-Fi建连");
         if (!apWriteAcknowledged) {
             callback.log("SSID先于AA13写入回执到达；待status=0后立即请求网络");
             return;
@@ -518,6 +527,7 @@ public final class M02sApStarter {
                 || !apWriteAcknowledged
                 || !M02sWifiPolicy.isConnectableSsid(expectedSsid)) return;
         startedWifiNetworkRequest = true;
+        wifiRequestAtMs = SystemClock.elapsedRealtime();
         if (scanTimer != null) {
             ui.removeCallbacks(scanTimer);
             scanTimer = null;
@@ -539,7 +549,9 @@ public final class M02sApStarter {
                     ui.post(() -> {
                         if (!valid(token) || networkCallback != this) return;
                         targetNetwork = net;
-                        callback.log("Android眼镜AP Network onAvailable；验证真实本地路由");
+                        callback.log("Android本轮精确SSID请求→onAvailable耗时="
+                                + (SystemClock.elapsedRealtime() - wifiRequestAtMs)
+                                + "ms；继续确认真实本地路由");
                         considerGateway(token, net, connectivity.getLinkProperties(net));
                     });
                 }
@@ -560,7 +572,28 @@ public final class M02sApStarter {
                     });
                 }
                 @Override public void onUnavailable() {
-                    ui.post(() -> fail(token, "Android未能连接眼镜AP，拒绝反复申请或猜测热点"));
+                    ui.post(() -> {
+                        // A completed/cancelled older request can leave a queued callback.
+                        // Unlike onLost(), v0.1.18 forgot the ownership check here.
+                        if (!valid(token) || networkCallback != this) return;
+                        long elapsed = wifiRequestAtMs > 0L
+                                ? SystemClock.elapsedRealtime() - wifiRequestAtMs : -1L;
+                        callback.log("Android本轮准确SSID请求onUnavailable；等待="
+                                + elapsed + "ms；仅表示该次网络请求未满足，"
+                                + "不能据此判定系统限制重复连接或眼镜热点坏了");
+                        // Android documents onUnavailable as an already-released request.
+                        // No blind second request. Recheck ONLY a currently connected
+                        // exact-SSID Network with a private IPv4 gateway, and require
+                        // the existing OEM HTTP verification afterwards.
+                        networkCallback = null;
+                        if (tryReuseConnectedTarget(token)) {
+                            callback.log("系统请求失败时发现已有同SSID目标网络；"
+                                    + "无需重复申请，交由原厂HTTP验证");
+                            return;
+                        }
+                        fail(token, "本次Android精准Wi-Fi请求未成功（onUnavailable，耗时="
+                                + elapsed + "ms），未重复申请；无法从回调判定具体系统原因");
+                    });
                 }
             };
             connectivity.requestNetwork(request, networkCallback, 25_000);
@@ -639,10 +672,12 @@ public final class M02sApStarter {
         scanTimer = null;
         stopScanner();
         if (networkCallback != null) {
-            try { connectivity.unregisterNetworkCallback(networkCallback); }
-            catch (IllegalArgumentException | SecurityException ignored) { }
+            ConnectivityManager.NetworkCallback oldCallback = networkCallback;
             networkCallback = null;
+            try { connectivity.unregisterNetworkCallback(oldCallback); }
+            catch (IllegalArgumentException | SecurityException ignored) { }
         }
+        wifiRequestAtMs = 0L;
         if (gatt != null) {
             try { gatt.disconnect(); }
             catch (SecurityException | IllegalStateException ignored) { }
