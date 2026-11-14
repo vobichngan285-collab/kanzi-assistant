@@ -44,7 +44,7 @@ public final class MainActivity extends Activity {
     private static final int PERMISSION_REQUEST = 1601;
     // E09 0x45 falling edge is a photo-finished candidate, NOT proof of a saved file.
     // No automatic AP opening, no fixed delay, no retry by waiting.
-    private static final long ONE_SHOT_MAX_MS = 39_000L;
+    private static final long ONE_SHOT_MAX_MS = 80_000L;
     private static final long LIST_RECHECK_MS = 350L;
     private static final int LIST_MAX_TRIES = 12;
 
