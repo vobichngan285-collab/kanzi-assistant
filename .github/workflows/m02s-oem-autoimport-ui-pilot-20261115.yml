@@ -43,6 +43,8 @@ jobs:
           grep -Fq 'if (!AutoImportPolicy.isOemPackage(event.getPackageName()))' "$SRC/OemAutoImportService.java" || grep -Fq '!AutoImportPolicy.isOemPackage(event.getPackageName())' "$SRC/OemAutoImportService.java"
           grep -Fq 'observedAbsentInOemAlbum' "$SRC/OemAutoImportService.java"
           grep -Fq 's.pendingCount > 1' "$SRC/OemAutoImportService.java"
+          grep -Fq 'oneShotConsumed = true;' "$SRC/OemAutoImportService.java"
+          grep -Fq 'arm_sequence' "$SRC/OemAutoImportService.java"
           grep -Fq 'STABLE_UI_MS = 950L' "$SRC/OemAutoImportService.java"
           grep -Fq 'AccessibilityNodeInfo.ACTION_CLICK' "$SRC/OemAutoImportService.java"
           grep -Fq 'android:packageNames="com.starglasses.app"' "$ROOT/app/src/main/res/xml/oem_autoimport_accessibility.xml"
@@ -54,7 +56,7 @@ jobs:
           grep -Fq 'Verified using v2 scheme (APK Signature Scheme v2): true' "$RUNNER_TEMP/sig.txt"
           "$TOOL/zipalign" -c -v 4 "$APK"
           "$TOOL/aapt" dump badging "$APK" > "$RUNNER_TEMP/badging.txt"
-          grep -Fq "package: name='com.vobichngan.bluestar.oemautoimport' versionCode='1' versionName='0.1.0-ui-pilot'" "$RUNNER_TEMP/badging.txt"
+          grep -Fq "package: name='com.vobichngan.bluestar.oemautoimport' versionCode='2' versionName='0.1.1-ui-pilot'" "$RUNNER_TEMP/badging.txt"
           "$TOOL/aapt" dump permissions "$APK" > "$RUNNER_TEMP/perms.txt"
           if grep -qE 'android.permission.(INTERNET|BLUETOOTH|NEARBY_WIFI_DEVICES|ACCESS_WIFI_STATE|CHANGE_WIFI_STATE|ACCESS_FINE_LOCATION|READ_MEDIA_IMAGES|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE|CAMERA|SYSTEM_ALERT_WINDOW)' "$RUNNER_TEMP/perms.txt"; then
             echo 'Forbidden data/network/control permission in UI-only lab' >&2
@@ -66,14 +68,14 @@ jobs:
           fi
           unzip -t "$APK" | tail -n 2
           mkdir -p release
-          cp "$APK" release/BlueStar_M02S_OEM_AutoImport_UI_Pilot_0.1.0.apk
+          cp "$APK" release/BlueStar_M02S_OEM_AutoImport_OneShot_0.1.1.apk
           sha256sum release/*.apk | tee release/SHA256SUMS.txt
           echo "Source: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload installation APK
         uses: actions/upload-artifact@v4
         with:
           name: BlueStar-M02S-OEM-Foreground-AutoImport-UI-Pilot
-          path: release/BlueStar_M02S_OEM_AutoImport_UI_Pilot_0.1.0.apk
+          path: release/BlueStar_M02S_OEM_AutoImport_OneShot_0.1.1.apk
           retention-days: 30
           if-no-files-found: error
       - name: Release standalone UI-only helper
@@ -85,20 +87,20 @@ jobs:
           cat > "$RUNNER_TEMP/notes.txt" <<'EOF'
           M02S OEM photo auto-import *foreground UI pilot*, not a patched/modified OEM APK.
           Based on user's uploaded 1.0.24-c com.starglasses.app binary, which defines AlbumFragment, dp.getUnImportNumLiveData, dp.connectP2pWifitoReceivePhoto, dp.startDownLoadPhotoByWifi, and UI resources "发现%1$s个文件", "导入".
-          This standalone test helper never replaces the original app. It requires voluntary Android Accessibility enable + its own opt-in switch. Only while OEM album is foreground, after observing no pending import and later exactly one new item with a clickable "导入" button, it clicks once. No blind retries and never taps clear/delete.
+          This standalone test helper never replaces the original app. It requires voluntary Android Accessibility enable + its own opt-in switch. Only while OEM album is foreground, after observing no pending import and later exactly one new item with a clickable "导入" button, it clicks at most ONCE per explicit opt-in toggle cycle. No blind retries and never taps clear/delete.
           Does not have INTERNET, Bluetooth, Wi-Fi, camera, or files permissions. All actual media import operations still run inside OEM. This does not guarantee that the OEM's own normal import cleanup does not delete downloaded content on glasses. No background or screen-off support. Needs real-device validation and may not work if controls are not exposed through accessibility.
           Original OEM APK/signature are never modified or redistributed; no functionality of RC25, Windows OCR or original APK was changed.
           EOF
-          gh release create bluestar-m02s-oem-autoimport-ui-pilot-20261115 \
-            release/BlueStar_M02S_OEM_AutoImport_UI_Pilot_0.1.0.apk \
+          gh release create bluestar-m02s-oem-autoimport-ui-pilot-v0111-20261115 \
+            release/BlueStar_M02S_OEM_AutoImport_OneShot_0.1.1.apk \
             release/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "M02S OEM Foreground Auto-Import Pilot v0.1.0 (separate helper, not OEM patch)" \
+            --title "M02S OEM Foreground Auto-Import ONE-SHOT Pilot v0.1.1 (separate helper, not OEM patch)" \
             --prerelease --notes-file "$RUNNER_TEMP/notes.txt"
       - name: Verify live Release assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view bluestar-m02s-oem-autoimport-ui-pilot-20261115 \
+          gh release view bluestar-m02s-oem-autoimport-ui-pilot-v0111-20261115 \
             --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,url,assets \
             --jq '{isDraft,isPrerelease,url,assets:[.assets[]|{name:.name,size:.size,url:.url}]}'
