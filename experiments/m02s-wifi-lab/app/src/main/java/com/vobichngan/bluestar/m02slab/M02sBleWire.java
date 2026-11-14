@@ -36,6 +36,9 @@ public final class M02sBleWire {
     /** Eyevue E09 open-source source: APP_LIVE AP mode -> 0x25 SSID -> RTSP /h264. */
     public static byte[] e09AppLiveAp() { return frame(0x67, 0x30); }
 
+    /** OEM + E09 GET_SUPPORT_FUNCTION: read-only capabilities, 0x95 with parameter 0. */
+    public static byte[] e09ReadCapabilities() { return frame(0x95, 0x00); }
+
     /** E09/HeyCyan documented NON-DELETING Wi-Fi session finish (0x44/0x30/0x01).
      * Never expose 0x44/0x30/0x00: that variant can delete media. */
     public static byte[] e09SafeTransferFinish() {
@@ -64,6 +67,7 @@ public final class M02sBleWire {
                 || Arrays.equals(bytes, wifiApInfo())
                 || Arrays.equals(bytes, e09BlePhoto())
                 || Arrays.equals(bytes, e09AppLiveAp())
+                || Arrays.equals(bytes, e09ReadCapabilities())
                 || Arrays.equals(bytes, e09SafeTransferFinish());
     }
 
@@ -85,6 +89,17 @@ public final class M02sBleWire {
         public String wifiSsidInMemory() {
             if (command != 0x25 || !checksumOk) return null;
             return M02sWifiPolicy.decodeSsid(payload);
+        }
+
+        /** Valid 0x95 AA14 response contains exactly four big-endian capability bytes.
+         * Return unsigned 32-bit mask or null; never guess unsupported on malformed replies. */
+        public Long e09CapabilityMaskOrNull() {
+            if (command != 0x95 || !checksumOk || payload.length != 4) return null;
+            long mask = ((long) (payload[0] & 255) << 24)
+                    | ((long) (payload[1] & 255) << 16)
+                    | ((long) (payload[2] & 255) << 8)
+                    | (long) (payload[3] & 255);
+            return mask;
         }
 
         /** Only the non-sensitive photo-related status fields are printable. */
@@ -135,6 +150,7 @@ public final class M02sBleWire {
         if (Arrays.equals(bytes, photoThumbnail())) return "已验证BLE拍照 0x22/0x30";
         if (Arrays.equals(bytes, e09BlePhoto())) return "E09 BLE直传照片试验 0x22/0x31";
         if (Arrays.equals(bytes, e09AppLiveAp())) return "E09 RTSP直播AP试验 0x67/0x30";
+        if (Arrays.equals(bytes, e09ReadCapabilities())) return "E09/原厂只读直播支持查询 0x95/0x00";
         if (Arrays.equals(bytes, e09SafeTransferFinish())) return "E09安全结束传输(不删文件) 0x44/0x30/0x01";
         if (Arrays.equals(bytes, wifiP2pInfo())) return "原厂P2P Wi-Fi信息请求 0x39/0x31";
         return "原厂AP Wi-Fi信息请求 0x39/0x30";
