@@ -1,0 +1,100 @@
+name: Blue Star M02S Wi-Fi Keepalive Diagnostic APK
+on:
+  workflow_dispatch:
+  push:
+    branches: ['exp/m02s-wifi-keepalive-lab-20261114']
+    paths:
+      - 'experiments/m02s-wifi-lab/**'
+      - '.github/workflows/m02s-wifi-hold-lab.yml'
+permissions:
+  contents: write
+
+jobs:
+  test-build-release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify Android SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -s "$ANDROID_HOME/platforms/android-36/android.jar" ] || [ ! -x "$ANDROID_HOME/build-tools/36.0.0/apksigner" ]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+          fi
+      - name: Prepare Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Unit tests and standalone Android build
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle -p experiments/m02s-wifi-lab --no-daemon --no-parallel --max-workers=2 \
+            :app:testDebugUnitTest :app:assembleDebug --stacktrace
+      - name: Verify independent APK, permissions, and signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="experiments/m02s-wifi-lab/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          TOOL="$ANDROID_HOME/build-tools/36.0.0"
+          "$TOOL/apksigner" verify --verbose "$APK" | tee "$RUNNER_TEMP/signature.txt"
+          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' "$RUNNER_TEMP/signature.txt"
+          "$TOOL/zipalign" -c -v 4 "$APK"
+          "$TOOL/aapt" dump badging "$APK" | tee "$RUNNER_TEMP/badging.txt"
+          grep -q "package: name='com.vobichngan.bluestar.m02slab' versionCode='1' versionName='0.1.0'" "$RUNNER_TEMP/badging.txt"
+          "$TOOL/aapt" dump permissions "$APK" | tee "$RUNNER_TEMP/permissions.txt"
+          grep -q 'android.permission.BLUETOOTH_SCAN' "$RUNNER_TEMP/permissions.txt"
+          grep -q 'android.permission.NEARBY_WIFI_DEVICES' "$RUNNER_TEMP/permissions.txt"
+          grep -q 'android.permission.INTERNET' "$RUNNER_TEMP/permissions.txt"
+          if grep -qE 'android.permission.(CAMERA|READ_MEDIA_IMAGES|READ_EXTERNAL_STORAGE)' "$RUNNER_TEMP/permissions.txt"; then
+            echo 'Unexpected camera or media access in transport-only lab' >&2; exit 1
+          fi
+          unzip -t "$APK" | tail -n 2
+          mkdir -p release
+          cp "$APK" release/BlueStar_M02S_WifiHold_Lab_0.1.0_Android.apk
+          sha256sum release/*.apk | tee release/SHA256SUMS.txt
+          echo "Source commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          cat release/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload installation APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar-M02S-WifiKeepalive-Standalone-APK
+          path: release/BlueStar_M02S_WifiHold_Lab_0.1.0_Android.apk
+          retention-days: 30
+          if-no-files-found: error
+      - name: Publish direct-browser APK
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/note.txt" <<'EOF'
+          Blue Star M02S Wi-Fi Hold Lab v0.1.0 — independent Android APK.
+          Standalone non-destructive network diagnostic for HeyCyan/StarGlasses M02S on vivo X200 Pro.
+          Bluetooth LE scan and optional read-only GATT service discovery. Manual Wi-Fi Direct peer scan/connection, optional manual AP SSID/password connection through Android network request, 120-second Wi-Fi lock observation and read-only HTTP GET /app/getfilelist (limited to 192.168.x.x).
+          Logs timestamps, P2P connection, network availability, HTTP response codes and local SHA-256 file-list fingerprint, NOT image contents or cloud submissions.
+          No BLE shutter or Wi-Fi wake command is sent; exact M02S command values still need verification. In particular, a scan may not find P2P devices until the genuine glasses firmware enables transfer. A Wi-Fi lock cannot prevent the glasses firmware from closing Wi-Fi.
+          Requests BT, nearby Wi-Fi and local network permissions. No camera, media or photo access; never deletes photos or touches original HeyCyan APK or Blue Star Guide RC25.
+          Requires real device testing to verify any connection or 120-second keepalive claim. GitHub Actions only compiles and runs local unit tests.
+          EOF
+          gh release create bluestar-m02s-wifi-hold-lab-20261114 \
+            release/BlueStar_M02S_WifiHold_Lab_0.1.0_Android.apk \
+            release/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Blue Star M02S Wi-Fi Hold Lab v0.1.0 — standalone diagnostic" \
+            --prerelease --notes-file "$RUNNER_TEMP/note.txt"
+      - name: Verify release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view bluestar-m02s-wifi-hold-lab-20261114 --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,isPrerelease,assets,url \
+            --jq '{isDraft,isPrerelease,url,assets: [.assets[] | {name: .name, size: .size, url: .url}]}'
