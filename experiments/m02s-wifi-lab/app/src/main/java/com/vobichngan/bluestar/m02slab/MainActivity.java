@@ -363,13 +363,13 @@ public final class MainActivity extends Activity {
         photoPreview.setScaleType(ImageView.ScaleType.FIT_CENTER);
         body.addView(photoPreview);
 
-        section(body, "⑤ v0.1.9 原厂AP连接实验：拍照→取图");
-        addRow(body, button("拍照→扫描AP→取原图", this::startOneClick),
+        section(body, "⑤ v0.1.10 拍照→新扫描验证→AP取图");
+        addRow(body, button("拍照→验证AP→取原图", this::startOneClick),
                 button("取消本次实验", () -> stopOneClick("用户取消本次拍照取图")));
-        body.addView(text("先连蓝牙、开启AA14通知，暂不连接AP。一次点击只拍一次，"
-                + "随后核对眼镜的目标热点扫描记录，再调用Android专属Network连接。"
-                + "首次连接不可用时，只有扫描确认唯一目标热点存在才允许一次不同策略恢复；"
-                + "不重复拍照，不猜热点或IP。首次照片仍需人工核对；完成后释放手机AP请求。", 14, false));
+        body.addView(text("先连蓝牙并开启AA14通知，不预先连接AP。只拍照一次，"
+                + "等待本次AP信息请求后的新扫描时间戳；同一目标热点再等待1.8秒后仅发一次SSID连接请求。"
+                + "Android16会尽量记录具体失败原因；不立刻重连、不猜热点、不重复拍照。"
+                + "首次下载的最新图片仍需人工核对是否刚拍摄。", 14, false));
 
         // Retained internally for legacy diagnostics; never displayed, so
         // unrelated nearby P2P devices cannot be selected accidentally.
@@ -1488,6 +1488,10 @@ public final class MainActivity extends Activity {
             catch (Exception ignored) { }
             apCallback = null;
         }
+        detachApFailureListener();
+        apScanRequestedAtUs = 0L;
+        apFreshFirstSeenAtMs = 0L;
+        apFreshFirstBssid = null;
         if (wasP2p && p2p != null && channel != null) {
             try { p2p.removeGroup(channel, new WifiP2pManager.ActionListener() {
                 @Override public void onSuccess() { log("已释放本实验创建的 P2P 连接组"); }
@@ -2024,6 +2028,10 @@ public final class MainActivity extends Activity {
             catch (Exception ignored) { }
             apCallback = null;
         }
+        detachApFailureListener();
+        apScanRequestedAtUs = 0L;
+        apFreshFirstSeenAtMs = 0L;
+        apFreshFirstBssid = null;
         apNetwork = null;
         wifiMode = WifiMode.NONE;
         wifiConnecting = false;
@@ -2236,7 +2244,7 @@ public final class MainActivity extends Activity {
     }
 
     private void copyDiagnostic() {
-        String payload = "M02S 原厂AP连接实验 v0.1.9 / Android " + Build.VERSION.RELEASE +
+        String payload = "M02S AP新扫描与失败诊断 v0.1.10 / Android " + Build.VERSION.RELEASE +
                 "\n" + logData.toString();
         ClipboardManager cb = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         cb.setPrimaryClip(ClipData.newPlainText("M02S diagnostic", payload));
