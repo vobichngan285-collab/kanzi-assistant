@@ -140,7 +140,7 @@ public final class MainActivity extends Activity {
         log("修复旧Wi-Fi onUnavailable回调可能误终止新会话的问题；"
                 + "旧请求释放时先失效回调归属；绝不盲目重试");
         log("新增毫秒诊断：开AP→SSID、精确Wi-Fi请求→onAvailable/onUnavailable；"
-                + "无12秒扫描、无2.2秒拍照兜底");
+                + "不扫描12秒、不使用拍照倒计时兜底");
         log("每张取图后仍释放手机Wi-Fi，避免常连妨碍实体拍照；"
                 + "重复失败是否属于Android系统限制目前没有证据");
         log("照片只到手机RAM；不会删除眼镜文件，不上传云端，也不操作OCR/TTS");
