@@ -33,18 +33,17 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * M02S fastest verified high-quality photo transport experiment.
- * BLE stands by for unverified ACTION_SYNC 0x45 physical photo candidate;
- * a manual fallback button works even when the firmware sends no notification.
- * BLE only issues the OEM 0x39/0x30 AP command after a physical shot.
+ * M02S vendor-style manual-import comparison: physical shutter and
+ * Wi-Fi/HTTP media import are deliberately separate user actions.
+ * BLE passively detects ACTION_SYNC 0x45 photo candidate / finish.
+ * Only a deliberate click on "导入高清原图" may send OEM 0x39/0x30.
  * No BLE remote shutter command, Wi-Fi scanning delay, continuous polling,
  * file deletion, cloud upload, album write, or OTA.
  */
 public final class MainActivity extends Activity {
     private static final int PERMISSION_REQUEST = 1601;
-    // E09 isTakePhoto=1 is "busy" rather than proof that JPEG has been saved.
-    // No auto-AP timer: only observed end of shutter activity or explicit user action.
-    private static final long PHOTO_DONE_SETTLE_MS = 250L;
+    // E09 0x45 falling edge is a photo-finished candidate, NOT proof of a saved file.
+    // No automatic AP opening, no fixed delay, no retry by waiting.
     private static final long ONE_SHOT_MAX_MS = 39_000L;
     private static final long LIST_RECHECK_MS = 350L;
     private static final int LIST_MAX_TRIES = 12;
@@ -57,6 +56,7 @@ public final class MainActivity extends Activity {
     private TextView logView;
     private TextView resultText;
     private TextView projectText;
+    private Button manualImportButton;
     private ImageView preview;
     private Network network;
     private String gateway;
@@ -74,8 +74,10 @@ public final class MainActivity extends Activity {
     private String lastDownloadedRemoteName; // memory only; never log or persist
     private M02sFreshPhotoPolicy.Selection previousList;
     private Runnable transferDeadline;
-    private Runnable pendingPhotoAction;
-    private boolean waitingPhotoDone;
+    private boolean waitingPhotoDone; // 0x45 photo activity high, waiting for low
+    private boolean photoReadyForManualImport; // local UI marker, not a real file listing
+    private long lastPhotoFinishedAtMs; // 0 if only user-confirmed / no 0x45 falling edge
+    private int observedPhotoFinishes;
     private String transferStage = "空闲";
 
     @Override public void onCreate(Bundle state) {
@@ -99,28 +101,36 @@ public final class MainActivity extends Activity {
             }
             @Override public void standbyReady() {
                 if (destroyed) return;
-                if (!inTransfer) status("BLE已待机：请直接按眼镜实体快门；若没有自动反应，点取图按钮");
+                if (!inTransfer) {
+                    if (photoReadyForManualImport) {
+                        status("已记录待导入照片候选；请手动点击「导入高清原图」");
+                    } else {
+                        status("BLE已待机：先按实体快门拍照，随后手动导入");
+                    }
+                    updateImportButton();
+                }
             }
             @Override public void photoActionCandidate() {
                 if (destroyed || inTransfer || waitingPhotoDone || !starter.standby()) return;
                 waitingPhotoDone = true;
-                log("收到AA14 0x45拍照活动0→1；只等待1→0结束信号；"
-                        + "没有倒计时自动开热点");
-                status("等待0x45状态1→0；没结束信号就保持BLE待机。"
-                        + "若确认已拍完，可点「我已经拍照」手动取图");
+                photoReadyForManualImport = false;
+                lastPhotoFinishedAtMs = 0L;
+                updateImportButton();
+                log("收到AA14 0x45拍照活动0→1；仅监听后续1→0；"
+                        + "不会自动开AP；若先前有待导入标记，本轮以最新照片候选为准");
+                status("眼镜正在拍照；等待结束通知。未收到结束通知时可手动确认拍完");
             }
             @Override public void photoActionEnded() {
                 if (destroyed || !waitingPhotoDone || inTransfer) return;
-                if (pendingPhotoAction != null) ui.removeCallbacks(pendingPhotoAction);
-                log("收到0x45拍照状态1→0；等待250ms后启动一次开AP（文件写盘仍需实测）");
-                status("拍照结束状态已收到，250ms后打开眼镜Wi-Fi");
-                pendingPhotoAction = () -> {
-                    pendingPhotoAction = null;
-                    if (destroyed || !waitingPhotoDone || inTransfer) return;
-                    waitingPhotoDone = false;
-                    startPhotoTransfer(true);
-                };
-                ui.postDelayed(pendingPhotoAction, PHOTO_DONE_SETTLE_MS);
+                waitingPhotoDone = false;
+                photoReadyForManualImport = true;
+                lastPhotoFinishedAtMs = SystemClock.elapsedRealtime();
+                observedPhotoFinishes++;
+                log("收到AA14 0x45拍照活动1→0；第" + observedPhotoFinishes
+                        + "次拍照结束候选已标记待导入；没有发送BLE开AP命令，"
+                        + "也尚未证实眼镜上文件已写盘");
+                status("检测到拍照结束；请手动点「导入高清原图」开始连接眼镜");
+                updateImportButton();
             }
             @Override public void deviceProjectReported(String project) {
                 if (destroyed) return;
@@ -153,17 +163,17 @@ public final class MainActivity extends Activity {
             }
         });
         makeUi();
-        log("v0.1.21 被动状态诊断：沿用v0.1.18已成功的"
-                + "BLE拍照结束→250ms开AP→精准Wi-Fi→高清原图GET");
-        log("只监听AA14 0x45可选第10位isImport；缺失绝不推断已退出传输模式");
-        log("只有手动点击才发送只读0x64设备项目查询；"
-                + "用CyanBridge项目号规则给参考，不切换AP/P2P");
-        log("添加第一次/第二次取图前后网络只读快照与旧扫描缓存年龄；"
-                + "不触发Wi-Fi扫描，也不把热点缓存当作已连接证据");
-        log("完全不含0x44结束/清除实验、0x22遥控快门或其它未验证指令；"
-                + "继续保留v0.1.19旧网络回调隔离和真实耗时");
-        log("照片只到手机RAM；不会删除眼镜文件，不上传云端，也不操作OCR/TTS");
-        status("点击「准备蓝牙待机」，成功后直接用眼镜实体键拍照");
+        log("v0.1.22 原厂式手动导入对照：拍照完成只做本地待导入标记，"
+                + "必须用户手动点「导入高清原图」才发送一次开AP并申请Wi-Fi");
+        log("保留原已真机验证的0x45监听、0x39/0x30 AP、0x25 SSID、"
+                + "精确WifiNetworkSpecifier、原厂HTTP列表与高清JPEG只读GET");
+        log("照片结束通知只代表候选，不代表已写盘或可查询到真实照片列表；"
+                + "不再250ms自动发BLE/AP；不加人为等待、不自动重试");
+        log("继续保留0x45 isImport被动观察、手动0x64项目号查询、"
+                + "旧Wi-Fi缓存年龄与分段耗时日志，帮助区分第1～5轮导入");
+        log("不含0x44结束/清除、0x22遥控拍照、P2P切换或OTA；"
+                + "照片只留手机RAM，不删除眼镜照片，不上传云端，不做OCR/TTS");
+        status("请先准备BLE待机，再按眼镜实体快门拍照，最后手动点导入");
     }
 
     private void makeUi() {
@@ -174,8 +184,8 @@ public final class MainActivity extends Activity {
         scroll.addView(body);
         setContentView(scroll);
 
-        addText(body,"蓝星 M02S 极速高清取图",24,0xff17385b,true);
-        addText(body,"v0.1.21 · 只读诊断眼镜导入状态及Wi-Fi会话",15,Color.DKGRAY,false);
+        addText(body,"蓝星 M02S 手动导入对照",24,0xff17385b,true);
+        addText(body,"v0.1.22 · 拍照和导入分开；不自动开热点",15,Color.DKGRAY,false);
         statusText = addText(body,"",18,0xff117458,true);
 
         addText(body,"① 先准备蓝牙待机（这一步不打开Wi-Fi）",17,Color.BLACK,true);
@@ -185,15 +195,22 @@ public final class MainActivity extends Activity {
         addButton(body,"只读查询设备项目号（不打开Wi-Fi）",this::requestDeviceProject);
         projectText=addText(body,"设备项目号：未查询；只有你主动点击才发0x64只读查询",
                 14,0xff17385b,false);
-        addText(body,"② 用实体按键拍照，监听到结束状态后自动取图",
-                16,Color.BLACK,true);
-        addText(body,"如果没有结束通知就只等待、不自动开启Wi-Fi。"
-                + "若已确认拍完，可点下面按钮立即取图；正在取图时只显示当前阶段，不重复发命令。",
+        addText(body,"② 按眼镜实体快门拍照；只记录待导入候选",
+                17,Color.BLACK,true);
+        addText(body,"检测到0x45拍照结束只更新待导入标记，绝不会自动打开热点。"
+                + "本软件在连接Wi-Fi以前看不到眼镜相册的真实文件列表。",
                 14,Color.DKGRAY,false);
-        addButton(body,"我已经拍照，立即取高清原图",() -> startPhotoTransfer(false));
-        addButton(body,"取消当前取图（不重试、不删除照片）",this::cancelCurrentTransfer);
+        addButton(body,"已拍照但没收到结束通知？手动标记待导入",
+                this::confirmPhotoFinishedManually);
+        addText(body,"③ 确认照片已经拍好后，再手动导入原图",
+                17,Color.BLACK,true);
+        manualImportButton=addButton(body,"导入高清原图（手动连接眼镜）",
+                this::startPhotoTransfer);
+        manualImportButton.setEnabled(false);
+        addButton(body,"取消当前任务／清除待导入标记（不删除照片）",
+                this::cancelCurrentTransfer);
 
-        addText(body,"③ 下载完成后只在内存显示原图",17,Color.BLACK,true);
+        addText(body,"④ 下载完成后只在内存显示原图",17,Color.BLACK,true);
         resultText = addText(body,"本轮已完成0张；等待实体拍照",16,0xff17385b,true);
         preview = new ImageView(this);
         preview.setAdjustViewBounds(true);
@@ -213,16 +230,17 @@ public final class MainActivity extends Activity {
         addButton(body,"复制诊断日志",() -> {
             ClipboardManager clipboard = (ClipboardManager)
                     getSystemService(Context.CLIPBOARD_SERVICE);
-            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.21 diagnostic",
+            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.22 diagnostic",
                     diagnostics.toString()));
             status("诊断日志已复制");
         });
         logView = addText(body,"",13,0xff26343e,false);
         logView.setGravity(Gravity.START);
 
-        addText(body,"说明：初次取图选取可确定的最新照片，"
-                + "不把文件时间推断当作快门确认；检测到与上次相同的照片不会重复下载。"
-                + "本版只验证传输速度，不接云端OCR或朗读。",13,Color.DKGRAY,false);
+        addText(body,"实验目的：按原厂“先拍照→再点导入”的顺序，"
+                + "连续测试最多5次手动导入。成功须以手机连接真实AP、原厂HTTP200和原始JPEG解码为准。"
+                + "文件时间排序不是本次快门身份认证，已导入过的同名原图不会重复下载。",
+                13,Color.DKGRAY,false);
     }
 
     private TextView addText(LinearLayout parent,String value,int sp,int color,boolean bold) {
@@ -235,13 +253,21 @@ public final class MainActivity extends Activity {
         parent.addView(t,new LinearLayout.LayoutParams(-1,-2));
         return t;
     }
-    private void addButton(LinearLayout parent,String label,Runnable click) {
+    private Button addButton(LinearLayout parent,String label,Runnable click) {
         Button b=new Button(this);
         b.setAllCaps(false);
         b.setText(label);
         b.setTextSize(16);
         parent.addView(b,new LinearLayout.LayoutParams(-1,-2));
         b.setOnClickListener(v -> click.run());
+        return b;
+    }
+
+    private void updateImportButton() {
+        if (manualImportButton != null)
+            manualImportButton.setEnabled(!destroyed && starter != null
+                    && starter.standby() && photoReadyForManualImport
+                    && !waitingPhotoDone && !inTransfer);
     }
     private int dp(int unit) {
         return (int)(getResources().getDisplayMetrics().density*unit+0.5f);
@@ -280,8 +306,12 @@ public final class MainActivity extends Activity {
     private void prepareStandby() {
         if (!ensurePermissions()) return;
         if (starter.running()) {
-            status(starter.standby()?"BLE已待机，请用眼镜实体键拍照":
-                    "正在连接M02S，勿重复操作");
+            status(starter.standby()
+                    ? (photoReadyForManualImport
+                        ? "BLE已待机且有待导入标记；无需重连，直接手动点击导入"
+                        : "BLE已待机；按实体快门拍照后再点击导入")
+                    : "正在连接M02S，勿重复操作");
+            updateImportButton();
             return;
         }
         starter.start();
@@ -300,19 +330,38 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void clearPendingPhotoAction() {
-        if (pendingPhotoAction != null) {
-            ui.removeCallbacks(pendingPhotoAction);
-            pendingPhotoAction = null;
+    /** User confirmation is a UI candidate only; does NOT claim OEM file exists. */
+    private void confirmPhotoFinishedManually() {
+        if (destroyed || inTransfer || !starter.standby()) {
+            status("手动标记被拒绝：先完成BLE待机且不能正在导入");
+            return;
         }
+        if (photoReadyForManualImport && !waitingPhotoDone) {
+            status("已有待导入候选；不重复标记，直接点「导入高清原图」");
+            return;
+        }
+        waitingPhotoDone = false;
+        photoReadyForManualImport = true;
+        lastPhotoFinishedAtMs = 0L;
+        log("用户确认已实体拍照：仅标记待导入候选，"
+                + "未收到完整拍照结束通知不等于已经写盘；没有发送AP命令");
+        status("已手动标记待导入候选；请点击「导入高清原图」");
+        updateImportButton();
+    }
+
+    private void clearPendingPhotoAction() {
+        // Kept as a state-only cleanup: there is NO scheduled auto-import runnable.
         waitingPhotoDone = false;
     }
 
     private void cancelCurrentTransfer() {
-        if (waitingPhotoDone) {
+        if (!inTransfer && (waitingPhotoDone || photoReadyForManualImport)) {
             clearPendingPhotoAction();
-            log("用户取消等待拍照结束：未发送BLE开AP命令，保留蓝牙待机");
-            status("已取消本次自动取图；BLE仍在待机，眼镜照片未触碰");
+            photoReadyForManualImport = false;
+            lastPhotoFinishedAtMs = 0L;
+            log("用户清除本地待导入状态；没有连接Wi-Fi，眼镜文件未触碰");
+            status("待导入标记已清空；眼镜照片没有删除，可以重新按实体快门");
+            updateImportButton();
             return;
         }
         if (inTransfer) {
@@ -324,28 +373,34 @@ public final class MainActivity extends Activity {
             status("已取消并断开本轮会话；下一次点「准备蓝牙待机」");
             return;
         }
-        status("目前没有进行中的取图或等待任务；BLE待机不受影响");
+        status("目前没有进行中的导入任务或待导入标记；BLE待机不受影响");
     }
 
-    private void startPhotoTransfer(boolean fromActionSync) {
+    /** The ONLY entry point into AP/HTTP transfer is the manual UI button. */
+    private void startPhotoTransfer() {
         if (destroyed) return;
         if (inTransfer) {
-            log("重复点击取原图：本轮任务仍在运行，未重复发送开AP；阶段=" + transferStage);
-            status("已有任务进行中：" + transferStage + "。若不想继续，可点「取消当前取图」");
+            log("导入按钮重复操作被忽略：已有任务在运行，阶段=" + transferStage);
+            status("已有导入任务进行中：" + transferStage + "，不重复开AP");
             return;
         }
-        if (waitingPhotoDone) {
-            log("用户确认实体照片已经拍好，跳过等待0x45结束状态，立即启动单次取图");
-            clearPendingPhotoAction();
+        if (waitingPhotoDone || !photoReadyForManualImport) {
+            status("还没有完成的拍照候选；先按实体快门，结束后再手动点导入");
+            return;
         }
         if (!starter.standby()) {
-            status("请先准备蓝牙待机；未连接眼镜，不发送Wi-Fi请求");
+            status("请先准备BLE待机；未连接眼镜，不发送Wi-Fi请求");
+            updateImportButton();
             return;
         }
         final long id=++runId;
         photoAttempts++;
-        log("本次APP第"+photoAttempts+"次取图；用于区分首次和再次Android建连");
-        captureToWifiStartMs=SystemClock.elapsedRealtime();
+        long clickedAt=SystemClock.elapsedRealtime();
+        log("用户亲自点击「导入高清原图」：第"+photoAttempts+"次手动导入；"
+                + (lastPhotoFinishedAtMs > 0
+                    ? "拍照结束候选→用户点击耗时="+(clickedAt-lastPhotoFinishedAtMs)+"ms"
+                    : "未得到可靠的拍照结束时间，点击前等待时长未知"));
+        captureToWifiStartMs=clickedAt;
         apRequestAtMs=captureToWifiStartMs;
         wifiReadyAtMs=0;
         listTries=0;
@@ -356,15 +411,18 @@ public final class MainActivity extends Activity {
         gateway=null;
         transferStage="准备发送原厂开AP命令，随后最多5秒等待SSID";
         status(transferStage);
-        log((fromActionSync?"候选0x45拍照状态自动触发":"用户确认已实体拍照手动触发")
-                +"：取图开始（此时刻不一定等于真实快门时刻）");
+        log("本次AP/HTTP启动仅来自用户按钮；没有拍照结束后自动开启AP");
 
         if (!starter.requestPhotoTransfer()) {
             inTransfer=false;
             transferStage="未能提交开AP命令";
-            status("无法发送唯一一次开AP指令：检查BLE待机/旧传输状态");
+            status("无法发送唯一一次开AP指令；保留本地待导入标记，检查BLE状态");
+            updateImportButton();
             return;
         }
+        photoReadyForManualImport = false;
+        lastPhotoFinishedAtMs = 0L;
+        updateImportButton();
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         transferDeadline=() -> {
             if (inTransfer && id==runId)
@@ -379,7 +437,7 @@ public final class MainActivity extends Activity {
         network=net;
         gateway=host;
         transferStage="Wi-Fi就绪，正在验证原厂照片列表";
-        log("手机收到真实眼镜AP Network和私有网关；触发到Wi-Fi就绪="
+        log("手机收到真实眼镜AP Network和私有网关；手动导入点击到Wi-Fi就绪="
                 +(wifiReadyAtMs-captureToWifiStartMs)+"ms，开始原厂只读HTTP");
         status(transferStage);
         readLatestList(runId);
@@ -490,7 +548,7 @@ public final class MainActivity extends Activity {
                             +"；字节="+res.body.length
                             +"；本次HTTP GET="+res.durationMs+"ms"
                             +"；GET到解码="+(doneAt-begin)+"ms"
-                            +"；触发取图到解码="+(doneAt-captureToWifiStartMs)+"ms"
+                            +"；手动点击导入到解码="+(doneAt-captureToWifiStartMs)+"ms"
                             +"（不包含未知的真实快门触发延迟）");
                     log("最新候选只代表文件时间排序，不能单独证明它由本次实体快门生成");
                     finishTransfer(true,"高清原图已显示；已释放手机Wi-Fi，BLE保留待机");
@@ -525,15 +583,19 @@ public final class MainActivity extends Activity {
         gateway=null;
         listBusy=false;
         starter.releasePhotoNetwork();
+        updateImportButton();
         status(reason+(starter.standby()?"。BLE仍在待机":"。BLE已断开"));
         if (!success) log("失败后不自动重发开AP指令，需用户主动触发");
     }
 
     private void disconnectAll() {
         if (waitingPhotoDone) clearPendingPhotoAction();
-        if (inTransfer) abortTransfer("用户主动结束本轮取图");
+        photoReadyForManualImport = false;
+        lastPhotoFinishedAtMs = 0L;
+        if (inTransfer) abortTransfer("用户主动结束本轮导入");
         runId++;
         starter.stop();
+        updateImportButton();
         network=null;gateway=null;listBusy=false;
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         status("BLE和本次手机Wi-Fi请求已释放；眼镜AP固件退出状态未验证");
@@ -542,6 +604,8 @@ public final class MainActivity extends Activity {
 
     @Override protected void onDestroy() {
         clearPendingPhotoAction();
+        photoReadyForManualImport = false;
+        lastPhotoFinishedAtMs = 0L;
         if(inTransfer) finishTransfer(false,"应用退出");
         destroyed=true;
         starter.stop();
