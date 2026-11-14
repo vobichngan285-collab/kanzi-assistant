@@ -1,3 +1,16 @@
+# 最新｜M02S 先蓝牙拍照再AP取图 v0.1.8（2026-11-14，已发布，待首次真机验证）
+
+- **最新用户实测结论**：v0.1.3 单独 BLE AA13 拍照确有快门声/AA14 0x22/0x42；v0.1.6 单独 AP 原图下载成功（3200×2400、532ms）；**v0.1.7 用户真机失败：预先连接AP时拍照无声，45秒没有新照片**。AP 抑制拍照仅是假设，不能当作已证实原因。
+- **本次用户明确授权**：制作独立 v0.1.8，仅尝试 **先 BLE 遥控拍照 → 至少5秒命令间隔 → 0x39/0x30精确连接 AP → 只读下载**。未改变正式 Blue Star Guide RC25、Windows OCR、原厂 HeyCyan 或旧 v0.1.0～v0.1.7 分支/Release。
+- **代码隔离**：新分支 `exp/m02s-ble-first-ap-fetch-v018-20261114`，源码 HEAD `dc55bfac785c9d154a27d330918f3ee73154e1f3`，基于 v0.1.7 的 `e094d2e1c845367d0da77860f115e5077304590d`。只修改 `experiments/m02s-wifi-lab/**` 和其专属 workflow；包名 `com.vobichngan.bluestar.m02sblefirstlab`、versionCode9/name0.1.8，独立共存。
+- **行为与证据边界**：第一次启动时不能先通过AP获取拍照前列表基线，因此首次只能从拍照后的AP列表选择**唯一最新原图供人工核对**，不得写成“已验证新照片”；两次连续列表稳定后才下载。一次成功后保留进程内上一次AP列表供第二次比较新文件名，但仍不保证因果。AA13 status0和AA14 0x22/0x42仅为蓝牙层证据，**必须由用户真实快门声/场景核对**。优先输出前8条相关AA14通知，不再被常规前40条日志节流隐藏。原先严格照片路径/大小/格式检查、只用专属 AP Network、32MB上限、不保存/不上传/不删照片全部保留。
+- **AP退出风险**：成功/取消时释放的是手机 `WifiNetworkSpecifier` / ConnectivityManager 的目标AP网络请求，**不代表眼镜固件已退出AP传输状态**。需在首次取图后再测下一次是否能拍照；若第二次无声，优先研究原厂 AP 退出/状态恢复逻辑，不重复旧 P2P 实验。不发未知 BLE/固件指令，不自动重复拍照。
+- **真实 CI / Release 已核验**：[Actions 43586809286](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/43586809286) `completed/success`；Gradle 单元测试+SDK36安装包编译、包名/版本/权限、v2签名、zipalign、ZIP完整性、Release资产均成功。Tag `bluestar-m02s-ble-first-ap-fetch-v018-20261114`；APK `BlueStar_M02S_BLE_First_AP_Fetch_0.1.8_Android.apk`，**145161字节**，SHA256 `b5bc190dfa38f2a5d2150c12cd1090cbf7ef7f6767b6cacdc3a6c6b82b287296`。浏览器直链：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-m02s-ble-first-ap-fetch-v018-20261114/BlueStar_M02S_BLE_First_AP_Fetch_0.1.8_Android.apk 。
+- **下一步只做一次真机验证**：用户退出HeyCyan，确保眼镜普通拍照状态，启动独立 v0.1.8 → BLE LE1M连接/AA14订阅status0 → **不提前点AP** → 点击`蓝牙拍照 → AP取图`一次并保持实验APP前台 → 观察真实快门声、AA14响应、AP onAvailable/网关、两次稳定列表和是否预览刚拍场景。取图成功后再测第二次拍照是否恢复。首次没有前置列表基线，须人工核对场景。若失败，仅提供脱敏日志，不反复重试。
+- **交接纪律**：本次代码构建已经完成并独立发布，真机 v0.1.8 还未测试，不可称硬件成功；main 只追加本段交接，不改正式源码。旧交接全部保留。
+
+---
+
 # 最新｜M02S 一键拍照取图 v0.1.7（2026-11-14，已发布，待首次真机串联测试）
 
 - **首次原图成功的真实用户日志（v0.1.6，已实测，不再重复基础研究）**：vivo X200 Pro / Android16 / M02S-3584，17:55:58 GATT LE1M **85ms**成功、AA14通知订阅status=0，17:56:16发送官方AP命令`0x39/0x30`，17:56:17获取0x25/SSID，17:56:22 Android目标AP连接onAvailable并获私有网关；17:56:59 `GET /app/getfilelist` **AP JSON解析成功，5条目/5个图片/5个可排序时间**；17:58:13 再次解析并唯一选出最新图，**原图下载及Android Bitmap解码成功：HTTP200、481424字节、JPEG、3200×2400、532ms、摘要e884d52cc67e**，用户截图确实在v0.1.6 APP预览区域看到实物照片。由此可**正式确认原图下载和显示已真机成功**，但截至v0.1.6还不是拍照→取图的一键串联。
