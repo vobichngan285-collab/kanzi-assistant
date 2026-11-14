@@ -1,8 +1,8 @@
-name: Blue Star M02S BLE Protocol Observer v0.1.2
+name: Blue Star M02S Verified BLE Commands Lab v0.1.3
 on:
   workflow_dispatch:
   push:
-    branches: ['exp/m02s-ble-protocol-lab-20261114']
+    branches: ['exp/m02s-verified-ble-commands-20261114']
     paths:
       - 'experiments/m02s-wifi-lab/**'
       - '.github/workflows/m02s-wifi-hold-lab.yml'
@@ -48,7 +48,7 @@ jobs:
           grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' "$RUNNER_TEMP/signature.txt"
           "$TOOL/zipalign" -c -v 4 "$APK"
           "$TOOL/aapt" dump badging "$APK" | tee "$RUNNER_TEMP/badging.txt"
-          grep -q "package: name='com.vobichngan.bluestar.m02sprotolab' versionCode='3' versionName='0.1.2'" "$RUNNER_TEMP/badging.txt"
+          grep -q "package: name='com.vobichngan.bluestar.m02scommandlab' versionCode='4' versionName='0.1.3'" "$RUNNER_TEMP/badging.txt"
           "$TOOL/aapt" dump permissions "$APK" | tee "$RUNNER_TEMP/permissions.txt"
           grep -q 'android.permission.BLUETOOTH_SCAN' "$RUNNER_TEMP/permissions.txt"
           grep -q 'android.permission.NEARBY_WIFI_DEVICES' "$RUNNER_TEMP/permissions.txt"
@@ -58,15 +58,15 @@ jobs:
           fi
           unzip -t "$APK" | tail -n 2
           mkdir -p release
-          cp "$APK" release/BlueStar_M02S_BLE_Protocol_Lab_0.1.2_Android.apk
+          cp "$APK" release/BlueStar_M02S_Verified_Commands_0.1.3_Android.apk
           sha256sum release/*.apk | tee release/SHA256SUMS.txt
           echo "Source commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
           cat release/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
       - name: Upload installation APK
         uses: actions/upload-artifact@v4
         with:
-          name: BlueStar-M02S-BleProtocol-v012-APK
-          path: release/BlueStar_M02S_BLE_Protocol_Lab_0.1.2_Android.apk
+          name: BlueStar-M02S-VerifiedCommands-v013-APK
+          path: release/BlueStar_M02S_Verified_Commands_0.1.3_Android.apk
           retention-days: 30
           if-no-files-found: error
       - name: Publish direct-browser APK
@@ -76,24 +76,24 @@ jobs:
         run: |
           set -euo pipefail
           cat > "$RUNNER_TEMP/note.txt" <<'EOF'
-          Blue Star M02S BLE Protocol Observer v0.1.2 — independent Android 16 test APK.
-          The user's actual M02S BLE connection succeeded in 112ms (status=0,newState=2), discovering AE00 and AA12 vendor services. This isolated lab retains the already validated explicit LE 1M connect behavior.
-          Lists UUIDs, properties and descriptors for vendor AE00 and AA12 service characteristics without reading values. With explicit button press it enables notifications/indications ONLY through the standard Bluetooth CCCD descriptor (0x2902), sequentially one at a time with 5s callback timeout, then logs up to 40 BLE notifications for 60 seconds with capped 20-byte hexadecimal previews. Use glasses physical shutter once during listening to identify unsolicited status updates. Notification content may contain sensitive device data; review before sharing logs.
-          Never writes vendor-specific control characteristic, never sends guessed shutter or Wi-Fi wake commands, and does not upload/download images or alter eyewear firmware. Runtime GATT success and actual notification values require vivo X200 Pro device test.
-          Unique new package ID (com.vobichngan.bluestar.m02sprotolab) preserves both prior experiments and formal Blue Star Guide; the untouched original HeyCyan APK is not modified. Existing nonessential Wi-Fi diagnostic controls retained.
-          APK static comparison: user-provided official app includes 0000ae00/ae01/ae02 and 0000aa12/aa13 UUID strings, but their purpose and M02S-specific command payloads are NOT yet proven. No speculative commands are sent.
+          Blue Star M02S Verified BLE Commands Lab v0.1.3 — independent Android APK.
+          User-confirmed in vivo BLE GATT LE 1M success (143ms), AA14 notification reception, and AE00/AA12 characteristics.
+          Interoperability-only, specific commands reverse traced in USER-SUPPLIED official HeyCyan APK v1.0.24-c: SendCommandViaBle.takePhoto(int) -> command 0x22, TAKE_PHOTO_THUMBNAIL=0x30; getWifiInfo(int) -> command 0x39, GET_WIFI_P2P=0x31, GET_WIFI_AP=0x30. Datagram encodes AB 55, length=3, command, one-byte parameter and (cmd+param)&0xff checksum. BleCore uses AA13 (with response) for commands and AA14 for command notifications.
+          Explicit buttons ONLY, cannot transmit unrecognized commands. Remote photo truly requests a photo; AP/P2P wifi info requests may cause the glasses to activate a transport, but this has not been verified on M02S. Requires the GATT AA14 standard CCCD notification subscription to succeed first. Prevents overlapping writes, enforces at least 5s between actions, logs Bluetooth write status and sanitized response frame summaries; never auto retries.
+          Wi-Fi response SSID/password payload is hidden from copied logs. No original photos copied or uploaded; no firmware changes or arbitrary vendor writes. Formal Blue Star Guide, previous labs and original HeyCyan APK are untouched.
+          Compilation/unit tests/v2-signed APK are CI-verified. REAL device command acceptance, photo generation, Wi-Fi on/off, and transfer time remain UNTESTED until user runs the APK.
           EOF
-          gh release create bluestar-m02s-ble-protocol-v012-20261114 \
-            release/BlueStar_M02S_BLE_Protocol_Lab_0.1.2_Android.apk \
+          gh release create bluestar-m02s-verified-commands-v013-20261114 \
+            release/BlueStar_M02S_Verified_Commands_0.1.3_Android.apk \
             release/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Blue Star M02S BLE Protocol Lab v0.1.2 — AE00 AA12 notification listening" \
+            --title "Blue Star M02S Verified BLE Commands Lab v0.1.3 — shutter and Wi-Fi request" \
             --prerelease --notes-file "$RUNNER_TEMP/note.txt"
       - name: Verify release assets
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view bluestar-m02s-ble-protocol-v012-20261114 --repo "$GITHUB_REPOSITORY" \
+          gh release view bluestar-m02s-verified-commands-v013-20261114 --repo "$GITHUB_REPOSITORY" \
             --json isDraft,isPrerelease,assets,url \
             --jq '{isDraft,isPrerelease,url,assets: [.assets[] | {name: .name, size: .size, url: .url}]}'

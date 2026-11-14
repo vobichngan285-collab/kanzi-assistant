@@ -97,6 +97,15 @@ public final class MainActivity extends Activity {
     private BluetoothGattCharacteristic pendingSubscription;
     private final ArrayDeque<BluetoothGattCharacteristic> notificationQueue = new ArrayDeque<>();
     private static final UUID CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
+    private static final UUID COMMAND_SERVICE = UUID.fromString("0000aa12-0000-1000-8000-00805f9b34fb");
+    private static final UUID COMMAND_WRITE = UUID.fromString("0000aa13-0000-1000-8000-00805f9b34fb");
+    private static final UUID COMMAND_NOTIFY = UUID.fromString("0000aa14-0000-1000-8000-00805f9b34fb");
+    private boolean commandNotifyReady;
+    private String writeInFlight;
+    private Runnable writeTimeout;
+    private long writeStartedAt;
+    private long lastSentAt;
+
     private int gattAttempt = 0;
     private long gattStarted = 0;
     private Runnable gattTimeout;
@@ -200,8 +209,8 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(receiver, f);
         receiverRegistered = true;
-        log("M02S v0.1.2 蓝牙协议实验启动：不会遥控拍照、上传图片或修改眼镜文件。");
-        log("仅执行 BLE 只读探测、系统 P2P/AP 连接和本地 HTTP 文件列表请求。");
+        log("M02S v0.1.3 官方指令实验启动：仅手动触发遥控拍照/读取 Wi-Fi 信息；不上传图片或修改眼镜文件。");
+        log("蓝牙发包仅允许 0x22/0x30 拍照、0x39/0x31 P2P 和 0x39/0x30 AP 信息请求；来源官方 App DEX；实际 M02S 结果待验证。");
         requestPermissionsIfNeeded();
         updateNetworkStatus();
     }
@@ -216,9 +225,9 @@ public final class MainActivity extends Activity {
         body.setBackgroundColor(Color.rgb(245, 248, 252));
         scroll.addView(body);
 
-        TextView heading = text("蓝星 M02S 连接实验", 24, true);
+        TextView heading = text("蓝星 M02S 官方指令验证 v0.1.3", 24, true);
         body.addView(heading);
-        body.addView(text("独立诊断 APK · 不影响蓝星向导 · 只读取连接状态", 14, false));
+        body.addView(text("独立实验 APK · 只发送从官方 App 核对的指令 · 不修改蓝星向导", 14, false));
         status = text("状态：等待授权", 17, true);
         status.setPadding(0, dp(12), 0, dp(10));
         body.addView(status);
@@ -234,17 +243,25 @@ public final class MainActivity extends Activity {
         addRow(body, button("兼容连接（15秒）", () -> connectGattReadOnly(true)),
                 button("主动断开 GATT", () -> closeGatt("用户主动断开")));
         body.addView(text("先选 M02S-3584，再点 LE 1M；只有失败才试兼容连接。", 14, false));
-        section(body, "② AE00 / AA12 蓝牙协议观察");
+        section(body, "② AE00 / AA12 蓝牙协议观察（发送前先启动监听）");
         addRow(body, button("查看特征 UUID/权限", this::inspectGattCharacteristics),
-                button("监听拍照通知（60秒）", this::startNotificationMonitor));
+                button("监听眼镜反馈（120秒）", this::startNotificationMonitor));
         addRow(body, button("停止通知记录", () -> stopNotificationMonitor("用户停止")),
                 button("复制诊断", this::copyDiagnostic));
-        body.addView(text("先连接成功、发现4个服务，再点监听，期间按眼镜上的实体拍照键。"
-                + "只对 AE00/AA12 可通知特征写入标准 CCCD 订阅配置；"
-                + "不发送拍照、开 Wi-Fi 或任何厂商控制命令。"
-                + "日志最多记录每条通知前20字节，请分享前检查敏感信息。", 14, false));
+        body.addView(text("先完成 LE 1M 连接，再点监听；等 AA14 订阅 status=0，"
+                + "才允许发送下面经过官方 APK 核对的两种命令。"
+                + "Wi-Fi 回复可能包含 SSID，日志自动隐藏数据内容。", 14, false));
 
-        section(body, "③ Wi-Fi Direct（本轮可跳过）");
+        section(body, "③ 官方指令实验（需要主动点击）");
+        addRow(body, button("遥控拍照：原厂模式", () -> sendVerifiedCommand(M02sBleWire.photoThumbnail())),
+                button("请求 P2P Wi-Fi 信息", () -> sendVerifiedCommand(M02sBleWire.wifiP2pInfo())));
+        addRow(body, button("请求 AP Wi-Fi 信息", () -> sendVerifiedCommand(M02sBleWire.wifiApInfo())),
+                button("查看当前网络", this::updateNetworkStatus));
+        body.addView(text("遥控拍照会真正让眼镜尝试拍摄一张照片；"
+                + "Wi-Fi 按钮会发送原厂读取/唤起 Wi-Fi 信息命令，"
+                + "但回执不代表 Wi-Fi 已连接。每次只点一个按钮，等日志结果。", 14, false));
+
+        section(body, "④ Wi-Fi Direct（仅在 Wi-Fi 请求后测试）");
         peerSpinner = new Spinner(this);
         peerAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item);
         peerAdapter.add("选择扫描到的 Wi-Fi Direct 设备");
@@ -253,7 +270,7 @@ public final class MainActivity extends Activity {
         addRow(body, button("扫描 P2P 设备", this::scanP2p),
                 button("连接所选 P2P", this::connectPeer));
 
-        section(body, "④ 如果眼镜使用 Wi-Fi AP 热点");
+        section(body, "⑤ 如果眼镜使用 Wi-Fi AP 热点");
         ssidField = field("眼镜热点 SSID（如果知道）", "");
         passField = field("Wi-Fi 密码（可留空）", "");
         passField.setInputType(android.text.InputType.TYPE_CLASS_TEXT |
@@ -263,7 +280,7 @@ public final class MainActivity extends Activity {
         addRow(body, button("连接已知 AP", this::connectAccessPoint),
                 button("查看当前网络", this::updateNetworkStatus));
 
-        section(body, "⑤ 连接保持与只读文件列表（本轮可跳过）");
+        section(body, "⑥ 连接保持与只读文件列表（需先建立真实 Wi-Fi 连接）");
         body.addView(text("文件列表地址：默认 192.168.49.207；另一个常见候选 192.168.169.1。"
                         + "真实地址需通过诊断确认。", 14, false));
         ipField = field("眼镜 IP", "192.168.49.207");
@@ -418,6 +435,8 @@ public final class MainActivity extends Activity {
     /** Only called from the main thread; late GATT callbacks are ignored by token. */
     private void closeGatt(String reason) {
         stopNotificationMonitor("GATT 连接结束");
+        clearWritePending();
+        lastSentAt = 0L;
         gattAttempt++;
         gattConnecting = false;
         gattConnected = false;
@@ -520,6 +539,11 @@ public final class MainActivity extends Activity {
                         }
                     });
                 }
+                @Override public void onCharacteristicWrite(BluetoothGatt connection,
+                                                            BluetoothGattCharacteristic c,
+                                                            int code) {
+                    ui.post(() -> onCommandWriteResult(connection, c, code, token));
+                }
                 @Override public void onDescriptorWrite(BluetoothGatt connection,
                                                         BluetoothGattDescriptor descriptor,
                                                         int code) {
@@ -612,13 +636,14 @@ public final class MainActivity extends Activity {
             return;
         }
         notificationMonitor = true;
+        commandNotifyReady = false;
         notificationCount = 0;
         notificationStarted = SystemClock.elapsedRealtime();
-        log("监听开始：等待按眼镜实体拍照键；可订阅特征 " + notificationQueue.size()
-                + " 个。60秒后自动停止记录。");
+        log("监听开始：等待眼镜反馈；可订阅特征 " + notificationQueue.size()
+                + " 个。120秒后自动停止记录。");
         status.setText("蓝牙监听中：按眼镜拍照键");
-        notificationTimeout = () -> stopNotificationMonitor("60秒监听期结束");
-        ui.postDelayed(notificationTimeout, 60_000);
+        notificationTimeout = () -> stopNotificationMonitor("120秒监听期结束");
+        ui.postDelayed(notificationTimeout, 120_000);
         subscribeNextCharacteristic();
     }
 
@@ -685,6 +710,11 @@ public final class MainActivity extends Activity {
         if (descriptorTimeout != null) ui.removeCallbacks(descriptorTimeout);
         descriptorTimeout = null;
         log("CCCD 订阅回调：" + pendingSubscription.getUuid() + " status=" + code);
+        if (code == BluetoothGatt.GATT_SUCCESS
+                && COMMAND_NOTIFY.equals(pendingSubscription.getUuid())) {
+            commandNotifyReady = true;
+            log("AA14 指令响应通知已就绪：允许手动发送白名单内官方命令");
+        }
         pendingSubscription = null;
         if (code != BluetoothGatt.GATT_SUCCESS) {
             log("当前特征订阅失败，不推断眼镜固件故障");
@@ -701,9 +731,12 @@ public final class MainActivity extends Activity {
         notificationCount++;
         if (GattProtocolPolicy.shouldLogPayload(notificationCount)) {
             long elapsed = SystemClock.elapsedRealtime() - notificationStarted;
+            M02sBleWire.ParsedFrame parsed = M02sBleWire.parseIncoming(value);
+            String detail = parsed == null
+                    ? "未组成完整 AC55 帧（内容隐藏，可能是分片）"
+                    : parsed.safeSummary();
             log("通知#" + notificationCount + " +" + elapsed + "ms；特征 "
-                    + c.getUuid() + "；长度 " + value.length
-                    + "；HEX " + GattProtocolPolicy.shortHex(value));
+                    + c.getUuid() + "；长度 " + value.length + "；" + detail);
         } else if (notificationCount == 41) {
             log("通知数量较多，后续只计数不打印，避免大量日志/敏感数据");
         }
@@ -712,6 +745,7 @@ public final class MainActivity extends Activity {
     private void stopNotificationMonitor(String reason) {
         boolean wasActive = notificationMonitor;
         notificationMonitor = false;
+        commandNotifyReady = false;
         notificationQueue.clear();
         pendingSubscription = null;
         if (notificationTimeout != null) ui.removeCallbacks(notificationTimeout);
@@ -723,6 +757,94 @@ public final class MainActivity extends Activity {
                     + " 次通知。停止本地记录；断开 GATT 时取消订阅。");
             status.setText("蓝牙通知监听已停止；共 " + notificationCount + " 次");
         }
+    }
+
+    private void clearWritePending() {
+        writeInFlight = null;
+        if (writeTimeout != null) ui.removeCallbacks(writeTimeout);
+        writeTimeout = null;
+    }
+
+    /** A real GATT WRITE to AA13, only from one of three official-app commands. */
+    private void sendVerifiedCommand(byte[] frame) {
+        if (!M02sBleWire.isExactAuthorizedCommand(frame)) {
+            log("安全拦截：不在原厂指令白名单内");
+            return;
+        }
+        if (!gattConnected || !servicesReady || gatt == null) {
+            log("请先扫描 M02S 并连接 LE 1M");
+            return;
+        }
+        if (!notificationMonitor || !commandNotifyReady
+                || pendingSubscription != null || !notificationQueue.isEmpty()) {
+            log("请先开启120秒监听，等待 AA14 CCCD 订阅 status=0 后再发送");
+            return;
+        }
+        if (writeInFlight != null) {
+            log("上一条命令正在等待 GATT 写入回执；请勿重复点击");
+            return;
+        }
+        long now = SystemClock.elapsedRealtime();
+        if (lastSentAt != 0L && now - lastSentAt < 5000) {
+            log("命令间隔至少5秒，避免误触和重复拍照");
+            return;
+        }
+        BluetoothGattService service = gatt.getService(COMMAND_SERVICE);
+        BluetoothGattCharacteristic ch = service == null ? null
+                : service.getCharacteristic(COMMAND_WRITE);
+        if (ch == null || (ch.getProperties()
+                & BluetoothGattCharacteristic.PROPERTY_WRITE) == 0) {
+            log("无法验证 AA13 的有回执写入属性；没有发送任何指令");
+            return;
+        }
+        String label = M02sBleWire.outgoingDescription(frame);
+        try {
+            writeInFlight = label;
+            writeStartedAt = now;
+            lastSentAt = now;
+            ch.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+            int resultCode;
+            if (Build.VERSION.SDK_INT >= 33) {
+                resultCode = gatt.writeCharacteristic(ch, frame,
+                        BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+            } else {
+                @SuppressWarnings("deprecation")
+                boolean accepted = ch.setValue(frame);
+                @SuppressWarnings("deprecation")
+                boolean written = accepted && gatt.writeCharacteristic(ch);
+                resultCode = written ? 0 : -1;
+            }
+            if (resultCode != 0) {
+                clearWritePending();
+                log("AA13 拒绝提交指令：" + label + "；系统错误码 " + resultCode);
+                return;
+            }
+            log("已向 AA13 发出：" + label + "；字节数=" + frame.length
+                    + "。等待 GATT 写入回执和 AA14 响应；"
+                    + "写入成功不等于拍照成功或 Wi-Fi 连通。");
+            writeTimeout = () -> {
+                if (writeInFlight == null) return;
+                log("AA13 写入4秒无回调，结果未确定；不自动重试以免重复拍照");
+                clearWritePending();
+            };
+            ui.postDelayed(writeTimeout, 4000);
+        } catch (SecurityException | IllegalStateException | IllegalArgumentException ex) {
+            clearWritePending();
+            log("AA13 写入异常：" + ex.getClass().getSimpleName());
+        }
+    }
+
+    private void onCommandWriteResult(BluetoothGatt connection,
+                                      BluetoothGattCharacteristic characteristic,
+                                      int code, int token) {
+        if (destroyed || token != gattAttempt || connection != gatt
+                || characteristic == null || !COMMAND_WRITE.equals(characteristic.getUuid())
+                || writeInFlight == null) return;
+        String label = writeInFlight;
+        long elapsed = SystemClock.elapsedRealtime() - writeStartedAt;
+        clearWritePending();
+        log("AA13 写入回执：" + label + "；status=" + code + "；耗时="
+                + elapsed + "ms；这仅代表 BLE 写入结果，需观察 AA14 返回确认设备动作");
     }
 
     private void requestPeers() {
@@ -922,7 +1044,7 @@ public final class MainActivity extends Activity {
     }
 
     private void copyDiagnostic() {
-        String payload = "M02S Wi-Fi Lab v0.1.0 / Android " + Build.VERSION.RELEASE +
+        String payload = "M02S 官方指令实验 v0.1.3 / Android " + Build.VERSION.RELEASE +
                 "\n" + logData.toString();
         ClipboardManager cb = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
         cb.setPrimaryClip(ClipData.newPlainText("M02S diagnostic", payload));
