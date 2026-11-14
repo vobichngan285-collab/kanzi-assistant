@@ -1,3 +1,17 @@
+# 最新｜M02S 一键拍照取图 v0.1.7（2026-11-14，已发布，待首次真机串联测试）
+
+- **首次原图成功的真实用户日志（v0.1.6，已实测，不再重复基础研究）**：vivo X200 Pro / Android16 / M02S-3584，17:55:58 GATT LE1M **85ms**成功、AA14通知订阅status=0，17:56:16发送官方AP命令`0x39/0x30`，17:56:17获取0x25/SSID，17:56:22 Android目标AP连接onAvailable并获私有网关；17:56:59 `GET /app/getfilelist` **AP JSON解析成功，5条目/5个图片/5个可排序时间**；17:58:13 再次解析并唯一选出最新图，**原图下载及Android Bitmap解码成功：HTTP200、481424字节、JPEG、3200×2400、532ms、摘要e884d52cc67e**，用户截图确实在v0.1.6 APP预览区域看到实物照片。由此可**正式确认原图下载和显示已真机成功**，但截至v0.1.6还不是拍照→取图的一键串联。
+- **本次用户明确授权制作v0.1.7**：不新建仓库、不重复以前已成功的蓝牙/Wi-Fi/文件接口研究，以v0.1.6成果为基线实现一键拍照→确认产生的是**新照片**→下载内存预览。没有改正式Blue Star Guide RC25、原厂HeyCyan、Windows OCR或既有v0.1.0-v0.1.6分支及发布。
+- **独立源码**：仓库`vobichngan285-collab/kanzi-assistant`；新分支`exp/m02s-oneclick-shot-fetch-v017-20261114`，HEAD `e094d2e1c845367d0da77860f115e5077304590d`，基于v0.1.6 `7db185627f2f0e2b9efe4bf152758e65819dd659`。只改`experiments/m02s-wifi-lab`和专用workflow；新增纯Java`M02sFreshPhotoPolicy`与JUnit测试；新独立包`com.vobichngan.bluestar.m02soneclicklab`，versionCode8/name0.1.7，与各版共存。
+- **一键流程**：用户先用现有已验证流程连BLE和**AP热点精准连接**（不会自动重连AP），此后点击一次`一键拍照并获取新照片`。程序在发送拍照指令**之前**通过已连接专属`Network`请求官方AP JSON列表建立基线，失败**不发拍照命令**；若AA14监听已过120秒则自动重新开启通知，确保AA14订阅成功；用原先真机验证过的唯一原厂`M02sBleWire.photoThumbnail()`（AA13 `0x22/0x30`）**只发一次**，仍维持5秒最短发送间隔与4秒GATT写回执超时，回执非0/无回执不重试。
+- **确认新照片而非旧照片**：收到GATT写入status=0之后才启动短时列表轮询，每次约1.2秒（不再发送任何拍照指令），最多**45秒**；只接受**拍照前基线里没有的新文件名**，图片大小至少32B且不超过32MB。多个新文件仅在创建时间可唯一确定最新时选择；否则继续等或超时，**不能随意拿旧列表里的最新照片**。同一个新文件必须在**连续两次列表响应中名称、字节长度和创建时间均一致**才开始一次原图下载；复用v0.1.6经真机验证的AP JSON解析、安全相对路径、专属WiFi Network + 实际私有网关、HTTP GET不跳转、JPG/PNG/WebP签名/解码/32MB限制、APP进程内存预览。只记录匿名数量/阶段/耗时，不输出SSID、照片名、时间值或照片字节。若同时有其他渠道拍照，单凭新文件名不能百分百证明因果，首次测试须避免同时按眼镜实体拍照键或运行原厂App。
+- **状态与安全**：用户可点击`取消本次拍照任务`；蓝牙断开或AP改变立即停止；拍照失败、无新文件、文件大小不稳定、超时、图片GET失败均不回退旧图、不中途无限重试；一键任务运行中禁止同时手动列表/照片下载。原v0.1.6单次列表/手动原图按钮全部保留作对照。照片不落盘/不存相册、不上传云、不删除、不修改固件、无`fileDownloadFinish`、不自动断开AP。首次一键真机串联尚未做，不宣称已经成功。
+- **真实CI核验/Release**：GitHub Actions [43583840263](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/43583840263) `completed/success`；Gradle `:app:testDebugUnitTest :app:assembleDebug`（新单测覆盖不误取旧图、必须新文件、相同图片必须连续两次稳定、未完成大小、多个新文件歧义、安全选最新），SDK36构建、目标APK包名/version、权限、v2签名、zipalign、ZIP完整性和Release asset核验均通过。Tag `bluestar-m02s-oneclick-capture-v017-20261114`，APK `BlueStar_M02S_OneClick_Capture_0.1.7_Android.apk` **143945 bytes**，SHA256 `c714858a42869e49d25509ff66c8983e5151001c893f667e7bc8bfc3af1a8ffc`，**浏览器直链** https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-m02s-oneclick-capture-v017-20261114/BlueStar_M02S_OneClick_Capture_0.1.7_Android.apk 。
+- **下一步只做单次真机一键串联**：退出HeyCyan→启动v0.1.7→蓝牙扫描M02S-3584、LE1M连通→AA14订阅→AP精准连接直到onAvailable/真实网关成功→将眼镜对准**与之前不同的场景**→点击一次`一键拍照并获取新照片`，保持实验APP前台最多45秒（切换ChatGPT会导致Android定时任务停顿）。等待“拍照前基线获取成功”→“AA13写入status=0”→“新照片已确认”→“一键拍照取图完成”→“原图下载并解码成功”及图片预览。若失败，只提供新增脱敏日志，不要反复快速点击或再次做旧P2P实验。之后才能考虑接入蓝星云AI视觉朗读，仍需用户单独授权。
+- **交接纪律**：保留PROJECT_HANDOFF.md全部历史，main只前置本次进度；RELEASE_STATUS.md在main根目录读取返回404，不应捏造；接手必须核对真实HEAD/Actions/Release。此次未修改正式Blue Star Guide、Windows OCR项目或原厂APK。
+
+---
+
 # 最新｜M02S AP 原图单次验证 v0.1.6（2026-11-14，已发布，待真机）
 
 - **用户授权与目的**：基于v0.1.5已有真机成功链路，专门进行“从眼镜获取官方AP JSON照片列表→找到最新一张原始图→仅下载到手机APP内存并校验”的独立实验；不改蓝星向导RC25、不动Windows OCR、不覆盖HeyCyan和既有v0.1.0～v0.1.5实验。**本轮编译测试通过，不等于原图已经在M02S真机下载成功。**
