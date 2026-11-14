@@ -47,6 +47,7 @@ public final class M02sApStarter {
         void ready(Network network, String host);
         void standbyReady();
         void photoActionCandidate();
+        void photoActionEnded();
         void failed(String message);
         void lost(String message);
     }
@@ -91,6 +92,7 @@ public final class M02sApStarter {
     private Runnable firstDeviceDelay;
     private Runnable overallTimeout;
     private Runnable scanTimer;
+    private Runnable ssidTimeout;
 
     public M02sApStarter(Activity context, Handler mainHandler,
                          ConnectivityManager cm, WifiManager wm, Callback cb) {
@@ -129,6 +131,7 @@ public final class M02sApStarter {
         startedWifiNetworkRequest = false;
         startedApRequest = false;
         apWriteAcknowledged = false;
+        cancelSsidTimeout();
         if (bleStandbyReady) callback.standbyReady();
     }
 
@@ -311,8 +314,20 @@ public final class M02sApStarter {
                                 if (status != 0) fail(token, "AA13开热点写入失败 status=" + status);
                                 else {
                                     apWriteAcknowledged = true;
-                                    callback.log("AA13唯一一次0x39/0x30写入成功；正在等待眼镜精确SSID");
+                                    callback.log("AA13唯一一次0x39/0x30写入成功；等待5秒内收到有效AA14 0x25 SSID");
+                                    // A successful BLE write only means the command was delivered.
+                                    // Never leave the UI silently waiting for a firmware reply.
+                                    cancelSsidTimeout();
+                                    ssidTimeout = () -> {
+                                        if (valid(token) && startedApRequest && apWriteAcknowledged
+                                                && expectedSsid == null && !targetReady) {
+                                            callback.log("AA13写入成功但5秒内没有校验通过的AA14 0x25 SSID；停止本轮，不重复发命令");
+                                            fail(token, "眼镜未返回Wi-Fi SSID（0x25），不是Android连接慢；请检查拍照后AP是否真正启动");
+                                        }
+                                    };
+                                    ui.postDelayed(ssidTimeout, 5000L);
                                     if (expectedSsid != null && !startedWifiNetworkRequest && !targetReady) {
+                                        cancelSsidTimeout();
                                         if (!tryReuseConnectedTarget(token)) connectWifi(token, false);
                                     }
                                 }
@@ -422,8 +437,13 @@ public final class M02sApStarter {
         int photoFlag = M02sApWire.actionSyncPhotoFlag(bytes);
         if (photoFlag >= 0 && bleStandbyReady) {
             boolean rising = photoFlag == 1 && !lastPhotoFlagHigh;
+            boolean falling = photoFlag == 0 && lastPhotoFlagHigh;
             lastPhotoFlagHigh = photoFlag == 1;
             long now = SystemClock.elapsedRealtime();
+            if (falling) {
+                callback.log("被动AA14 0x45 isTakePhoto标志1→0，照片活动结束候选（并非保证已写盘）");
+                callback.photoActionEnded();
+            }
             if (rising && now - lastPhotoActionAtMs > 3500L) {
                 lastPhotoActionAtMs = now;
                 callback.log("被动AA14 0x45拍照状态标志出现0→1（开源E09推断，M02S待验证）");
@@ -440,6 +460,7 @@ public final class M02sApStarter {
         String ssid = M02sApWire.decodeWifiSsid(bytes);
         if (ssid == null) return;
         expectedSsid = ssid; // RAM only
+        cancelSsidTimeout();
         callback.log("AA14 0x25真实SSID校验成功；不扫热点，直接走Android精确Wi-Fi请求");
         if (!apWriteAcknowledged) {
             callback.log("SSID先于AA13写入回执到达；待status=0后立即请求网络");
@@ -568,6 +589,13 @@ public final class M02sApStarter {
     }
 
     /** The initial AP connection deadline must not interrupt 120-second photo watching. */
+    private void cancelSsidTimeout() {
+        if (ssidTimeout != null) {
+            ui.removeCallbacks(ssidTimeout);
+            ssidTimeout = null;
+        }
+    }
+
     private void cancelEstablishTimeout() {
         if (overallTimeout != null) {
             ui.removeCallbacks(overallTimeout);
@@ -604,6 +632,7 @@ public final class M02sApStarter {
         if (firstDeviceDelay != null) ui.removeCallbacks(firstDeviceDelay);
         if (overallTimeout != null) ui.removeCallbacks(overallTimeout);
         if (scanTimer != null) ui.removeCallbacks(scanTimer);
+        cancelSsidTimeout();
         bleTimeout = null;
         firstDeviceDelay = null;
         overallTimeout = null;
