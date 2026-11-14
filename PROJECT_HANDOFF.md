@@ -1,3 +1,14 @@
+# 最新｜M02S HeyCyan Wi-Fi 接续协议静态核查（2026-11-14，只分析未改代码）
+
+- **用户现场最新结果**：v0.1.3 通过蓝牙对 M02S 发送官方拍照命令后眼镜确实执行一次拍照；发送 `AB 55 00 03 39 31 6A` 后，AA14 先返回 `0x39`，随后约0.45秒出现一条完整校验通过的 `AC 55 ... 25 ...`，**有效载荷13字节**。系统 P2P 搜索到1台设备，用户已截图证实是 `DIRECT-92-HP M132f LaserJet` **惠普打印机，不是 M02S**。目前没有建立 M02S Wi-Fi，不能将发现打印机当成眼镜 Wi-Fi 成功。
+- **此次从原始用户上传 HeyCyan APK 直接重新读取 DEX**：`/mnt/data/70465ff3819258a6218e7871da0a23f8.apk`（284MB级安装包，包含 classes.dex～classes7.dex）。针对 `classes2.dex` 的 `ModBleResponse.onRequestSyncDataResponse(Datagram)` 实际检查 **sparse-switch 分发表**：命令 **0x25 跳转 code-unit 760**，实例化 `WifiCmdBean`，以 `leHeader.payload` 调 `WifiCmdBean.recoverByBytes`，取出 `ssid`，然后调用 `OnWifiDataListener.onWifiData(ssid,预设连接口令)`；`WifiCmdBean.recoverByBytes` 本身将**整段载荷** `HexConvert.convertList2Array` 后直接以 **UTF-8** 构造 `String`。这证明 **0x25 是原厂 SSID 数据帧**，而不是未知事件；v0.1.3 为避免泄露 SSID 已对0x25自动脱敏，因此既有日志无法还原真实字符串。注意 0x39 是 Wi-Fi 请求对应响应，**0x25才实际携带 SSID**；当时13个字节并不等于已验证的13个可见字符。
+- **后续连接调用链核对**：`classes5.dex` 的 `Lyo.onWifiData(ssid,password)` 只调用 `Ldp.connectWifi(ssid,password)`；`Ldp.connectP2pWifitoReceivePhoto()` 在发 Wi-Fi 请求前根据 `Lgw6.K` 在 `GET_WIFI_AP` 与 `GET_WIFI_P2P` 间分支。收到 SSID 后 `Ldp.connectWifi` 同样用 `Lgw6.K` 选择 `Lxxh.connectApwifi` 或 `Ldyh.connectToDirectWifi`。前者（`classes3.dex`）在 Android Q+ 利用 `WifiNetworkSpecifier/ConnectivityManager.requestNetwork` 和目标 SSID 走**热点连接**；后者主动 `WifiP2pManager.discoverPeers`，取得匹配设备后调用 `WifiP2pManager.connect` 走 **Wi-Fi Direct**。**官方 App 不会仅请求 Wi-Fi 信息后就停止，而是用收到的 SSID 开启明确的连接链路**。此前实验 v0.1.3 没有解析/使用0x25 SSID，所以扫描出惠普打印机不能判定 M02S 的 AP 或 P2P 模式失败。
+- **官方如何选择模式**：`ModBleResponse.onRequestSyncDataResponse` 解析 `CustomerCmdBean.project`，检查是否包含 `T`，据此写入 `Lgw6.K`；**包含 T 时 K=true → AP 路径；否则 K=false → P2P 路径**。这是原厂代码选择机制，但用户现有 BLE 诊断尚未采集 M02S 的 `project` 值，**不能擅自确认此台 M02S 必然使用哪一种模式**。
+- **断连的重要线索**：`classes5.dex` 中 `Ldp.startDownLoadPhotoByWifi` 完成阶段有 `runOnUiThreadDelayed(...,400ms)` → `Lcp.run` → `Ldp.stopP2pWifiConnect`，按 AP/P2P 模式执行对应断开；这是每次官方导入重新花费连接时间的代码证据，但眼镜固件是否另行断连仍须测试。
+- **研究结论与下一步拟议（未授权代码修改/构建）**：不用再重复 BLE 建连或盲扫打印机。建议隔离开发 v0.1.4，以**仅内存**形式安全解析 `0x25` 的真实 UTF-8 SSID（日志只显示长度/是否匹配/隐藏敏感数据）、基于真实眼镜名称尝试 **AP/P2P 两条明确区分的连接路线**，优先按设备 `project` 标识选路；需有用户点击确认，记录 Android 网络回调、设备类型、真正的 Network/IP/网关，**成功后才**允许 HTTP 文件列表测试；禁止凭蓝牙写入成功推断 Wi-Fi 已连接。正式 RC25、官方 APK、旧实验均不得改动。此次已完成静态分析，**没有创建新 APK 或发送额外指令**。
+
+---
+
 # 最新｜M02S 原厂 BLE 拍照及 Wi-Fi 请求指令专项 v0.1.3（2026-11-14，已发布，待真机）
 
 - **真机既有成功结果（用户亲测）**：v0.1.1/v0.1.2 在 vivo X200 Pro/Android16 上使用 `TRANSPORT_LE + PHY_LE_1M` 对 M02S-3584 GATT 连接成功（112ms、143ms），找到服务 `1800/AE00/AA12/180F`，厂商 AA12 下 `AA13` 为有回执写入、`AA14/AA15` 可通知；原厂协议状态 AA14 的 CCCD 订阅 0 状态成功，拍照实体键试验重复收到 `AC 55 ... 22 01`、`45 01`、`42 00 03/04`、`45 00`，验证接收链路。**这是眼镜实体键事件，不等同于已验证远程控制拍照。**
