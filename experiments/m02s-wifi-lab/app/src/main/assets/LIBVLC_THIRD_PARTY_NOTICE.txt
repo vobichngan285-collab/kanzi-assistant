@@ -1,0 +1,30 @@
+Blue Star M02S E09 isolated RTSP lab - third party notice
+Version: v0.1.14 / 2026-11-15
+
+This experimental Android APK includes LibVLC Android 3.7.7, obtained as
+the official VideoLAN Maven Central artifact:
+  org.videolan.android:libvlc-all:3.7.7
+  https://central.sonatype.com/artifact/org.videolan.android/libvlc-all/3.7.7
+
+LibVLC is developed by VideoLAN and its contributors.
+The LibVLC engine/bindings are licensed under GNU Lesser General Public
+License, version 2.1, or later as applicable to the library.
+A copy of the LGPL-2.1 full license text is bundled in this APK at:
+  assets/LICENSE-LGPL-2.1.txt
+
+Official source code for the library and its native components:
+  https://code.videolan.org/videolan/vlc-android
+  https://code.videolan.org/videolan/libvlcjni
+  https://code.videolan.org/videolan/vlc
+
+This experimental app's own Java source is provided in:
+  https://github.com/vobichngan285-collab/kanzi-assistant/tree/exp/m02s-e09-libvlc-rtsp-player-v0114-20261115/experiments/m02s-wifi-lab
+
+LibVLC is shipped as an upstream compiled Android AAR in an Android
+dynamic library deployment, not modified or statically embedded as app
+source. You may download/rebuild a compatible LibVLC artifact from the
+upstream source or Maven repository as permitted by its license.
+
+The app also references the E09 open-source reverse-engineering project
+and retains the existing E09_SOURCE_LICENSE.md attribution.
+No other app or eyewear firmware is modified.
