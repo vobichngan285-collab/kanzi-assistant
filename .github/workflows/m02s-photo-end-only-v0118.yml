@@ -1,0 +1,131 @@
+name: Blue Star M02S Photo End Only Then Fast AP WiFi JPEG v0.1.18
+on:
+  workflow_dispatch:
+  push:
+    branches: ['exp/m02s-photo-end-only-v0118-20261114']
+    paths:
+      - 'experiments/m02s-wifi-only-lab/**'
+      - '.github/workflows/m02s-photo-end-only-v0118.yml'
+permissions:
+  contents: write
+
+jobs:
+  test-build-release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -s "$ANDROID_HOME/platforms/android-36/android.jar" ] || [ ! -x "$ANDROID_HOME/build-tools/36.0.0/apksigner" ]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+          fi
+      - name: Prepare Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Verify exact BLE AP-only command; unit tests and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE=experiments/m02s-wifi-only-lab/app/src/main/java
+          WIRE="$SOURCE/com/vobichngan/bluestar/m02slab/M02sApWire.java"
+          grep -Fq '0x39, 0x30, 0x69' "$WIRE"
+          grep -Fq 'Arrays.equals(AP_REQUEST, bytes)' "$WIRE"
+          grep -Fq 'actionSyncPhotoFlag' "$WIRE"
+          STARTER="$SOURCE/com/vobichngan/bluestar/m02slab/M02sApStarter.java"
+          MAIN="$SOURCE/com/vobichngan/bluestar/m02slab/MainActivity.java"
+          grep -Fq 'setSsid(expectedSsid)' "$STARTER"
+          grep -Fq 'void photoActionEnded();' "$STARTER"
+          grep -Fq 'ui.postDelayed(ssidTimeout, 5000L)' "$STARTER"
+          grep -Fq 'if (falling)' "$STARTER"
+          grep -Fq 'PHOTO_DONE_SETTLE_MS = 250L' "$MAIN"
+          grep -Fq 'cancelCurrentTransfer()' "$MAIN"
+          grep -Fq 'waitingPhotoDone = true' "$MAIN"
+          grep -Fq 'ui.postDelayed(pendingPhotoAction, PHOTO_DONE_SETTLE_MS)' "$MAIN"
+          if grep -Fq 'PHOTO_DONE_FALLBACK_MS' "$MAIN" || grep -Fq '2200L' "$MAIN" || grep -Fq '2.2秒' "$MAIN"; then
+            echo 'Forbidden photo-finish timeout fallback remains in v0.1.18' >&2
+            exit 1
+          fi
+          grep -Fq 'clearPendingPhotoAction()' "$MAIN"
+          if grep -Fq 'startPhotoTransfer(true), 350L' "$MAIN"; then
+            echo 'old premature 350ms AP activation still present' >&2
+            exit 1
+          fi
+          if grep -Fq 'wifi.startScan(' "$SOURCE/com/vobichngan/bluestar/m02slab/M02sApStarter.java"; then
+            echo 'v0.1.18 must not perform Android Wi-Fi scan before exact SSID request' >&2
+            exit 1
+          fi
+          if grep -R -E 'M02sBleWire[.]photoThumbnail|e09BlePhoto[(]|[.]removeFile[(]|DELETE_MEDIA' "$SOURCE" ; then
+            echo 'Unauthorized shutter/erase API in one-time AP starter' >&2
+            exit 1
+          fi
+          gradle -p experiments/m02s-wifi-only-lab --no-daemon --no-parallel --max-workers=2 \
+            :app:testDebugUnitTest :app:assembleDebug --stacktrace
+      - name: Verify manifest, standalone APK signing and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=experiments/m02s-wifi-only-lab/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          TOOL="$ANDROID_HOME/build-tools/36.0.0"
+          "$TOOL/apksigner" verify --verbose "$APK" | tee "$RUNNER_TEMP/signature.txt"
+          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' "$RUNNER_TEMP/signature.txt"
+          "$TOOL/zipalign" -c -v 4 "$APK"
+          "$TOOL/aapt" dump badging "$APK" | tee "$RUNNER_TEMP/badging.txt"
+          grep -q "package: name='com.vobichngan.bluestar.m02sphotoendonlylab' versionCode='19' versionName='0.1.18'" "$RUNNER_TEMP/badging.txt"
+          "$TOOL/aapt" dump permissions "$APK" | tee "$RUNNER_TEMP/permissions.txt"
+          for p in BLUETOOTH_SCAN BLUETOOTH_CONNECT ACCESS_NETWORK_STATE ACCESS_WIFI_STATE CHANGE_NETWORK_STATE CHANGE_WIFI_STATE NEARBY_WIFI_DEVICES ACCESS_FINE_LOCATION INTERNET; do
+            grep -q "android.permission.${p}" "$RUNNER_TEMP/permissions.txt"
+          done
+          if grep -qE 'android.permission.(CAMERA|READ_MEDIA_IMAGES|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE)' "$RUNNER_TEMP/permissions.txt"; then
+            echo 'Unexpected camera or photo storage permission' >&2
+            exit 1
+          fi
+          unzip -t "$APK" | tail -n 2
+          mkdir -p release
+          cp "$APK" release/BlueStar_M02S_Photo_End_Only_0.1.18_Android.apk
+          sha256sum release/*.apk | tee release/SHA256SUMS.txt
+          echo "Source commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          cat release/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload standalone signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar-M02S-Photo-End-Only-v0118-APK
+          path: release/BlueStar_M02S_Photo_End_Only_0.1.18_Android.apk
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish stable browser download URL
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/release-notes.txt" <<'EOF'
+          M02S v0.1.18 — PHOTO END EVENT ONLY. This targeted revision fixes an actual v0.1.17 22:58 real-device race: 0x45 isTakePhoto flag rose to 1 at 22:58:22. The previous 2.2-second fallback issued BLE 0x39/0x30 AP enable at 22:58:24, immediately BEFORE the 0x45 flag dropped 1->0 in the same second. AA13 GATT write status0 succeeded but no AA14 0x25 SSID followed within 5 seconds. This is consistent with premature mode switching; it is not definitive proof of why the firmware withheld the SSID.
+          Changed: NO 2.2-second timeout fallback or any timer that automatically sends AP while photo state remains active. BLE stays connected in standby. Valid checksum 0x45 flag 0->1 only sets waiting state, not AP startup. The 1->0 transition alone schedules the existing one-time verified official 0x39/0x30 AP command after 250ms. If no 1->0 arrives, AP is NOT started automatically; the user can explicitly tap 'I've already taken the photo, get original now' if photo capture has finished. Already-running transfers report their stage rather than issuing another BLE command. A cancel button stops waiting or aborts the active one-shot without deleting any eyewear media. E09 0x45 flag 1->0 is a photo-state candidate, not independent confirmation that the full JPEG is written to storage.
+          Unchanged: only allowlisted BLE 0x39/0x30, never send 0x22 remote-shutter or destructive 0x44/OTA commands. AA13 successful write status0 starts a strict 5-second wait for verified AA14 0x25 exact SSID; on missing SSID report firmware/AP failure and stop without retries. On SSID confirmation, immediately request Android WifiNetworkSpecifier with exact verified credentials without Wi-Fi scan, 12s/1.8s waits or guessing another network. Require Android onAvailable and private gateway, verified OEM HTTP200 JSON /app/getfilelist, select uniquely newest candidate stable across two reads about 350ms apart, download original high-resolution JPEG into phone RAM only with size/path/signature checks. No album save, no cloud upload, no delete, no OCR/TTS, no continuous 450ms polling. Releasing phone network does not prove eyewear AP has exited transfer mode.
+          This APK is an isolated com.vobichngan.bluestar.m02sphotoendonlylab experiment (versionCode19, versionName0.1.18) built from previous successful v0.1.17 branch. Prior experiments, the production Blue Star Guide app and Windows OCR are unchanged. CI success proves source builds/tests/signs/releases, not confirmed M02S full-size JPEG transfer in this new mode. MIT E09 attribution preserved.
+          EOF
+          gh release create bluestar-m02s-photo-end-only-v0118-20261114 \
+            release/BlueStar_M02S_Photo_End_Only_0.1.18_Android.apk \
+            release/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Blue Star M02S Photo End Only + Fast WiFi v0.1.18 — experimental" \
+            --prerelease --notes-file "$RUNNER_TEMP/release-notes.txt"
+      - name: Verify release published and downloadable
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view bluestar-m02s-photo-end-only-v0118-20261114 \
+            --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,assets,url \
+            --jq '{isDraft,isPrerelease,url,assets: [.assets[] | {name: .name, size: .size, url: .url}]}'
