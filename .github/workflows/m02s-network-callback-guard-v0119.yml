@@ -1,0 +1,141 @@
+name: Blue Star M02S WiFi Network Callback Guard + Timings v0.1.19
+on:
+  workflow_dispatch:
+  push:
+    branches: ['exp/m02s-network-callback-guard-v0119-20261114']
+    paths:
+      - 'experiments/m02s-wifi-only-lab/**'
+      - '.github/workflows/m02s-network-callback-guard-v0119.yml'
+permissions:
+  contents: write
+
+jobs:
+  test-build-release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -s "$ANDROID_HOME/platforms/android-36/android.jar" ] || [ ! -x "$ANDROID_HOME/build-tools/36.0.0/apksigner" ]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+          fi
+      - name: Prepare Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Verify exact BLE AP-only command; unit tests and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE=experiments/m02s-wifi-only-lab/app/src/main/java
+          WIRE="$SOURCE/com/vobichngan/bluestar/m02slab/M02sApWire.java"
+          grep -Fq '0x39, 0x30, 0x69' "$WIRE"
+          grep -Fq 'Arrays.equals(AP_REQUEST, bytes)' "$WIRE"
+          grep -Fq 'actionSyncPhotoFlag' "$WIRE"
+          STARTER="$SOURCE/com/vobichngan/bluestar/m02slab/M02sApStarter.java"
+          MAIN="$SOURCE/com/vobichngan/bluestar/m02slab/MainActivity.java"
+          grep -Fq 'setSsid(expectedSsid)' "$STARTER"
+          grep -Fq 'void photoActionEnded();' "$STARTER"
+          grep -Fq 'if (!valid(token) || networkCallback != this) return;' "$STARTER"
+          grep -Fq 'wifiRequestAtMs' "$STARTER"
+          grep -Fq 'Android本轮准确SSID请求onUnavailable；等待=' "$STARTER"
+          grep -Fq '网络请求未满足' "$STARTER"
+          grep -Fq 'if (tryReuseConnectedTarget(token)) {' "$STARTER"
+          if grep -Fq 'Android未能连接眼镜AP，拒绝反复申请或猜测热点' "$STARTER"; then
+            echo 'Old misleading onUnavailable message and unsafe callback ownership still exist' >&2
+            exit 1
+          fi
+          grep -Fq 'ui.postDelayed(ssidTimeout, 5000L)' "$STARTER"
+          grep -Fq 'if (falling)' "$STARTER"
+          grep -Fq 'PHOTO_DONE_SETTLE_MS = 250L' "$MAIN"
+          grep -Fq 'cancelCurrentTransfer()' "$MAIN"
+          grep -Fq 'waitingPhotoDone = true' "$MAIN"
+          grep -Fq 'ui.postDelayed(pendingPhotoAction, PHOTO_DONE_SETTLE_MS)' "$MAIN"
+          if grep -Fq 'PHOTO_DONE_FALLBACK_MS' "$MAIN" || grep -Fq '2200L' "$MAIN" || grep -Fq '2.2秒' "$MAIN"; then
+            echo 'Forbidden photo-finish timeout fallback remains in v0.1.19' >&2
+            exit 1
+          fi
+          grep -Fq 'clearPendingPhotoAction()' "$MAIN"
+          if grep -Fq 'startPhotoTransfer(true), 350L' "$MAIN"; then
+            echo 'old premature 350ms AP activation still present' >&2
+            exit 1
+          fi
+          if grep -Fq 'wifi.startScan(' "$SOURCE/com/vobichngan/bluestar/m02slab/M02sApStarter.java"; then
+            echo 'v0.1.19 must not perform Android Wi-Fi scan before exact SSID request' >&2
+            exit 1
+          fi
+          if grep -R -E 'M02sBleWire[.]photoThumbnail|e09BlePhoto[(]|[.]removeFile[(]|DELETE_MEDIA' "$SOURCE" ; then
+            echo 'Unauthorized shutter/erase API in one-time AP starter' >&2
+            exit 1
+          fi
+          gradle -p experiments/m02s-wifi-only-lab --no-daemon --no-parallel --max-workers=2 \
+            :app:testDebugUnitTest :app:assembleDebug --stacktrace
+      - name: Verify manifest, standalone APK signing and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=experiments/m02s-wifi-only-lab/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          TOOL="$ANDROID_HOME/build-tools/36.0.0"
+          "$TOOL/apksigner" verify --verbose "$APK" | tee "$RUNNER_TEMP/signature.txt"
+          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' "$RUNNER_TEMP/signature.txt"
+          "$TOOL/zipalign" -c -v 4 "$APK"
+          "$TOOL/aapt" dump badging "$APK" | tee "$RUNNER_TEMP/badging.txt"
+          grep -q "package: name='com.vobichngan.bluestar.m02scallbackguardlab' versionCode='20' versionName='0.1.19'" "$RUNNER_TEMP/badging.txt"
+          "$TOOL/aapt" dump permissions "$APK" | tee "$RUNNER_TEMP/permissions.txt"
+          for p in BLUETOOTH_SCAN BLUETOOTH_CONNECT ACCESS_NETWORK_STATE ACCESS_WIFI_STATE CHANGE_NETWORK_STATE CHANGE_WIFI_STATE NEARBY_WIFI_DEVICES ACCESS_FINE_LOCATION INTERNET; do
+            grep -q "android.permission.${p}" "$RUNNER_TEMP/permissions.txt"
+          done
+          if grep -qE 'android.permission.(CAMERA|READ_MEDIA_IMAGES|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE)' "$RUNNER_TEMP/permissions.txt"; then
+            echo 'Unexpected camera or photo storage permission' >&2
+            exit 1
+          fi
+          unzip -t "$APK" | tail -n 2
+          mkdir -p release
+          cp "$APK" release/BlueStar_M02S_Network_Callback_Guard_0.1.19_Android.apk
+          sha256sum release/*.apk | tee release/SHA256SUMS.txt
+          echo "Source commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          cat release/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload standalone signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar-M02S-Network-Callback-Guard-v0119-APK
+          path: release/BlueStar_M02S_Network_Callback_Guard_0.1.19_Android.apk
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish stable browser download URL
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/release-notes.txt" <<'EOF'
+          M02S v0.1.19 WiFi network callback-ownership repair and fine-grained connection diagnostics; based strictly on v0.1.18, already physically tested to download full 3200x2400 JPEG in 6.188 seconds from photo-end-trigger to decode. Later user screenshot showed 2 successfully downloaded original photos and a subsequent "Android cannot connect AP" screen, but the full failing log is missing. No claim is made that Android blocked repeated requests or that the device firmware failed.
+          Inspected real Java code: v0.1.18 onLost/onAvailable/onLinkPropertiesChanged callbacks check that the callback still owns the current network request, while onUnavailable lacks this check and calls fail(token), potentially stopping a newer BLE+WiFi session if a previous released request dispatches a late failure. v0.1.19 closes this hole by checking both valid generation and networkCallback == this for onUnavailable, and clearing callback ownership before unregistering after a photo or on stop.
+          Adds safe elapsedRealtime telemetry from BLE AP command to validated 0x25 SSID, from exact Android WifiNetworkSpecifier request to onAvailable, and from that request to onUnavailable. Android's onUnavailable only means that particular network request could not be fulfilled or timed out, not proof of rate-limits, deliberate refusal, or bad eyewear. On an unavailable callback, the request is already released per Android official API docs; check ONLY already-connected Networks matching the BLE-confirmed exact SSID AND private IPv4 gateway, then verify existing OEM HTTP JSON before accepting. Never issue a second WiFi request automatically; otherwise fail with the measured duration and stop.
+          Unchanged: BLE standby waits for valid isTakePhoto ACTION_SYNC 0x45 rise then fall; after 1->0, only 250ms settle before the single verified OEM 0x39/0x30 AP command. No 2.2sec photo fallback; no remote shutter command 0x22, no destructive 0x44, no OTA. Strict AA13 write success and AA14 0x25 verified SSID before WifiNetworkSpecifier precise WPA2 request, no 12s WiFi scan. Network onAvailable + private gateway + OEM /app/getfilelist HTTP200 result0 required. Two stable list reads then original JPEG GET into RAM only with same pre-existing security checks. No cloud upload, gallery write, file deletion or OCR/TTS. Keep releasing phone WiFi request after each shot to avoid interfering with the glasses' physical shutter; retaining AP constantly is not an authorized workaround.
+          The APK has separate applicationId com.vobichngan.bluestar.m02scallbackguardlab (versionCode20/versionName0.1.19), leaving all v0.1.12 through v0.1.18 experiments, the main Blue Star Guide, Windows OCR and HeyCyan untouched. GitHub CI build success is not a guarantee that repeated Android WiFi connections will now always succeed on the physical device. Public MIT E09 protocol attribution retained in E09_SOURCE_LICENSE.md.
+          EOF
+          gh release create bluestar-m02s-network-callback-guard-v0119-20261114 \
+            release/BlueStar_M02S_Network_Callback_Guard_0.1.19_Android.apk \
+            release/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Blue Star M02S Network Callback Guard + Timings v0.1.19 — experimental" \
+            --prerelease --notes-file "$RUNNER_TEMP/release-notes.txt"
+      - name: Verify release published and downloadable
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view bluestar-m02s-network-callback-guard-v0119-20261114 \
+            --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,assets,url \
+            --jq '{isDraft,isPrerelease,url,assets: [.assets[] | {name: .name, size: .size, url: .url}]}'
