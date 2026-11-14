@@ -72,6 +72,39 @@ public final class M02sBleWireTest {
         assertNull(M02sBleWire.parseIncoming(frame).wifiSsidInMemory());
     }
 
+
+    @Test public void liveSupportReadOnlyWirePacketMatchesOemDexAndE09() {
+        assertArrayEquals(new byte[]{(byte)0xab,0x55,0,3,(byte)0x95,0,(byte)0x95},
+                M02sBleWire.e09ReadCapabilities());
+        assertTrue(M02sBleWire.isExactAuthorizedCommand(M02sBleWire.e09ReadCapabilities()));
+        assertFalse(M02sBleWire.isExactAuthorizedCommand(
+                new byte[]{(byte)0xab,0x55,0,3,(byte)0x95,1,(byte)0x96}));
+        assertTrue(M02sBleWire.outgoingDescription(
+                M02sBleWire.e09ReadCapabilities()).contains("只读"));
+    }
+
+    @Test public void capabilitiesBigEndianBit0DeterminesLiveSupportOnlyWhenValid() {
+        byte[] live = {(byte)0xac,0x55,0,6,(byte)0x95,0,0,0,1,(byte)0x96};
+        M02sBleWire.ParsedFrame a = M02sBleWire.parseIncoming(live);
+        assertNotNull(a);
+        assertEquals(Long.valueOf(1), a.e09CapabilityMaskOrNull());
+        assertEquals(1L, a.e09CapabilityMaskOrNull() & 1L);
+        assertFalse(a.safeSummary().contains("安全预览="));
+
+        byte[] noLive = {(byte)0xac,0x55,0,6,(byte)0x95,
+                (byte)0x80,0,0,2,0x17};
+        M02sBleWire.ParsedFrame b = M02sBleWire.parseIncoming(noLive);
+        assertNotNull(b);
+        assertEquals(Long.valueOf(0x80000002L),b.e09CapabilityMaskOrNull());
+        assertEquals(0L,b.e09CapabilityMaskOrNull() & 1L);
+
+        byte[] truncated = {(byte)0xac,0x55,0,5,(byte)0x95,0,0,1,(byte)0x96};
+        assertNull(M02sBleWire.parseIncoming(truncated).e09CapabilityMaskOrNull());
+        live[live.length - 1] ^= 1;
+        assertNull(M02sBleWire.parseIncoming(live).e09CapabilityMaskOrNull());
+        assertNull(M02sBleWire.parseIncoming(null));
+    }
+
     @Test public void malformedFramesAreNotTrustworthy() {
         assertNull(M02sBleWire.parseIncoming(new byte[]{(byte)0xac,0x55,0,3,0x22,1}));
         assertNull(M02sBleWire.parseIncoming(new byte[]{(byte)0xab,0x55,0,3,0x22,1,0x23}));
