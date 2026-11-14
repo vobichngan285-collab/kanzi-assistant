@@ -55,6 +55,23 @@ public final class M02sFreshPhotoPolicy {
         return new Selection(Status.READY, fresh.size(), chosen, key);
     }
 
+    /**
+     * AP was intentionally not connected before BLE shutter, so the first shot
+     * has no pre-shot file-list baseline. A unique latest file may be PREVIEWED,
+     * but is never claimed to have been created by this shutter event.
+     */
+    public static Selection selectLatestUnverified(List<M02sPhotoPolicy.Candidate> after) {
+        if (after == null) throw new IllegalArgumentException("null snapshot");
+        if (after.isEmpty()) return new Selection(Status.NO_NEW_FILE, 0, null, null);
+        M02sPhotoPolicy.Candidate chosen = M02sPhotoPolicy.uniqueLatestOrNull(after);
+        if (chosen == null) return new Selection(Status.AMBIGUOUS, after.size(), null, null);
+        if (chosen.declaredBytes < 32 || chosen.declaredBytes > M02sPhotoPolicy.MAX_IMAGE_BYTES) {
+            return new Selection(Status.NEW_FILE_INCOMPLETE, after.size(), null, null);
+        }
+        String key = chosen.remoteName + "\\u0000" + chosen.declaredBytes + "\\u0000" + chosen.createdAt;
+        return new Selection(Status.READY, after.size(), chosen, key);
+    }
+
     /** Two back-to-back identical list observations required before download. */
     public static boolean stablePair(Selection previous, Selection current) {
         return previous != null && current != null
