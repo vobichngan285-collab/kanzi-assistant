@@ -14,7 +14,7 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"/>
     <uses-permission android:name="android.permission.INTERNET"/>
-    <application android:label="蓝星 M02S 仅拍照结束取图 v0.1.18"
+    <application android:label="蓝星 M02S 连接稳定性 v0.1.19"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="true"
         android:allowBackup="false"
