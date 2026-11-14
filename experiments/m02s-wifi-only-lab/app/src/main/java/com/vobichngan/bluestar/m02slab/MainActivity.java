@@ -5,27 +5,21 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
-import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.net.ConnectivityManager;
-import android.net.LinkProperties;
 import android.net.Network;
-import android.net.NetworkCapabilities;
-import android.net.RouteInfo;
-import android.net.wifi.WifiInfo;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
-import android.provider.Settings;
 import android.view.Gravity;
 import android.view.WindowManager;
 import android.widget.Button;
-import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -33,468 +27,408 @@ import android.widget.TextView;
 
 import org.json.JSONObject;
 
-import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * M02S manual physical shutter + Wi-Fi auto-fetch experiment.
- * One-time verified BLE 0x39/0x30 command enables the glasses AP ONLY.
- * This app never sends BLE photo/shutter commands.
- *
- * Uses the OEM AP list /app/getfilelist + original-photo read-only GET that
- * already worked on the user's device, with conservative fresh-file policy.
- * The photo remains in RAM only; no cloud upload, gallery write or delete.
+ * M02S fastest verified high-quality photo transport experiment.
+ * BLE stands by for unverified ACTION_SYNC 0x45 physical photo candidate;
+ * a manual fallback button works even when the firmware sends no notification.
+ * BLE only issues the OEM 0x39/0x30 AP command after a physical shot.
+ * No BLE remote shutter command, Wi-Fi scanning delay, continuous polling,
+ * file deletion, cloud upload, album write, or OTA.
  */
 public final class MainActivity extends Activity {
-    private static final long POLL_DELAY_MS = 450L;
-    private static final long MAX_WATCH_MS = 120_000L;
-    private static final int MAX_SHOTS = 3;
-    private static final int REQUEST_WIFI_PERMISSIONS = 1301;
+    private static final int PERMISSION_REQUEST = 1601;
+    private static final long ONE_SHOT_MAX_MS = 39_000L;
+    private static final long LIST_RECHECK_MS = 350L;
+    private static final int LIST_MAX_TRIES = 12;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final StringBuilder diagnostics = new StringBuilder();
-    private ConnectivityManager connectivity;
-    private TextView statusView;
+    private M02sApStarter starter;
+    private TextView statusText;
     private TextView logView;
-    private TextView counterView;
-    private M02sApStarter apStarter;
-    private ImageView photoPreview;
-    private Network targetNetwork;
-    private String targetHost;
-    private boolean verifying;
-    private boolean watching;
-    private boolean inFlight;
+    private TextView resultText;
+    private ImageView preview;
+    private Network network;
+    private String gateway;
     private boolean destroyed;
-    private long epoch;
-    private long firstNewObservedAt = -1;
-    private int shots;
-    private int polls;
-    private int failures;
-    private byte[] photoInMemory; // RAM only.
-    private List<M02sPhotoPolicy.Candidate> known = new ArrayList<>();
-    private M02sFreshPhotoPolicy.Selection previous;
-    private Runnable watchDeadline;
+    private boolean inTransfer;
+    private boolean listBusy;
+    private long runId;
+    private long captureToWifiStartMs;
+    private long apRequestAtMs;
+    private long wifiReadyAtMs;
+    private int listTries;
+    private int downloadedCount;
+    private byte[] lastJpegInRam;
+    private String lastDownloadedRemoteName; // memory only; never log or persist
+    private M02sFreshPhotoPolicy.Selection previousList;
+    private Runnable transferDeadline;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        connectivity = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-        android.net.wifi.WifiManager wifi = (android.net.wifi.WifiManager)
-                getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-        apStarter = new M02sApStarter(this, ui, connectivity, wifi,
-                new M02sApStarter.Callback() {
-                    @Override public void log(String message) { MainActivity.this.log(message); }
-                    @Override public void ready(Network net, String host) { onApConnected(net, host); }
-                    @Override public void failed(String message) {
-                        MainActivity.this.log("眼镜Wi-Fi建连未成功：" + message);
-                        status("连接失败：" + message);
-                    }
-                    @Override public void lost(String message) {
-                        MainActivity.this.log(message);
-                        stopWatch(message);
-                        targetNetwork = null;
-                        targetHost = null;
-                    }
-                });
-        buildUi();
-        log("v0.1.15 扫描失败回退修复：蓝牙只开AP，已连接目标复用，否则12秒后仅对准确SSID请求一次Wi-Fi；不遥控拍照");
-        log("继续拍前基线/450ms照片列表比较/高清JPEG下载；不保存相册、上传云端、删除眼镜照片");
-        status("按「连接眼镜并启动Wi-Fi」；无需手动猜热点SSID或密码");
+        ConnectivityManager cm = (ConnectivityManager)
+                getSystemService(Context.CONNECTIVITY_SERVICE);
+        WifiManager wifi = (WifiManager) getApplicationContext()
+                .getSystemService(Context.WIFI_SERVICE);
+        starter = new M02sApStarter(this, ui, cm, wifi, new M02sApStarter.Callback() {
+            @Override public void log(String message) { MainActivity.this.log(message); }
+            @Override public void standbyReady() {
+                if (destroyed) return;
+                if (!inTransfer) status("BLE已待机：请直接按眼镜实体快门；若没有自动反应，点取图按钮");
+            }
+            @Override public void photoActionCandidate() {
+                if (!inTransfer) {
+                    log("上游E09 0x45 isTakePhoto候选事件出现；约350ms后尝试取图，"
+                            + "目前尚未在M02S实机验证该标志一定对应实体快门");
+                    ui.postDelayed(() -> startPhotoTransfer(true), 350L);
+                }
+            }
+            @Override public void ready(Network net, String host) {
+                onWifiReady(net, host);
+            }
+            @Override public void failed(String message) {
+                log("BLE或眼镜Wi-Fi阶段失败：" + message);
+                if (inTransfer) abortTransfer("取图失败：" + message);
+                else status("蓝牙准备失败：" + message);
+            }
+            @Override public void lost(String message) {
+                log(message);
+                if (inTransfer) abortTransfer("眼镜网络断开");
+                else status("眼镜Wi-Fi已断开：" + message);
+            }
+        });
+        makeUi();
+        log("v0.1.16 最短路径：BLE先待机→实体快门→直接0x39/0x30开AP"
+                + "→准确SSID立即请求Android Wi-Fi→GET最新高清候选");
+        log("彻底取消12秒Wi-Fi扫描、1.8秒等待和450ms长时间轮询；只在拍后取图");
+        log("0x45拍照标志来自E09开源推断，在M02S上待验证；提供手动已拍照取图入口");
+        log("照片只到手机RAM；不会删除眼镜文件，不上传云端，也不操作OCR/TTS");
+        status("点击「准备蓝牙待机」，成功后直接用眼镜实体键拍照");
     }
 
-    private void buildUi() {
+    private void makeUi() {
         ScrollView scroll = new ScrollView(this);
         LinearLayout body = new LinearLayout(this);
-        body.setPadding(px(18), px(20), px(18), px(26));
         body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(dp(18),dp(16),dp(18),dp(24));
         scroll.addView(body);
         setContentView(scroll);
 
-        addText(body, "蓝星 M02S 手动快门 Wi-Fi 取图", 24, Color.rgb(28, 59, 94), true);
-        addText(body, "v0.1.15 · 蓝牙只开热点 · 实体手动拍照", 15, Color.DKGRAY, false);
-        statusView = addText(body, "", 18, Color.rgb(12, 99, 75), true);
+        addText(body,"蓝星 M02S 极速高清取图",24,0xff17385b,true);
+        addText(body,"v0.1.16 · 先拍照，再直接连接Wi-Fi取原图",15,Color.DKGRAY,false);
+        statusText = addText(body,"",18,0xff117458,true);
 
-        addText(body, "① 用蓝牙仅开启眼镜Wi-Fi（不遥控拍照）", 18, Color.BLACK, true);
-        addButton(body, "连接M02S并开启Wi-Fi、自动等待照片", this::connectApAndWatch);
-        addButton(body, "停止监听并断开本次眼镜Wi-Fi连接", this::disconnectAll);
-        addText(body, "程序只对唯一M02S发送一次已验证的0x39/0x30开热点命令，"
-                + "收到眼镜SSID后按此前成功的Wi-Fi连接方法自动建连；不发送任何0x22拍照指令。", 14,
-                Color.DKGRAY, false);
-        addText(body, "② 看到“基线已建立”后，直接按眼镜实体快门", 18, Color.BLACK, true);
-        addText(body, "如果眼镜在Wi-Fi模式下无法实体拍照，说明可能存在固件模式互斥；"
-                + "请直接反馈，不重复发送开热点或拍照命令。", 14, Color.DKGRAY, false);
-        addText(body, "③ 手机Wi-Fi自动读取新的高清原图", 18, Color.BLACK, true);
-        counterView = addText(body, "本轮成功 0 / 3 张", 18, Color.rgb(28, 59, 94), true);
-        addText(body, "Wi-Fi保持连接，每约450毫秒检查一次新增文件；连续两次稳定后自动下载原图。最多120秒或成功3张。", 14, Color.DKGRAY, false);
+        addText(body,"① 先准备蓝牙待机（这一步不打开Wi-Fi）",17,Color.BLACK,true);
+        addButton(body,"准备蓝牙待机",this::prepareStandby);
+        addText(body,"② 眼镜实体按键拍照，监听到0x45拍照状态候选会自动尝试取图",
+                16,Color.BLACK,true);
+        addText(body,"如果你按完眼镜快门手机没有自动反应，直接点下面这个按钮。"
+                + "无需先连Wi-Fi，也不需要等待12秒扫描。",14,Color.DKGRAY,false);
+        addButton(body,"我已经拍照，立即取高清原图",() -> startPhotoTransfer(false));
 
-        addText(body, "最新高清照片（仅内存预览）", 18, Color.BLACK, true);
-        photoPreview = new ImageView(this);
-        photoPreview.setAdjustViewBounds(true);
-        photoPreview.setMinimumHeight(px(150));
-        photoPreview.setBackgroundColor(Color.rgb(239,243,246));
-        body.addView(photoPreview, new LinearLayout.LayoutParams(-1, -2));
-        addButton(body, "清除内存照片", () -> {
-            photoInMemory = null;
-            photoPreview.setImageDrawable(null);
-            log("已清除手机内存照片预览；不会触碰眼镜文件");
+        addText(body,"③ 下载完成后只在内存显示原图",17,Color.BLACK,true);
+        resultText = addText(body,"本轮已完成0张；等待实体拍照",16,0xff17385b,true);
+        preview = new ImageView(this);
+        preview.setAdjustViewBounds(true);
+        preview.setMinimumHeight(dp(150));
+        preview.setBackgroundColor(0xffeef2f5);
+        body.addView(preview,new LinearLayout.LayoutParams(-1,-2));
+
+        addButton(body,"停止并断开手机连接",this::disconnectAll);
+        addButton(body,"清除内存图片",() -> {
+            lastJpegInRam=null;
+            preview.setImageDrawable(null);
+            log("手机内存预览已清空；未操作眼镜媒体");
         });
 
-        addText(body, "诊断日志（不含照片、SSID、密码、文件名或设备地址）", 18, Color.BLACK, true);
-        addButton(body, "复制匿名诊断日志", () -> {
-            ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-            cm.setPrimaryClip(ClipData.newPlainText("M02S Wi-Fi-only diagnostics", diagnostics.toString()));
-            status("已复制诊断日志");
+        addText(body,"匿名诊断（不包含SSID、密码、MAC、文件名或照片）",
+                17,Color.BLACK,true);
+        addButton(body,"复制诊断日志",() -> {
+            ClipboardManager clipboard = (ClipboardManager)
+                    getSystemService(Context.CLIPBOARD_SERVICE);
+            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.16 diagnostic",
+                    diagnostics.toString()));
+            status("诊断日志已复制");
         });
-        logView = addText(body, "", 13, Color.rgb(35,44,50), false);
+        logView = addText(body,"",13,0xff26343e,false);
         logView.setGravity(Gravity.START);
-        addText(body, "注意：手机无法精准获得实体快门按下的时间；报告的“首次发现新文件到解码”并非整个拍照耗时。此版仅测试高清Wi-Fi取图，不接OCR/TTS。", 13, Color.DKGRAY, false);
+
+        addText(body,"说明：初次取图选取可确定的最新照片，"
+                + "不把文件时间推断当作快门确认；检测到与上次相同的照片不会重复下载。"
+                + "本版只验证传输速度，不接云端OCR或朗读。",13,Color.DKGRAY,false);
     }
 
-    private TextView addText(LinearLayout body, String value, int sp, int color, boolean strong) {
-        TextView text = new TextView(this);
-        text.setText(value);
-        text.setTextSize(sp);
-        text.setTextColor(color);
-        if (strong) text.setTypeface(null, 1);
-        text.setPadding(0, px(7), 0, px(7));
-        body.addView(text, new LinearLayout.LayoutParams(-1, -2));
-        return text;
+    private TextView addText(LinearLayout parent,String value,int sp,int color,boolean bold) {
+        TextView t = new TextView(this);
+        t.setText(value);
+        t.setTextSize(sp);
+        t.setTextColor(color);
+        if (bold) t.setTypeface(null,1);
+        t.setPadding(0,dp(7),0,dp(7));
+        parent.addView(t,new LinearLayout.LayoutParams(-1,-2));
+        return t;
     }
-
-    private void addButton(LinearLayout body, String label, Runnable action) {
-        Button b = new Button(this);
+    private void addButton(LinearLayout parent,String label,Runnable click) {
+        Button b=new Button(this);
+        b.setAllCaps(false);
         b.setText(label);
         b.setTextSize(16);
-        b.setAllCaps(false);
-        body.addView(b, new LinearLayout.LayoutParams(-1, -2));
-        b.setOnClickListener(v -> action.run());
+        parent.addView(b,new LinearLayout.LayoutParams(-1,-2));
+        b.setOnClickListener(v -> click.run());
     }
-    private int px(int dp) {
-        return (int)(getResources().getDisplayMetrics().density * dp + 0.5f);
+    private int dp(int unit) {
+        return (int)(getResources().getDisplayMetrics().density*unit+0.5f);
     }
     private void status(String message) {
-        if (statusView != null) statusView.setText(message);
+        if (statusText!=null) statusText.setText(message);
     }
     private void log(String message) {
-        String row = android.text.format.DateFormat.format("HH:mm:ss", System.currentTimeMillis())
-                + " " + message + "\n";
+        if (destroyed) return;
+        String row=android.text.format.DateFormat.format("HH:mm:ss",
+                System.currentTimeMillis())+" "+message+"\n";
         diagnostics.append(row);
-        if (diagnostics.length() > 16000)
-            diagnostics.delete(0, Math.min(4000, diagnostics.length() - 14000));
-        if (logView != null) logView.setText(diagnostics.toString());
+        if (diagnostics.length()>22000)
+            diagnostics.delete(0,Math.min(5000,diagnostics.length()-19000));
+        if (logView!=null) logView.setText(diagnostics.toString());
     }
 
-    private boolean ensurePermission() {
-        List<String> missing = new ArrayList<>();
-        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED)
-            missing.add(Manifest.permission.ACCESS_FINE_LOCATION);
-        if (Build.VERSION.SDK_INT >= 33 &&
-                checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED)
-            missing.add(Manifest.permission.NEARBY_WIFI_DEVICES);
-        if (Build.VERSION.SDK_INT >= 31) {
-            if (checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED)
-                missing.add(Manifest.permission.BLUETOOTH_SCAN);
-            if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED)
-                missing.add(Manifest.permission.BLUETOOTH_CONNECT);
+    private boolean ensurePermissions() {
+        java.util.ArrayList<String> missing=new java.util.ArrayList<>();
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                !=PackageManager.PERMISSION_GRANTED) missing.add(Manifest.permission.ACCESS_FINE_LOCATION);
+        if (Build.VERSION.SDK_INT>=31) {
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN)
+                    !=PackageManager.PERMISSION_GRANTED) missing.add(Manifest.permission.BLUETOOTH_SCAN);
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)
+                    !=PackageManager.PERMISSION_GRANTED) missing.add(Manifest.permission.BLUETOOTH_CONNECT);
         }
+        if (Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES)
+                !=PackageManager.PERMISSION_GRANTED) missing.add(Manifest.permission.NEARBY_WIFI_DEVICES);
         if (missing.isEmpty()) return true;
-        requestPermissions(missing.toArray(new String[0]), REQUEST_WIFI_PERMISSIONS);
-        status("请授予蓝牙与附近Wi-Fi权限，然后再次点击连接");
+        requestPermissions(missing.toArray(new String[0]),PERMISSION_REQUEST);
+        status("请授予蓝牙和Wi-Fi附近设备权限，再点准备蓝牙待机");
         return false;
     }
 
-    /** Active only for the one BLE-confirmed, exact-SSID Android Network. */
-    private boolean targetStillPresent() {
-        return apStarter != null && apStarter.isActive(targetNetwork, targetHost);
+    private void prepareStandby() {
+        if (!ensurePermissions()) return;
+        if (starter.running()) {
+            status(starter.standby()?"BLE已待机，请用眼镜实体键拍照":
+                    "正在连接M02S，勿重复操作");
+            return;
+        }
+        starter.start();
+        status("正在连接M02S BLE并订阅拍照状态；不启动眼镜Wi-Fi");
     }
 
-    private void connectApAndWatch() {
-        if (!ensurePermission()) return;
-        if (watching || verifying || inFlight) {
-            status("当前已有照片监听或验证，请勿重复开启眼镜AP");
+    private void startPhotoTransfer(boolean fromActionSync) {
+        if (destroyed || inTransfer) return;
+        if (!starter.standby()) {
+            status("请先准备蓝牙待机；未连接眼镜，不发送Wi-Fi请求");
             return;
         }
-        if (targetStillPresent()) {
-            log("此前已确认的眼镜AP连接仍然存在，直接重新建立拍前基线，不再发送蓝牙命令");
-            beginWatch();
+        final long id=++runId;
+        captureToWifiStartMs=SystemClock.elapsedRealtime();
+        apRequestAtMs=captureToWifiStartMs;
+        wifiReadyAtMs=0;
+        listTries=0;
+        previousList=null;
+        inTransfer=true;
+        listBusy=false;
+        network=null;
+        gateway=null;
+        status("已触发取图：立即发送一次开AP指令，收到SSID后直接申请Wi-Fi");
+        log((fromActionSync?"候选0x45拍照状态自动触发":"用户确认已实体拍照手动触发")
+                +"：取图开始（此时刻不一定等于真实快门时刻）");
+
+        if (!starter.requestPhotoTransfer()) {
+            inTransfer=false;
+            status("无法发送唯一一次开AP指令：检查BLE待机/旧传输状态");
             return;
         }
-        if (apStarter != null && apStarter.running()) {
-            status("正在建立眼镜Wi-Fi连接；不重复开热点");
-            return;
-        }
-        apStarter.start();
-        status("正在蓝牙连接眼镜并开启Wi-Fi，请观察连接授权");
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        transferDeadline=() -> {
+            if (inTransfer && id==runId)
+                abortTransfer("本轮39秒取图上限已到，不自动重复发送蓝牙/Wi-Fi指令");
+        };
+        ui.postDelayed(transferDeadline,ONE_SHOT_MAX_MS);
     }
 
-    /** Network is proven BLE-SSID-bound by the starter; double-check OEM list. */
-    private void onApConnected(Network net, String host) {
-        if (destroyed) return;
-        if (watching || verifying) return;
-        final long run = ++epoch;
-        verifying = true;
-        targetNetwork = net;
-        targetHost = host;
-        status("已拿到眼镜真实AP网关，正在验证原厂照片列表");
+    private void onWifiReady(Network net,String host) {
+        if (!inTransfer || destroyed) return;
+        wifiReadyAtMs=SystemClock.elapsedRealtime();
+        network=net;
+        gateway=host;
+        log("手机收到真实眼镜AP Network和私有网关；触发到Wi-Fi就绪="
+                +(wifiReadyAtMs-captureToWifiStartMs)+"ms，开始原厂只读HTTP");
+        status("眼镜Wi-Fi已就绪，读取最新高清照片列表");
+        readLatestList(runId);
+    }
+
+    private static M02sPhotoListReader.Result readList(Network net,String host) throws Exception {
+        M02sPhotoTransport.Response res=M02sPhotoTransport.getList(net,host);
+        if (res.httpCode!=200) throw new java.io.IOException("OEM照片列表HTTP非200");
+        JSONObject root=new JSONObject(new String(res.body,StandardCharsets.UTF_8));
+        if (root.optInt("result",-9)!=0 || !root.has("info"))
+            throw new java.io.IOException("OEM照片列表JSON未经验证");
+        return M02sPhotoListReader.parse(res.body);
+    }
+
+    private void readLatestList(long id) {
+        if (destroyed || !inTransfer || id!=runId || listBusy || network==null)
+            return;
+        if (!starter.isActive(network,gateway)) {
+            abortTransfer("眼镜专属Wi-Fi连接已丢失，不能尝试其他网络");
+            return;
+        }
+        if (listTries>=LIST_MAX_TRIES) {
+            abortTransfer("照片列表未出现唯一且连续稳定的最新候选；不盲目下载旧照片");
+            return;
+        }
+        listBusy=true;
+        listTries++;
+        final Network net=network;
+        final String host=gateway;
         io.execute(() -> {
             try {
-                M02sPhotoListReader.Result list = readPhotoList(net, host);
+                M02sPhotoListReader.Result list=readList(net,host);
                 ui.post(() -> {
-                    if (destroyed || run != epoch) return;
-                    verifying = false;
-                    if (!targetStillPresent()) {
-                        status("验证中眼镜Wi-Fi已断开，不能自动取图");
+                    if (destroyed || !inTransfer || id!=runId) return;
+                    listBusy=false;
+                    M02sFreshPhotoPolicy.Selection candidate=
+                            M02sFreshPhotoPolicy.selectLatestUnverified(list.candidates);
+                    if (candidate.status==M02sFreshPhotoPolicy.Status.READY
+                            && candidate.photo != null
+                            && candidate.photo.remoteName.equals(lastDownloadedRemoteName)) {
+                        log("列表最新候选与本App刚下载的同一张一致，拒绝重复取旧图");
+                        abortTransfer("没有检测到比上次成功取图更新的照片");
                         return;
                     }
-                    log("BLE唤醒眼镜AP + Android专属Wi-Fi + 原厂HTTP200 JSON验证成功；"
-                            + "旧照片数量=" + list.eligibleImages + "，准备自动建立基线");
-                    beginWatch();
+                    if (M02sFreshPhotoPolicy.stablePair(previousList,candidate)) {
+                        log("照片列表#" +listTries+"：最新候选连续两次稳定，"
+                                +"图片总数="+list.eligibleImages+"；开始直接GET原始图片");
+                        downloadOriginal(id,net,host,candidate.photo);
+                        return;
+                    }
+                    previousList=candidate;
+                    if (listTries==1 || listTries%3==0)
+                        log("照片列表#"+listTries+"：总图片数="+list.eligibleImages
+                                +"；最新候选状态="+candidate.status+"；350ms后复核稳定性");
+                    ui.postDelayed(() -> readLatestList(id),LIST_RECHECK_MS);
                 });
-            } catch (Exception ex) {
+            } catch (Exception e) {
                 ui.post(() -> {
-                    if (destroyed || run != epoch) return;
-                    verifying = false;
-                    log("目标AP连上，但原厂HTTP照片列表校验失败；类型="
-                            + ex.getClass().getSimpleName() + "；不冒认其它设备");
-                    status("原厂照片列表不可用。请复制日志，别重复点击拍照");
-                    // Do not keep a non-validated connection silently.
-                    if (apStarter != null) apStarter.stop();
-                    targetNetwork = null;
-                    targetHost = null;
+                    if (destroyed || !inTransfer || id!=runId) return;
+                    listBusy=false;
+                    log("OEM列表请求失败，异常类型="+e.getClass().getSimpleName());
+                    abortTransfer("原厂HTTP照片列表不可用；不重复BLE或猜测IP");
                 });
             }
         });
     }
 
-    private static M02sPhotoListReader.Result readPhotoList(Network net, String host)
-            throws Exception {
-        M02sPhotoTransport.Response response = M02sPhotoTransport.getList(net, host);
-        if (response.httpCode != 200)
-            throw new java.io.IOException("照片列表HTTP非200");
-        org.json.JSONObject root = new org.json.JSONObject(
-                new String(response.body, StandardCharsets.UTF_8));
-        if (root.optInt("result", -1234) != 0 || !root.has("info"))
-            throw new java.io.IOException("不是已验证的M02S原厂JSON照片列表");
-        return M02sPhotoListReader.parse(response.body);
+    private void downloadOriginal(long id,Network net,String host,
+                                  M02sPhotoPolicy.Candidate candidate) {
+        if (!inTransfer || id!=runId || candidate==null) return;
+        final long begin=SystemClock.elapsedRealtime();
+        status("正在下载原厂最新高清原图（仅内存）");
+        io.execute(() -> {
+            try {
+                M02sPhotoTransport.Response res=
+                        M02sPhotoTransport.getOriginalPhoto(net,host,candidate);
+                if(res.httpCode!=200) throw new java.io.IOException("original HTTP non200");
+                M02sPhotoPolicy.ImageKind kind=M02sPhotoPolicy.imageKind(res.body);
+                if (!M02sPhotoPolicy.extensionMatches(candidate.remoteName,kind))
+                    throw new java.io.IOException("wrong original image signature");
+                BitmapFactory.Options bounds=new BitmapFactory.Options();
+                bounds.inJustDecodeBounds=true;
+                BitmapFactory.decodeByteArray(res.body,0,res.body.length,bounds);
+                if (bounds.outWidth<1 || bounds.outHeight<1 || bounds.outWidth>10000
+                        || bounds.outHeight>10000
+                        || (long)bounds.outWidth*bounds.outHeight>32_000_000L)
+                    throw new java.io.IOException("invalid image bounds");
+                Bitmap bitmap=BitmapFactory.decodeByteArray(res.body,0,res.body.length);
+                if (bitmap==null) throw new java.io.IOException("Bitmap decode failed");
+                long doneAt=SystemClock.elapsedRealtime();
+                ui.post(() -> {
+                    if (destroyed || !inTransfer || id!=runId) {
+                        bitmap.recycle();return;
+                    }
+                    if (!starter.isActive(net,host)) {
+                        bitmap.recycle();
+                        abortTransfer("读取后检测到眼镜Network已掉线，不把本图误报为取图成功");
+                        return;
+                    }
+                    lastJpegInRam=res.body;
+                    lastDownloadedRemoteName=candidate.remoteName;
+                    preview.setImageBitmap(bitmap);
+                    downloadedCount++;
+                    resultText.setText("成功下载"+downloadedCount+"张；最近原图"
+                            +bitmap.getWidth()+"×"+bitmap.getHeight());
+                    log("已下载最新高清候选：尺寸="+bitmap.getWidth()+"×"+bitmap.getHeight()
+                            +"；字节="+res.body.length
+                            +"；本次HTTP GET="+res.durationMs+"ms"
+                            +"；GET到解码="+(doneAt-begin)+"ms"
+                            +"；触发取图到解码="+(doneAt-captureToWifiStartMs)+"ms"
+                            +"（不包含未知的真实快门触发延迟）");
+                    log("最新候选只代表文件时间排序，不能单独证明它由本次实体快门生成");
+                    finishTransfer(true,"高清原图已显示；已释放手机Wi-Fi，BLE保留待机");
+                });
+            } catch (Exception e) {
+                ui.post(() -> {
+                    if (!inTransfer || destroyed || id!=runId) return;
+                    log("高清GET失败，异常类型="+e.getClass().getSimpleName());
+                    abortTransfer("原图下载失败；没有云端上传、没有删除眼镜照片");
+                });
+            }
+        });
+    }
+
+    private void abortTransfer(String reason) {
+        if (!inTransfer) {
+            status(reason);
+            return;
+        }
+        log("本轮取图停止："+reason);
+        finishTransfer(false,reason);
+    }
+
+    private void finishTransfer(boolean success,String reason) {
+        inTransfer=false;
+        runId++; // invalidate all pending callbacks and old IO completions
+        if (transferDeadline!=null) ui.removeCallbacks(transferDeadline);
+        transferDeadline=null;
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        network=null;
+        gateway=null;
+        listBusy=false;
+        starter.releasePhotoNetwork();
+        status(reason+(starter.standby()?"。BLE仍在待机":"。BLE已断开"));
+        if (!success) log("失败后不自动重发开AP指令，需用户主动触发");
     }
 
     private void disconnectAll() {
-        stopWatch("用户停止自动取图");
-        if (apStarter != null) apStarter.stop();
-        targetNetwork = null;
-        targetHost = null;
-        log("已释放本次眼镜Wi-Fi网络请求和BLE控制连接；眼镜固件何时关闭热点未知");
-        status("眼镜Wi-Fi控制会话已停止；原图仍只在本机内存预览");
-    }
-
-    private void beginWatch() {
-        if (!ensurePermission()) return;
-        if (watching || verifying || inFlight) {
-            status("已有Wi-Fi检查任务运行，请勿重复开始"); return;
-        }
-        if (targetNetwork == null || targetHost == null || !targetStillPresent()) {
-            status("请先点击连接眼镜并开启Wi-Fi，验证专属网络后才可监听");
-            return;
-        }
-        final long run = ++epoch;
-        inFlight = true;
-        shots = 0;
-        polls = 0;
-        failures = 0;
-        firstNewObservedAt = -1;
-        previous = null;
-        counterView.setText("本轮成功 0 / 3 张");
-        status("正在读取拍照前旧照片基线；完成后再按实体拍照键");
-        final Network net = targetNetwork;
-        final String host = targetHost;
-        io.execute(() -> {
-            try {
-                M02sPhotoListReader.Result list = readPhotoList(net, host);
-                ui.post(() -> {
-                    if (destroyed || run != epoch) return;
-                    inFlight = false;
-                    if (!targetStillPresent()) {
-                        status("建立基线期间Wi-Fi已断开，拒绝开始监听"); return;
-                    }
-                    known = new ArrayList<>(list.candidates);
-                    watching = true;
-                    getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-                    log("新实验：只读照片基线已建立，旧图片数=" + known.size()
-                            + "；开始每约450ms检查新增文件；本应用绝不发蓝牙指令");
-                    status("正在监听新照片：现在请按眼镜的实体拍照键");
-                    watchDeadline = () -> {
-                        if (watching && run == epoch)
-                            stopWatch("120秒观察到期；已成功 " + shots + " 张");
-                    };
-                    ui.postDelayed(watchDeadline, MAX_WATCH_MS);
-                    schedulePoll(run, POLL_DELAY_MS);
-                });
-            } catch (Exception ex) {
-                ui.post(() -> {
-                    if (destroyed || run != epoch) return;
-                    inFlight = false;
-                    log("拍照前基线失败：原厂照片列表不可用；异常类型="
-                            + ex.getClass().getSimpleName());
-                    status("无法建立拍照前基线；不会自动取旧照片");
-                });
-            }
-        });
-    }
-
-    private void schedulePoll(long run, long delayMs) {
-        ui.postDelayed(() -> poll(run), delayMs);
-    }
-
-    private void poll(long run) {
-        if (!watching || destroyed || run != epoch || inFlight) return;
-        if (!targetStillPresent()) {
-            stopWatch("目标眼镜Wi-Fi已断开/切换或无安全网关；不会切换其他网络");
-            return;
-        }
-        inFlight = true;
-        polls++;
-        final Network net = targetNetwork;
-        final String host = targetHost;
-        io.execute(() -> {
-            try {
-                M02sPhotoListReader.Result list = readPhotoList(net, host);
-                ui.post(() -> {
-                    if (!watching || destroyed || run != epoch) return;
-                    inFlight = false;
-                    failures = 0;
-                    M02sFreshPhotoPolicy.Selection selected =
-                            M02sFreshPhotoPolicy.select(known, list.candidates);
-                    if (selected.status != M02sFreshPhotoPolicy.Status.NO_NEW_FILE
-                            && firstNewObservedAt < 0) {
-                        firstNewObservedAt = SystemClock.elapsedRealtime();
-                        log("检测到旧照片基线之外的文件变化：状态=" + selected.status
-                                + "；候选数量=" + selected.freshCount + "；等待稳定");
-                    }
-                    if (M02sFreshPhotoPolicy.stablePair(previous, selected)) {
-                        inFlight = true;
-                        log("检测到同一新文件连续两次大小稳定；开始只读下载原图");
-                        downloadNewPhoto(run, net, host, selected.photo);
-                        return;
-                    }
-                    if (polls % 8 == 0 || (previous != null
-                            && previous.status != selected.status)) {
-                        log("Wi-Fi列表观察 #" + polls + "：状态=" + selected.status
-                                + "；新候选数=" + selected.freshCount);
-                    }
-                    previous = selected;
-                    schedulePoll(run, POLL_DELAY_MS);
-                });
-            } catch (Exception ex) {
-                ui.post(() -> {
-                    if (!watching || destroyed || run != epoch) return;
-                    inFlight = false;
-                    failures++;
-                    log("Wi-Fi列表查询失败 #" + failures
-                            + "；异常类型=" + ex.getClass().getSimpleName());
-                    if (failures >= 3) {
-                        stopWatch("连续3次只读列表请求失败；不自动重连或扫描");
-                    } else schedulePoll(run, POLL_DELAY_MS);
-                });
-            }
-        });
-    }
-
-    private void downloadNewPhoto(long run, Network net, String host,
-                                  M02sPhotoPolicy.Candidate candidate) {
-        final long begin = SystemClock.elapsedRealtime();
-        io.execute(() -> {
-            try {
-                M02sPhotoTransport.Response response =
-                        M02sPhotoTransport.getOriginalPhoto(net, host, candidate);
-                if (response.httpCode != 200)
-                    throw new java.io.IOException("原图HTTP状态非200");
-                M02sPhotoPolicy.ImageKind type =
-                        M02sPhotoPolicy.imageKind(response.body);
-                if (!M02sPhotoPolicy.extensionMatches(candidate.remoteName, type))
-                    throw new java.io.IOException("原图签名和扩展名不匹配");
-                BitmapFactory.Options bounds = new BitmapFactory.Options();
-                bounds.inJustDecodeBounds = true;
-                BitmapFactory.decodeByteArray(response.body, 0,
-                        response.body.length, bounds);
-                if (bounds.outWidth < 1 || bounds.outHeight < 1
-                        || bounds.outWidth > 10000 || bounds.outHeight > 10000
-                        || (long)bounds.outWidth * bounds.outHeight > 32_000_000L)
-                    throw new java.io.IOException("原图尺寸无效或过大");
-                Bitmap bitmap = BitmapFactory.decodeByteArray(
-                        response.body, 0, response.body.length);
-                if (bitmap == null)
-                    throw new java.io.IOException("原图Bitmap解码失败");
-                long total = SystemClock.elapsedRealtime() - begin;
-                ui.post(() -> {
-                    if (!watching || destroyed || run != epoch) {
-                        bitmap.recycle();
-                        return;
-                    }
-                    inFlight = false;
-                    if (!targetStillPresent()) {
-                        bitmap.recycle();
-                        stopWatch("下载后发现已切换网络；放弃本次结果");
-                        return;
-                    }
-                    photoInMemory = response.body;
-                    photoPreview.setImageBitmap(bitmap);
-                    known.add(candidate); // Mark ONLY downloaded file as seen.
-                    previous = null;
-                    shots++;
-                    counterView.setText("本轮成功 " + shots + " / 3 张");
-                    long discoveryToDecode = firstNewObservedAt < 0 ? -1
-                            : SystemClock.elapsedRealtime() - firstNewObservedAt;
-                    log("高清原图自动下载成功 #" + shots
-                            + "：分辨率=" + bitmap.getWidth() + "×" + bitmap.getHeight()
-                            + "；字节=" + response.body.length
-                            + "；HTTP下载=" + response.durationMs + "ms"
-                            + "；请求到解码=" + total + "ms"
-                            + "；首次发现新文件到解码=" + discoveryToDecode
-                            + "ms；仅手机内存预览");
-                    firstNewObservedAt = -1;
-                    if (shots >= MAX_SHOTS) {
-                        stopWatch("连续3张新高清照片自动下载成功；不代表端到端拍照耗时达标");
-                    } else {
-                        status("第" + shots + "张高清照片已显示，请再次按眼镜实体拍照键");
-                        schedulePoll(run, POLL_DELAY_MS);
-                    }
-                });
-            } catch (Exception ex) {
-                ui.post(() -> {
-                    if (!watching || destroyed || run != epoch) return;
-                    inFlight = false;
-                    log("发现新照片，但原图下载/解码失败；类型="
-                            + ex.getClass().getSimpleName() + "；不会使用旧图冒充");
-                    stopWatch("原图下载失败，停止监听并保留诊断");
-                });
-            }
-        });
-    }
-
-    private void stopWatch(String why) {
-        boolean was = watching;
-        watching = false;
-        epoch++; // Invalidate all scheduled callbacks and in-flight results.
-        inFlight = false;
-        verifying = false;
-        if (watchDeadline != null) ui.removeCallbacks(watchDeadline);
-        watchDeadline = null;
+        if (inTransfer) abortTransfer("用户主动结束本轮取图");
+        runId++;
+        starter.stop();
+        network=null;gateway=null;listBusy=false;
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        if (was) log("Wi-Fi自动取图停止：" + why
-                + "；成功张数=" + shots + "；列表查询次数=" + polls);
-        status("已停止：" + why);
+        status("BLE和本次手机Wi-Fi请求已释放；眼镜AP固件退出状态未验证");
+        log("用户主动断开手机会话；不发送任何删除或未知结束命令");
     }
 
     @Override protected void onDestroy() {
-        destroyed = true;
-        stopWatch("应用退出");
-        if (apStarter != null) apStarter.stop();
+        if(inTransfer) finishTransfer(false,"应用退出");
+        destroyed=true;
+        starter.stop();
         io.shutdownNow();
-        photoInMemory = null;
+        lastJpegInRam=null;
         super.onDestroy();
     }
 }
