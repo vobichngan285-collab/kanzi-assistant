@@ -1,0 +1,148 @@
+name: Blue Star M02S E09 Vivo OEM First AP Matcher v0.1.13
+on:
+  workflow_dispatch:
+  push:
+    branches: ['exp/m02s-e09-vivo-oem-ap-matcher-20261115']
+    paths:
+      - 'experiments/m02s-wifi-lab/**'
+      - '.github/workflows/m02s-e09-vivo-oem-ap-matcher-20261115.yml'
+permissions:
+  contents: write
+
+jobs:
+  test-build-release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify Android SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -s "$ANDROID_HOME/platforms/android-36/android.jar" ] || [ ! -x "$ANDROID_HOME/build-tools/36.0.0/apksigner" ]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+          fi
+      - name: Prepare Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Unit tests and standalone Android build
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle -p experiments/m02s-wifi-lab --no-daemon --no-parallel --max-workers=2 \
+            :app:testDebugUnitTest :app:assembleDebug --stacktrace
+      - name: Verify manual 0x95 hardware live support query, original BLE export and RTSP unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="experiments/m02s-wifi-lab/app/src/main/java/com/vobichngan/bluestar/m02slab/MainActivity.java"
+          grep -Fq 'button("保存刚收到的蓝牙JPEG到手机相册（原始画质）", this::exportE09BleJpeg)' "$SRC"
+          grep -Fq 'lastE09PhotoForExport = jpeg;' "$SRC"
+          grep -Fq 'final byte[] jpeg = lastE09PhotoForExport.clone();' "$SRC"
+          grep -Fq 'out.write(jpeg);' "$SRC"
+          grep -Fq 'MediaStore.Images.Media.IS_PENDING' "$SRC"
+          grep -Fq 'Environment.DIRECTORY_PICTURES + "/BlueStarE09"' "$SRC"
+          grep -Fq 'if (lastE09PhotoForExport == null' "$SRC"
+          grep -Fq 'button("E09 RTSP直播建连", this::startE09Live)' "$SRC"
+          grep -Fq 'button("播放RTSP画面", this::playE09Preview)' "$SRC"
+          grep -Fq 'M02sBleWire.e09BlePhoto()' "$SRC"
+          ! grep -Fq 'Bitmap.compress(' "$SRC"
+          # Compare the immutable Git blob from the user's tested v0.1.12 base.
+          test "$(git hash-object experiments/m02s-wifi-lab/app/src/main/java/com/vobichngan/bluestar/m02slab/M02sE09PhotoAssembler.java)" = "3be7b6c1b485d1766a9f0ebb5c65cbce2a0df0df"
+          grep -Fq 'button("检测眼镜直播功能支持位（只读 BLE 0x95）", this::probeE09LiveSupport)' "$SRC"
+          grep -Fq 'private void probeE09LiveSupport()' "$SRC"
+          grep -Fq 'M02sBleWire.e09ReadCapabilities()' "$SRC"
+          grep -Fq 'parsed.e09CapabilityMaskOrNull()' "$SRC"
+          grep -Fq 'e09CapabilityPending' "$SRC"
+          grep -Fq 'bit0 supportLive=' "$SRC"
+          WIRE="experiments/m02s-wifi-lab/app/src/main/java/com/vobichngan/bluestar/m02slab/M02sBleWire.java"
+          grep -Fq 'public static byte[] e09ReadCapabilities() { return frame(0x95, 0x00); }' "$WIRE"
+          grep -Fq 'payload.length != 4' "$WIRE"
+          grep -Fq 'Arrays.equals(bytes, e09ReadCapabilities())' "$WIRE"
+          # Preserve unchanged RTSP protocol/socket probe from user's v0.1.12 base.
+          test "$(git hash-object experiments/m02s-wifi-lab/app/src/main/java/com/vobichngan/bluestar/m02slab/M02sE09RtspProbe.java)" = "bec97b0f0ca5099e9fcfa4babd466409187c3097"
+          # The ONLY connection experiment is Vivo's APP_LIVE first request:
+          # public OEM WifiApConnector uses literal-pattern SSID with the
+          # fresh scanned target BSSID, rather than our old SSID-only request.
+          grep -Fq 'new PatternMatcher(' "$SRC"
+          grep -Fq 'targetWifiSsid, PatternMatcher.PATTERN_LITERAL' "$SRC"
+          grep -Fq 'builder.setBssid(MacAddress.fromString(apFreshFirstBssid));' "$SRC"
+          grep -Fq 'M02sE09OemMatchPolicy.choose(' "$SRC"
+          grep -Fq 'e09LiveRequested, Build.BRAND, currentTargetApScan()' "$SRC"
+          grep -Fq 'if (strategy == M02sE09OemMatchPolicy.Choice.TARGET_NOT_READY)' "$SRC"
+          grep -Fq 'button("普通AP相册连接（非直播）"' "$SRC"
+          POLICY="experiments/m02s-wifi-lab/app/src/main/java/com/vobichngan/bluestar/m02slab/M02sE09OemMatchPolicy.java"
+          grep -Fq '!"vivo".equalsIgnoreCase(deviceBrand)' "$POLICY"
+          grep -Fq 'M02sApReadinessPolicy.canConnect(' "$POLICY"
+          ! grep -qE 'for *\(.*requestNetwork|while *\(.*requestNetwork' "$SRC"
+          echo "Vivo OEM live-only literal-pattern+BSSID; no extra BLE writes or automatic retries"
+
+      - name: Verify independent APK, permissions, and signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="experiments/m02s-wifi-lab/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          TOOL="$ANDROID_HOME/build-tools/36.0.0"
+          "$TOOL/apksigner" verify --verbose "$APK" | tee "$RUNNER_TEMP/signature.txt"
+          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' "$RUNNER_TEMP/signature.txt"
+          "$TOOL/zipalign" -c -v 4 "$APK"
+          "$TOOL/aapt" dump badging "$APK" | tee "$RUNNER_TEMP/badging.txt"
+          grep -q "package: name='com.vobichngan.bluestar.m02se09oemrtsp' versionCode='16' versionName='0.1.13'" "$RUNNER_TEMP/badging.txt"
+          "$TOOL/aapt" dump permissions "$APK" | tee "$RUNNER_TEMP/permissions.txt"
+          grep -q 'android.permission.BLUETOOTH_SCAN' "$RUNNER_TEMP/permissions.txt"
+          grep -q 'android.permission.NEARBY_WIFI_DEVICES' "$RUNNER_TEMP/permissions.txt"
+          grep -q 'android.permission.INTERNET' "$RUNNER_TEMP/permissions.txt"
+          grep -q 'android.permission.CHANGE_NETWORK_STATE' "$RUNNER_TEMP/permissions.txt"
+          grep -q 'android.permission.ACCESS_NETWORK_STATE' "$RUNNER_TEMP/permissions.txt"
+          grep -q 'android.permission.CHANGE_WIFI_STATE' "$RUNNER_TEMP/permissions.txt"
+          if grep -qE 'android.permission.(CAMERA|READ_MEDIA_IMAGES|READ_EXTERNAL_STORAGE)' "$RUNNER_TEMP/permissions.txt"; then
+            echo 'Unexpected camera or media access in transport-only lab' >&2; exit 1
+          fi
+          unzip -t "$APK" | tail -n 2
+          mkdir -p release
+          cp "$APK" release/BlueStar_M02S_E09_VivoOEM_RTSP_0.1.13_Android.apk
+          sha256sum release/*.apk | tee release/SHA256SUMS.txt
+          echo "Source commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          cat release/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload installation APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar-M02S-E09-VivoOEM-RTSP-v0113-APK
+          path: release/BlueStar_M02S_E09_VivoOEM_RTSP_0.1.13_Android.apk
+          retention-days: 30
+          if-no-files-found: error
+      - name: Publish direct-browser APK
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/note.txt" <<'EOF'
+          M02S E09 Vivo OEM matching v0.1.13. User's M02S firmware reports supportLive=true (0x95 mask 0x000012AB), but previous APP_LIVE 0x67/0x30 BLE + 0x25 SSID + new AP scan was followed by Android 16 ASSOCIATION error code 1 before any RTSP traffic.
+          Direct source comparison with publicly decompiled Eyevue OEM WifiApConnector.java shows its first request for Vivo/non-Harmony/ColorOS/Xiaomi uses WifiNetworkSpecifier.setSsidPattern(PatternMatcher.PATTERN_LITERAL) plus setBssid(scannedTarget), whereas our older v0.1.12 used setSsid() with no pin.
+          Only Vivo E09 APP_LIVE's single first request now uses that OEM matcher after the uniquely confirmed fresh post-BLE target beacon has been stable for 1.8s. No new wait times, no repeated network requests, and no BLE retries; cached/ambiguous/invalid BSSID is blocked. Ordinary photo AP keeps original SSID-only method, other brands unchanged.
+          Preserve BLE PHOTO_START/TRANS/END JPEG assembler, 0x22/0x31 low-res photo, JPEG gallery export, 0x95 read-only capability query, 0x67/0x30 APP_LIVE, read-only RTSP OPTIONS/DESCRIBE and Android MediaPlayer. No deletion/OTA/cloud upload/firmware writes. E09 MIT license remains.
+          New independent package com.vobichngan.bluestar.m02se09oemrtsp 0.1.13, no overwrite of user's old releases.
+          One actual M02S test is required: connect LE1M, enable AA14 notifications, tap only E09 RTSP直播建连, verify OEM match strategy log then check onAvailable vs error1. Only if RTSP probe reaches gateway click playback; do not infer video from firmware capability.
+          EOF
+          gh release create bluestar-m02s-e09-vivo-oem-ap-matcher-20261115 \
+            release/BlueStar_M02S_E09_VivoOEM_RTSP_0.1.13_Android.apk \
+            release/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Blue Star M02S E09 Vivo OEM AP Matcher v0.1.13" \
+            --prerelease --notes-file "$RUNNER_TEMP/note.txt"
+      - name: Verify release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view bluestar-m02s-e09-vivo-oem-ap-matcher-20261115 --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,isPrerelease,assets,url \
+            --jq '{isDraft,isPrerelease,url,assets: [.assets[] | {name: .name, size: .size, url: .url}]}'
