@@ -42,6 +42,9 @@ import java.util.UUID;
  * with MIT E09 reference Constants.swift and WifiMediaManager.swift.
  */
 public final class M02sApStarter {
+    /** GATT write completion; NOT proof the glasses exited AP. */
+    public interface NonClearFinishCallback { void complete(boolean gattWriteSucceeded); }
+
     public interface Callback {
         void log(String message);
         void ready(Network network, String host);
@@ -94,6 +97,9 @@ public final class M02sApStarter {
     private Runnable overallTimeout;
     private Runnable scanTimer;
     private Runnable ssidTimeout;
+    private Runnable nonClearFinishTimeout;
+    private NonClearFinishCallback pendingNonClearFinish;
+    private boolean nonClearFinishWriting;
 
     public M02sApStarter(Activity context, Handler mainHandler,
                          ConnectivityManager cm, WifiManager wm, Callback cb) {
@@ -111,10 +117,72 @@ public final class M02sApStarter {
     /** User has physically pressed shutter, or upstream ACTION_SYNC indicates capture.
      * No camera-control command ever leaves the phone. */
     public boolean requestPhotoTransfer() {
-        if (!standby() || startedApRequest || startedWifiNetworkRequest || targetReady)
+        if (!standby() || nonClearFinishWriting || startedApRequest
+                || startedWifiNetworkRequest || targetReady)
             return false;
         writeApCommand(generation);
         return startedApRequest;
+    }
+
+    /**
+     * E09-derived, M02S-unverified non-deleting Wi-Fi session close.
+     * Caller MUST ensure explicit opt-in; this exact 44/30/01 frame is
+     * independently allowlisted. 44/30/00 is never supported.
+     */
+    public boolean requestNonClearFinish(NonClearFinishCallback cb) {
+        if (!standby() || nonClearFinishWriting || cb == null) return false;
+        byte[] packet = M02sApWire.nonClearFinishRequest();
+        if (!M02sApWire.authorizedNonClearFinish(packet)) return false;
+        BluetoothGattService service = gatt.getService(AA12);
+        BluetoothGattCharacteristic ch =
+                service == null ? null : service.getCharacteristic(AA13);
+        if (ch == null || (ch.getProperties() & BluetoothGattCharacteristic.PROPERTY_WRITE) == 0)
+            return false;
+        final int token = generation;
+        try {
+            nonClearFinishWriting = true;
+            pendingNonClearFinish = cb;
+            int code;
+            if (Build.VERSION.SDK_INT >= 33) {
+                code = gatt.writeCharacteristic(ch, packet,
+                        BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+            } else {
+                @SuppressWarnings("deprecation")
+                boolean set = ch.setValue(packet);
+                @SuppressWarnings("deprecation")
+                boolean wrote = set && gatt.writeCharacteristic(ch);
+                code = wrote ? 0 : -1;
+            }
+            if (code != 0) {
+                callback.log("不删除结束帧提交到GATT失败 code=" + code);
+                completeNonClearFinish(false);
+                return true;
+            }
+            callback.log("实验性发送唯一不删除结束帧0x44/0x30/0x01；"
+                    + "仅E09开源依据，M02S未验证；绝不发送清除版本");
+            nonClearFinishTimeout = () -> {
+                if (valid(token) && nonClearFinishWriting) {
+                    callback.log("不删除结束帧3秒内没有GATT写回执；不重发、不推断退出成功");
+                    completeNonClearFinish(false);
+                }
+            };
+            ui.postDelayed(nonClearFinishTimeout, 3000L);
+            return true;
+        } catch (SecurityException | IllegalStateException ex) {
+            callback.log("不删除结束帧GATT异常=" + ex.getClass().getSimpleName());
+            completeNonClearFinish(false);
+            return true;
+        }
+    }
+
+    private void completeNonClearFinish(boolean succeeded) {
+        if (!nonClearFinishWriting) return;
+        nonClearFinishWriting = false;
+        if (nonClearFinishTimeout != null) ui.removeCallbacks(nonClearFinishTimeout);
+        nonClearFinishTimeout = null;
+        NonClearFinishCallback cb = pendingNonClearFinish;
+        pendingNonClearFinish = null;
+        if (cb != null) cb.complete(succeeded);
     }
 
     /** Release only the phone Wi-Fi request; keep BLE listening for next shutter.
@@ -318,6 +386,12 @@ public final class M02sApStarter {
                                 if (!valid(token) || connection != gatt
                                         || characteristic == null
                                         || !AA13.equals(characteristic.getUuid())) return;
+                                if (nonClearFinishWriting) {
+                                    callback.log("实验性不删除结束帧AA13写回执status=" + status
+                                            + "；GATT成功也不证明眼镜退出传输模式");
+                                    completeNonClearFinish(status == 0);
+                                    return;
+                                }
                                 if (status != 0) fail(token, "AA13开热点写入失败 status=" + status);
                                 else {
                                     apWriteAcknowledged = true;
@@ -650,6 +724,11 @@ public final class M02sApStarter {
     }
 
     public void stop() {
+        // Cancel pending no-delete experiment before invalidating BLE callbacks.
+        nonClearFinishWriting = false;
+        pendingNonClearFinish = null;
+        if (nonClearFinishTimeout != null) ui.removeCallbacks(nonClearFinishTimeout);
+        nonClearFinishTimeout = null;
         generation++;
         running = false;
         targetReady = false;
