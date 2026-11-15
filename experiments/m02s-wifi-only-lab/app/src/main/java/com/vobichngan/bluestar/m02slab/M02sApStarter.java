@@ -139,6 +139,12 @@ public final class M02sApStarter {
             && !awaitingOldWifiLoss && !awaitingZeroImportIdle; }
     public boolean ready() { return running && targetReady && targetNetwork != null; }
 
+    public boolean canProbeHighQualityPhotoDuringAp() {
+        return standby() && ready() && lastImportFlag==1 && apWriteAcknowledged
+                && startedApRequest && !projectQueryPending && !partialFinishWriting
+                && !apPhotoProbePending && !apPhotoProbeUsed;
+    }
+
     /** Explicit probe only after real AP association and a positive 0x45
      * isImport=1. Does not re-open AP, switch firmware mode, or retry.
      */
