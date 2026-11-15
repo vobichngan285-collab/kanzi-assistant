@@ -20,6 +20,7 @@ import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -57,6 +58,12 @@ public final class MainActivity extends Activity {
     private TextView resultText;
     private TextView projectText;
     private Button manualImportButton;
+    /** Explicit opt-in; manual v0.1.29 path stays the default. */
+    private boolean fastAutoImportEnabled;
+    private long lastShutterStartedAtMs;
+    private long shutterStartedForTransferMs;
+    private long shutterFinishedForTransferMs;
+    private long latestOriginalReadyAtMs;
     private ImageView preview;
     private Network network;
     private String gateway;
@@ -120,6 +127,7 @@ public final class MainActivity extends Activity {
                 if (destroyed || inTransfer || closingSession || waitingPhotoDone || !starter.standby()) return;
                 waitingPhotoDone = true;
                 photoReadyForManualImport = false;
+                lastShutterStartedAtMs = SystemClock.elapsedRealtime();
                 lastPhotoFinishedAtMs = 0L;
                 updateImportButton();
                 log("收到AA14 0x45拍照活动0→1；仅监听后续1→0；"
@@ -135,8 +143,22 @@ public final class MainActivity extends Activity {
                 log("收到AA14 0x45拍照活动1→0；第" + observedPhotoFinishes
                         + "次拍照结束候选已标记待导入；没有发送BLE开AP命令，"
                         + "也尚未证实眼镜上文件已写盘");
-                status("检测到拍照结束；请手动点「导入高清原图」开始连接眼镜");
+                status(fastAutoImportEnabled
+                        ? "拍照结束候选：极速模式尝试一次原厂AP取图，真实文件仍须HTTP验真"
+                        : "检测到拍照结束；请手动点「导入高清原图」开始连接眼镜");
                 updateImportButton();
+                if (fastAutoImportEnabled && starter.standby()) {
+                    // Trigger strictly AFTER the complete 0x45 1→0 shutter event,
+                    // not 250ms after shutter start. No timer or automatic retry.
+                    log("极速自动导入已由用户启用：仅在实体快门结束候选后触发一次原厂开AP；"
+                            + "照片是否写盘仍由两次稳定HTTP列表检查确认");
+                    ui.post(() -> {
+                        if (!destroyed && fastAutoImportEnabled
+                                && photoReadyForManualImport && starter.standby()
+                                && !inTransfer && !closingSession)
+                            startPhotoTransfer(true);
+                    });
+                }
             }
             @Override public void deviceProjectReported(String project) {
                 if (destroyed) return;
@@ -202,13 +224,12 @@ public final class MainActivity extends Activity {
             }
         });
         makeUi();
-        log("v0.1.29 基于v0.1.28原厂完整循环：拍照完成只做本地待导入标记，"
-                + "必须用户手动点「导入高清原图」才发送一次开AP并申请Wi-Fi");
-        log("保留0x45拍照监听、0x39/0x30开AP、0x25真实SSID、原厂HTTP和高清JPEG；"
-                + "恢复v0.1.24 vivo Pattern+新鲜唯一BSSID单次Wi-Fi关联；"
-                + "不恢复Wi-Fi常连，不加自动导入");
-        log("照片结束通知只代表候选，不代表已写盘或可查询到真实照片列表；"
-                + "不再250ms自动发BLE/AP；不加人为等待、不自动重试");
+        log("v0.1.30 极速首帧试验：基于v0.1.29已验证的原厂循环和Wi-Fi失败ZERO恢复；"
+                + "默认仍为手动导入，用户可自行打开极速自动取图开关");
+        log("保留0x45拍照监听、0x39/0x30开AP、0x25真实SSID、vivo Pattern+BSSID与SSID-only恢复；"
+                + "不保持Wi-Fi常连；新改动仅优先取最新高清原图，再继续处理旧照片与原厂FULL结束");
+        log("极速自动导入默认关闭，开启后只在实体快门0x45 1→0结束候选触发一次；"
+                + "不使用原来的250ms定时开AP，不跳过原厂HTTP稳定列表检查，不无限重试");
         log("继续保留0x45 isImport被动观察、手动0x64项目号查询、"
                 + "旧Wi-Fi缓存年龄与分段耗时日志，帮助区分第1～5轮导入");
         log("保留v0.1.28已真机验证的原厂HTTP全量下载、FULL 0x44结束与网络断开；"
@@ -226,7 +247,7 @@ public final class MainActivity extends Activity {
         setContentView(scroll);
 
         addText(body,"蓝星 M02S 原厂循环导入",24,0xff17385b,true);
-        addText(body,"v0.1.29 · 原厂完整循环 + Wi-Fi失败一次补救",15,Color.DKGRAY,false);
+        addText(body,"v0.1.30 · 最新高清先就绪 + 原厂FULL安全收尾",15,Color.DKGRAY,false);
         statusText = addText(body,"",18,0xff117458,true);
 
         addText(body,"① 先准备蓝牙待机（这一步不打开Wi-Fi）",17,Color.BLACK,true);
@@ -238,9 +259,22 @@ public final class MainActivity extends Activity {
                 14,0xff17385b,false);
         addText(body,"② 按眼镜实体快门拍照；只记录待导入候选",
                 17,Color.BLACK,true);
-        addText(body,"检测到0x45拍照结束只更新待导入标记，绝不会自动打开热点。"
-                + "本软件在连接Wi-Fi以前看不到眼镜相册的真实文件列表。",
+        addText(body,"默认只标记待导入；可选极速自动导入在实体快门结束候选后一次开启AP。"
+                + "这不是已写盘证明，仍必须通过原厂HTTP列表两次稳定验证。",
                 14,Color.DKGRAY,false);
+        CheckBox fastMode = new CheckBox(this);
+        fastMode.setText("极速自动导入实验（默认关闭，需主动勾选）");
+        fastMode.setTextSize(16);
+        fastMode.setChecked(false);
+        fastMode.setOnCheckedChangeListener((v,enabled) -> {
+            fastAutoImportEnabled=enabled;
+            log(enabled ? "用户开启极速自动导入：实体快门结束通知后立刻请求一次原厂AP"
+                    : "用户关闭极速自动导入：继续使用原有手动导入");
+            status(enabled
+                    ? "极速实验已开启：按实体快门后自动取最新高清；网络/硬件限速仍可能超过5秒"
+                    : "已恢复原有手动导入；0x45只标记候选");
+        });
+        body.addView(fastMode,new LinearLayout.LayoutParams(-1,-2));
         addButton(body,"已拍照但没收到结束通知？手动标记待导入",
                 this::confirmPhotoFinishedManually);
         addText(body,"③ 确认照片已经拍好后，再手动导入原图",
@@ -256,7 +290,7 @@ public final class MainActivity extends Activity {
                 + "列表全为图片且不超过24张时按原顺序下载全部原图并发送0x44/0x30/0x00；"
                 + "如果不符合整批条件，只取最新照片并使用原厂部分下载结束指令。"
                 + "原厂结束指令可能清空眼镜中的图片，不可恢复。",14,Color.DKGRAY,false);
-        addText(body,"⑤ 原厂整批下载完成后显示最新原图（只保留最新一张到RAM）",
+        addText(body,"⑤ 最新高清原图优先到RAM并显示；旧图随后传输以维持原厂FULL收尾",
                 17,Color.BLACK,true);
         resultText = addText(body,"本轮已完成0张；等待实体拍照",16,0xff17385b,true);
         preview = new ImageView(this);
@@ -277,7 +311,7 @@ public final class MainActivity extends Activity {
         addButton(body,"复制诊断日志",() -> {
             ClipboardManager clipboard = (ClipboardManager)
                     getSystemService(Context.CLIPBOARD_SERVICE);
-            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.29 diagnostic",
+            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.30 diagnostic",
                     diagnostics.toString()));
             status("诊断日志已复制");
         });
@@ -427,8 +461,14 @@ public final class MainActivity extends Activity {
         status("目前没有进行中的导入任务或待导入标记；BLE待机不受影响");
     }
 
-    /** The ONLY entry point into AP/HTTP transfer is the manual UI button. */
-    private void startPhotoTransfer() {
+    /** Existing user-button path, kept intact. */
+    private void startPhotoTransfer() { startPhotoTransfer(false); }
+
+    /** Fast opt-in path can ONLY follow a confirmed 0x45 shutter 1→0 edge.
+     * Both paths use the same OEM AP, HTTP and completion handling.
+     */
+    private void startPhotoTransfer(boolean automaticFromShutter) {
+        if (automaticFromShutter && !fastAutoImportEnabled) return;
         if (destroyed || closingSession) {
             status("上一轮正在结束传输会话，不能重新开启Wi-Fi");
             return;
@@ -450,11 +490,16 @@ public final class MainActivity extends Activity {
         final long id=++runId;
         photoAttempts++;
         long clickedAt=SystemClock.elapsedRealtime();
-        log("用户亲自点击「导入高清原图」：第"+photoAttempts+"次手动导入；"
+        log((automaticFromShutter
+                    ? "用户启用的极速自动取图：" : "用户亲自点击「导入高清原图」：")
+                + "第"+photoAttempts+"次导入；"
                 + (lastPhotoFinishedAtMs > 0
-                    ? "拍照结束候选→用户点击耗时="+(clickedAt-lastPhotoFinishedAtMs)+"ms"
-                    : "未得到可靠的拍照结束时间，点击前等待时长未知"));
+                    ? "拍照结束候选→启动耗时="+(clickedAt-lastPhotoFinishedAtMs)+"ms"
+                    : "未得到可靠的拍照结束时间，启动前等待时长未知"));
         captureToWifiStartMs=clickedAt;
+        shutterStartedForTransferMs=lastShutterStartedAtMs;
+        shutterFinishedForTransferMs=lastPhotoFinishedAtMs;
+        latestOriginalReadyAtMs=0L;
         apRequestAtMs=captureToWifiStartMs;
         wifiReadyAtMs=0;
         listTries=0;
@@ -469,7 +514,9 @@ public final class MainActivity extends Activity {
         gateway=null;
         transferStage="准备发送原厂开AP命令，随后最多5秒等待SSID";
         status(transferStage);
-        log("本次AP/HTTP启动仅来自用户按钮；没有拍照结束后自动开启AP");
+        log(automaticFromShutter
+                ? "本次AP/HTTP启动来自用户开启的极速模式，严格由实体快门0x45 1→0触发一次"
+                : "本次AP/HTTP启动仅来自用户按钮；没有自动开启AP");
 
         if (!starter.requestPhotoTransfer()) {
             inTransfer=false;
