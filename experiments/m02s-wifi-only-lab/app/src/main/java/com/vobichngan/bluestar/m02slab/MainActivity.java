@@ -37,8 +37,9 @@ import java.util.concurrent.Executors;
  * Wi-Fi/HTTP media import are deliberately separate user actions.
  * BLE passively detects ACTION_SYNC 0x45 photo candidate / finish.
  * Only a deliberate click on "导入高清原图" may send OEM 0x39/0x30.
- * No BLE remote shutter command, Wi-Fi scanning delay, continuous polling,
- * no full-file-clear command, cloud upload, album write, or OTA.
+ * This separate v0.1.31 test may submit one original 0x22/0x31 high-quality
+ * photo command WHILE AP is verified; no retries, remote shutter loops,
+ * unknown firmware commands, cloud upload, album write or OTA.
  */
 public final class MainActivity extends Activity {
     private static final int PERMISSION_REQUEST = 1601;
@@ -57,6 +58,18 @@ public final class MainActivity extends Activity {
     private TextView resultText;
     private TextView projectText;
     private Button manualImportButton;
+    private Button apPhotoProbeButton;
+    private Button apPhotoExitButton;
+    // Only this isolated experiment uses explicit high-quality BLE command.
+    private boolean apPhotoHoldRequested;
+    private boolean apPhotoHoldReady;
+    private boolean apPhotoProbeAttempted;
+    private boolean apPhotoListBusy;
+    private int apPhotoChecks;
+    private long apPhotoShotAtMs;
+    private M02sPhotoListReader.Result apPhotoBefore;
+    private M02sPhotoListReader.Result apPhotoCandidateConfirm;
+    private Runnable apPhotoPollTask;
     private ImageView preview;
     private Network network;
     private String gateway;
@@ -157,6 +170,13 @@ public final class MainActivity extends Activity {
             @Override public void ready(Network net, String host) {
                 onWifiReady(net, host);
             }
+            @Override public void apPhotoProbeWriteResult(boolean ok) {
+                if(destroyed || !inTransfer || !apPhotoHoldReady || !apPhotoProbeAttempted) return;
+                log(ok ? "单次0x22/0x31 GATT写回执成功，但固件是否真拍仍必须看新增高清JPEG"
+                       : "0x22/0x31未获得成功GATT写回执；仍短时观察原厂相册，不重新发命令");
+                status("AP在线高清拍照测试：检查原厂相册是否新增原图和Wi-Fi是否保持");
+                scheduleApPhotoPoll(runId,200L);
+            }
             @Override public void failed(String message) {
                 log("BLE或眼镜Wi-Fi阶段失败：" + message);
                 if (closingSession) {
@@ -169,6 +189,9 @@ public final class MainActivity extends Activity {
             }
             @Override public void lost(String message) {
                 log(message);
+                if (apPhotoHoldRequested && inTransfer)
+                    log("【关键】AP在线高质量拍照实验期间收到Wi-Fi/设备断开："
+                            +"维持Wi-Fi在线拍照条件不成立或无法继续验证");
                 if (closingSession) {
                     closingSession=false;
                     starter.releasePhotoNetwork();
@@ -202,8 +225,9 @@ public final class MainActivity extends Activity {
             }
         });
         makeUi();
-        log("v0.1.29 基于v0.1.28原厂完整循环：拍照完成只做本地待导入标记，"
-                + "必须用户手动点「导入高清原图」才发送一次开AP并申请Wi-Fi");
+        log("v0.1.31 M02S AP在线高质量拍照独立实验：继承v0.1.29真机已成功"
+                + "的BLE/Wi-Fi/HTTP和原厂0x44 ZERO收尾；"
+                + "只在AP已验证且镜端isImport=1时允许用户手动发送一次0x22/0x31");
         log("保留0x45拍照监听、0x39/0x30开AP、0x25真实SSID、原厂HTTP和高清JPEG；"
                 + "恢复v0.1.24 vivo Pattern+新鲜唯一BSSID单次Wi-Fi关联；"
                 + "不恢复Wi-Fi常连，不加自动导入");
@@ -226,7 +250,7 @@ public final class MainActivity extends Activity {
         setContentView(scroll);
 
         addText(body,"蓝星 M02S 原厂循环导入",24,0xff17385b,true);
-        addText(body,"v0.1.29 · 原厂完整循环 + Wi-Fi失败一次补救",15,Color.DKGRAY,false);
+        addText(body,"v0.1.31 · AP在线单次高质量拍照（独立实验）",15,Color.DKGRAY,false);
         statusText = addText(body,"",18,0xff117458,true);
 
         addText(body,"① 先准备蓝牙待机（这一步不打开Wi-Fi）",17,Color.BLACK,true);
@@ -248,6 +272,20 @@ public final class MainActivity extends Activity {
         manualImportButton=addButton(body,"导入高清原图（手动连接眼镜）",
                 this::startPhotoTransfer);
         manualImportButton.setEnabled(false);
+        addText(body,"④ AP已连时拍照专项（与普通导入二选一）",17,Color.BLACK,true);
+        addText(body,"先按一次实体快门拍照并等结束，再点下方准备。"
+                + "程序只打开一次原厂AP、验证真实网关和原厂HTTP列表基线；"
+                + "【不会】自动拍照和整批下载。只有第二个按钮会发送一次原厂高质量0x22/0x31。"
+                + "请听是否有快门声，观察新3200×2400原图及Wi-Fi是否掉线。"
+                + "测试结束点原厂ZERO退出。",14,Color.DKGRAY,false);
+        addButton(body,"A. AP在线拍照专项准备（只连Wi-Fi/记录旧列表）",
+                this::startApPhotoHold);
+        apPhotoProbeButton=addButton(body,"B. AP已连接：只发送一次0x22/0x31高质量拍照",
+                this::sendSingleApPhotoProbe);
+        apPhotoProbeButton.setEnabled(false);
+        apPhotoExitButton=addButton(body,"C. 结束AP专项：原厂ZERO退出（保留眼镜照片）",
+                this::closeApPhotoHold);
+        apPhotoExitButton.setEnabled(false);
         addButton(body,"取消当前任务／清除待导入标记（不删除照片）",
                 this::cancelCurrentTransfer);
 
@@ -277,7 +315,7 @@ public final class MainActivity extends Activity {
         addButton(body,"复制诊断日志",() -> {
             ClipboardManager clipboard = (ClipboardManager)
                     getSystemService(Context.CLIPBOARD_SERVICE);
-            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.29 diagnostic",
+            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.31 AP-online diagnostics",
                     diagnostics.toString()));
             status("诊断日志已复制");
         });
@@ -315,6 +353,15 @@ public final class MainActivity extends Activity {
             manualImportButton.setEnabled(!destroyed && starter != null
                     && starter.standby() && photoReadyForManualImport
                     && !waitingPhotoDone && !inTransfer && !closingSession);
+        if (apPhotoProbeButton!=null)
+            apPhotoProbeButton.setEnabled(!destroyed && apPhotoHoldRequested
+                    && apPhotoHoldReady && !apPhotoProbeAttempted
+                    && !closingSession && inTransfer && starter!=null
+                    && starter.canProbeHighQualityPhotoDuringAp());
+        if (apPhotoExitButton!=null)
+            apPhotoExitButton.setEnabled(!destroyed && apPhotoHoldRequested
+                    && inTransfer && !closingSession && starter!=null
+                    && starter.ready() && starter.standby());
     }
     private int dp(int unit) {
         return (int)(getResources().getDisplayMetrics().density*unit+0.5f);
@@ -489,6 +536,197 @@ public final class MainActivity extends Activity {
         ui.postDelayed(transferDeadline,ONE_SHOT_MAX_MS);
     }
 
+    /** Requires the same OFF-Wi-Fi physical shutter used by validated OEM
+     * import, then deliberately opens a real AP session for a single test.
+     * No remote shutter is sent by this preparation action.
+     */
+    private void startApPhotoHold() {
+        if(destroyed || inTransfer || closingSession || !starter.standby()
+                || !photoReadyForManualImport || waitingPhotoDone) {
+            status("专项准备被拒绝：先BLE待机→按实体快门拍照→等结束通知");
+            return;
+        }
+        apPhotoHoldRequested=true;
+        apPhotoHoldReady=false;
+        apPhotoProbeAttempted=false;
+        apPhotoChecks=0;
+        apPhotoBefore=null;
+        apPhotoCandidateConfirm=null;
+        log("用户选择AP在线高质量拍照专项；先用已验证的BLE开AP流程"
+                +"建立Wi-Fi与原厂HTTP列表基线，不发送拍照命令");
+        startPhotoTransfer();
+        if(!inTransfer) apPhotoHoldRequested=false;
+        updateImportButton();
+    }
+
+    /** EXACTLY one 0x22/0x31 per AP session. */
+    private void sendSingleApPhotoProbe() {
+        if(!apPhotoHoldRequested || !apPhotoHoldReady || !inTransfer
+                || apPhotoProbeAttempted || network==null || gateway==null
+                || !starter.isActive(network,gateway)
+                || !starter.canProbeHighQualityPhotoDuringAp()) {
+            status("禁止拍照命令：尚未验证真实AP/HTTP、isImport=1或已试过一次");
+            return;
+        }
+        apPhotoProbeAttempted=true;
+        apPhotoShotAtMs=SystemClock.elapsedRealtime();
+        apPhotoChecks=0;
+        apPhotoCandidateConfirm=null;
+        updateImportButton();
+        log("【AP在线拍照实验开始】已确认真实眼镜Wi-Fi和原厂旧照片列表；"
+                +"即将单次发送0x22/0x31，当前镜端isImport=1；"
+                +"等待真正新增的3200×2400原图，不把GATT ACK当成功");
+        status("单次高质量拍照指令发送中；请观察眼镜有无快门声及Wi-Fi是否断开");
+        if(!starter.requestApOnlineHighQualityPhoto()) {
+            log("本轮一次性0x22/0x31命令未提交；不重新发送；"
+                    +"点击原厂ZERO结束此AP会话");
+            status("本轮AP在线高质量拍照命令未提交；仍保留网络，建议退出");
+        }
+    }
+
+    private void scheduleApPhotoPoll(long id,long delayMs) {
+        if(destroyed || !inTransfer || !apPhotoHoldRequested
+                || !apPhotoHoldReady || !apPhotoProbeAttempted || id!=runId) return;
+        if(apPhotoPollTask!=null) ui.removeCallbacks(apPhotoPollTask);
+        apPhotoPollTask=()->pollApPhotoDelta(id);
+        ui.postDelayed(apPhotoPollTask,delayMs);
+    }
+
+    /** Read-only HTTP: same trusted AP and snapshot; never trigger extra shot. */
+    private void pollApPhotoDelta(long id) {
+        if(destroyed || !inTransfer || id!=runId || !apPhotoHoldReady
+                || !apPhotoProbeAttempted || apPhotoListBusy) return;
+        if(SystemClock.elapsedRealtime()-apPhotoShotAtMs>11000L) {
+            log("【AP在线拍照未证实】11秒内未发现两次稳定的单个新高清原图；"
+                    +"没有再次发送0x22；热点是否连通以当前Network检查为准");
+            status("未证实AP在线原生拍照；请点原厂ZERO退出（不自动重试）");
+            return;
+        }
+        if(network==null || gateway==null || !starter.isActive(network,gateway)) {
+            log("【AP在线拍照失败】原厂HTTP采样前专属Wi-Fi已断开");
+            abortTransfer("AP在线拍照期间Wi-Fi断开，实验不成立");
+            return;
+        }
+        apPhotoListBusy=true;
+        apPhotoChecks++;
+        final int check=apPhotoChecks;
+        final Network net=network;
+        final String host=gateway;
+        io.execute(()->{
+            try {
+                M02sPhotoListReader.Result current=readList(net,host);
+                ui.post(()->{
+                    if(destroyed || !inTransfer || id!=runId || !apPhotoHoldRequested) return;
+                    apPhotoListBusy=false;
+                    M02sApPhotoProbePolicy.Delta delta=
+                            M02sApPhotoProbePolicy.compare(apPhotoBefore,current);
+                    if(check==1 || check%3==0)
+                        log("AP在线快门后HTTP列表复核#"+check
+                                +"：原始条目="+current.entriesObserved
+                                +"；新增图片判定="+delta.status
+                                +"；Android原AP保持="+starter.isActive(net,host));
+                    if(delta.status==M02sApPhotoProbePolicy.Status.NEW_UNIQUE_ORIGINAL
+                            && apPhotoCandidateConfirm!=null
+                            && M02sPhotoListReader.sameSnapshot(apPhotoCandidateConfirm,current)) {
+                        downloadApPhotoOriginal(id,net,host,delta.newOriginal);
+                        return;
+                    }
+                    apPhotoCandidateConfirm=
+                            delta.status==M02sApPhotoProbePolicy.Status.NEW_UNIQUE_ORIGINAL
+                                    ? current : null;
+                    scheduleApPhotoPoll(id,600L);
+                });
+            } catch(Exception ex) {
+                ui.post(()->{
+                    if(destroyed || !inTransfer || id!=runId) return;
+                    apPhotoListBusy=false;
+                    log("AP在线命令后原厂HTTP列表读取异常="
+                            +ex.getClass().getSimpleName()
+                            +"；可能是Wi-Fi断开或镜端转为拍摄模式，未证实高清新图");
+                    if(starter.isActive(net,host)) scheduleApPhotoPoll(id,700L);
+                    else abortTransfer("AP在线命令后原厂Wi-Fi不可用");
+                });
+            }
+        });
+    }
+
+    private void downloadApPhotoOriginal(long id,Network net,String host,
+            M02sPhotoPolicy.Candidate image) {
+        apPhotoHoldReady=false; // prohibit a second HTTP batch or BLE shot
+        updateImportButton();
+        io.execute(()->{
+            try {
+                M02sPhotoTransport.Response res=
+                        M02sPhotoTransport.getOriginalPhoto(net,host,image);
+                if(res.httpCode!=200
+                        || !M02sPhotoPolicy.extensionMatches(image.remoteName,
+                        M02sPhotoPolicy.imageKind(res.body)))
+                    throw new java.io.IOException("new original not real OEM HTTP200 image");
+                BitmapFactory.Options opts=new BitmapFactory.Options();
+                opts.inJustDecodeBounds=true;
+                BitmapFactory.decodeByteArray(res.body,0,res.body.length,opts);
+                if(opts.outWidth<1 || opts.outHeight<1
+                        || (long)opts.outWidth*opts.outHeight>32_000_000L)
+                    throw new java.io.IOException("new original dimensions invalid");
+                Bitmap bmp=BitmapFactory.decodeByteArray(res.body,0,res.body.length);
+                if(bmp==null) throw new java.io.IOException("new original decode failed");
+                ui.post(()->{
+                    if(destroyed || !inTransfer || id!=runId) {
+                        bmp.recycle();return;
+                    }
+                    lastJpegInRam=res.body;
+                    preview.setImageBitmap(bmp);
+                    boolean stillUp=starter.isActive(net,host);
+                    boolean nativeHighRes=(bmp.getWidth()==3200 && bmp.getHeight()==2400);
+                    log((nativeHighRes && stillUp
+                            ? "【AP在线原生高清拍照成立】" : "【新增图但目标未全部成立】")
+                            +"本轮命令→高清GET="+(SystemClock.elapsedRealtime()-apPhotoShotAtMs)
+                            +"ms；新图="+bmp.getWidth()+"×"+bmp.getHeight()
+                            +"；原厂HTTP200；Wi-Fi仍连接="+stillUp
+                            +"；从旧列表中新增加且两次稳定的唯一原图"
+                            +"；不能仅从该结果证明实体快门在AP内可用");
+                    resultText.setText("AP在线测试：新增图="+bmp.getWidth()+"×"+bmp.getHeight()
+                            +"，Wi-Fi保持="+stillUp+"；下一步请点原厂ZERO退出");
+                    status(nativeHighRes && stillUp
+                            ? "验证成功：AP在线命令生成3200×2400并通过同一Wi-Fi GET"
+                            : "仅得到新增图，未同时满足高清尺寸和Wi-Fi保持");
+                    updateImportButton();
+                });
+            } catch(Exception ex) {
+                ui.post(()->{
+                    if(!destroyed && inTransfer && id==runId) {
+                        log("发现原厂新增照片，但高清GET/校验失败："
+                                +ex.getClass().getSimpleName()
+                                +"；不能冒充AP在线原图成功");
+                        status("检测到新文件，但未拿到有效3200×2400原图；请ZERO退出");
+                    }
+                });
+            }
+        });
+    }
+
+    private void closeApPhotoHold() {
+        if(!inTransfer || !apPhotoHoldRequested || closingSession) {
+            status("当前没有需要退出的AP在线实验会话");
+            return;
+        }
+        log("用户主动结束AP在线专项：不论有无新图，本轮故意按原厂ZERO 0x44/0x30/0x01"
+                +"收尾；不触发FULL清理、不重新发送拍照");
+        originalsCompletedThisRound=0; // no OEM album move; protect historical originals
+        finishTransfer(false,"AP在线高质量拍照单次实验结束");
+    }
+
+    private void cancelApPhotoPoll() {
+        if(apPhotoPollTask!=null) ui.removeCallbacks(apPhotoPollTask);
+        apPhotoPollTask=null;
+        apPhotoListBusy=false;
+        apPhotoHoldReady=false;
+        apPhotoHoldRequested=false;
+        apPhotoBefore=null;
+        apPhotoCandidateConfirm=null;
+        updateImportButton();
+    }
+
     private void onWifiReady(Network net,String host) {
         if (!inTransfer || destroyed) return;
         wifiReadyAtMs=SystemClock.elapsedRealtime();
@@ -547,7 +785,22 @@ public final class MainActivity extends Activity {
                         log("原厂HTTP完整列表连续两次稳定：原始条目=" + originalOemTotal
                                 + "；可安全GET图片=" + list.eligibleImages
                                 + "；将按照原厂成功计数选择结束指令");
-                        downloadOemSession(id,net,host,list,candidate.photo);
+                        if(apPhotoHoldRequested) {
+                            apPhotoHoldReady=true;
+                            apPhotoBefore=list;
+                            originalsCompletedThisRound=0;
+                            transferStage="AP在线高质量拍照专项：Wi-Fi+HTTP列表基线已确认";
+                            log("【AP在线实验准备就绪】原厂HTTP两次列表稳定；原始条目="
+                                    +list.entriesObserved+"；真实眼镜Network/网关已确认；"
+                                    +"只有用户亲自点击B才单次发送0x22/0x31；"
+                                    +"结束时只会发原厂ZERO，不清理镜端相册");
+                            status(starter.canProbeHighQualityPhotoDuringAp()
+                                    ? "AP已在线，isImport=1：可以点击B试一次高质量拍照"
+                                    : "AP已在线，但未观察到isImport=1或BLE状态不满足，禁止0x22");
+                            updateImportButton();
+                        } else {
+                            downloadOemSession(id,net,host,list,candidate.photo);
+                        }
                         return;
                     }
                     previousList=candidate;
@@ -687,6 +940,9 @@ public final class MainActivity extends Activity {
     }
 
     private void finishTransfer(boolean success,String reason) {
+        if(apPhotoHoldRequested)
+            log("AP在线专项当前结束：真机拍照成功必须由新增3200×2400原图+同一Wi-Fi存活共同证实");
+        cancelApPhotoPoll();
         inTransfer=false;
         transferStage=success?"下载完成，正在按原厂协议退出":"本轮下载中断";
         runId++; // invalidate old HTTP and delayed callbacks
@@ -740,6 +996,7 @@ public final class MainActivity extends Activity {
     }
 
     private void disconnectAll() {
+        cancelApPhotoPoll();
         closingSession=false;
         clearPendingPhotoAction();
         photoReadyForManualImport=false;
@@ -760,6 +1017,7 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        cancelApPhotoPoll();
         closingSession=false;
         clearPendingPhotoAction();
         photoReadyForManualImport = false;
