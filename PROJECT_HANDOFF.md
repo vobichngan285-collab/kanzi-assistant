@@ -1,3 +1,15 @@
+# 最新｜SJCAM Zone C110/C110+ 通信链深度静态复核（2026-11-15，无相机在线验证）
+
+- **研究授权**：用户提供SJCAM Zone原厂安装包，并要求定位C110+ Wi-Fi连续拍照、原图下载实际协议；本轮只静态解析，不修改代码、不生成APK、不写相机固件、不联网发送相机指令。仍未购买/连通对应C110+，也没有该相机实机通信日志。
+- **来源核实**：用户附件`bdcc3db17ea0e26aecaf22bc01fe99be.apk`，`org.jght.sjcam.zone`版本`6.7.3.16`，5个DEX，SHA-256`a07236df9b97b5a202179ab2bd98cead497bdcae5a6aa32e55113d49b37e1274`。完整逐层静态分析与下载报告见本轮ChatGPT生成的`SJCAM_C110_通信链复核报告_2026-11-15.md`；没有上传用户专有APK到GitHub。
+- **新证据：按型号+固件分流，不可直接断言C110+唯一协议**：`ConnectCameraFragment.onConnCameraSuccess$lambda$17` 和 `ConnectCameraDialog.onConnCameraSuccess$lambda$9` 识别`C110_PRO`按`v1.1.2`、`C110`按`v1.0.4`固件字符串门槛分流到旧控制页或`NewCameraControlActivity`。`NewCameraControlActivity.takeClick`检查SDCard后调`ISCamera.take`，吻合用户未插卡不能拍照经历；它还检查`SocketHelper.isConnect`，可能重启TCP会话，不能认为所有固件都是裸HTTP。
+- **实际源码通信后端**：`SCamera.getCamera(1)`构造`LYCamera`；其`take`中一条拍照路径使用HTTP GET`http://192.168.1.254/?custom=1`附加`cmd=1001`及`par=1/0`，`getSDCardInfo`查询`cmd=3017`；`LYCameraFileList.getFileListNew`通过Jsoup提取HTML`a[href]`及文件信息构成HTTP原图URL。`SCamera.getCamera(5)`构造`AllWinnerCameraHttp`；其`take`为`http://192.168.10.1:8082/api/setdeviceinfo/?custom=1...`的HTTP POST，命令`1100/1101`，媒体数据库与前者不同。还存在Amba/His/iCatch多栈。**这些均是APK内真实代码，尚非用户具体C110+实机协议**。
+- **外部型号分歧**：SJCAM官网`https://www.sjcam.com/download`写明升级版C110 Plus需`SJCAM X`，其他多数含旧C110使用`SJCAM Zone`；老C110+产品页仍列Zone。购买前务必确认实际机型、设备固件、所用原厂App，不能把APK中`580-C110+`、`675-C110`字符串视为协议识别成功。
+- **最短后续证据**：须实机在相同Wi-Fi中通过对应原厂App完成一次带microSD的拍照、列表和原图下载，取得脱敏cameraModel、firVersion、camType、网关/端口、照片前后列表及时间、HTTP/TCP请求事件；不解密上传隐私照片。先只读诊断和旧图GET，再单次新拍，最后蓝牙触发/OCR/TTS。**未拿到实时证据前不能承诺5秒，也不应造猜测式安装包**。
+- **治理**：只追加研究交接记录；M02S v0.1.29~31、蓝星向导正式版、Windows OCR、原厂APK和全部旧Release均未动。
+
+---
+
 # 最新｜M02S TK8 固件并行拍照可行性深度调查（2026-11-15，**只研究未改软件或镜端**）
 
 - **直接证据**：此前用户真实项目号 **TK8**（BLE`0x64`）、AA12/AA13/AA14、真实拍照/原厂AP导入均已确认；v0.1.31两轮AP在线`0x22/0x31` GATT成功但JPEG列表不变，验证固件`isImport=1`状态阻断普通已知遥控快门的强烈证据。无须重复0x22/0x30、0x22/0x31、卡顿RTSP或0x95支持位实验。
