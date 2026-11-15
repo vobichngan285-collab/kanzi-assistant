@@ -61,7 +61,7 @@ public final class MainActivity extends Activity {
     private Network network;
     private String gateway;
     private boolean destroyed;
-    private boolean inTransfer;
+    private volatile boolean inTransfer;
     private boolean listBusy;
     // Count actual downloaded original files, NOT just picture candidates.
     private int originalOemTotal;
@@ -69,7 +69,7 @@ public final class MainActivity extends Activity {
     private M02sPhotoListReader.Result previousFullList;
     private boolean closingSession;
     private int lastVisibleImageCount; // only a validated list's image count
-    private long runId;
+    private volatile long runId;
     private long captureToWifiStartMs;
     private long apRequestAtMs;
     private long wifiReadyAtMs;
@@ -233,7 +233,8 @@ public final class MainActivity extends Activity {
                 + "列表全为图片且不超过24张时按原顺序下载全部原图并发送0x44/0x30/0x00；"
                 + "如果不符合整批条件，只取最新照片并使用原厂部分下载结束指令。"
                 + "原厂结束指令可能清空眼镜中的图片，不可恢复。",14,Color.DKGRAY,false);
-        addText(body,"⑤ 下载完成后只在内存显示原图",17,Color.BLACK,true);
+        addText(body,"⑤ 原厂整批下载完成后显示最新原图（只保留最新一张到RAM）",
+                17,Color.BLACK,true);
         resultText = addText(body,"本轮已完成0张；等待实体拍照",16,0xff17385b,true);
         preview = new ImageView(this);
         preview.setAdjustViewBounds(true);
@@ -571,8 +572,10 @@ public final class MainActivity extends Activity {
             long totalHttpMs=0;
             try {
                 for (M02sPhotoPolicy.Candidate item : files) {
-                    if (destroyed || !inTransfer || runId!=id)
+                    if (destroyed || !inTransfer || runId!=id) {
+                        if(newestBitmap!=null) newestBitmap.recycle();
                         return; // user cancellation; MainActivity handles network release
+                    }
                     M02sPhotoTransport.Response response =
                             M02sPhotoTransport.getOriginalPhoto(net,host,item);
                     if(response.httpCode!=200)
@@ -715,17 +718,22 @@ public final class MainActivity extends Activity {
 
     private void disconnectAll() {
         closingSession=false;
-        if (waitingPhotoDone) clearPendingPhotoAction();
-        photoReadyForManualImport = false;
-        lastPhotoFinishedAtMs = 0L;
-        if (inTransfer) abortTransfer("用户主动结束本轮导入");
+        clearPendingPhotoAction();
+        photoReadyForManualImport=false;
+        lastPhotoFinishedAtMs=0L;
+        if(inTransfer) {
+            inTransfer=false;
+            log("用户主动停止导入，取消未完成的原图下载；不再发送原厂0x44结束帧");
+        }
+        if(transferDeadline!=null) ui.removeCallbacks(transferDeadline);
+        transferDeadline=null;
         runId++;
         starter.stop();
         updateImportButton();
         network=null;gateway=null;listBusy=false;
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        status("BLE和本次手机Wi-Fi请求已释放；眼镜AP固件退出状态未验证");
-        log("用户主动断开手机会话；不发送任何删除或未知结束命令");
+        status("BLE和本次Android Wi-Fi请求已停止；下次需重新准备BLE");
+        log("用户手动断开；不重复BLE、Wi-Fi或删除指令");
     }
 
     @Override protected void onDestroy() {
@@ -733,8 +741,11 @@ public final class MainActivity extends Activity {
         clearPendingPhotoAction();
         photoReadyForManualImport = false;
         lastPhotoFinishedAtMs = 0L;
-        if(inTransfer) finishTransfer(false,"应用退出");
         destroyed=true;
+        inTransfer=false;
+        runId++;
+        if(transferDeadline!=null) ui.removeCallbacks(transferDeadline);
+        transferDeadline=null;
         starter.stop();
         io.shutdownNow();
         lastJpegInRam=null;
