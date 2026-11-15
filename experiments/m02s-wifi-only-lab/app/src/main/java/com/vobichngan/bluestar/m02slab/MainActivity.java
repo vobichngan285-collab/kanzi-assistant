@@ -45,7 +45,7 @@ public final class MainActivity extends Activity {
     private static final int PERMISSION_REQUEST = 1601;
     // E09 0x45 falling edge is a photo-finished candidate, NOT proof of a saved file.
     // No automatic AP opening, no fixed delay, no retry by waiting.
-    private static final long ONE_SHOT_MAX_MS = 39_000L;
+    private static final long ONE_SHOT_MAX_MS = 75_000L;
     private static final long LIST_RECHECK_MS = 350L;
     private static final int LIST_MAX_TRIES = 12;
 
@@ -177,10 +177,11 @@ public final class MainActivity extends Activity {
             }
         });
         makeUi();
-        log("v0.1.25 原厂部分导入退出实验：拍照完成只做本地待导入标记，"
+        log("v0.1.26 恢复原厂Wi-Fi建连：拍照完成只做本地待导入标记，"
                 + "必须用户手动点「导入高清原图」才发送一次开AP并申请Wi-Fi");
-        log("保留原已真机验证的0x45监听、0x39/0x30 AP、0x25 SSID、"
-                + "精确WifiNetworkSpecifier、原厂HTTP列表与高清JPEG只读GET");
+        log("保留0x45拍照监听、0x39/0x30开AP、0x25真实SSID、原厂HTTP和高清JPEG；"
+                + "恢复v0.1.24 vivo Pattern+新鲜唯一BSSID单次Wi-Fi关联；"
+                + "不恢复Wi-Fi常连，不加自动导入");
         log("照片结束通知只代表候选，不代表已写盘或可查询到真实照片列表；"
                 + "不再250ms自动发BLE/AP；不加人为等待、不自动重试");
         log("继续保留0x45 isImport被动观察、手动0x64项目号查询、"
@@ -198,8 +199,8 @@ public final class MainActivity extends Activity {
         scroll.addView(body);
         setContentView(scroll);
 
-        addText(body,"蓝星 M02S 部分导入结束实验",24,0xff17385b,true);
-        addText(body,"v0.1.25 · 独立试验；无常连；不自动导入",15,Color.DKGRAY,false);
+        addText(body,"蓝星 M02S OEM Wi-Fi 恢复实验",24,0xff17385b,true);
+        addText(body,"v0.1.26 · v0.1.24 Wi-Fi建连 + v0.1.25手动导入",15,Color.DKGRAY,false);
         statusText = addText(body,"",18,0xff117458,true);
 
         addText(body,"① 先准备蓝牙待机（这一步不打开Wi-Fi）",17,Color.BLACK,true);
@@ -260,7 +261,7 @@ public final class MainActivity extends Activity {
         addButton(body,"复制诊断日志",() -> {
             ClipboardManager clipboard = (ClipboardManager)
                     getSystemService(Context.CLIPBOARD_SERVICE);
-            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.25 diagnostic",
+            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.26 diagnostic",
                     diagnostics.toString()));
             status("诊断日志已复制");
         });
@@ -464,7 +465,7 @@ public final class MainActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         transferDeadline=() -> {
             if (inTransfer && id==runId)
-                abortTransfer("本轮39秒取图上限已到，不自动重复发送蓝牙/Wi-Fi指令");
+                abortTransfer("本轮75秒取图安全上限已到，不自动重复发送蓝牙/Wi-Fi指令");
         };
         ui.postDelayed(transferDeadline,ONE_SHOT_MAX_MS);
     }
