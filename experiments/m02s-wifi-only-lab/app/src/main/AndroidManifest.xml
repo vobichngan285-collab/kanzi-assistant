@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- BLE is used exclusively for the one validated AP startup command 0x39/0x30. -->
+    <!-- BLE: validated 0x39/0x30 AP, read-only 0x64, and a default-OFF
+         experimental OEM partial-finish command. No CLEAR/DELETE frame. -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false"/>
     <uses-feature android:name="android.hardware.wifi" android:required="true"/>
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
@@ -14,7 +15,7 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"/>
     <uses-permission android:name="android.permission.INTERNET"/>
-    <application android:label="蓝星 M02S 手动导入对照 v0.1.22"
+    <application android:label="蓝星 M02S 部分导入结束实验 v0.1.25"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="true"
         android:allowBackup="false"
