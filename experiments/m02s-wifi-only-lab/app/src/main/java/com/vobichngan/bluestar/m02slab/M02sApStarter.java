@@ -138,6 +138,8 @@ public final class M02sApStarter {
     public boolean standby() { return running && bleStandbyReady && gatt != null
             && !awaitingOldWifiLoss && !awaitingZeroImportIdle; }
     public boolean ready() { return running && targetReady && targetNetwork != null; }
+    public boolean apPhotoProbeWritePending() { return apPhotoProbePending; }
+
 
     public boolean canProbeHighQualityPhotoDuringAp() {
         return standby() && ready() && lastImportFlag==1 && apWriteAcknowledged
