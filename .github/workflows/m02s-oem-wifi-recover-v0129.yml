@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: m02s-oem-wifi-recover-v0129
+  cancel-in-progress: true
+
 jobs:
   test-build-release:
     runs-on: ubuntu-22.04
@@ -149,12 +153,20 @@ jobs:
           cat > "$RUNNER_TEMP/release-notes.txt" <<'EOF'
           Independent v0.1.29 test APK from v0.1.28, which the user tested successfully for 6 out of 8 photo-import rounds (including three consecutive successes). The v0.1.28 successful normal path remains: eyewear physical shutter (no remote shutter), manually tap import, BLE 0x39/0x30, verified 0x25 SSID, fresh unique BSSID Vivo OEM matcher, real AP gateway, complete OEM full-original list and downloads, OEM 0x44 FULL finish (may clear eyewear media, authorized), unregister old NetworkCallback and wait for old Wi-Fi Network disappearance. New exceptional path ONLY: if a FRESH-BSSID PINNED Android Wi-Fi request returns onUnavailable, the previous request was auto-released and the exact BLE-verified SSID is reused for ONE more Android WifiNetworkSpecifier request without a locked BSSID, NO repeated BLE/AP command. If that also fails or the first was already SSID-only, keep BLE, send EXACT OEM 0x44/0x30/0x01 ZERO-completed transfer frame once via live GATT AA13 even without Android Network, wait for the next passive isImport=0 when available (8-second UI safeguard), release Android side and preserve the same photo candidate for a new user-tapped import; do not require another shutter. No auto-retry loop, P2P, OTA, cloud upload, gallery writes or Windows project changes. It does not claim guaranteed indefinite hardware stability until live repeated tests.
           EOF
-          gh release create bluestar-m02s-oem-wifi-recover-v0129-20261115 \
-            release/BlueStar_M02S_OEM_Recovery_0.1.29_Android.apk \
-            release/SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Blue Star M02S OEM Wi-Fi Recovery v0.1.29 — based on tested full cycle" \
-            --prerelease --notes-file "$RUNNER_TEMP/release-notes.txt"
+          TAG=bluestar-m02s-oem-wifi-recover-v0129-20261115
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" \
+              release/BlueStar_M02S_OEM_Recovery_0.1.29_Android.apk \
+              release/SHA256SUMS.txt --clobber --repo "$GITHUB_REPOSITORY"
+            echo "Existing pre-release assets verified and refreshed for latest source commit"
+          else
+            gh release create "$TAG" \
+              release/BlueStar_M02S_OEM_Recovery_0.1.29_Android.apk \
+              release/SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "Blue Star M02S OEM Wi-Fi Recovery v0.1.29 — based on tested full cycle" \
+              --prerelease --notes-file "$RUNNER_TEMP/release-notes.txt"
+          fi
       - name: Verify public release and download asset URL
         shell: bash
         env:
