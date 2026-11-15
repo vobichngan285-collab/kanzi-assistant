@@ -67,6 +67,24 @@ public final class M02sPhotoListReader {
         return new Result(total, list);
     }
 
+    /** Stable full import inventory, not merely a stable latest filename.
+     * Preserve the original PhotoApBean file order for OEM success counts.
+     */
+    public static boolean sameSnapshot(Result first, Result second) {
+        if (first == null || second == null
+                || first.entriesObserved != second.entriesObserved
+                || first.eligibleImages != second.eligibleImages) return false;
+        for (int i = 0; i < first.candidates.size(); i++) {
+            M02sPhotoPolicy.Candidate a = first.candidates.get(i);
+            M02sPhotoPolicy.Candidate b = second.candidates.get(i);
+            if (!a.remoteName.equals(b.remoteName)
+                    || a.declaredBytes != b.declaredBytes
+                    || !a.createdAt.equals(b.createdAt)
+                    || !a.type.equals(b.type)) return false;
+        }
+        return true;
+    }
+
     private static int addFiles(JSONObject group, Set<String> names,
                                 List<M02sPhotoPolicy.Candidate> result,
                                 int observed) throws JSONException {
