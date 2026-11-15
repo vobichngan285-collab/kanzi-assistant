@@ -6,7 +6,8 @@ import java.util.Arrays;
  * Minimal, exact OEM Wi-Fi AP command and AA14 SSID response, from the prior
  * M02S real-world successful experiment and E09 open-source protocol.
  *
- * NO TAKE_PHOTO method; no delete, clear or OTA command; guarded partial finish is opt-in only.
+ * NO TAKE_PHOTO or OTA method. OEM 0x44 finish commands (including media clear)
+ * are in M02sOemImportPolicy and only issued after verified GET completion.
  * APP -> glasses: AB 55 00 03 39 30 69
  * glasses -> APP: AC 55 ... 25 [SSID UTF-8] checksum
  */
@@ -20,19 +21,6 @@ public final class M02sApWire {
     private static final byte[] PROJECT_QUERY = {
             (byte)0xAB, 0x55, 0x00, 0x02, 0x64, 0x64
     };
-    /** OEM APK Ldp.stopP2pWifiConnect uses 0x44/0x31/<successful count>
-     * when only part of the gallery was downloaded. E09 public audit calls
-     * this partial finish non-deleting, but M02S firmware behavior is NOT
-     * confirmed. NEVER use automatically; experimental UI opt-in is required.
-     * 0x44/0x30/0x00 is a possible DELETE and is not supported here.
-     */
-    private static final byte[] PARTIAL_ONE = {
-            (byte)0xAB, 0x55, 0x00, 0x04, 0x44, 0x31, 0x01, 0x76
-    };
-    public static byte[] partialOneFinishRequest() { return PARTIAL_ONE.clone(); }
-    public static boolean authorizedPartialOneFinish(byte[] frame) {
-        return Arrays.equals(PARTIAL_ONE, frame);
-    }
     public static byte[] deviceProjectQuery() { return PROJECT_QUERY.clone(); }
     public static boolean authorizedReadOnlyProject(byte[] bytes) {
         return Arrays.equals(PROJECT_QUERY, bytes);
