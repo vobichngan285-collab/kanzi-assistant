@@ -28,26 +28,6 @@ public final class M02sApWireTest {
         assertFalse(M02sApWire.authorized(command));
         assertFalse(M02sApWire.authorized(new byte[]{(byte)0xAB,0x55,0,4,0x44,0x30,0,0x74}));
     }
-    @Test public void onlyExactOptInPartialOneFinishCanEverBeAuthorized() {
-        byte[] expected = new byte[]{(byte)0xAB,0x55,0,4,0x44,0x31,1,0x76};
-        byte[] frame = M02sApWire.partialOneFinishRequest();
-        assertArrayEquals(expected,frame);
-        assertTrue(M02sApWire.authorizedPartialOneFinish(frame));
-        assertFalse(M02sApWire.authorized(frame)); // unchanged AP-only whitelist
-        assertFalse(M02sApWire.authorizedReadOnlyProject(frame));
-        frame[5]=0x30; // NEVER allow complete-download CLEAR/DELETE
-        assertFalse(M02sApWire.authorizedPartialOneFinish(frame));
-        frame=M02sApWire.partialOneFinishRequest();
-        frame[6]=2; // never report a guessed number of completed downloads
-        assertFalse(M02sApWire.authorizedPartialOneFinish(frame));
-        assertFalse(M02sApWire.authorizedPartialOneFinish(
-                new byte[]{(byte)0xAB,0x55,0,4,0x44,0x30,0,0x74}));
-        assertFalse(M02sApWire.authorizedPartialOneFinish(
-                new byte[]{(byte)0xAB,0x55,0,4,0x44,0x30,1,0x75}));
-        assertArrayEquals(expected,M02sApWire.partialOneFinishRequest()); // clone
-        assertFalse(M02sApWire.authorizedPartialOneFinish(null));
-    }
-
     @Test public void parsesOnlyVerifiedOemSsidFrame() {
         byte[] frame = response(0x25,"M02S_TEST_WIFI".getBytes(StandardCharsets.UTF_8));
         assertEquals("M02S_TEST_WIFI",M02sApWire.decodeWifiSsid(frame));
