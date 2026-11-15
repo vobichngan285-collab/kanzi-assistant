@@ -1,3 +1,15 @@
+# 最新｜M02S v0.1.25 原厂「部分导入结束」与预期 Wi-Fi 断开时保留 BLE（2026-11-15；已发布，真机待验收）
+
+- **直接分析用户上传的原厂APK**：重新读取原始 `com.starglasses.app` APK（284656626 bytes，7个DEX）。在 `classes5.dex` 的 `Ldp;->stopP2pWifiConnect()` 中直接定位：成功数为0时发送 `fileDownloadFinish(WIFI_FILE_DOWNLOAD_FINISH, WIFI_FILE_DOWNLOAD_NOT_CLEAR)`（相当于 `44/30/01`）；成功数等于列表总数时发送 `...CLEAR_THUMBNAIL`（`44/30/00`，可能删除镜端媒体，**禁止**）；部分成功时发送 `...FINISH_NUN,successfulCount`（`44/31/N`）。原厂还调用 `Lxxh;->disconnectAp()`，内部清连接会话ID、Handler任务、注销NetworkCallback、解绑进程网络等。此前v0.1.20发送了**零下载**分支`44/30/01`，尽管当次实际下载成功一张，也不对应原厂部分成功分支；此前第二轮失败不能证明不存在其它可行状态退出路线。
+- **原协议安全边界**：公开E09逆向文档 `sctg-development/ai-smart-glasses-e09:REVERSE_ENGINEERING_EYEVUE_BLE_PROTOCOL.md` 认为部分成功 `44/31/N` 不删除文件，但 **M02S固件未实测，绝不能承诺不丢图**。v0.1.25绝不发送已知危险的 `44/30/00` 完整清理、旧失败的 `44/30/01`、任何遥控快门/OTA/P2P切换/上传。实验仅用无关紧要且已备份的图，用户需主动勾选（默认OFF、不持久化）。
+- **基线与改动**：从已发布的手动导入v0.1.22源码 `1bceb607359e455ea53e29e6ec7b31b240652fc6` 建立**独立实验分支** `exp/m02s-oem-partial-finish-v0125-20261115`，不覆盖v0.1.22、v0.1.24、原厂App、正式RC25或Windows OCR。保留「眼镜实体拍照→手机只标待导入→用户手动点击导入」；接收经AA14确证的SSID、原厂HTTP两次稳定列表、只读GET真实高清JPEG成功解码后，**当列表至少2张图片且本轮仅成功下载1张、用户勾选、本轮BLE有效**，才发送白名单精确帧 `AB 55 00 04 44 31 01 76` 一次，最多3秒等GATT写回执，随后释放手机 `NetworkCallback`；其它情况仍仅释放手机侧Wi-Fi。GATT成功不等于眼镜固件已退出AP。
+- **关键二次状态保护**：在主动结束会话时，若Wi-Fi `onLost/onUnavailable` 先到，不应直接将整个BLE `stop()`；本实验对当前会话预期断网与旧回调分别处理，避免清除仍在用的BLE待机；但真实BLE若断开仍需要重新连接（并未保证设备自复位）。重试超时和主动退出后不追加开AP指令。
+- **构建实证**：实验代码完成，独立Android SDK36 Gradle/JUnit、精确0x44白名单/默认OFF/禁止0x44清理静态检查、APK v2签名、zipalign、权限和包名检查均成功。源码HEAD `c452040e7fb4b563c36f9ea69fb7116430caaac0`；Actions [43680846609](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/43680846609) `completed/success`。APK 独立包名 `com.vobichngan.bluestar.m02spartialexitlab`、versionCode26、versionName0.1.25，**112253 bytes**，SHA256 `4b75751b994c2c7cdde59c629234b3a79e30b5fcc5f1da00c94c6a7fccd47c3b`。
+- **Release与直链（已回读）**：[实验Release](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-m02s-oem-partial-finish-v0125-20261115)；APK直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-m02s-oem-partial-finish-v0125-20261115/BlueStar_M02S_PartialFinish_0.1.25_Android.apk 。非草稿公开prerelease；release asset状态uploaded；另附SHA256SUMS.txt。
+- **真机验证（尚未进行，不得宣称修复）**：事先备份镜端重要照片；关闭其它控制眼镜的App，新目录安装独立v0.1.25，用户自主选择是否承担未知固件副作用并勾选。先按镜端实体快门拍A→人工点击「导入高清原图」→确认高清JPEG已显示、是否发`44/31/01`及是否有`onLost`后BLE保持待机→再实体拍B→人工点导入→观察第二次AA14 0x25 / Android `onAvailable` / HTTP200 / JPEG。第二轮失败即停止并复制匿名日志。**只允许这一个与旧版不同的退出变量，不再建议Wi-Fi常连或换个超时重试。**
+
+---
+
 # 最新｜M02S v0.1.24｜原厂式 AP 关联修复 + Wi-Fi 常连状态下实体快门验证（2026-11-15，已发布，待真机）
 
 - **用户核心纠正**：我们先前的 AP 常连实验 v0.1.7 已验证在 Wi-Fi 已连时用**手机 BLE 遥控拍照**无声/无新图；但**Wi-Fi 已连接时用户亲手按眼镜实体快门**尚无完成的真机验证，不能混为同一实验。v0.1.14/v0.1.15 已写好 AP 常连接、拍前 HTTP 列表基线、手按眼镜实体快门、450ms 监听及自动下载新照片（最多3张／120秒），但 v0.1.14 真机停在热点新扫描误判，根本未进入手动快门验证。用户明确授权**修复旧 Wi-Fi 建连障碍并发布独立实验 APK**，不重做其它功能、不刷眼镜固件。
