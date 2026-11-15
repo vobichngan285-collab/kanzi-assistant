@@ -1,3 +1,15 @@
+# 最新｜M02S v0.1.27 原厂退出计数审计＋手机/镜端状态分离（2026-11-15，源码与CI已完成；未发布APK，第二轮未修复）
+
+- **用户最新事实**：v0.1.26 第一轮 15:15:14 人工点导入→15:15:31 vivo Pattern回退 `onAvailable`，HTTP200 列表图片数5、15:15:34 3200×2400 JPEG 下载成功，仅显示手机侧 `releasePhotoNetwork()`；没有确认眼镜真正退出 AP 或第二轮成功。用户强调这只是重复昨天已成功的第一轮，不再把它当新突破。
+- **已直接重审原厂APK**：用户原始 `com.starglasses.app` 284656626字节，SHA256 `92f103b9d473d4cdf7424407ddfc851cac1700d15a06e55dfa0009ccf962ad57`，7DEX，只在私有执行容器读取（**未提交原厂APK**）。`classes5.dex Lu64$a.onLoadSuccess()` 将 `PhotoApBean.info[].files[]` 展平为原始 `FileListParser.FileItem` 列表，代码内无只限JPG过滤；`Ldp.onGetDataSuccess()` 将该列表 `List.size()` 写入本轮总数 `l`；`Ldp$e.taskEnd(COMPLETED)` 仅在原图完成本地文件处理后增加完成数 `o`；`Ldp.startDownLoadPhotoByWifi()` 结束时约400ms延迟执行 `Ldp.stopP2pWifiConnect()`，按 `o=0` →44/30/01、`0<o<l`→44/31/o、`o=l>0`→44/30/00，随后`Lxxh.disconnectAp()`。原厂此处并没有显式等待0x45 isImport=0或GATT固件复位确认。
+- **本轮新增关键风险判断**：蓝星 `M02sPhotoListReader.entriesObserved` 是原始HTTP条目数，`eligibleImages` 是本地过滤后的图片候选数；v0.1.26直接拿5张图片、单张JPEG成功下载推导`44/31/01`的条件，并非已证明与原厂文件列表和原厂顺序一致。协议中的`44/30/00`在E09公开研究中被标注为**删除媒体触发**，M02S具体行为无真机证明，绝不盲发；`44/31/N`在其他硬件上被称为“不删除”，但对M02S固件也未证实。v0.1.20的`44/30/01`已失败过，不重复。
+- **独立研究分支**：`exp/m02s-oem-exit-audit-v0127-20261115` 从v0.1.26源码派生；新增只读 `M02sSessionEvidence.java` 和5组JUnit测试，分别记录原始列表总数/可读图片数、手机释放NetworkCallback、0x45 isImport后续变化、释放后实体快门、新的JPEG完成数。**手机网络释放≠镜端退出；0x45 isImport=0与拍照活动都不单独证明第二轮Wi-Fi可连接；不同高清JPEG第二次HTTP成功才是二轮有效证据**。`MainActivity`状态文字已纠正成“镜端退出未确认”，继续保留v0.1.26 vivo Pattern/BSSID连接、实体快门＋手动导入、只读HTTP/JPEG、无自动重试。
+- **安全改动**：在本研究分支的 `M02sApStarter.java` 和 `M02sApWire.java` 内**移除了0x44发送和授权实现**，`MainActivity` 也移除原实验勾选及调用；只保留用户主动BLE 0x39/0x30 AP开启和只读0x64项目号，不远程拍照、不删图、不刷固件、不上传。旧v0.1.24/v0.1.25/v0.1.26实验源码/Release原样保留。
+- **可核对的审计报告**：[OEM_EXIT_AUDIT_20261115.md](https://github.com/vobichngan285-collab/kanzi-assistant/blob/exp/m02s-oem-exit-audit-v0127-20261115/experiments/m02s-wifi-only-lab/OEM_EXIT_AUDIT_20261115.md)。CI HEAD `5bf0c1775dd244fb536802c4d2fb31fbead2c5b5`，Actions [43690638788](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/43690638788) `completed/success`：安全断言、Gradle `:app:testDebugUnitTest :app:assembleDebug`、APK v2签名/zipalign/独立包名 `com.vobichngan.bluestar.m02sexitaudit27` 均通过；只保存JUnit结果Artifact `14152311473`，**没有创建新Release、没有让用户再下载重复测试APK**。
+- **下一步边界（未解决）**：必须从M02S固件官方协议或原厂App实际设备通信明确，成功后哪个0x44组合能退出AP且不影响任何眼镜原图，以及原厂对文件序列如何解释成功N。Android APK静态代码不足以推出M02S固件副作用；不得说已修复第二轮，也不建议用户再次重复第一轮真机实验。不得改正式蓝星向导、Windows OCR、旧仓库项目。
+
+---
+
 # 最新｜M02S v0.1.26 恢复v0.1.24原厂式vivo Wi-Fi建连，保留v0.1.25手动导入（2026-11-15，已发布，真机待测）
 
 - **最新真机失败证据（不重做已失败实验）**：用户v0.1.25匿名日志14:10:30～14:10:32实体拍照0x45从0→1→0成功，14:10:39人工点导入并成功写AA13 `0x39/0x30`，14:10:40得到准确AA14 `0x25` SSID（AP指令至SSID=551ms），其后旧直连 `WifiNetworkSpecifier.setSsid()` 在14:10:46 `onUnavailable`（6596ms），根本未拿到Network/HTTP/JPEG，也未进入v0.1.25新的`0x44/0x31/0x01`结束实验。不能把该次失败解释为结束帧无效。
