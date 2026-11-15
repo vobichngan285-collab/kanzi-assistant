@@ -114,6 +114,8 @@ public final class M02sApStarter {
     private Runnable oldWifiPoll;
     private long oldWifiReleaseAt;
     private boolean oldWifiTimeoutLogged;
+    private boolean fastConnectionOptIn;
+    private boolean fastConnectionForThisImport;
     private boolean wifiSsidOnlyFallbackAttempted;
     private boolean wifiRecoveryClosing;
     private boolean awaitingZeroImportIdle;
@@ -128,6 +130,11 @@ public final class M02sApStarter {
         callback = cb;
     }
 
+    public void setFastConnectionOptIn(boolean enabled) {
+        // Snapshot is taken only at the next AP request, never mid-session.
+        fastConnectionOptIn=enabled;
+    }
+
     public boolean running() { return running; }
     public boolean standby() { return running && bleStandbyReady && gatt != null
             && !awaitingOldWifiLoss && !awaitingZeroImportIdle; }
@@ -139,6 +146,7 @@ public final class M02sApStarter {
         if (!standby() || projectQueryPending || partialFinishWriting || startedApRequest
                 || startedWifiNetworkRequest || targetReady)
             return false;
+        fastConnectionForThisImport=fastConnectionOptIn;
         writeApCommand(generation);
         return startedApRequest;
     }
@@ -361,6 +369,7 @@ public final class M02sApStarter {
         awaitingOldWifiLoss=released!=null;
         oldWifiTimeoutLogged=false;
         oldWifiReleaseAt=SystemClock.elapsedRealtime();
+        fastConnectionForThisImport=false;
         wifiSsidOnlyFallbackAttempted=false;
         wifiRecoveryClosing=false;
         observePhoneWifi("注销请求后瞬时状态-尚未证明断开");
@@ -887,9 +896,16 @@ public final class M02sApStarter {
                 firstFreshSeenAtMs = now;
                 callback.log("检测到本次启动后的唯一眼镜AP广播，等待短暂稳定");
             }
-            if (M02sApReadinessPolicy.canConnect(observed, freshBssid,
-                    firstFreshSeenAtMs, now)) {
-                connectWifi(token, true);
+            boolean settled = fastConnectionForThisImport
+                    ? M02sApReadinessPolicy.canConnectWithSettling(
+                            observed,freshBssid,firstFreshSeenAtMs,now,650L)
+                    : M02sApReadinessPolicy.canConnect(
+                            observed,freshBssid,firstFreshSeenAtMs,now);
+            if (settled) {
+                if(fastConnectionForThisImport)
+                    callback.log("v0.1.30极速模式：新鲜唯一BSSID持续650ms即向Android"
+                            +"申请一次Wi-Fi，后续仍必须onAvailable、真实网关和原厂HTTP验真");
+                connectWifi(token,true);
                 return;
             }
         } else {
@@ -1165,6 +1181,7 @@ public final class M02sApStarter {
         if(oldWifiPoll!=null) ui.removeCallbacks(oldWifiPoll);
         oldWifiPoll=null;
         oldWifiTimeoutLogged=false;
+        fastConnectionForThisImport=false;
         wifiSsidOnlyFallbackAttempted=false;
         wifiRecoveryClosing=false;
         awaitingZeroImportIdle=false;
