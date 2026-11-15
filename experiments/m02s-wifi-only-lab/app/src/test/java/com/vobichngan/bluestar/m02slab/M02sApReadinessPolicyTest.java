@@ -60,6 +60,24 @@ public final class M02sApReadinessPolicyTest {
         assertEquals(M02sApReadinessPolicy.Kind.CACHE_ONLY,o.kind);
     }
 
+    @Test public void beaconBetweenApWakeAndSsidReplyMustNotBeDiscarded() {
+        long apWakeUs = 100_000_000L;
+        long ssidReplyUs = apWakeUs + 900_000L;
+        long beaconUs = apWakeUs + 300_000L;
+        M02sApScanPolicy.Beacon early = beacon(
+                "Target", "ab:cd:ef:00:11:22", beaconUs);
+        M02sApReadinessPolicy.Observation anchoredToAp =
+                M02sApReadinessPolicy.inspect(
+                        "Target", Collections.singletonList(early),
+                        apWakeUs, ssidReplyUs + 2_000_000L);
+        assertEquals(M02sApReadinessPolicy.Kind.FRESH_UNIQUE, anchoredToAp.kind);
+        M02sApReadinessPolicy.Observation wronglyAnchoredToReply =
+                M02sApReadinessPolicy.inspect(
+                        "Target", Collections.singletonList(early),
+                        ssidReplyUs, ssidReplyUs + 2_000_000L);
+        assertEquals(M02sApReadinessPolicy.Kind.CACHE_ONLY, wronglyAnchoredToReply.kind);
+    }
+
     @Test public void noBeaconsNeverTriggersConnection() {
         M02sApReadinessPolicy.Observation o=M02sApReadinessPolicy.inspect(
             "Target",Collections.emptyList(),REQ,NOW);
