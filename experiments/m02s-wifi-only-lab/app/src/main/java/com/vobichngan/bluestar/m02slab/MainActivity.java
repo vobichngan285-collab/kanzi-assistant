@@ -20,7 +20,6 @@ import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.WindowManager;
 import android.widget.Button;
-import android.widget.CheckBox;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -45,7 +44,7 @@ public final class MainActivity extends Activity {
     private static final int PERMISSION_REQUEST = 1601;
     // E09 0x45 falling edge is a photo-finished candidate, NOT proof of a saved file.
     // No automatic AP opening, no fixed delay, no retry by waiting.
-    private static final long ONE_SHOT_MAX_MS = 75_000L;
+    private static final long ONE_SHOT_MAX_MS = 300_000L;
     private static final long LIST_RECHECK_MS = 350L;
     private static final int LIST_MAX_TRIES = 12;
 
@@ -64,7 +63,10 @@ public final class MainActivity extends Activity {
     private boolean destroyed;
     private boolean inTransfer;
     private boolean listBusy;
-    private boolean partialFinishOptIn; // always off each launch; never persisted
+    // Count actual downloaded original files, NOT just picture candidates.
+    private int originalOemTotal;
+    private int originalsCompletedThisRound;
+    private M02sPhotoListReader.Result previousFullList;
     private boolean closingSession;
     private int lastVisibleImageCount; // only a validated list's image count
     private long runId;
@@ -177,7 +179,7 @@ public final class MainActivity extends Activity {
             }
         });
         makeUi();
-        log("v0.1.26 恢复原厂Wi-Fi建连：拍照完成只做本地待导入标记，"
+        log("v0.1.28 原厂完整导入并退出会话：拍照完成只做本地待导入标记，"
                 + "必须用户手动点「导入高清原图」才发送一次开AP并申请Wi-Fi");
         log("保留0x45拍照监听、0x39/0x30开AP、0x25真实SSID、原厂HTTP和高清JPEG；"
                 + "恢复v0.1.24 vivo Pattern+新鲜唯一BSSID单次Wi-Fi关联；"
@@ -186,8 +188,9 @@ public final class MainActivity extends Activity {
                 + "不再250ms自动发BLE/AP；不加人为等待、不自动重试");
         log("继续保留0x45 isImport被动观察、手动0x64项目号查询、"
                 + "旧Wi-Fi缓存年龄与分段耗时日志，帮助区分第1～5轮导入");
-        log("实验结束帧默认关闭；只有一张真实高清JPEG下载且可见图片数至少2张、用户已勾选才尝试0x44/0x31/0x01；"
-                + "不含0x44/0x30/0x00清除、0x22快门、P2P或OTA，不上云");
+        log("用户已明确授权原厂相册清理；对完整且全部可下载的原厂文件列表顺序GET所有原图，"
+                + "成功后按原厂发送0x44/0x30/0x00清理结束；部分下载用0x44/0x31/N；"
+                + "按GATT回执释放手机Wi-Fi并等待旧网络真正消失，不保持Wi-Fi常连");
         status("请先准备BLE待机，再按眼镜实体快门拍照，最后手动点导入");
     }
 
@@ -199,8 +202,8 @@ public final class MainActivity extends Activity {
         scroll.addView(body);
         setContentView(scroll);
 
-        addText(body,"蓝星 M02S OEM Wi-Fi 恢复实验",24,0xff17385b,true);
-        addText(body,"v0.1.26 · v0.1.24 Wi-Fi建连 + v0.1.25手动导入",15,Color.DKGRAY,false);
+        addText(body,"蓝星 M02S 原厂循环导入",24,0xff17385b,true);
+        addText(body,"v0.1.28 · 原厂完整下载 + 结束帧 + 回到拍照待机",15,Color.DKGRAY,false);
         statusText = addText(body,"",18,0xff117458,true);
 
         addText(body,"① 先准备蓝牙待机（这一步不打开Wi-Fi）",17,Color.BLACK,true);
@@ -225,22 +228,11 @@ public final class MainActivity extends Activity {
         addButton(body,"取消当前任务／清除待导入标记（不删除照片）",
                 this::cancelCurrentTransfer);
 
-        addText(body,"④ 可选：实验性结束会话（默认关闭）",17,Color.BLACK,true);
-        addText(body,"原厂APK：成功下载部分文件时使用0x44/0x31/数量。"
-                + "公开E09研究认为此指令不删除照片，但M02S固件未经验证，仍有丢失文件风险。"
-                + "仅使用无关紧要的测试照片，提前备份眼镜原图。"
-                + "只有可见图片至少2张且本轮真正下载成功1张时才尝试。"
-                + "不会发送0x44/0x30/0x00完整清理帧。",14,Color.DKGRAY,false);
-        CheckBox partialCheckbox = new CheckBox(this);
-        partialCheckbox.setText("我接受测试照片风险，本次运行允许发送一次“部分导入完成”指令");
-        partialCheckbox.setChecked(false);
-        partialCheckbox.setTextSize(15);
-        partialCheckbox.setOnCheckedChangeListener((button,checked) -> {
-            partialFinishOptIn = checked;
-            log(checked ? "用户本次主动启用OEM部分导入结束实验；仅在真正下载后且候选图片数>=2时生效"
-                    : "OEM部分导入结束实验已关闭；没有任何0x44写入");
-        });
-        body.addView(partialCheckbox,new LinearLayout.LayoutParams(-1,-2));
+        addText(body,"④ 原厂式传输结束（已启用）",17,Color.BLACK,true);
+        addText(body,"你已明确允许原厂删除镜端照片。"
+                + "列表全为图片且不超过24张时按原顺序下载全部原图并发送0x44/0x30/0x00；"
+                + "如果不符合整批条件，只取最新照片并使用原厂部分下载结束指令。"
+                + "原厂结束指令可能清空眼镜中的图片，不可恢复。",14,Color.DKGRAY,false);
         addText(body,"⑤ 下载完成后只在内存显示原图",17,Color.BLACK,true);
         resultText = addText(body,"本轮已完成0张；等待实体拍照",16,0xff17385b,true);
         preview = new ImageView(this);
@@ -261,7 +253,7 @@ public final class MainActivity extends Activity {
         addButton(body,"复制诊断日志",() -> {
             ClipboardManager clipboard = (ClipboardManager)
                     getSystemService(Context.CLIPBOARD_SERVICE);
-            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.26 diagnostic",
+            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.28 diagnostic",
                     diagnostics.toString()));
             status("诊断日志已复制");
         });
@@ -443,7 +435,10 @@ public final class MainActivity extends Activity {
         wifiReadyAtMs=0;
         listTries=0;
         previousList=null;
+        previousFullList=null;
         lastVisibleImageCount=0;
+        originalOemTotal=0;
+        originalsCompletedThisRound=0;
         inTransfer=true;
         listBusy=false;
         network=null;
@@ -465,7 +460,7 @@ public final class MainActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         transferDeadline=() -> {
             if (inTransfer && id==runId)
-                abortTransfer("本轮75秒取图安全上限已到，不自动重复发送蓝牙/Wi-Fi指令");
+                abortTransfer("本轮300秒完整导入安全上限已到，不自动重复发送蓝牙/Wi-Fi指令");
         };
         ui.postDelayed(transferDeadline,ONE_SHOT_MAX_MS);
     }
@@ -521,16 +516,18 @@ public final class MainActivity extends Activity {
                         abortTransfer("没有检测到比上次成功取图更新的照片");
                         return;
                     }
-                    if (M02sFreshPhotoPolicy.stablePair(previousList,candidate)) {
-                        log("照片列表#" +listTries+"：最新候选连续两次稳定，"
-                                +"图片总数="+list.eligibleImages+"；开始直接GET原始图片");
+                    if (M02sFreshPhotoPolicy.stablePair(previousList,candidate)
+                            && M02sPhotoListReader.sameSnapshot(previousFullList,list)) {
+                        originalOemTotal=list.entriesObserved;
                         lastVisibleImageCount=list.eligibleImages;
-                        log("当前原厂HTTP列表共有" + lastVisibleImageCount
-                                + "张图片；仅本轮最新一张原图下载成功且列表至少2张时才符合部分结束实验条件");
-                        downloadOriginal(id,net,host,candidate.photo);
+                        log("原厂HTTP完整列表连续两次稳定：原始条目=" + originalOemTotal
+                                + "；可安全GET图片=" + list.eligibleImages
+                                + "；将按照原厂成功计数选择结束指令");
+                        downloadOemSession(id,net,host,list,candidate.photo);
                         return;
                     }
                     previousList=candidate;
+                    previousFullList=list;
                     if (listTries==1 || listTries%3==0)
                         log("照片列表#"+listTries+"：总图片数="+list.eligibleImages
                                 +"；最新候选状态="+candidate.status+"；350ms后复核稳定性");
@@ -547,59 +544,108 @@ public final class MainActivity extends Activity {
         });
     }
 
-    private void downloadOriginal(long id,Network net,String host,
-                                  M02sPhotoPolicy.Candidate candidate) {
-        if (!inTransfer || id!=runId || candidate==null) return;
-        final long begin=SystemClock.elapsedRealtime();
-        transferStage="正在下载原厂高清原图（仅内存）";
+    /** Follow the OEM original-list completion semantics. Full-image lists
+     * are fetched in original server order, not reverse-sorted; one newer
+     * image is previewed, and earlier files are discarded from phone RAM.
+     * In a mixed list, fetch only the newest and report partial success N=1.
+     */
+    private void downloadOemSession(long id,Network net,String host,
+                                    M02sPhotoListReader.Result list,
+                                    M02sPhotoPolicy.Candidate latest) {
+        if (!inTransfer || id!=runId || latest==null || list==null
+                || list.entriesObserved<=0) return;
+        final boolean fullBatch = M02sOemImportPolicy.canCompleteWholeList(
+                list.entriesObserved,list.eligibleImages);
+        final java.util.List<M02sPhotoPolicy.Candidate> files = fullBatch
+                ? list.candidates
+                : java.util.Collections.singletonList(latest);
+        transferStage = fullBatch ? "正在按原厂列表顺序下载全部原图" : "正在下载单张原图";
         status(transferStage);
+        log(fullBatch
+                ? "原厂整批模式：逐张只读GET"+files.size()+"张并验证，全部成功才发完整结束/清理帧"
+                : "原厂部分模式：混合文件/数量超限，仅取最新一张并按完成数发送部分结束帧");
         io.execute(() -> {
+            int completed=0;
+            Bitmap newestBitmap=null;
+            byte[] newestBytes=null;
+            long totalHttpMs=0;
             try {
-                M02sPhotoTransport.Response res=
-                        M02sPhotoTransport.getOriginalPhoto(net,host,candidate);
-                if(res.httpCode!=200) throw new java.io.IOException("original HTTP non200");
-                M02sPhotoPolicy.ImageKind kind=M02sPhotoPolicy.imageKind(res.body);
-                if (!M02sPhotoPolicy.extensionMatches(candidate.remoteName,kind))
-                    throw new java.io.IOException("wrong original image signature");
-                BitmapFactory.Options bounds=new BitmapFactory.Options();
-                bounds.inJustDecodeBounds=true;
-                BitmapFactory.decodeByteArray(res.body,0,res.body.length,bounds);
-                if (bounds.outWidth<1 || bounds.outHeight<1 || bounds.outWidth>10000
-                        || bounds.outHeight>10000
-                        || (long)bounds.outWidth*bounds.outHeight>32_000_000L)
-                    throw new java.io.IOException("invalid image bounds");
-                Bitmap bitmap=BitmapFactory.decodeByteArray(res.body,0,res.body.length);
-                if (bitmap==null) throw new java.io.IOException("Bitmap decode failed");
-                long doneAt=SystemClock.elapsedRealtime();
-                ui.post(() -> {
-                    if (destroyed || !inTransfer || id!=runId) {
-                        bitmap.recycle();return;
+                for (M02sPhotoPolicy.Candidate item : files) {
+                    if (destroyed || !inTransfer || runId!=id)
+                        return; // user cancellation; MainActivity handles network release
+                    M02sPhotoTransport.Response response =
+                            M02sPhotoTransport.getOriginalPhoto(net,host,item);
+                    if(response.httpCode!=200)
+                        throw new java.io.IOException("OEM original HTTP code not 200");
+                    M02sPhotoPolicy.ImageKind kind=M02sPhotoPolicy.imageKind(response.body);
+                    if (!M02sPhotoPolicy.extensionMatches(item.remoteName,kind))
+                        throw new java.io.IOException("OEM original kind/extension mismatch");
+                    BitmapFactory.Options bounds = new BitmapFactory.Options();
+                    bounds.inJustDecodeBounds=true;
+                    BitmapFactory.decodeByteArray(response.body,0,response.body.length,bounds);
+                    if (bounds.outWidth<1 || bounds.outHeight<1
+                            || bounds.outWidth>10000 || bounds.outHeight>10000
+                            || (long)bounds.outWidth*bounds.outHeight>32_000_000L)
+                        throw new java.io.IOException("OEM original image bounds invalid");
+                    if(item.remoteName.equals(latest.remoteName)) {
+                        newestBytes=response.body;
+                        newestBitmap=BitmapFactory.decodeByteArray(
+                                response.body,0,response.body.length);
+                        if(newestBitmap==null) throw new java.io.IOException("latest image decode failed");
                     }
-                    if (!starter.isActive(net,host)) {
-                        bitmap.recycle();
-                        abortTransfer("读取后检测到眼镜Network已掉线，不把本图误报为取图成功");
+                    completed++;
+                    totalHttpMs+=response.durationMs;
+                    final int count=completed;
+                    ui.post(() -> {
+                        if (!destroyed && inTransfer && id==runId) {
+                            originalsCompletedThisRound=count;
+                            resultText.setText("已导入原图 "+count+"/"+originalOemTotal);
+                        }
+                    });
+                }
+                final int count=completed;
+                final long httpMs=totalHttpMs;
+                final Bitmap display=newestBitmap;
+                final byte[] raw=newestBytes;
+                ui.post(() -> {
+                    if (destroyed || !inTransfer || runId!=id) {
+                        if(display!=null) display.recycle();
                         return;
                     }
-                    lastJpegInRam=res.body;
-                    lastDownloadedRemoteName=candidate.remoteName;
-                    preview.setImageBitmap(bitmap);
+                    originalsCompletedThisRound=count;
+                    if (!starter.isActive(net,host)) {
+                        if(display!=null) display.recycle();
+                        abortTransfer("下载结束时眼镜专属Wi-Fi已断开，保留真实完成数");
+                        return;
+                    }
+                    if (display==null || raw==null) {
+                        abortTransfer("原厂原图批次内未得到本次最新图片，不能误报取图成功");
+                        return;
+                    }
+                    lastJpegInRam=raw;
+                    lastDownloadedRemoteName=latest.remoteName;
+                    preview.setImageBitmap(display);
                     downloadedCount++;
-                    resultText.setText("成功下载"+downloadedCount+"张；最近原图"
-                            +bitmap.getWidth()+"×"+bitmap.getHeight());
-                    log("已下载最新高清候选：尺寸="+bitmap.getWidth()+"×"+bitmap.getHeight()
-                            +"；字节="+res.body.length
-                            +"；本次HTTP GET="+res.durationMs+"ms"
-                            +"；GET到解码="+(doneAt-begin)+"ms"
-                            +"；手动点击导入到解码="+(doneAt-captureToWifiStartMs)+"ms"
-                            +"（不包含未知的真实快门触发延迟）");
-                    log("最新候选只代表文件时间排序，不能单独证明它由本次实体快门生成");
-                    finishTransfer(true,"高清原图已显示；已释放手机Wi-Fi，BLE保留待机");
+                    resultText.setText("成功导入"+count+"张；本次最新原图"
+                            +display.getWidth()+"×"+display.getHeight());
+                    log("原厂批次原图已逐张下载：真实完成数="+count
+                            +"/"+originalOemTotal+"；最新原图="+display.getWidth()
+                            +"×"+display.getHeight()+"；整批HTTP="+httpMs+"ms"
+                            +"；手动点击到导入完成="+(SystemClock.elapsedRealtime()-captureToWifiStartMs)+"ms");
+                    finishTransfer(true,"原厂原图下载已完成，正在发送传输结束指令");
                 });
             } catch (Exception e) {
+                final int count=completed;
+                final Bitmap display=newestBitmap;
                 ui.post(() -> {
-                    if (!inTransfer || destroyed || id!=runId) return;
-                    log("高清GET失败，异常类型="+e.getClass().getSimpleName());
-                    abortTransfer("原图下载失败；没有云端上传、没有删除眼镜照片");
+                    if (display!=null) display.recycle();
+                    if (!destroyed && inTransfer && id==runId) {
+                        originalsCompletedThisRound=count;
+                        log("原厂原图在第"+(count+1)+"张失败，类型="
+                                +e.getClass().getSimpleName()
+                                +"；将以真实成功数="+count+"执行原厂部分/零下载结束");
+                        abortTransfer("原厂整批下载未全部完成，仍执行原厂对应结束分支");
+                    }
                 });
             }
         });
@@ -616,39 +662,55 @@ public final class MainActivity extends Activity {
 
     private void finishTransfer(boolean success,String reason) {
         inTransfer=false;
-        transferStage=success?"已完成高清取图":"本轮已停止";
-        runId++; // invalidate all pending callbacks and old IO completions
+        transferStage=success?"下载完成，正在按原厂协议退出":"本轮下载中断";
+        runId++; // invalidate old HTTP and delayed callbacks
         if (transferDeadline!=null) ui.removeCallbacks(transferDeadline);
         transferDeadline=null;
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         network=null;
         gateway=null;
         listBusy=false;
-        if (success && partialFinishOptIn && lastVisibleImageCount>=2 && starter.standby()) {
+
+        final int originalCount=originalOemTotal;
+        final int done=originalsCompletedThisRound;
+        // The OEM 0x44 sequence is only valid after receiving a verified file
+        // inventory and an AP-connected session. Never guess missing counts.
+        if (originalCount>0 && starter.ready() && starter.standby()) {
             closingSession=true;
             updateImportButton();
-            status("原图已下载，实验性发送部分导入结束指令；暂不能再次拍照/导入");
-            boolean attempted = starter.requestPartialOneFinish(ok -> {
-                if (destroyed || !closingSession) return;
+            final M02sOemImportPolicy.Branch branch;
+            try {
+                branch=M02sOemImportPolicy.branch(originalCount,done);
+            } catch (IllegalArgumentException ex) {
+                closingSession=false;
+                log("原厂完成计数非法，不发送任何未知0x44帧");
+                starter.releasePhotoNetwork();
+                updateImportButton();
+                status("完成计数异常，手机请求已释放，镜端状态未知");
+                return;
+            }
+            log("原厂退出分支="+branch+"，本轮原始条目="+originalCount
+                    +"，真实完成原图="+done+"；完整成功可能清空眼镜照片（已获用户授权）");
+            status("原厂"+branch+"结束指令提交中；完成之前禁止下一轮");
+            final boolean requested=starter.requestOemFinish(originalCount,done,ok -> {
+                if(destroyed || !closingSession) return;
+                log(ok ? "原厂0x44指令GATT写回执成功；准备释放手机Wi-Fi"
+                        : "原厂0x44指令未获得成功写回执；仍释放手机Wi-Fi，不自动重发");
                 closingSession=false;
                 starter.releasePhotoNetwork();
                 updateImportButton();
-                log(ok ? "0x44/0x31/0x01 GATT写入确认，且手机专属Wi-Fi请求已释放；"
-                            + "固件状态仍须下一张验证"
-                        : "实验部分结束指令未确认写入；不自动重试，释放手机Wi-Fi");
-                status(reason+(ok ? "；部分结束指令已写入，待确认下一轮"
-                            : "；退出未确认，勿重复试错"));
+                status(ok ? "已发送原厂传输结束帧；正断开Wi-Fi，断开后可进行下一轮拍照"
+                        : "原厂结束帧未确认，眼镜可能仍在导入状态");
             });
-            if (attempted) return;
+            if (requested) return;
             closingSession=false;
-            log("部分结束指令未提交，未发0x44；按旧方式只释放手机Wi-Fi");
-        } else if (success && partialFinishOptIn && lastVisibleImageCount<2) {
-            log("本轮照片列表不足2张：完整导入会进入清理分支；为安全跳过0x44");
+            log("原厂0x44结束帧未能提交；手机Wi-Fi仍需释放");
+        } else {
+            log("尚无完整原厂列表或BLE/AP连接已丢失，不推断结束指令参数");
         }
         starter.releasePhotoNetwork();
         updateImportButton();
-        status(reason+(starter.standby()?"。BLE仍在待机":"。BLE已断开"));
-        if (!success) log("失败后不自动重发开AP指令，需用户主动触发");
+        status(reason+"；已释放手机网络，镜端状态需在下一轮验证");
     }
 
     private void disconnectAll() {
