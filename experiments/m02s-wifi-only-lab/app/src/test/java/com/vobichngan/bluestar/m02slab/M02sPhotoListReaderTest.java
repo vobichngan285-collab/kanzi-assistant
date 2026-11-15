@@ -36,6 +36,17 @@ public final class M02sPhotoListReaderTest {
         assertNotNull(result.candidates.get(0).sortableTime);
     }
 
+    @Test public void stableInventoryNeedsAllItemNamesAndSizesMatching() throws Exception {
+        String a="{\"info\":[{\"files\":[{\"name\":\"A.jpg\",\"size\":1},{\"name\":\"B.jpg\",\"size\":2}]}]}";
+        String b="{\"info\":[{\"files\":[{\"name\":\"A.jpg\",\"size\":1},{\"name\":\"B.jpg\",\"size\":4}]}]}";
+        M02sPhotoListReader.Result one=M02sPhotoListReader.parse(a.getBytes(StandardCharsets.UTF_8));
+        M02sPhotoListReader.Result two=M02sPhotoListReader.parse(a.getBytes(StandardCharsets.UTF_8));
+        M02sPhotoListReader.Result changed=M02sPhotoListReader.parse(b.getBytes(StandardCharsets.UTF_8));
+        assertTrue(M02sPhotoListReader.sameSnapshot(one,two));
+        assertFalse(M02sPhotoListReader.sameSnapshot(one,changed));
+        assertFalse(M02sPhotoListReader.sameSnapshot(null,two));
+    }
+
     @Test public void rejectNonApXmlAndOversizedResponses() throws Exception {
         try {
             M02sPhotoListReader.parse("<FileList/>".getBytes(StandardCharsets.UTF_8));
