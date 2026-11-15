@@ -6,7 +6,7 @@ import java.util.Arrays;
  * Minimal, exact OEM Wi-Fi AP command and AA14 SSID response, from the prior
  * M02S real-world successful experiment and E09 open-source protocol.
  *
- * NO TAKE_PHOTO or OTA method. OEM 0x44 finish commands (including media clear)
+ * Default has no TAKE_PHOTO; separate explicit AP-online 0x22/0x31 experiment only.\n * No OTA method. OEM 0x44 finish commands (including media clear)
  * are in M02sOemImportPolicy and only issued after verified GET completion.
  * APP -> glasses: AB 55 00 03 39 30 69
  * glasses -> APP: AC 55 ... 25 [SSID UTF-8] checksum
@@ -17,6 +17,22 @@ public final class M02sApWire {
     private static final byte[] AP_REQUEST = {
             (byte) 0xAB, 0x55, 0x00, 0x03, 0x39, 0x30, 0x69
     };
+    /**
+     * OEM com.starglasses.app SendCommandViaBle.takePhoto(HIGH_QUALITY).
+     * Experimental ONCE per AP session ONLY after the user explicitly clicks
+     * the AP-online diagnostic button. This MAY fail or disconnect Wi-Fi.
+     * It is not the existing 0x22/0x30 photo-thumbnail command.
+     */
+    private static final byte[] AP_ONLINE_HIGH_QUALITY_SHOT = {
+            (byte)0xAB, 0x55, 0x00, 0x03, 0x22, 0x31, 0x53
+    };
+    public static byte[] apOnlineHighQualityShot() {
+        return AP_ONLINE_HIGH_QUALITY_SHOT.clone();
+    }
+    public static boolean authorizedApOnlineHighQualityShot(byte[] frame) {
+        return Arrays.equals(AP_ONLINE_HIGH_QUALITY_SHOT,frame);
+    }
+
     /** E09 GET_CUSTOMER is a read-only query (command 0x64, no payload). */
     private static final byte[] PROJECT_QUERY = {
             (byte)0xAB, 0x55, 0x00, 0x02, 0x64, 0x64
