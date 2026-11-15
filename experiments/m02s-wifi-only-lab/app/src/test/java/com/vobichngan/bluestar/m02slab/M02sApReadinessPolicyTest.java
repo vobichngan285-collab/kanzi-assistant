@@ -78,6 +78,22 @@ public final class M02sApReadinessPolicyTest {
         assertEquals(M02sApReadinessPolicy.Kind.CACHE_ONLY, wronglyAnchoredToReply.kind);
     }
 
+    @Test public void fastOptInSettlesAt650ButDefaultStillRequires1800() {
+        M02sApReadinessPolicy.Observation fresh=M02sApReadinessPolicy.inspect(
+            "Target",Collections.singletonList(beacon(
+                "Target","ab:cd:ef:00:11:22",REQ+500_000)),REQ,NOW);
+        assertTrue(M02sApReadinessPolicy.canConnectWithSettling(
+                fresh,fresh.uniqueBssid,101000,101650,650L));
+        assertFalse(M02sApReadinessPolicy.canConnect(
+                fresh,fresh.uniqueBssid,101000,101650));
+        assertFalse(M02sApReadinessPolicy.canConnectWithSettling(
+                fresh,"ab:cd:ef:00:11:23",101000,103000,650L));
+        assertFalse(M02sApReadinessPolicy.canConnectWithSettling(
+                fresh,fresh.uniqueBssid,101000,101650,100L));
+        assertTrue(M02sApReadinessPolicy.canConnect(
+                fresh,fresh.uniqueBssid,101000,102800));
+    }
+
     @Test public void noBeaconsNeverTriggersConnection() {
         M02sApReadinessPolicy.Observation o=M02sApReadinessPolicy.inspect(
             "Target",Collections.emptyList(),REQ,NOW);
