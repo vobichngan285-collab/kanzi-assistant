@@ -202,6 +202,9 @@ public final class MainActivity extends Activity {
             }
             @Override public void recoverableImportFailure(String message) {
                 if (destroyed || !inTransfer) return;
+                if(apPhotoHoldRequested)
+                    log("AP在线专项首次Wi-Fi建连失败；ZERO回执后保留原拍照候选，不执行0x22");
+                cancelApPhotoPoll();
                 // A failed Wi-Fi request did not download the current photo.
                 // Restore the SAME capture candidate for a new manual import.
                 inTransfer=false;
@@ -361,7 +364,8 @@ public final class MainActivity extends Activity {
         if (apPhotoExitButton!=null)
             apPhotoExitButton.setEnabled(!destroyed && apPhotoHoldRequested
                     && inTransfer && !closingSession && starter!=null
-                    && starter.ready() && starter.standby());
+                    && starter.ready() && starter.standby()
+                    && !starter.apPhotoProbeWritePending());
     }
     private int dp(int unit) {
         return (int)(getResources().getDisplayMetrics().density*unit+0.5f);
@@ -710,6 +714,10 @@ public final class MainActivity extends Activity {
             status("当前没有需要退出的AP在线实验会话");
             return;
         }
+        if(starter.apPhotoProbeWritePending()) {
+            status("0x22/0x31正在等待最多3秒GATT回执，不能抢占发送0x44");
+            return;
+        }
         log("用户主动结束AP在线专项：不论有无新图，本轮故意按原厂ZERO 0x44/0x30/0x01"
                 +"收尾；不触发FULL清理、不重新发送拍照");
         originalsCompletedThisRound=0; // no OEM album move; protect historical originals
@@ -940,7 +948,8 @@ public final class MainActivity extends Activity {
     }
 
     private void finishTransfer(boolean success,String reason) {
-        if(apPhotoHoldRequested)
+        final boolean wasApPhotoDiagnostic=apPhotoHoldRequested;
+        if(wasApPhotoDiagnostic)
             log("AP在线专项当前结束：真机拍照成功必须由新增3200×2400原图+同一Wi-Fi存活共同证实");
         cancelApPhotoPoll();
         inTransfer=false;
@@ -957,7 +966,8 @@ public final class MainActivity extends Activity {
         final int done=originalsCompletedThisRound;
         // The OEM 0x44 sequence is only valid after receiving a verified file
         // inventory and an AP-connected session. Never guess missing counts.
-        if (originalCount>0 && starter.ready() && starter.standby()) {
+        if ((originalCount>0 || wasApPhotoDiagnostic)
+                && starter.ready() && starter.standby()) {
             closingSession=true;
             updateImportButton();
             final M02sOemImportPolicy.Branch branch;
