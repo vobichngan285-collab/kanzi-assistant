@@ -1,3 +1,16 @@
+# 最新｜M02S v0.1.28 原厂完整导入+结束0x44+真实断开Wi-Fi等待（2026-11-15，已发布APK，连续第二轮真机待验）
+
+- **用户对安全边界最新明确授权**：用户原话“眼镜里没有任何有价值的照片，新买的；只要按照原厂的来”，准许像原厂一样发送**可能清空镜端媒体**的完整成功结束帧 `0x44/0x30/0x00`。这项授权仅用于原厂式M02S照片导入实验，不等于授权上传云端、远程快门、刷机、清理其它App或修改Windows仓库。已明确告诉用户软件可清空眼镜照片且不可恢复。
+- **不再重复第一轮成功的旧实验**：v0.1.26 15:15成功首次BLE AP→vivo `onAvailable`→HTTP200→3200×2400 JPEG，但只释放 Android `NetworkCallback`，没有向固件发原厂结束指令，第二轮仍未真机成功。v0.1.27只读审计确定原厂 `Ldp.onGetDataSuccess` 计数完整`FileItem`列表长度 `l`，`Ldp$e.taskEnd` 每条原图真正完成本地迁移后增计数 `o`，`Ldp.stopP2pWifiConnect` 根据 `o/l` 选择：0成功→`44/30/01`，全部成功→`44/30/00`，部分成功→`44/31/o`，然后 `disconnectAp()`。原厂APK不等于固件源码，M02S具体复位效果仍需硬件。
+- **本次一次性开发**：新分支 `exp/m02s-oem-complete-import-v0128-20261115` **基于v0.1.26首次已真机成功的建连源码**，没有把v0.1.27只读审计版当新功能基线；旧v0.1.24/25/26/27分支和Release、原厂HeyCyan、蓝星主APP和Windows OCR不覆盖。保留严格实体快门只监听0x45→用户**手动点击导入**才一次性发送0x39/0x30→vivo PatternMatcher+新鲜BSSID/12s单次回退→私有网关/原厂HTTP200/JPEG。
+- **原厂计数真正对齐**：`M02sPhotoListReader.sameSnapshot` 将**完整原始原厂HTTP列表及每个图片候选的顺序/名字/大小/时间/type**两次稳定核对，不再仅对齐最新候选。若整份原厂列表都属于可GET图片且总数不超过24，按**原服务器文件列表顺序逐张GET并校验每张**（仅最新图留RAM预览），只有全部完成后才发送`AB 55 00 04 44 30 00 74` 原厂FULL帧（可能清镜端照片）；若原厂列表含非图片、列表超过24张则只下载最新一张并发送原厂`44/31/01` PARTIAL帧；若完整下载中途失败只发送真实完成数对应的PARTIAL或ZERO帧。所有帧经 `M02sOemImportPolicy.authorizedFinish` 严格校验；没有猜测完成数、没有无效一张被算作全完成。取消/退出App不会补发清理帧。
+- **真正退出Android临时Network**：`M02sApStarter.requestOemFinish(total,done,cb)` 只在有效AA12/AA13 BLE GATT+真实AP HTTP会话下调用一次，监听AA13 GATT写回执，最多3秒无回执也不会重复发送。通过`intentionalImportExit`区分原厂结束造成的预期Wi-Fi onLost，防止手机旧回调误停BLE；然后`releasePhotoNetwork`注销对应Android `NetworkCallback`，清旧SSID、网关、会话状态，并以旧`Network`句柄检查确实不再有Wi-Fi capabilities**才允许开启下一轮**（否则保持阻断并提示，不谎称断开；超10秒只读低频监测，无AP重试）。全程不强制保持Wi-Fi连线拍照，BLE继续待机。
+- **实机目标**：只看连续两轮：BLE待机→实体快门拍A→人工「导入高清原图」→原厂HTTP清单整批GET→原厂FULL/PARTIAL/ ZERO结束帧→旧Network真正消失→再次实体快门拍B→人工导入B→**新的高清JPEG**。第一轮成功**不算验收**。本软件不自动替代原厂“导入”按钮；先验证退出循环可行。用户已授权镜端媒体清理，无需在每次启动反复勾选。
+- **真实构建/发布**：源码/CI HEAD `c7c1233cd976f98cebae0d4c5a60cf3d62a90682`，Actions [43691608764](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/43691608764) = completed/success；SDK36、Gradle `:app:testDebugUnitTest :app:assembleDebug`、原厂三种准确帧和数量非法保护JUnit、全列表稳定单测、原建连vivo代码静态校验、签名v2、zipalign、aapt包名、必要权限均通过。独立包`com.vobichngan.bluestar.m02soemfullcycle28`，versionCode29/versionName0.1.28；Release已回读且asset状态uploaded：`BlueStar_M02S_OEM_FullCycle_0.1.28_Android.apk` 120981字节 SHA256 `6c6a280352cecc2f6ec52fd0b0c2f774e57e9cc9907823472f4127d5a49ed2db`。
+- **网页直链** https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-m02s-oem-full-cycle-v0128-20261115/BlueStar_M02S_OEM_FullCycle_0.1.28_Android.apk ；[Release页](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-m02s-oem-full-cycle-v0128-20261115)。**安装包构建成功不等于M02S固件已真正通过连续第二轮测试**。若第二轮失败只需收集v0.1.28的完整匿名日志，不再重做没有退出帧的旧版连接实验。
+
+---
+
 # 最新｜M02S v0.1.27 原厂退出计数审计＋手机/镜端状态分离（2026-11-15，源码与CI已完成；未发布APK，第二轮未修复）
 
 - **用户最新事实**：v0.1.26 第一轮 15:15:14 人工点导入→15:15:31 vivo Pattern回退 `onAvailable`，HTTP200 列表图片数5、15:15:34 3200×2400 JPEG 下载成功，仅显示手机侧 `releasePhotoNetwork()`；没有确认眼镜真正退出 AP 或第二轮成功。用户强调这只是重复昨天已成功的第一轮，不再把它当新突破。
