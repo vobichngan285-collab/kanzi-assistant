@@ -84,6 +84,20 @@ public final class M02sApWire {
         return Arrays.equals(AP_REQUEST, bytes);
     }
 
+    /** Return only command ID from a complete checksummed AA14 OEM frame.
+     * Payload is never logged and cannot authorize any response-based action.
+     */
+    public static int validatedResponseCommand(byte[] frame) {
+        if(frame==null || frame.length<6 || frame.length>255
+                || (frame[0]&255)!=0xAC || (frame[1]&255)!=0x55)
+            return -1;
+        int len=((frame[2]&255)<<8)|(frame[3]&255);
+        if(len!=frame.length-4 || len<2) return -1;
+        int sum=0;
+        for(int i=4;i<frame.length-1;i++) sum=(sum+(frame[i]&255))&255;
+        return sum==(frame[frame.length-1]&255) ? (frame[4]&255) : -1;
+    }
+
     /** Returns only verified SSID from 0x25 response; never log the bytes. */
     public static String decodeWifiSsid(byte[] frame) {
         if (frame == null || frame.length < 7 || frame.length > 64
