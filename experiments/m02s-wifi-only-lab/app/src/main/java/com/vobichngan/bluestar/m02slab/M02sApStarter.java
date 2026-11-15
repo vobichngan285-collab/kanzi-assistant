@@ -14,6 +14,7 @@ import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
 import android.net.ConnectivityManager;
+import android.net.MacAddress;
 import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
@@ -24,6 +25,7 @@ import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiNetworkSpecifier;
 import android.os.Build;
 import android.os.Handler;
+import android.os.PatternMatcher;
 import android.os.SystemClock;
 
 import java.net.InetAddress;
@@ -300,6 +302,12 @@ public final class M02sApStarter {
         intentionalImportExit = false;
         partialFinishWriting = false;
         pendingPartialFinish = null;
+        scanRequestedAtUs = 0L;
+        firstFreshSeenAtMs = 0L;
+        freshBssid = null;
+        scanChecks = 0;
+        if (scanTimer != null) ui.removeCallbacks(scanTimer);
+        scanTimer = null;
         if (partialFinishTimeout != null) ui.removeCallbacks(partialFinishTimeout);
         partialFinishTimeout = null;
         wifiRequestAtMs = 0L;
@@ -357,6 +365,10 @@ public final class M02sApStarter {
         cancelProjectQuery();
         startedWifiNetworkRequest = false;
         wifiRequestAtMs = 0L;
+        scanRequestedAtUs = 0L;
+        firstFreshSeenAtMs = 0L;
+        freshBssid = null;
+        scanChecks = 0;
         matchingDevices.clear();
         matchedAddresses.clear();
 
@@ -524,7 +536,7 @@ public final class M02sApStarter {
                                     ui.postDelayed(ssidTimeout, 5000L);
                                     if (expectedSsid != null && !startedWifiNetworkRequest && !targetReady) {
                                         cancelSsidTimeout();
-                                        if (!tryReuseConnectedTarget(token)) connectWifi(token, false);
+                                        if (!tryReuseConnectedTarget(token)) beginOemApScan(token);
                                     }
                                 }
                             });
@@ -687,7 +699,11 @@ public final class M02sApStarter {
             callback.log("SSID先于AA13写入回执到达；待status=0后立即请求网络");
             return;
         }
-        if (!tryReuseConnectedTarget(token)) connectWifi(token, false);
+        if (!apWriteAcknowledged) {
+            callback.log("眼镜0x25 SSID先于开AP GATT写回执到达，等待ACK后开始同一轮新热点扫描");
+            return;
+        }
+        if (!tryReuseConnectedTarget(token)) beginOemApScan(token);
     }
 
     /** If Android is already connected to exactly the BLE-confirmed SSID,
@@ -730,6 +746,92 @@ public final class M02sApStarter {
         return false;
     }
 
+
+    /**
+     * Only after the user manually imports a photographed image.
+     * Scan age is anchored to the exact BLE 0x39/0x30 send timestamp,
+     * NOT to the later 0x25 SSID reply. No continuous Wi-Fi watch.
+     */
+    private void beginOemApScan(int token) {
+        if (!valid(token) || !apWriteAcknowledged || expectedSsid == null
+                || startedWifiNetworkRequest || targetReady || scanRequestedAtUs != 0L) return;
+        scanRequestedAtUs = bleCommandAtMs * 1000L;
+        firstFreshSeenAtMs = 0L;
+        freshBssid = null;
+        scanChecks = 0;
+        callback.log("v0.1.26恢复v0.1.24 OEM建连：本轮BLE开AP指令为扫描时间锚点；"
+                + "只认准确SSID与新鲜唯一BSSID，稍后只申请一次Wi-Fi");
+        try {
+            wifi.startScan();
+        } catch (SecurityException | IllegalStateException ex) {
+            callback.log("Android主动扫描受限：" + ex.getClass().getSimpleName()
+                    + "；将由原有12秒单次SSID回退判断，不猜热点");
+        }
+        scanForAp(token);
+    }
+
+    private void scanForAp(int token) {
+        if (!valid(token) || expectedSsid == null || startedWifiNetworkRequest) return;
+        scanChecks++;
+        List<M02sApScanPolicy.Beacon> beacons = new ArrayList<>();
+        try {
+            List<android.net.wifi.ScanResult> all = wifi.getScanResults();
+            if (all != null) {
+                for (android.net.wifi.ScanResult item : all) {
+                    if (item != null && expectedSsid.equals(item.SSID))
+                        beacons.add(new M02sApScanPolicy.Beacon(
+                                item.SSID, item.BSSID, item.timestamp));
+                }
+            }
+        } catch (SecurityException | IllegalStateException ex) {
+            if (scanChecks == 1)
+                callback.log("系统扫描结果受限：" + ex.getClass().getSimpleName());
+        }
+        long now = SystemClock.elapsedRealtime();
+        M02sApReadinessPolicy.Observation observed =
+                M02sApReadinessPolicy.inspect(expectedSsid, beacons,
+                        scanRequestedAtUs, now * 1000L);
+        if (observed.kind == M02sApReadinessPolicy.Kind.FRESH_AMBIGUOUS) {
+            fail(token, "出现多个不同BSSID但同名的目标热点；为避免误连接已停止");
+            return;
+        }
+        if (observed.kind == M02sApReadinessPolicy.Kind.FRESH_UNIQUE) {
+            if (freshBssid == null
+                    || !freshBssid.equalsIgnoreCase(observed.uniqueBssid)) {
+                freshBssid = observed.uniqueBssid;
+                firstFreshSeenAtMs = now;
+                callback.log("检测到本次启动后的唯一眼镜AP广播，等待短暂稳定");
+            }
+            if (M02sApReadinessPolicy.canConnect(observed, freshBssid,
+                    firstFreshSeenAtMs, now)) {
+                connectWifi(token, true);
+                return;
+            }
+        } else {
+            freshBssid = null;
+            firstFreshSeenAtMs = 0;
+        }
+        long elapsedUs = now * 1000L - scanRequestedAtUs;
+        if (elapsedUs >= M02sApConnectPolicy.SCAN_WAIT_LIMIT_US) {
+            if (M02sApConnectPolicy.allowExactSsidFallback(
+                    apWriteAcknowledged, expectedSsid, startedWifiNetworkRequest,
+                    observed.kind, elapsedUs)) {
+                callback.log("Android扫描12秒未提供持续有效的本次新热点证据；"
+                        + "依据已校验AA14 0x25准确SSID，仅向该目标申请一次系统Wi-Fi连接。"
+                        + "不把旧缓存当热点就绪，不连接其它SSID；以onAvailable、真实网关和原厂HTTP结果为准");
+                connectWifi(token, false);
+            } else {
+                fail(token, "12秒扫描仍不能连接：开AP写入未确认或目标SSID未校验；拒绝未知Wi-Fi请求");
+            }
+            return;
+        }
+        if (scanChecks == 1 || scanChecks % 5 == 0)
+            callback.log("等待本次眼镜AP新扫描，第" + scanChecks
+                    + "次；目标状态=" + observed.kind);
+        scanTimer = () -> scanForAp(token);
+        ui.postDelayed(scanTimer, 650L);
+    }
+
     /**
      * Reuses the OEM-tested exact SSID + WPA2 request path. The caller only
      * changes when the one request is allowed, never its destination.
@@ -745,13 +847,32 @@ public final class M02sApStarter {
             ui.removeCallbacks(scanTimer);
             scanTimer = null;
         }
-        callback.log("快路径：收到BLE确认SSID后直接申请一次Android精准SSID+WPA2连接；"
-                + "无12秒扫描，无猜测；以onAvailable/网关/原厂HTTP为准");
+        callback.log(observedFreshBeacon
+                ? "v0.1.26新鲜AP已稳定：一次OEM Wi-Fi Pattern+准确BSSID连接"
+                : "v0.1.26扫描受限：只对BLE证实SSID发起一次OEM Pattern连接，禁止猜BSSID");
         try {
-            WifiNetworkSpecifier spec = new WifiNetworkSpecifier.Builder()
-                    .setSsid(expectedSsid)
-                    .setWpa2Passphrase(OEM_AP_PASSPHRASE)
-                    .build();
+            // Copied v0.1.24's already used Vivo OEM matcher.
+            // Fresh unique BSSID is pinned; stale or ambiguous scans are never pinned.
+            WifiNetworkSpecifier.Builder builder = new WifiNetworkSpecifier.Builder()
+                    .setWpa2Passphrase(OEM_AP_PASSPHRASE);
+            if ("vivo".equalsIgnoreCase(Build.BRAND)) {
+                builder.setSsidPattern(new PatternMatcher(
+                        expectedSsid, PatternMatcher.PATTERN_LITERAL));
+                if (observedFreshBeacon) {
+                    if (!M02sApScanPolicy.validBssid(freshBssid)) {
+                        fail(token, "没有经过验证的本轮眼镜BSSID，禁止猜测连接");
+                        return;
+                    }
+                    builder.setBssid(MacAddress.fromString(freshBssid));
+                    callback.log("vivo原厂式首次Wi-Fi请求：SSID字面量Pattern+唯一新鲜BSSID，不重试");
+                } else {
+                    callback.log("vivo原厂式单次回退：BLE确认SSID Pattern，不使用旧BSSID，不重试");
+                }
+            } else {
+                builder.setSsid(expectedSsid);
+                callback.log("非vivo保持既有精确SSID模式，不改变其它设备连接策略");
+            }
+            WifiNetworkSpecifier spec = builder.build();
             NetworkRequest request = new NetworkRequest.Builder()
                     .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
                     .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -819,7 +940,7 @@ public final class M02sApStarter {
                     });
                 }
             };
-            connectivity.requestNetwork(request, networkCallback, 25_000);
+            connectivity.requestNetwork(request, networkCallback, 48_000);
         } catch (SecurityException | IllegalArgumentException | IllegalStateException ex) {
             fail(token, "Android网络连接请求失败：" + ex.getClass().getSimpleName());
         }
@@ -910,6 +1031,10 @@ public final class M02sApStarter {
             catch (IllegalArgumentException | SecurityException ignored) { }
         }
         wifiRequestAtMs = 0L;
+        scanRequestedAtUs = 0L;
+        firstFreshSeenAtMs = 0L;
+        freshBssid = null;
+        scanChecks = 0;
         if (gatt != null) {
             try { gatt.disconnect(); }
             catch (SecurityException | IllegalStateException ignored) { }
