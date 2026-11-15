@@ -268,6 +268,7 @@ public final class MainActivity extends Activity {
         fastMode.setChecked(false);
         fastMode.setOnCheckedChangeListener((v,enabled) -> {
             fastAutoImportEnabled=enabled;
+            starter.setFastConnectionOptIn(enabled);
             log(enabled ? "用户开启极速自动导入：实体快门结束通知后立刻请求一次原厂AP"
                     : "用户关闭极速自动导入：继续使用原有手动导入");
             status(enabled
