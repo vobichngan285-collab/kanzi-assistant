@@ -55,6 +55,8 @@ public final class M02sApStarter {
         void deviceProjectReported(String project);
         void failed(String message);
         void lost(String message);
+        /** Failed one-shot AP association was closed by OEM ZERO, BLE preserved. */
+        void recoverableImportFailure(String message);
     }
 
     private static final UUID AA12 = UUID.fromString("0000aa12-0000-1000-8000-00805f9b34fb");
@@ -112,6 +114,8 @@ public final class M02sApStarter {
     private Runnable oldWifiPoll;
     private long oldWifiReleaseAt;
     private boolean oldWifiTimeoutLogged;
+    private boolean wifiSsidOnlyFallbackAttempted;
+    private boolean wifiRecoveryClosing;
 
     public M02sApStarter(Activity context, Handler mainHandler,
                          ConnectivityManager cm, WifiManager wm, Callback cb) {
@@ -141,7 +145,23 @@ public final class M02sApStarter {
      * explicitly authorized by the user and is never a physical shutter.
      */
     public boolean requestOemFinish(int total, int done, OemFinishCallback cb) {
-        if (!running || !bleStandbyReady || gatt==null || !targetReady
+        return requestOemFinishInternal(total,done,cb,false);
+    }
+
+    /** The OEM ZERO branch closes AP with NO downloaded file. This is valid
+     * after AA13 0x39/0x30 and AA14 0x25 even without Android Network.
+     */
+    private boolean requestZeroFinishAfterWifiFailure(OemFinishCallback cb) {
+        if (!wifiRecoveryClosing || !startedApRequest || !apWriteAcknowledged
+                || !M02sWifiPolicy.isConnectableSsid(expectedSsid)
+                || targetReady) return false;
+        return requestOemFinishInternal(0,0,cb,true);
+    }
+
+    private boolean requestOemFinishInternal(int total, int done,
+            OemFinishCallback cb, boolean allowNoNetwork) {
+        if (!running || !bleStandbyReady || gatt==null
+                || (!targetReady && !allowNoNetwork)
                 || projectQueryPending || partialFinishWriting || awaitingOldWifiLoss
                 || cb==null) return false;
         final byte[] frame;
@@ -338,6 +358,8 @@ public final class M02sApStarter {
         awaitingOldWifiLoss=released!=null;
         oldWifiTimeoutLogged=false;
         oldWifiReleaseAt=SystemClock.elapsedRealtime();
+        wifiSsidOnlyFallbackAttempted=false;
+        wifiRecoveryClosing=false;
         observePhoneWifi("注销请求后瞬时状态-尚未证明断开");
         if(awaitingOldWifiLoss) checkOldWifiGone(generation);
         else if(bleStandbyReady) callback.standbyReady();
@@ -888,8 +910,17 @@ public final class M02sApStarter {
      * changes when the one request is allowed, never its destination.
      */
     private void connectWifi(int token, boolean observedFreshBeacon) {
-        if (!valid(token) || startedWifiNetworkRequest || expectedSsid == null
-                || !apWriteAcknowledged
+        connectWifi(token,observedFreshBeacon,false);
+    }
+
+    /** Same verified SSID; at most one unpinned fallback after onUnavailable. */
+    private void connectWifi(int token, boolean observedFreshBeacon,
+                             boolean recoverySsidOnly) {
+        if (!valid(token)
+                || (!recoverySsidOnly && startedWifiNetworkRequest)
+                || (recoverySsidOnly && (!startedWifiNetworkRequest
+                        || !wifiSsidOnlyFallbackAttempted || wifiRecoveryClosing))
+                || expectedSsid == null || !apWriteAcknowledged
                 || !M02sWifiPolicy.isConnectableSsid(expectedSsid)) return;
         startedWifiNetworkRequest = true;
         wifiRequestAtMs = SystemClock.elapsedRealtime();
@@ -898,9 +929,11 @@ public final class M02sApStarter {
             ui.removeCallbacks(scanTimer);
             scanTimer = null;
         }
-        callback.log(observedFreshBeacon
-                ? "v0.1.26新鲜AP已稳定：一次OEM Wi-Fi Pattern+准确BSSID连接"
-                : "v0.1.26扫描受限：只对BLE证实SSID发起一次OEM Pattern连接，禁止猜BSSID");
+        callback.log(recoverySsidOnly
+                ? "v0.1.29首个精确BSSID请求onUnavailable：仅一次准确SSID Pattern回退，不重新开启AP"
+                : observedFreshBeacon
+                    ? "v0.1.26新鲜AP已稳定：一次OEM Wi-Fi Pattern+准确BSSID连接"
+                    : "v0.1.26扫描受限：只对BLE证实SSID发起一次OEM Pattern连接，禁止猜BSSID");
         try {
             // Copied v0.1.24's already used Vivo OEM matcher.
             // Fresh unique BSSID is pinned; stale or ambiguous scans are never pinned.
@@ -917,7 +950,9 @@ public final class M02sApStarter {
                     builder.setBssid(MacAddress.fromString(freshBssid));
                     callback.log("vivo原厂式首次Wi-Fi请求：SSID字面量Pattern+唯一新鲜BSSID，不重试");
                 } else {
-                    callback.log("vivo原厂式单次回退：BLE确认SSID Pattern，不使用旧BSSID，不重试");
+                    callback.log(recoverySsidOnly
+                            ? "v0.1.29备用建连：BLE确认的准确SSID Pattern，无BSSID锁定，无BLE AP重发"
+                            : "vivo原厂式单次回退：BLE确认SSID Pattern，不使用旧BSSID，不重试");
                 }
             } else {
                 builder.setSsid(expectedSsid);
@@ -976,24 +1011,68 @@ public final class M02sApStarter {
                         callback.log("Android本轮准确SSID请求onUnavailable；等待="
                                 + elapsed + "ms；仅表示该次网络请求未满足，"
                                 + "不能据此判定系统限制重复连接或眼镜热点坏了");
-                        // Android documents onUnavailable as an already-released request.
-                        // No blind second request. Recheck ONLY a currently connected
-                        // exact-SSID Network with a private IPv4 gateway, and require
-                        // the existing OEM HTTP verification afterwards.
+                        // onUnavailable auto-releases this Android request. Invalidate
+                        // callback ownership BEFORE submitting one fallback.
                         networkCallback = null;
                         if (tryReuseConnectedTarget(token)) {
-                            callback.log("系统请求失败时发现已有同SSID目标网络；"
-                                    + "无需重复申请，交由原厂HTTP验证");
+                            callback.log("系统请求失败时发现已有同SSID目标网络；交由原厂HTTP验真");
                             return;
                         }
-                        fail(token, "本次Android精准Wi-Fi请求未成功（onUnavailable，耗时="
-                                + elapsed + "ms），未重复申请；无法从回调判定具体系统原因");
+                        if (M02sWifiRecoveryPolicy.canTrySsidOnly(
+                                observedFreshBeacon,wifiSsidOnlyFallbackAttempted,
+                                apWriteAcknowledged,
+                                M02sWifiPolicy.isConnectableSsid(expectedSsid),
+                                standby(),targetReady)) {
+                            wifiSsidOnlyFallbackAttempted=true;
+                            callback.log("精确BSSID网络请求未满足（" + elapsed
+                                    + "ms）；不关闭BLE，改用一次准确SSID Pattern（不锁BSSID）");
+                            connectWifi(token,false,true);
+                            return;
+                        }
+                        closeFailedWifiSession(token,recoverySsidOnly
+                                ? "备用准确SSID请求也未满足，耗时=" + elapsed + "ms"
+                                : "SSID-only连接未满足或无可用备用路径，耗时=" + elapsed + "ms");
                     });
                 }
             };
             connectivity.requestNetwork(request, networkCallback, 48_000);
         } catch (SecurityException | IllegalArgumentException | IllegalStateException ex) {
-            fail(token, "Android网络连接请求失败：" + ex.getClass().getSimpleName());
+            if (recoverySsidOnly) {
+                networkCallback=null;
+                closeFailedWifiSession(token,
+                        "备用准确SSID请求异常：" + ex.getClass().getSimpleName());
+            } else {
+                fail(token, "Android网络连接请求失败：" + ex.getClass().getSimpleName());
+            }
+        }
+    }
+
+    /**
+     * Failed Android association is NOT a BLE GATT failure. Submit the OEM
+     * ZERO-complete exit while BLE remains valid, then restore photo marker.
+     * No extra BLE AP command and no more Android requests.
+     */
+    private void closeFailedWifiSession(int token,String reason) {
+        if (!valid(token) || wifiRecoveryClosing) return;
+        wifiRecoveryClosing=true;
+        networkCallback=null;
+        callback.log("v0.1.29 Wi-Fi建连失败："+reason
+                +"；保留BLE，按原厂ZERO结束本轮没有下载文件的AP会话");
+        final boolean submitted=requestZeroFinishAfterWifiFailure(ok -> {
+            if (!valid(token) || !wifiRecoveryClosing) return;
+            callback.log(ok
+                    ? "原厂ZERO 0x44/0x30/0x01 GATT写回执成功；未下发删除原图命令"
+                    : "原厂ZERO写回执未确认；保留BLE，回收手机Wi-Fi请求");
+            releasePhotoNetwork();
+            callback.recoverableImportFailure(reason
+                    + (ok ? "；原厂ZERO结束成功、BLE保留"
+                            : "；ZERO退出未确认、BLE保留"));
+        });
+        if (!submitted) {
+            callback.log("原厂ZERO指令未能提交，镜端退出状态未知；"
+                    +"释放手机请求且保留BLE/待导入标记");
+            releasePhotoNetwork();
+            callback.recoverableImportFailure(reason+"；ZERO退出未提交");
         }
     }
 
@@ -1051,6 +1130,8 @@ public final class M02sApStarter {
         if(oldWifiPoll!=null) ui.removeCallbacks(oldWifiPoll);
         oldWifiPoll=null;
         oldWifiTimeoutLogged=false;
+        wifiSsidOnlyFallbackAttempted=false;
+        wifiRecoveryClosing=false;
         partialFinishWriting = false;
         intentionalImportExit = false;
         pendingPartialFinish = null;
