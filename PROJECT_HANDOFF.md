@@ -1,3 +1,14 @@
+# 最新｜M02S TK8 固件并行拍照可行性深度调查（2026-11-15，**只研究未改软件或镜端**）
+
+- **直接证据**：此前用户真实项目号 **TK8**（BLE`0x64`）、AA12/AA13/AA14、真实拍照/原厂AP导入均已确认；v0.1.31两轮AP在线`0x22/0x31` GATT成功但JPEG列表不变，验证固件`isImport=1`状态阻断普通已知遥控快门的强烈证据。无须重复0x22/0x30、0x22/0x31、卡顿RTSP或0x95支持位实验。
+- **重新实际核查私有原厂APK** `com.starglasses.app`：读取用户Library中的同一284656626字节APK，匹配sha256`92f103b9d473d4cdf7424407ddfc851cac1700d15a06e55dfa0009ccf962ad57`；解析ZIP/7个DEX，`classes2.dex SendCommandViaBle.appGetDevicdInfo()`真实代码固定BLE command **`0x55`，参数0x00**，其`DeviceValueBean`确有`btVersion`、`ispVersion`、`deviceVersion`三项，E09逆向文档确认是**只读固件版本查询**。这是目前未在用户本机做过、最有增量价值的安全取证。只是发现了接口，**本轮没向眼镜发送**。
+- **主控与同名型号区分**：部分AI眼镜/开发板JL7018F+全志V821L2；全志V821官方`sample_smartIPC_demo`同一IPC方案支持WiFi视频及JPEG抓拍，理论上不排除并行，但部分官方示例抓拍为低清次码流，不能推断用户M02S/TK8能持续Wi-Fi AP同时拍3200×2400。公开另有名为M02S/A02S但BLE用AE30/DE5B的不同固件家族，**不可把其`WIFIA02S_*.swu`刷入TK8**；用户具体主控尚无硬件实物证据。
+- **适配厂家证据**：原厂Android软件`com.starglasses.app`对应Google Play开发者**东莞市成星电子科技有限公司**，支持邮件`a1191282346@gmail.com`。应向该支持方询问`TK8`确切BT/ISP版本的镜端固件/SDK及“`isImport=1`且WiFi/AP+原厂HTTP保持时原生快门JPEG”的并行能力和完整恢复路径，而不是依赖相似型号或无关镜片品牌。
+- **下一步纪律**：先获得用户授权后在**新隔离只读诊断版**执行一次`GET_DEVICE_INFO 0x55`→回读其BT/ISP/device版本，不开AP、不拍照、不改固件；再比对支持渠道确切固件适配与恢复性。无厂商SDK/签名镜像/已验证恢复办法之前，绝不刷机、发送未知`0x50`模式字节或宣称可以突破限制。
+- **仓库材料**：新分析报告 `main:experiments/m02s-wifi-only-lab/M02S_TK8_FIRMWARE_FEASIBILITY_AUDIT_20261115.md`（commit`12b8e9da736744269fc574201fb91f18424b53fb`）。v0.1.28~31实验分支、Release、正式蓝星向导、Windows OCR、私人APK全部保持不变。本次只有报告和本交接记录两项文字。
+
+---
+
 # 最新｜M02S v0.1.31 双轮 AP 在线高质量拍照真机验收：**命令写入成功但无新高清图**（2026-11-15）
 
 - **真实真机结果／否定性证据**：用户提供 v0.1.31 完整日志。第1轮：17:59:24～26 Wi-Fi关闭状态实体快门0x45 1→0正常；18:00:06开启原厂AP；18:00:13 Android眼镜专属Wi-Fi及HTTP列表稳定，旧图 **29** 张、`isImport=1`；18:00:28人工按B发**唯一**原厂高质量命令`0x22/0x31`，AA13 GATT status=0；18:00:28～18:00:40的15次只读HTTP复核始终`NO_CHANGE`、29张、AP保持=true；11秒观察窗口内**没有新3200×2400照片**。18:00:43 BLE后来断开（距命令约15秒），18:02:50 Wi-Fi才断开；**绝不是命令一发送Wi-Fi立刻断线**，断开原因未确定，失联后无法发送原厂ZERO。
