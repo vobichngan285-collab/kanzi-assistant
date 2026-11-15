@@ -1,3 +1,15 @@
+# 最新｜M02S 原厂APK Wi-Fi在线拍照静态审计（2026-11-15，**没有修改代码/固件或生成安装包**）
+
+- **用户当前实际目标**：Wi-Fi AP与手机连接保持时，眼镜实体快门还能产生新的**3200×2400 JPEG**并立即从原厂HTTP接口读回，之后OCR/TTS目标从按下实体快门到开口**3～5秒、绝不能超过5秒**。此前RTSP直播实验失败/卡顿，不再重复。用户本次授权**先核查原厂App是否存在可用特殊拍照接口或解除互斥的模式命令**；本轮不做固件修改和真机发送。
+- **唯一原厂依据**：用户私有 `com.starglasses.app` APK `70465ff3819258a6218e7871da0a23f8.apk` 284656626 bytes SHA256 `92f103b9d473d4cdf7424407ddfc851cac1700d15a06e55dfa0009ccf962ad57`，已在本轮**重新直接解析全部7个DEX的实际字节码和静态命令常量**，没有把文件上传公共仓库。完整报告新增 `experiments/m02s-wifi-only-lab/AP_ONLINE_SHUTTER_STATIC_AUDIT_20261115.md`（main上，已提交）。
+- **直接证据一，原厂UI有明确拦截**：`classes5.dex DeviceFragment$c.onClick`在下发0x22拍照前检查 `Lgw6.N/M/O`，`O`真时弹出`string_isp_importing`并返回；`classes2.dex ModBleResponse.onRequestSyncDataResponse`在字节码位置704～707将镜端`SyncValueBean.isImport`直接存入全局`Lgw6.O`。所以**手机原厂App在isImport=1时主动不允许拍照**；然而已知眼镜物理快门在AP连接时也不能拍照，删掉手机端判断**不等于解除镜端固件限制**。
+- **直接证据二，仅发现已有拍照两参数，无专门AP在线快门**：原厂`SendCommandViaBle.takePhoto(I)`固定命令号`0x22`，普通按钮 `0x22/0x30`（TAKE_PHOTO_THUMBNAIL），AI识图/AI拍照 `0x22/0x31`（TAKE_PHOTO_HIGH_QUALITY），原厂其它AI/语音路径仍用同0x22并非新Wi-Fi在线快门协议。之前v0.1.10在AP已打开状态`0x22/0x30` GATT status0却无快门声/无新图通知；v0.1.12 **不在AP导入状态**的`0x22/0x31`曾成功通过AA15得到320×180 JPEG、约3061ms，**不能因此把它称为AP在线3200×2400高清拍照**。唯一尚未由等价实机配置核实的是 **`isImport=1`且AP真连状态下的单次`0x22/0x31`**，但仍没有任何成功保证。
+- **直接证据三，ISP工作模式分离**：`Command$Param`静态常量`ISP_TAKE_PHOTO=0` / `ISP_TAKE_VIDEO=1` / `ISP_TAKE_AUDIO=2` / `ISP_IMPORTING=3`；`AlbumFragment$k.lambda$onIspWorkState$0`将这4种状态分别显示。原厂还有`SendCommandViaBle.setCameraMode` commandId`0x50`，参数Standard`0x30`/Classic`0x31`，扫描全部7DEX没有找到实际调用者，**不能将风格模式误认成ISP传输状态→拍照状态且AP不断开的命令**。APK内无可辨认的镜端firmware镜像，因此不能仅从Android App安全修改眼镜芯片拍照互斥。
+- **审计结论**：已经证实的只是**App侧导入期间禁拍**、同一0x22两种参数和镜端不同ISP状态；**没有证据能保证Android App单独解除物理快门限制**，也不能下结论说固件绝对不可能支持。若用户决定继续，优先在**独立诊断实验版**上只发一次已有原厂明确`0x22/0x31`，条件为镜端BLE有效、`isImport=1`、AP已`onAvailable`且真实HTTP列表可读，**被动对比AP是否保持、是否出现新的3200×2400原图**；不重复已失败的`0x22/0x30`或RTSP、没有危险未知指令或固件刷写，失败即原厂ZERO收尾；再失败才转为向厂商索取具体M02S固件/API与安全恢复方案。**该真机实验尚未得到单独授权，也未做任何代码修改。**
+- **项目保全**：v0.1.28原厂FULL导入、v0.1.29 Wi-Fi失败ZERO恢复、v0.1.30最新优先/自动导入性能实验分支、Actions、Release、正式蓝星向导与Windows OCR代码均保持原样。本次只有main文档报告和交接记录更新。
+
+---
+
 # 最新｜M02S v0.1.30 极速首帧：最新JPEG优先交付＋可选快门结束后自动导入（2026-11-15，APK已发布，5秒语音目标待验证）
 
 - **用户明确目标**：从眼镜实体快门按下到听到OCR朗读，**3–5秒，不能超过5秒**。在上一轮建议“先把新照片到手机的传输阶段优化，再考虑接OCR/TTS”的基础上授权改代码。此版只完成**首张高清JPEG提前到手机**和硬件传输计时，**没有OCR或TTS组件**，绝不声称已经实现5秒内开口朗读；还需要真机性能证据。0x45拍照活动开始时间戳不一定等于物理按钮电气触发瞬间。
