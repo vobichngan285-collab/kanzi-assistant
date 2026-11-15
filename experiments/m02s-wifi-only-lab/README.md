@@ -1,3 +1,21 @@
+# 最新｜v0.1.29：保留v0.1.28已成功六轮的原厂主链，仅修Wi-Fi onUnavailable
+
+## 真机证据（2026-11-15）
+- v0.1.28共8轮：第1、2、4、5、6、8轮完整下载+原厂FULL结束成功（6/8）；第3轮 `15:58:39` 请求3432ms后onUnavailable；第7轮 `16:02:50` 请求3152ms后onUnavailable；两次都已收到BLE成功开AP、正确0x25 SSID、新鲜唯一BSSID，**问题发生在Android Wi-Fi申请阶段，不是原图GET或GATT结束**。
+- 第3轮失败后，重新开始BLE后第4～6轮连续成功；第7轮失败后重新BLE第8轮成功。证明v0.1.28原厂`FULL 0x44/0x30/0x00`→释放Wi-Fi→BLE待机正常链路应该保留，不要再次重写。
+
+## v0.1.29改动
+1. 保留v0.1.28所有**成功路径**：眼镜实体快门0x45被动观察、手动点击`导入高清原图`才向眼镜一次发送`0x39/0x30`、等待`0x25`真实SSID、原厂vivo`WifiNetworkSpecifier` SSID Literal Pattern+新鲜唯一BSSID、原厂HTTP200整列表稳定后逐张下载原图、全部完成发送FULL`44/30/00`（用户授权镜端媒体清理）、注销Android网络请求并等待旧Network消失。
+2. 在**首次精确BSSID绑定请求的`onUnavailable`**，确认Android已自动释放旧请求、清旧回调归属后，依据前一轮BLE证实的**同一个精确SSID、原厂WPA2口令**，只补救申请**一次**不锁BSSID的Literal SSID Pattern；不会重新扫描、不会第二次发送BLE开AP、不会猜其他热点；如果第一次本来没有锁BSSID，不浪费一次相同请求。连接成功仍必须通过真实网关和HTTP200验证。
+3. 如果备用SSID-only也`onUnavailable`，不再通过`fail()->stop()`销毁BLE。趁GATT仍连接，在已有`0x39/0x30`写回执和真实`0x25` SSID基础上发送**原厂ZERO 44/30/01**（实际下载0张，非删除照片的FULL帧），最多等待3秒GATT写回执；释放手机旧网络请求并保留BLE。
+4. 已经被动看到眼镜`isImport=1`的情况下，ZERO结束后等待下一条`isImport=0`才开放导入按钮；如8秒未观察到则明确提示状态未知并只开放用户手动重试，**绝不自动继续连线**。不会让用户重新拍照：只恢复原来的待导入标记，用户可按同一「导入高清原图」按钮再试，且每次人工导入限一次BSSID回退。
+5. 不改变Windows软件、正式蓝星向导、原厂APP、原仓库旧分支/Release；本次独立APP `com.vobichngan.bluestar.m02soemrecover29`，versionCode30/versionName0.1.29。
+
+## 实际验收
+连续实体快门→人工导入若干轮：最重要的是观察v0.1.29遇到`onUnavailable`后是否直接从首次精确BSSID走到备用SSID-only成功`onAvailable`并下载；若两条路径都失败，是否有`ZERO GATT回执`→`isImport=0`→BLE连接保留→**无新快门直接手动再次导入旧照片**。不能宣称已经消灭全部Android拒绝或做到无限循环，需要真机。
+
+---
+
 # 最新｜M02S v0.1.28 原厂完整导入/退出、反复循环实验（用户授权清理原图）
 
 ## 这次只看第二轮，第一轮成功不再算成果
