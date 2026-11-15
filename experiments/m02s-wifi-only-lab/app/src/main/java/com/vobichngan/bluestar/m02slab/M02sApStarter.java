@@ -116,6 +116,8 @@ public final class M02sApStarter {
     private boolean oldWifiTimeoutLogged;
     private boolean wifiSsidOnlyFallbackAttempted;
     private boolean wifiRecoveryClosing;
+    private boolean awaitingZeroImportIdle;
+    private Runnable zeroImportIdleTimeout;
 
     public M02sApStarter(Activity context, Handler mainHandler,
                          ConnectivityManager cm, WifiManager wm, Callback cb) {
@@ -127,7 +129,8 @@ public final class M02sApStarter {
     }
 
     public boolean running() { return running; }
-    public boolean standby() { return running && bleStandbyReady && gatt != null && !awaitingOldWifiLoss; }
+    public boolean standby() { return running && bleStandbyReady && gatt != null
+            && !awaitingOldWifiLoss && !awaitingZeroImportIdle; }
     public boolean ready() { return running && targetReady && targetNetwork != null; }
 
     /** User has physically pressed shutter, or upstream ACTION_SYNC indicates capture.
@@ -362,7 +365,7 @@ public final class M02sApStarter {
         wifiRecoveryClosing=false;
         observePhoneWifi("注销请求后瞬时状态-尚未证明断开");
         if(awaitingOldWifiLoss) checkOldWifiGone(generation);
-        else if(bleStandbyReady) callback.standbyReady();
+        else if(standby()) callback.standbyReady();
     }
 
     private void checkOldWifiGone(int token) {
@@ -383,7 +386,7 @@ public final class M02sApStarter {
             oldWifiNetwork=null;
             oldWifiPoll=null;
             callback.log("旧眼镜Network已从Android消失；BLE仍在待机，允许新一轮拍照/导入");
-            if(bleStandbyReady) callback.standbyReady();
+            if(standby()) callback.standbyReady();
             return;
         }
         long elapsed=SystemClock.elapsedRealtime()-oldWifiReleaseAt;
@@ -724,6 +727,15 @@ public final class M02sApStarter {
                         + importFlag + "（E09含义；M02S固件待实测；"
                         + "0=仅报告不活跃，1=仅报告活跃）");
                 lastImportFlag = importFlag;
+                if (importFlag==0 && awaitingZeroImportIdle) {
+                    awaitingZeroImportIdle=false;
+                    if(zeroImportIdleTimeout!=null)
+                        ui.removeCallbacks(zeroImportIdleTimeout);
+                    zeroImportIdleTimeout=null;
+                    callback.log("原厂ZERO结束后已被动观察到isImport=0；"
+                            +"无需重新配对BLE，可手动再次导入原照片");
+                    if(bleStandbyReady && !awaitingOldWifiLoss) callback.standbyReady();
+                }
             } else if (importFlag < 0 && !absentImportReported) {
                 absentImportReported = true;
                 callback.log("AA14 0x45本次未携带合法的第10位isImport；"
@@ -1063,6 +1075,7 @@ public final class M02sApStarter {
             callback.log(ok
                     ? "原厂ZERO 0x44/0x30/0x01 GATT写回执成功；未下发删除原图命令"
                     : "原厂ZERO写回执未确认；保留BLE，回收手机Wi-Fi请求");
+            awaitZeroImportIdleAfterExit(token);
             releasePhotoNetwork();
             callback.recoverableImportFailure(reason
                     + (ok ? "；原厂ZERO结束成功、BLE保留"
@@ -1071,9 +1084,31 @@ public final class M02sApStarter {
         if (!submitted) {
             callback.log("原厂ZERO指令未能提交，镜端退出状态未知；"
                     +"释放手机请求且保留BLE/待导入标记");
+            awaitZeroImportIdleAfterExit(token);
             releasePhotoNetwork();
             callback.recoverableImportFailure(reason+"；ZERO退出未提交");
         }
+    }
+
+    /** Reports AFTER the OEM ZERO write (or failure) are merely passive
+     * evidence; wait for the actual isImport=0 indication when available.
+     * The watchdog releases the UI if firmware never reports idle; it does
+     * not retry BLE or Wi-Fi automatically.
+     */
+    private void awaitZeroImportIdleAfterExit(int token) {
+        if (!valid(token) || lastImportFlag != 1) return;
+        awaitingZeroImportIdle=true;
+        if(zeroImportIdleTimeout!=null) ui.removeCallbacks(zeroImportIdleTimeout);
+        callback.log("已观察到眼镜isImport=1，ZERO结束后等待被动isImport=0再开放导入按钮");
+        zeroImportIdleTimeout=()->{
+            if(!valid(token) || !awaitingZeroImportIdle) return;
+            awaitingZeroImportIdle=false;
+            zeroImportIdleTimeout=null;
+            callback.log("原厂ZERO结束后8秒仍未收到isImport=0；设备状态未知，"
+                    +"仅开放用户手动重试，不自动连接");
+            if(bleStandbyReady && !awaitingOldWifiLoss) callback.standbyReady();
+        };
+        ui.postDelayed(zeroImportIdleTimeout,8000L);
     }
 
     private void considerGateway(int token, Network net, LinkProperties lp) {
@@ -1132,6 +1167,9 @@ public final class M02sApStarter {
         oldWifiTimeoutLogged=false;
         wifiSsidOnlyFallbackAttempted=false;
         wifiRecoveryClosing=false;
+        awaitingZeroImportIdle=false;
+        if(zeroImportIdleTimeout!=null) ui.removeCallbacks(zeroImportIdleTimeout);
+        zeroImportIdleTimeout=null;
         partialFinishWriting = false;
         intentionalImportExit = false;
         pendingPartialFinish = null;
