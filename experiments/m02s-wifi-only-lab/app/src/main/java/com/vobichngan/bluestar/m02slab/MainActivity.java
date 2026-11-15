@@ -37,9 +37,10 @@ import java.util.concurrent.Executors;
  * M02S vendor-style manual-import comparison: physical shutter and
  * Wi-Fi/HTTP media import are deliberately separate user actions.
  * BLE passively detects ACTION_SYNC 0x45 photo candidate / finish.
- * Only a deliberate click on "导入高清原图" may send OEM 0x39/0x30.
- * No BLE remote shutter command, Wi-Fi scanning delay, continuous polling,
- * no full-file-clear command, cloud upload, album write, or OTA.
+ * Default: only deliberate "导入高清原图" click sends OEM AP.
+ * Opt-in speed mode: only the physical 0x45 shutter-finished event sends AP.
+ * OEM FULL 0x44 can clear eyewear photos (user authorized). No BLE remote
+ * shutter, permanent Wi-Fi, cloud upload, album write, or OTA.
  */
 public final class MainActivity extends Activity {
     private static final int PERMISSION_REQUEST = 1601;
