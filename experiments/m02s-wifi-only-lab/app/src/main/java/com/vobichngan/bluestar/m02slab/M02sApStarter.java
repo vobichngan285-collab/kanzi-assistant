@@ -35,9 +35,10 @@ import java.util.Locale;
 import java.util.UUID;
 
 /**
- * One-time BLE AP-enablement only. It has intentionally NO shutter command
- * and no BLE file transfer. The independent Wi-Fi-only code performs all
- * subsequent physical-shutter image detection via read-only HTTP.
+ * BLE AP-enablement and verified OEM Wi-Fi. One separate user-clicked
+ * ONCE-per-session high-quality 0x22/0x31 test is allowed ONLY while
+ * the original photo HTTP AP is established AND isImport=1.
+ * No auto shutter or BLE file transfer.
  *
  * Protocol copied from the same repo's M02S real-world-proven AA13
  * 0x39/0x30 -> AA14 0x25 -> Android WiFiNetworkSpecifier flow, cross-checked
@@ -53,6 +54,8 @@ public final class M02sApStarter {
         void photoActionCandidate();
         void photoActionEnded();
         void deviceProjectReported(String project);
+        /** GATT status only; DOES NOT prove a new photo exists. */
+        void apPhotoProbeWriteResult(boolean writeAcknowledged);
         void failed(String message);
         void lost(String message);
         /** Failed one-shot AP association was closed by OEM ZERO, BLE preserved. */
@@ -99,6 +102,9 @@ public final class M02sApStarter {
     private boolean absentImportReported;
     private boolean projectQueryPending;
     private Runnable projectQueryTimeout;
+    private boolean apPhotoProbePending;
+    private boolean apPhotoProbeUsed;
+    private Runnable apPhotoProbeTimeout;
 
     private Runnable bleTimeout;
     private Runnable firstDeviceDelay;
@@ -133,6 +139,60 @@ public final class M02sApStarter {
             && !awaitingOldWifiLoss && !awaitingZeroImportIdle; }
     public boolean ready() { return running && targetReady && targetNetwork != null; }
 
+    /** Explicit probe only after real AP association and a positive 0x45
+     * isImport=1. Does not re-open AP, switch firmware mode, or retry.
+     */
+    public boolean requestApOnlineHighQualityPhoto() {
+        if (!standby() || !ready() || lastImportFlag!=1
+                || !apWriteAcknowledged || !startedApRequest
+                || projectQueryPending || partialFinishWriting
+                || apPhotoProbePending || apPhotoProbeUsed)
+            return false;
+        BluetoothGattService svc=gatt.getService(AA12);
+        BluetoothGattCharacteristic ch=svc==null ? null : svc.getCharacteristic(AA13);
+        if(ch==null || (ch.getProperties() & BluetoothGattCharacteristic.PROPERTY_WRITE)==0)
+            return false;
+        byte[] frame=M02sApWire.apOnlineHighQualityShot();
+        if(!M02sApWire.authorizedApOnlineHighQualityShot(frame)) return false;
+        final int token=generation;
+        apPhotoProbeUsed=true; // even an unconfirmed write MUST NOT be repeated
+        apPhotoProbePending=true;
+        try {
+            int code;
+            if(Build.VERSION.SDK_INT>=33) {
+                code=gatt.writeCharacteristic(ch,frame,
+                        BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+            } else {
+                @SuppressWarnings("deprecation") boolean set=ch.setValue(frame);
+                @SuppressWarnings("deprecation") boolean ok=set && gatt.writeCharacteristic(ch);
+                code=ok ? 0 : -1;
+            }
+            if(code!=0) {
+                apPhotoProbePending=false;
+                callback.log("AP在线0x22/0x31仅一次GATT提交被拒；code="+code);
+                callback.apPhotoProbeWriteResult(false);
+                return false;
+            }
+            callback.log("用户亲自触发AP在线原厂高质量0x22/0x31：AA13仅写一次；"
+                    +"不重新开AP、不声明镜端已拍照");
+            apPhotoProbeTimeout=()->{
+                if(valid(token) && apPhotoProbePending) {
+                    apPhotoProbePending=false;
+                    apPhotoProbeTimeout=null;
+                    callback.log("AP在线0x22/0x31 3秒内无GATT写回执；不重发");
+                    callback.apPhotoProbeWriteResult(false);
+                }
+            };
+            ui.postDelayed(apPhotoProbeTimeout,3000L);
+            return true;
+        } catch(SecurityException | IllegalStateException ex) {
+            apPhotoProbePending=false;
+            callback.log("AP在线拍照命令提交异常="+ex.getClass().getSimpleName());
+            callback.apPhotoProbeWriteResult(false);
+            return false;
+        }
+    }
+
     /** User has physically pressed shutter, or upstream ACTION_SYNC indicates capture.
      * No camera-control command ever leaves the phone. */
     public boolean requestPhotoTransfer() {
@@ -165,7 +225,8 @@ public final class M02sApStarter {
             OemFinishCallback cb, boolean allowNoNetwork) {
         if (!running || !bleStandbyReady || gatt==null
                 || (!targetReady && !allowNoNetwork)
-                || projectQueryPending || partialFinishWriting || awaitingOldWifiLoss
+                || projectQueryPending || partialFinishWriting || apPhotoProbePending
+                || awaitingOldWifiLoss
                 || cb==null) return false;
         final byte[] frame;
         final M02sOemImportPolicy.Branch kind;
@@ -361,6 +422,10 @@ public final class M02sApStarter {
         awaitingOldWifiLoss=released!=null;
         oldWifiTimeoutLogged=false;
         oldWifiReleaseAt=SystemClock.elapsedRealtime();
+        apPhotoProbePending=false;
+        apPhotoProbeUsed=false;
+        if(apPhotoProbeTimeout!=null) ui.removeCallbacks(apPhotoProbeTimeout);
+        apPhotoProbeTimeout=null;
         wifiSsidOnlyFallbackAttempted=false;
         wifiRecoveryClosing=false;
         observePhoneWifi("注销请求后瞬时状态-尚未证明断开");
@@ -589,6 +654,15 @@ public final class M02sApStarter {
                                     completeOemFinish(status == 0);
                                     return;
                                 }
+                                if (apPhotoProbePending) {
+                                    apPhotoProbePending=false;
+                                    if(apPhotoProbeTimeout!=null) ui.removeCallbacks(apPhotoProbeTimeout);
+                                    apPhotoProbeTimeout=null;
+                                    callback.log("AP在线高质量0x22/0x31 AA13 GATT写回执status="
+                                            +status+"；仅证明BLE写入，不等于镜端产生高清新照片");
+                                    callback.apPhotoProbeWriteResult(status==0);
+                                    return;
+                                }
                                 if (projectQueryPending) {
                                     callback.log("只读设备项目号0x64的GATT写回执status=" + status
                                             + "（不代表已收到设备项目号）");
@@ -758,6 +832,11 @@ public final class M02sApStarter {
             }
             return;
         }
+
+        if (targetReady && apPhotoProbeUsed && M02sApWire.validatedResponseCommand(bytes)==0x22)
+            callback.log("AP在线0x22/0x31测试期间AA14收到0x22拍照相关通知（不等于高清已写盘）");
+        if (targetReady && apPhotoProbeUsed && M02sApWire.validatedResponseCommand(bytes)==0x42)
+            callback.log("AP在线0x22/0x31测试期间AA14收到0x42照片计数候选（不记录内容）");
 
         if (projectQueryPending) {
             String project = M02sApWire.decodeReadOnlyProject(bytes);
@@ -1165,6 +1244,10 @@ public final class M02sApStarter {
         if(oldWifiPoll!=null) ui.removeCallbacks(oldWifiPoll);
         oldWifiPoll=null;
         oldWifiTimeoutLogged=false;
+        apPhotoProbePending=false;
+        apPhotoProbeUsed=false;
+        if(apPhotoProbeTimeout!=null) ui.removeCallbacks(apPhotoProbeTimeout);
+        apPhotoProbeTimeout=null;
         wifiSsidOnlyFallbackAttempted=false;
         wifiRecoveryClosing=false;
         awaitingZeroImportIdle=false;
