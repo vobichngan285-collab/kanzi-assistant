@@ -52,6 +52,8 @@ public final class M02sApStarter {
         void standbyReady();
         void photoActionCandidate();
         void photoActionEnded();
+        /** Passive 0x45 import bit; this is observation, NOT firmware reset proof. */
+        void deviceImportStateObserved(int flag);
         void deviceProjectReported(String project);
         void failed(String message);
         void lost(String message);
@@ -297,7 +299,8 @@ public final class M02sApStarter {
             networkCallback = null;
             try { connectivity.unregisterNetworkCallback(oldCallback); }
             catch (IllegalArgumentException | SecurityException ignored) { }
-            callback.log("本张照片传输完成/结束：释放手机本轮专属Wi-Fi请求；保留BLE待机");
+            callback.log("本张照片手机侧HTTP/网络请求结束：只释放NetworkCallback；"
+                    + "不等于镜端0x44结束，也不等于镜端AP已经退出");
         }
         intentionalImportExit = false;
         partialFinishWriting = false;
@@ -646,12 +649,17 @@ public final class M02sApStarter {
         int photoFlag = M02sApWire.actionSyncPhotoFlag(bytes);
         if (photoFlag >= 0 && bleStandbyReady) {
             int importFlag = M02sApWire.actionSyncImportFlag(bytes);
-            if (importFlag >= 0 && importFlag != lastImportFlag) {
-                callback.log("AA14 0x45被动isImport状态="
-                        + importFlag + "（E09含义；M02S固件待实测；"
-                        + "0=仅报告不活跃，1=仅报告活跃）");
-                lastImportFlag = importFlag;
-            } else if (importFlag < 0 && !absentImportReported) {
+            if (importFlag >= 0) {
+                if (importFlag != lastImportFlag) {
+                    callback.log("AA14 0x45被动isImport状态="
+                            + importFlag + "（E09含义；M02S固件待实测；"
+                            + "0=仅报告不活跃，1=仅报告活跃）");
+                    lastImportFlag = importFlag;
+                }
+                // Read-only: even repeated valid flags can be useful AFTER a
+                // NetworkCallback release. Never auto-send 0x44 from here.
+                callback.deviceImportStateObserved(importFlag);
+            } else if (!absentImportReported) {
                 absentImportReported = true;
                 callback.log("AA14 0x45本次未携带合法的第10位isImport；"
                         + "缺失不等于导入状态=0");
