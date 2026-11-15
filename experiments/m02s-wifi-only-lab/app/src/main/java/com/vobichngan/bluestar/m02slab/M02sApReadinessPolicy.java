@@ -64,15 +64,26 @@ public final class M02sApReadinessPolicy {
                 old, fresh, firstRadio, latest);
     }
 
-    /** Settling is a delay, not proof of multiple independent scans. */
+    /** Existing stable v0.1.29 path: unchanged 1800ms settling threshold. */
     public static boolean canConnect(Observation observation,
             String firstBssid, long firstObservedAtMs, long nowMs) {
-        return observation != null
+        return canConnectWithSettling(observation, firstBssid,
+                firstObservedAtMs, nowMs, 1800L);
+    }
+
+    /** Experimental faster threshold for user-opted-in mode ONLY. This is
+     * not proof of AP auth readiness: Android onAvailable + OEM HTTP validate.
+     */
+    public static boolean canConnectWithSettling(Observation observation,
+            String firstBssid, long firstObservedAtMs, long nowMs,
+            long settleMs) {
+        return settleMs >= 400L && settleMs <= 1800L
+                && observation != null
                 && observation.kind == Kind.FRESH_UNIQUE
                 && firstBssid != null
                 && firstBssid.equalsIgnoreCase(observation.uniqueBssid)
                 && firstObservedAtMs > 0
                 && nowMs >= firstObservedAtMs
-                && nowMs - firstObservedAtMs >= 1800L;
+                && nowMs - firstObservedAtMs >= settleMs;
     }
 }
