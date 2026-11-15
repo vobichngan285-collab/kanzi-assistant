@@ -15,7 +15,7 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"/>
     <uses-permission android:name="android.permission.INTERNET"/>
-    <application android:label="蓝星 M02S 部分导入结束实验 v0.1.25"
+    <application android:label="蓝星 M02S 原厂Wi-Fi恢复实验 v0.1.26"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="true"
         android:allowBackup="false"
