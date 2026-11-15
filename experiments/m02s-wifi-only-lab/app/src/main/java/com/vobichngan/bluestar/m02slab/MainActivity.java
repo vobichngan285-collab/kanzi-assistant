@@ -177,9 +177,32 @@ public final class MainActivity extends Activity {
                 } else if (inTransfer) abortTransfer("眼镜网络断开");
                 else status("眼镜Wi-Fi已断开：" + message);
             }
+            @Override public void recoverableImportFailure(String message) {
+                if (destroyed || !inTransfer) return;
+                // A failed Wi-Fi request did not download the current photo.
+                // Restore the SAME capture candidate for a new manual import.
+                inTransfer=false;
+                runId++;
+                if (transferDeadline!=null) ui.removeCallbacks(transferDeadline);
+                transferDeadline=null;
+                network=null;
+                gateway=null;
+                listBusy=false;
+                closingSession=false;
+                waitingPhotoDone=false;
+                photoReadyForManualImport=true;
+                lastPhotoFinishedAtMs=0L;
+                transferStage="Wi-Fi失败已按原厂ZERO收尾，原照片仍待导入";
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                log("v0.1.29恢复完成："+message
+                        +"；保留原拍照候选，不用重新拍照；只需再次手动点导入");
+                status("本轮Wi-Fi未连上；已保留照片待导入和BLE，"
+                        +"眼镜退出导入模式后可再次手动点导入");
+                updateImportButton();
+            }
         });
         makeUi();
-        log("v0.1.28 原厂完整导入并退出会话：拍照完成只做本地待导入标记，"
+        log("v0.1.29 基于v0.1.28原厂完整循环：拍照完成只做本地待导入标记，"
                 + "必须用户手动点「导入高清原图」才发送一次开AP并申请Wi-Fi");
         log("保留0x45拍照监听、0x39/0x30开AP、0x25真实SSID、原厂HTTP和高清JPEG；"
                 + "恢复v0.1.24 vivo Pattern+新鲜唯一BSSID单次Wi-Fi关联；"
@@ -188,9 +211,9 @@ public final class MainActivity extends Activity {
                 + "不再250ms自动发BLE/AP；不加人为等待、不自动重试");
         log("继续保留0x45 isImport被动观察、手动0x64项目号查询、"
                 + "旧Wi-Fi缓存年龄与分段耗时日志，帮助区分第1～5轮导入");
-        log("用户已明确授权原厂相册清理；对完整且全部可下载的原厂文件列表顺序GET所有原图，"
-                + "成功后按原厂发送0x44/0x30/0x00清理结束；部分下载用0x44/0x31/N；"
-                + "按GATT回执释放手机Wi-Fi并等待旧网络真正消失，不保持Wi-Fi常连");
+        log("保留v0.1.28已真机验证的原厂HTTP全量下载、FULL 0x44结束与网络断开；"
+                + "新增首次BSSID锁定请求onUnavailable时准确SSID-only最多一次补救；"
+                + "仍失败则用原厂ZERO 0x44/0x30/0x01退出并保留BLE与本次待导入照片");
         status("请先准备BLE待机，再按眼镜实体快门拍照，最后手动点导入");
     }
 
@@ -203,7 +226,7 @@ public final class MainActivity extends Activity {
         setContentView(scroll);
 
         addText(body,"蓝星 M02S 原厂循环导入",24,0xff17385b,true);
-        addText(body,"v0.1.28 · 原厂完整下载 + 结束帧 + 回到拍照待机",15,Color.DKGRAY,false);
+        addText(body,"v0.1.29 · 原厂完整循环 + Wi-Fi失败一次补救",15,Color.DKGRAY,false);
         statusText = addText(body,"",18,0xff117458,true);
 
         addText(body,"① 先准备蓝牙待机（这一步不打开Wi-Fi）",17,Color.BLACK,true);
@@ -254,7 +277,7 @@ public final class MainActivity extends Activity {
         addButton(body,"复制诊断日志",() -> {
             ClipboardManager clipboard = (ClipboardManager)
                     getSystemService(Context.CLIPBOARD_SERVICE);
-            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.28 diagnostic",
+            clipboard.setPrimaryClip(ClipData.newPlainText("M02S v0.1.29 diagnostic",
                     diagnostics.toString()));
             status("诊断日志已复制");
         });
