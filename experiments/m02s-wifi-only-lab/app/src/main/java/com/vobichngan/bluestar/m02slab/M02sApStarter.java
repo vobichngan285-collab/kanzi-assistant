@@ -45,7 +45,7 @@ import java.util.UUID;
  */
 public final class M02sApStarter {
     /** BLE GATT write ACK is not proof of device state reset. */
-    public interface PartialFinishCallback { void complete(boolean writeAcknowledged); }
+    public interface OemFinishCallback { void complete(boolean writeAcknowledged); }
     public interface Callback {
         void log(String message);
         void ready(Network network, String host);
@@ -104,9 +104,14 @@ public final class M02sApStarter {
     private Runnable scanTimer;
     private Runnable ssidTimeout;
     private Runnable partialFinishTimeout;
-    private PartialFinishCallback pendingPartialFinish;
+    private OemFinishCallback pendingPartialFinish;
     private boolean partialFinishWriting;
     private boolean intentionalImportExit;
+    private boolean awaitingOldWifiLoss;
+    private Network oldWifiNetwork;
+    private Runnable oldWifiPoll;
+    private long oldWifiReleaseAt;
+    private boolean oldWifiTimeoutLogged;
 
     public M02sApStarter(Activity context, Handler mainHandler,
                          ConnectivityManager cm, WifiManager wm, Callback cb) {
@@ -118,7 +123,7 @@ public final class M02sApStarter {
     }
 
     public boolean running() { return running; }
-    public boolean standby() { return running && bleStandbyReady && gatt != null; }
+    public boolean standby() { return running && bleStandbyReady && gatt != null && !awaitingOldWifiLoss; }
     public boolean ready() { return running && targetReady && targetNetwork != null; }
 
     /** User has physically pressed shutter, or upstream ACTION_SYNC indicates capture.
@@ -131,66 +136,73 @@ public final class M02sApStarter {
         return startedApRequest;
     }
 
-    /** OEM APK uses 0x44/0x31/successful-count for PARTIAL downloads.
-     * Opt-in must be checked by caller; allowed frame is one verified photo.
-     * E09 reverse engineering says this is non-deleting, but M02S behavior
-     * is NOT hardware verified. Never send any 0x44/0x30/0x00 clear frame.
+    /** OEM file-transfer finish with actual completed original count.
+     * On ALL complete 0x44/0x30/0x00 may clear eyewear media. This is
+     * explicitly authorized by the user and is never a physical shutter.
      */
-    public boolean requestPartialOneFinish(PartialFinishCallback cb) {
-        if (!standby() || !targetReady || projectQueryPending
-                || partialFinishWriting || cb == null) return false;
-        byte[] frame = M02sApWire.partialOneFinishRequest();
-        if (!M02sApWire.authorizedPartialOneFinish(frame)) return false;
-        BluetoothGattService svc = gatt.getService(AA12);
-        BluetoothGattCharacteristic ch = svc == null ? null : svc.getCharacteristic(AA13);
-        if (ch == null || (ch.getProperties()
-                & BluetoothGattCharacteristic.PROPERTY_WRITE) == 0) return false;
-        final int token = generation;
-        partialFinishWriting = true;
-        intentionalImportExit = true;
-        pendingPartialFinish = cb;
+    public boolean requestOemFinish(int total, int done, OemFinishCallback cb) {
+        if (!running || !bleStandbyReady || gatt==null || !targetReady
+                || projectQueryPending || partialFinishWriting || awaitingOldWifiLoss
+                || cb==null) return false;
+        final byte[] frame;
+        final M02sOemImportPolicy.Branch kind;
+        try {
+            kind=M02sOemImportPolicy.branch(total,done);
+            frame=M02sOemImportPolicy.finishFrame(total,done);
+        } catch(IllegalArgumentException badCount) {
+            callback.log("原厂结束命令完成数量不合法，拒绝发送");
+            return false;
+        }
+        if (!M02sOemImportPolicy.authorizedFinish(frame)) return false;
+        BluetoothGattService svc=gatt.getService(AA12);
+        BluetoothGattCharacteristic ch=svc==null ? null : svc.getCharacteristic(AA13);
+        if(ch==null || (ch.getProperties() & BluetoothGattCharacteristic.PROPERTY_WRITE)==0)
+            return false;
+        final int token=generation;
+        partialFinishWriting=true;
+        intentionalImportExit=true;
+        pendingPartialFinish=cb;
+        callback.log("提交原厂0x44结束："+kind+"，原始列表="+total+"，完成原图="+done
+                +"；FULL可能清除镜端照片（用户已明确授权）");
         try {
             int code;
-            if (Build.VERSION.SDK_INT >= 33) {
-                code = gatt.writeCharacteristic(ch, frame,
-                        BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
-            } else {
+            if(Build.VERSION.SDK_INT>=33)
+                code=gatt.writeCharacteristic(ch,frame,BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+            else {
                 @SuppressWarnings("deprecation")
-                boolean set = ch.setValue(frame);
+                boolean set=ch.setValue(frame);
                 @SuppressWarnings("deprecation")
-                boolean wrote = set && gatt.writeCharacteristic(ch);
-                code = wrote ? 0 : -1;
+                boolean wrote=set && gatt.writeCharacteristic(ch);
+                code=wrote ? 0 : -1;
             }
-            if (code != 0) {
-                callback.log("部分导入结束指令GATT提交失败 code=" + code);
-                completePartialFinish(false);
+            if(code!=0) {
+                callback.log("原厂0x44 GATT提交拒绝，code="+code);
+                completeOemFinish(false);
                 return true;
             }
-            callback.log("用户主动开启部分导入实验：仅发一次0x44/0x31/0x01；"
-                    + "绝不发送完整清除指令；M02S实际副作用尚未证实");
-            partialFinishTimeout = () -> {
-                if (valid(token) && partialFinishWriting) {
-                    callback.log("部分导入结束指令3秒内无GATT回执；不重复发送");
-                    completePartialFinish(false);
+            partialFinishTimeout=()->{
+                if(valid(token) && partialFinishWriting) {
+                    callback.log("原厂0x44写回执3秒超时；不重复发指令");
+                    completeOemFinish(false);
                 }
             };
-            ui.postDelayed(partialFinishTimeout, 3000L);
+            ui.postDelayed(partialFinishTimeout,3000L);
             return true;
-        } catch (SecurityException | IllegalStateException ex) {
-            callback.log("部分导入结束指令GATT异常="+ex.getClass().getSimpleName());
-            completePartialFinish(false);
+        } catch(SecurityException | IllegalStateException ex) {
+            callback.log("原厂0x44 GATT异常："+ex.getClass().getSimpleName());
+            completeOemFinish(false);
             return true;
         }
     }
 
-    private void completePartialFinish(boolean ok) {
-        if (!partialFinishWriting) return;
-        partialFinishWriting = false;
-        if (partialFinishTimeout != null) ui.removeCallbacks(partialFinishTimeout);
-        partialFinishTimeout = null;
-        PartialFinishCallback cb = pendingPartialFinish;
-        pendingPartialFinish = null;
-        if (cb != null) cb.complete(ok);
+    private void completeOemFinish(boolean ok) {
+        if(!partialFinishWriting) return;
+        partialFinishWriting=false;
+        if(partialFinishTimeout!=null) ui.removeCallbacks(partialFinishTimeout);
+        partialFinishTimeout=null;
+        OemFinishCallback cb=pendingPartialFinish;
+        pendingPartialFinish=null;
+        if(cb!=null) cb.complete(ok);
     }
 
     /**
@@ -286,41 +298,80 @@ public final class M02sApStarter {
                 + wifiNetworks + "；" + cached);
     }
 
-    /** Release only the phone Wi-Fi request; keep BLE listening for next shutter.
-     * This does NOT prove the glasses themselves have exited import mode. */
+    /** Original-vendor closure: after OEM 0x44 write, unregister Android's
+     * temporary Wi-Fi request, then observe old Network disappearance.
+     * Do not accept the next manual import while still attached to the old AP.
+     */
     public void releasePhotoNetwork() {
         observePhoneWifi("释放前");
-        if (networkCallback != null) {
-            // Clear ownership BEFORE releasing Android's network request.
-            // Any queued callback from this old photo session must be ignored.
-            ConnectivityManager.NetworkCallback oldCallback = networkCallback;
-            networkCallback = null;
-            try { connectivity.unregisterNetworkCallback(oldCallback); }
-            catch (IllegalArgumentException | SecurityException ignored) { }
-            callback.log("本张照片传输完成/结束：释放手机本轮专属Wi-Fi请求；保留BLE待机");
+        Network released=targetNetwork;
+        if(networkCallback!=null) {
+            ConnectivityManager.NetworkCallback old=networkCallback;
+            networkCallback=null;
+            try { connectivity.unregisterNetworkCallback(old); }
+            catch(IllegalArgumentException | SecurityException ignored) {}
+            callback.log("原厂退出：注销旧Wi-Fi NetworkCallback（BLE保留）");
         }
-        intentionalImportExit = false;
-        partialFinishWriting = false;
-        pendingPartialFinish = null;
-        scanRequestedAtUs = 0L;
-        firstFreshSeenAtMs = 0L;
-        freshBssid = null;
-        scanChecks = 0;
-        if (scanTimer != null) ui.removeCallbacks(scanTimer);
-        scanTimer = null;
-        if (partialFinishTimeout != null) ui.removeCallbacks(partialFinishTimeout);
-        partialFinishTimeout = null;
-        wifiRequestAtMs = 0L;
-        targetNetwork = null;
-        targetHost = null;
-        targetReady = false;
-        expectedSsid = null;
-        startedWifiNetworkRequest = false;
-        startedApRequest = false;
-        apWriteAcknowledged = false;
+        intentionalImportExit=false;
+        partialFinishWriting=false;
+        pendingPartialFinish=null;
+        if(partialFinishTimeout!=null) ui.removeCallbacks(partialFinishTimeout);
+        partialFinishTimeout=null;
+        scanRequestedAtUs=0L;
+        firstFreshSeenAtMs=0L;
+        freshBssid=null;
+        scanChecks=0;
+        if(scanTimer!=null) ui.removeCallbacks(scanTimer);
+        scanTimer=null;
+        wifiRequestAtMs=0L;
+        targetNetwork=null;
+        targetHost=null;
+        targetReady=false;
+        expectedSsid=null;
+        startedWifiNetworkRequest=false;
+        startedApRequest=false;
+        apWriteAcknowledged=false;
         cancelSsidTimeout();
-        observePhoneWifi("解除请求后瞬时状态-非最终断网证明");
-        if (bleStandbyReady) callback.standbyReady();
+        if(oldWifiPoll!=null) ui.removeCallbacks(oldWifiPoll);
+        oldWifiPoll=null;
+        oldWifiNetwork=released;
+        awaitingOldWifiLoss=released!=null;
+        oldWifiTimeoutLogged=false;
+        oldWifiReleaseAt=SystemClock.elapsedRealtime();
+        observePhoneWifi("注销请求后瞬时状态-尚未证明断开");
+        if(awaitingOldWifiLoss) checkOldWifiGone(generation);
+        else if(bleStandbyReady) callback.standbyReady();
+    }
+
+    private void checkOldWifiGone(int token) {
+        if(!valid(token) || !awaitingOldWifiLoss) return;
+        boolean stillWifi=false;
+        try {
+            if(oldWifiNetwork!=null) {
+                NetworkCapabilities cap=connectivity.getNetworkCapabilities(oldWifiNetwork);
+                stillWifi=cap!=null && cap.hasTransport(NetworkCapabilities.TRANSPORT_WIFI);
+            }
+        } catch(SecurityException | IllegalStateException ignored) {
+            callback.log("系统不允许查询旧Wi-Fi网络，不能确认实际断线");
+            oldWifiPoll=null;
+            return; // do not falsely mark ready
+        }
+        if(!stillWifi) {
+            awaitingOldWifiLoss=false;
+            oldWifiNetwork=null;
+            oldWifiPoll=null;
+            callback.log("旧眼镜Network已从Android消失；BLE仍在待机，允许新一轮拍照/导入");
+            if(bleStandbyReady) callback.standbyReady();
+            return;
+        }
+        long elapsed=SystemClock.elapsedRealtime()-oldWifiReleaseAt;
+        if(elapsed>=10000L && !oldWifiTimeoutLogged) {
+            oldWifiTimeoutLogged=true;
+            callback.log("已释放旧请求10秒但系统仍报告相同眼镜Network；禁止把旧连接当下一轮。"
+                    +"如其它App在保持热点，请关闭它");
+        }
+        oldWifiPoll=()->checkOldWifiGone(token);
+        ui.postDelayed(oldWifiPoll,elapsed>=10000L ? 1500L : 350L);
     }
 
     public boolean isActive(Network network, String host) {
@@ -508,9 +559,9 @@ public final class M02sApStarter {
                                         || characteristic == null
                                         || !AA13.equals(characteristic.getUuid())) return;
                                 if (partialFinishWriting) {
-                                    callback.log("部分导入结束AA13 GATT回执status=" + status
+                                    callback.log("原厂0x44结束指令AA13 GATT写回执status=" + status
                                             + "；不是固件退出传输模式的证明");
-                                    completePartialFinish(status == 0);
+                                    completeOemFinish(status == 0);
                                     return;
                                 }
                                 if (projectQueryPending) {
@@ -995,6 +1046,11 @@ public final class M02sApStarter {
     }
 
     public void stop() {
+        awaitingOldWifiLoss=false;
+        oldWifiNetwork=null;
+        if(oldWifiPoll!=null) ui.removeCallbacks(oldWifiPoll);
+        oldWifiPoll=null;
+        oldWifiTimeoutLogged=false;
         partialFinishWriting = false;
         intentionalImportExit = false;
         pendingPartialFinish = null;
