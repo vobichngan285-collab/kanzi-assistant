@@ -615,48 +615,55 @@ public final class MainActivity extends Activity {
         });
     }
 
-    /** Follow the OEM original-list completion semantics. Full-image lists
-     * are fetched in original server order, not reverse-sorted; one newer
-     * image is previewed, and earlier files are discarded from phone RAM.
-     * In a mixed list, fetch only the newest and report partial success N=1.
+    /** Speed-first import: latest high-resolution JPEG is fetched, decoded
+     * and exposed to the UI BEFORE historical originals. The remaining OEM
+     * inventory is still downloaded before the proven FULL 0x44 session close.
+     * On partial failure only the actual downloaded count is reported.
      */
     private void downloadOemSession(long id,Network net,String host,
                                     M02sPhotoListReader.Result list,
                                     M02sPhotoPolicy.Candidate latest) {
         if (!inTransfer || id!=runId || latest==null || list==null
                 || list.entriesObserved<=0) return;
-        final boolean fullBatch = M02sOemImportPolicy.canCompleteWholeList(
+        final boolean fullBatch=M02sOemImportPolicy.canCompleteWholeList(
                 list.entriesObserved,list.eligibleImages);
-        final java.util.List<M02sPhotoPolicy.Candidate> files = fullBatch
-                ? list.candidates
-                : java.util.Collections.singletonList(latest);
-        transferStage = fullBatch ? "正在按原厂列表顺序下载全部原图" : "正在下载单张原图";
+        final java.util.List<M02sPhotoPolicy.Candidate> files;
+        try {
+            files=M02sFastDownloadPlan.plan(list,latest,fullBatch);
+        } catch(IllegalArgumentException ex) {
+            abortTransfer("原厂列表与最新图片不一致：拒绝进入错误的FULL完成分支");
+            return;
+        }
+        transferStage=fullBatch ? "正在优先获取最新高清，旧原图随后下载"
+                : "正在只获取最新高清原图（部分导入分支）";
         status(transferStage);
         log(fullBatch
-                ? "原厂整批模式：逐张只读GET"+files.size()+"张并验证，全部成功才发完整结束/清理帧"
-                : "原厂部分模式：混合文件/数量超限，仅取最新一张并按完成数发送部分结束帧");
+                ? "极速首帧：优先GET最新高清原图，随后按原列表补全其余"
+                        +(files.size()-1)+"张，最后仍发送已真机验证的原厂FULL结束帧"
+                : "极速首帧：混合媒体或超出24张整批阈值，取最新高清并使用原厂PARTIAL结束");
         io.execute(() -> {
             int completed=0;
+            long totalHttpMs=0;
             Bitmap newestBitmap=null;
             byte[] newestBytes=null;
-            long totalHttpMs=0;
+            boolean previewPosted=false;
             try {
-                for (M02sPhotoPolicy.Candidate item : files) {
-                    if (destroyed || !inTransfer || runId!=id) {
-                        if(newestBitmap!=null) newestBitmap.recycle();
-                        return; // user cancellation; MainActivity handles network release
+                for(M02sPhotoPolicy.Candidate item:files) {
+                    if(destroyed || !inTransfer || runId!=id) {
+                        if(newestBitmap!=null && !previewPosted) newestBitmap.recycle();
+                        return;
                     }
-                    M02sPhotoTransport.Response response =
+                    M02sPhotoTransport.Response response=
                             M02sPhotoTransport.getOriginalPhoto(net,host,item);
                     if(response.httpCode!=200)
                         throw new java.io.IOException("OEM original HTTP code not 200");
                     M02sPhotoPolicy.ImageKind kind=M02sPhotoPolicy.imageKind(response.body);
-                    if (!M02sPhotoPolicy.extensionMatches(item.remoteName,kind))
+                    if(!M02sPhotoPolicy.extensionMatches(item.remoteName,kind))
                         throw new java.io.IOException("OEM original kind/extension mismatch");
-                    BitmapFactory.Options bounds = new BitmapFactory.Options();
+                    BitmapFactory.Options bounds=new BitmapFactory.Options();
                     bounds.inJustDecodeBounds=true;
                     BitmapFactory.decodeByteArray(response.body,0,response.body.length,bounds);
-                    if (bounds.outWidth<1 || bounds.outHeight<1
+                    if(bounds.outWidth<1 || bounds.outHeight<1
                             || bounds.outWidth>10000 || bounds.outHeight>10000
                             || (long)bounds.outWidth*bounds.outHeight>32_000_000L)
                         throw new java.io.IOException("OEM original image bounds invalid");
@@ -664,15 +671,55 @@ public final class MainActivity extends Activity {
                         newestBytes=response.body;
                         newestBitmap=BitmapFactory.decodeByteArray(
                                 response.body,0,response.body.length);
-                        if(newestBitmap==null) throw new java.io.IOException("latest image decode failed");
+                        if(newestBitmap==null)
+                            throw new java.io.IOException("latest image decode failed");
+                        final Bitmap earlyBitmap=newestBitmap;
+                        final byte[] earlyOriginal=newestBytes;
+                        final int realWidth=bounds.outWidth,realHeight=bounds.outHeight;
+                        final long imageReadyAt=SystemClock.elapsedRealtime();
+                        previewPosted=true;
+                        // This is the future OCR entrypoint: use the ORIGINAL JPEG
+                        // bytes as soon as they arrive; never wait for history GETs.
+                        ui.post(() -> {
+                            if(destroyed || !inTransfer || runId!=id) {
+                                earlyBitmap.recycle();
+                                return;
+                            }
+                            lastJpegInRam=earlyOriginal;
+                            latestOriginalReadyAtMs=imageReadyAt;
+                            preview.setImageBitmap(earlyBitmap);
+                            resultText.setText("最新高清已先到达手机："
+                                    +realWidth+"×"+realHeight
+                                    +"；剩余旧图后台处理"+(files.size()-1)+"张");
+                            transferStage="最新高清已就绪，旧照片后台传输及原厂结束会话继续进行";
+                            status(transferStage);
+                            long manualMs=imageReadyAt-captureToWifiStartMs;
+                            long wifiMs=wifiReadyAtMs>0?imageReadyAt-wifiReadyAtMs:-1;
+                            String shutterStarted=shutterStartedForTransferMs>0
+                                    ? (imageReadyAt-shutterStartedForTransferMs)+"ms"
+                                    : "无可靠实体快门开始时间";
+                            String shutterEnded=shutterFinishedForTransferMs>0
+                                    ? (imageReadyAt-shutterFinishedForTransferMs)+"ms"
+                                    : "无可靠快门结束时间";
+                            log("【最新高清首帧已就绪／未来OCR入口】JPEG="
+                                    +realWidth+"×"+realHeight+"；启动取图→就绪="
+                                    +manualMs+"ms；Wi-Fi就绪→高清就绪="+wifiMs
+                                    +"ms；实体快门开始→高清就绪="+shutterStarted
+                                    +"；实体快门结束→高清就绪="+shutterEnded
+                                    +"；旧照片仍在后台，未提前发送原厂FULL");
+                        });
                     }
                     completed++;
                     totalHttpMs+=response.durationMs;
                     final int count=completed;
                     ui.post(() -> {
-                        if (!destroyed && inTransfer && id==runId) {
+                        if(!destroyed && inTransfer && id==runId) {
                             originalsCompletedThisRound=count;
-                            resultText.setText("已导入原图 "+count+"/"+originalOemTotal);
+                            if(latestOriginalReadyAtMs>0)
+                                resultText.setText("最新高清已就绪；旧照片收尾进度 "
+                                        +count+"/"+originalOemTotal);
+                            else resultText.setText("原厂原图传输 "
+                                        +count+"/"+originalOemTotal);
                         }
                     });
                 }
@@ -680,44 +727,49 @@ public final class MainActivity extends Activity {
                 final long httpMs=totalHttpMs;
                 final Bitmap display=newestBitmap;
                 final byte[] raw=newestBytes;
+                final boolean earlyPosted=previewPosted;
                 ui.post(() -> {
-                    if (destroyed || !inTransfer || runId!=id) {
-                        if(display!=null) display.recycle();
+                    if(destroyed || !inTransfer || runId!=id) {
+                        if(display!=null && !earlyPosted) display.recycle();
                         return;
                     }
                     originalsCompletedThisRound=count;
-                    if (!starter.isActive(net,host)) {
-                        if(display!=null) display.recycle();
-                        abortTransfer("下载结束时眼镜专属Wi-Fi已断开，保留真实完成数");
+                    if(!starter.isActive(net,host)) {
+                        if(display!=null && !earlyPosted) display.recycle();
+                        abortTransfer("旧照片下载完时眼镜专属Wi-Fi已断开，保留真实完成数");
                         return;
                     }
-                    if (display==null || raw==null) {
-                        abortTransfer("原厂原图批次内未得到本次最新图片，不能误报取图成功");
+                    if(display==null || raw==null) {
+                        abortTransfer("未得到本次最新原图，不能误报高速识别就绪");
                         return;
                     }
-                    lastJpegInRam=raw;
+                    if(latestOriginalReadyAtMs<=0) {
+                        lastJpegInRam=raw;
+                        preview.setImageBitmap(display);
+                    }
                     lastDownloadedRemoteName=latest.remoteName;
-                    preview.setImageBitmap(display);
                     downloadedCount++;
-                    resultText.setText("成功导入"+count+"张；本次最新原图"
-                            +display.getWidth()+"×"+display.getHeight());
-                    log("原厂批次原图已逐张下载：真实完成数="+count
-                            +"/"+originalOemTotal+"；最新原图="+display.getWidth()
-                            +"×"+display.getHeight()+"；整批HTTP="+httpMs+"ms"
-                            +"；手动点击到导入完成="+(SystemClock.elapsedRealtime()-captureToWifiStartMs)+"ms");
-                    finishTransfer(true,"原厂原图下载已完成，正在发送传输结束指令");
+                    resultText.setText("最新高清已就绪；整批"+count+"/"+originalOemTotal
+                            +"张原图完成，可发送原厂FULL／PARTIAL结束");
+                    log("原厂后台收尾已完成：真实完成数="+count+"/"+originalOemTotal
+                            +"；整批HTTP="+httpMs+"ms；启动取图→整批完成="
+                            +(SystemClock.elapsedRealtime()-captureToWifiStartMs)+"ms"
+                            +"；此前已提前交付最新高清原图");
+                    finishTransfer(true,"原厂整批原图已下载并验证，正在发送原厂结束指令");
                 });
-            } catch (Exception e) {
+            } catch(Exception e) {
                 final int count=completed;
                 final Bitmap display=newestBitmap;
+                final boolean earlyPosted=previewPosted;
                 ui.post(() -> {
-                    if (display!=null) display.recycle();
-                    if (!destroyed && inTransfer && id==runId) {
+                    if(display!=null && !earlyPosted) display.recycle();
+                    if(!destroyed && inTransfer && id==runId) {
                         originalsCompletedThisRound=count;
-                        log("原厂原图在第"+(count+1)+"张失败，类型="
+                        log("原厂旧图传输在第"+(count+1)+"张中断，异常="
                                 +e.getClass().getSimpleName()
-                                +"；将以真实成功数="+count+"执行原厂部分/零下载结束");
-                        abortTransfer("原厂整批下载未全部完成，仍执行原厂对应结束分支");
+                                +"；已先到达的最新高清保留在手机RAM；"
+                                +"只使用真实完成数执行原厂PARTIAL/ZERO，绝不误报FULL");
+                        abortTransfer("原厂后台旧原图未全部完成，按真实成功数退出");
                     }
                 });
             }
