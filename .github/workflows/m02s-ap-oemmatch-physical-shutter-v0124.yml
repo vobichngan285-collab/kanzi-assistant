@@ -1,0 +1,112 @@
+name: Blue Star M02S AP SSID One-Shot Fallback Manual Shutter v0.1.24
+on:
+  workflow_dispatch:
+  push:
+    branches: ['exp/m02s-ap-oemmatch-physical-shutter-v0124-20261115']
+    paths:
+      - 'experiments/m02s-wifi-only-lab/**'
+      - '.github/workflows/m02s-ap-oemmatch-physical-shutter-v0124.yml'
+permissions:
+  contents: write
+
+jobs:
+  test-build-release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -s "$ANDROID_HOME/platforms/android-36/android.jar" ] || [ ! -x "$ANDROID_HOME/build-tools/36.0.0/apksigner" ]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+          fi
+      - name: Prepare Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Verify exact BLE AP-only command; unit tests and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE=experiments/m02s-wifi-only-lab/app/src/main/java
+          WIRE="$SOURCE/com/vobichngan/bluestar/m02slab/M02sApWire.java"
+          grep -Fq '0x39, 0x30, 0x69' "$WIRE"
+          grep -Fq 'Arrays.equals(AP_REQUEST, bytes)' "$WIRE"
+          if grep -R -E 'M02sBleWire[.]photoThumbnail|e09BlePhoto[(]|[.]removeFile[(]|DELETE_MEDIA' "$SOURCE" ; then
+            echo 'Unauthorized shutter/erase API in one-time AP starter' >&2
+            exit 1
+          fi
+          STARTER="$SOURCE/com/vobichngan/bluestar/m02slab/M02sApStarter.java"
+          grep -Fq 'scanRequestedAtUs = bleCommandAtMs * 1000L' "$STARTER"
+          grep -Fq 'setSsidPattern(new PatternMatcher' "$STARTER"
+          grep -Fq 'builder.setBssid(MacAddress.fromString(freshBssid))' "$STARTER"
+          if grep -RE '0x44, 0x30|M02sBleWire[.]takePhoto|DELETE_MEDIA' "$SOURCE"; then
+            echo 'Disallowed BLE erase/shutter behavior' >&2; exit 1
+          fi
+          gradle -p experiments/m02s-wifi-only-lab --no-daemon --no-parallel --max-workers=2 \
+            :app:testDebugUnitTest :app:assembleDebug --stacktrace
+      - name: Verify manifest, standalone APK signing and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=experiments/m02s-wifi-only-lab/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          TOOL="$ANDROID_HOME/build-tools/36.0.0"
+          "$TOOL/apksigner" verify --verbose "$APK" | tee "$RUNNER_TEMP/signature.txt"
+          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' "$RUNNER_TEMP/signature.txt"
+          "$TOOL/zipalign" -c -v 4 "$APK"
+          "$TOOL/aapt" dump badging "$APK" | tee "$RUNNER_TEMP/badging.txt"
+          grep -q "package: name='com.vobichngan.bluestar.m02sphysicalkeepap24' versionCode='25' versionName='0.1.24'" "$RUNNER_TEMP/badging.txt"
+          "$TOOL/aapt" dump permissions "$APK" | tee "$RUNNER_TEMP/permissions.txt"
+          for p in BLUETOOTH_SCAN BLUETOOTH_CONNECT ACCESS_NETWORK_STATE ACCESS_WIFI_STATE CHANGE_NETWORK_STATE CHANGE_WIFI_STATE NEARBY_WIFI_DEVICES ACCESS_FINE_LOCATION INTERNET; do
+            grep -q "android.permission.${p}" "$RUNNER_TEMP/permissions.txt"
+          done
+          if grep -qE 'android.permission.(CAMERA|READ_MEDIA_IMAGES|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE)' "$RUNNER_TEMP/permissions.txt"; then
+            echo 'Unexpected camera or photo storage permission' >&2
+            exit 1
+          fi
+          unzip -t "$APK" | tail -n 2
+          mkdir -p release
+          cp "$APK" release/BlueStar_M02S_OEMMatch_PhysicalShutter_0.1.24_Android.apk
+          sha256sum release/*.apk | tee release/SHA256SUMS.txt
+          echo "Source commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          cat release/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload standalone signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar-M02S-OEMMatch-PhysicalShutter-v0124-APK
+          path: release/BlueStar_M02S_OEMMatch_PhysicalShutter_0.1.24_Android.apk
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish stable browser download URL
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/release-notes.txt" <<'EOF'
+          v0.1.24 experimental fix of the existing v0.1.15 BLE-AP + manually pressed glasses shutter photo monitor, for vivo X200 Pro / M02S. Only Wi-Fi association is changed: use original BLE AP-command timestamp rather than the later SSID reply as freshness anchor; adopt the OEM-style SSID PATTERN_LITERAL with unique fresh pinned BSSID already proven to reach onAvailable in the separate v0.1.13 E09 live experiment. If no reliable fresh scan, 12s bounded BLE-SSID pattern-only fallback (no guessed BSSID or repeat attempts). Adds stale callback guard and elapsed timing. This does NOT prove photo AP uses identical hardware state or that physical shutter works while AP is active. Tests remain on-device pending.
+          Safeguards: exact one BLE AP 0x39/0x30 only; no BLE shutter, firmware OTA, erase, photo/media write or cloud. Read-only OEM photo-list and original-JPEG GET, photos in RAM only. After Wi-Fi connects the original app workflow preserves the session during up to 120 seconds of up to 3 physical shutter presses, only releasing upon manual stop, app exit, system loss or failure. Do not confuse foreground bounded observation with guaranteed permanent Wi-Fi lock. No other Blue Star Guide RC25 / Windows OCR / OEM app or earlier branch/APK is changed.
+          EOF
+          gh release create bluestar-m02s-ap-oemmatch-physical-shutter-v0124-20261115 \
+            release/BlueStar_M02S_OEMMatch_PhysicalShutter_0.1.24_Android.apk \
+            release/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Blue Star M02S AP SSID Fallback + Manual Shutter Wi-Fi Photo v0.1.24 — experimental" \
+            --prerelease --notes-file "$RUNNER_TEMP/release-notes.txt"
+      - name: Verify release published and downloadable
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view bluestar-m02s-ap-oemmatch-physical-shutter-v0124-20261115 \
+            --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,assets,url \
+            --jq '{isDraft,isPrerelease,url,assets: [.assets[] | {name: .name, size: .size, url: .url}]}'

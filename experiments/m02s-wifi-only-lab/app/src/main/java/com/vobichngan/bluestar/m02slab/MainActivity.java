@@ -101,7 +101,7 @@ public final class MainActivity extends Activity {
                     }
                 });
         buildUi();
-        log("v0.1.15 扫描失败回退修复：蓝牙只开AP，已连接目标复用，否则12秒后仅对准确SSID请求一次Wi-Fi；不遥控拍照");
+        log("v0.1.24 连接专项：修复早到热点被判旧缓存；vivo借用已真机成功的原厂SSID Pattern+BSSID匹配；仍只由眼镜实体快门拍照");
         log("继续拍前基线/450ms照片列表比较/高清JPEG下载；不保存相册、上传云端、删除眼镜照片");
         status("按「连接眼镜并启动Wi-Fi」；无需手动猜热点SSID或密码");
     }
@@ -115,7 +115,7 @@ public final class MainActivity extends Activity {
         setContentView(scroll);
 
         addText(body, "蓝星 M02S 手动快门 Wi-Fi 取图", 24, Color.rgb(28, 59, 94), true);
-        addText(body, "v0.1.15 · 蓝牙只开热点 · 实体手动拍照", 15, Color.DKGRAY, false);
+        addText(body, "v0.1.24 · 原厂式Wi-Fi连接 · 实体手动拍照", 15, Color.DKGRAY, false);
         statusView = addText(body, "", 18, Color.rgb(12, 99, 75), true);
 
         addText(body, "① 用蓝牙仅开启眼镜Wi-Fi（不遥控拍照）", 18, Color.BLACK, true);

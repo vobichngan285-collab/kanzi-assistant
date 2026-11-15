@@ -1,26 +1,28 @@
-# M02S-3584｜v0.1.15 实体手动快门 + Wi-Fi 精准连接回退修复
+# M02S v0.1.24｜Wi-Fi连接修复 + 眼镜实体快门验证
 
-## 修复依据（真实Android16失败）
-- 用户 v0.1.14 21:55:46 BLE `0x39/0x30` 开AP已成功写入；AA14 `0x25`返回校验通过的真实SSID；21:55:47 曾检测到本次新AP广播。
-- 后续实机屏幕提示 **“连接失败：12秒内未扫描到本次新的眼镜Wi-Fi热点；不连接旧缓存或邻居设备”**。当眼镜BLE提供真实SSID后，Android扫描可能限流、结果回收或广播暂时消失。扫描缺席**不能推断该眼镜不支持或不存在AP**；也不能直接承诺AP在线。
-- 截图界面顶部错误残留 `v0.1.13`，虽然运行的是v0.1.14。此版修正UI与APK Manifest版本标签，所有显示统一为v0.1.15。
+这是 v0.1.15 **原实验的独立修正版**，不是新方案，也不覆盖以前的独立 APK。
 
-## 最小变更——在旧成功流程上加安全回退
-1. **只启动一次原厂已验证BLE开AP**：扫描唯一 `M02S`，GATT LE1M、AA14 CCCD，AA13写精确白名单 `AB 55 00 03 39 30 69` (`0x39/0x30`)，等待GATT status0和AA14 checksum正确的 `0x25` 真实SSID。无 `0x22` 远程拍照、无BLE直传、无删除/OTA/P2P写指令。
-2. **优先复用已经连接的精确目标**：遍历Android已连Wi-Fi Network，若WifiInfo SSID与BLE返回的完全相同、并有真实私有IPv4网关，复用此Network，**不申请新连接**。但仍必须让 `MainActivity` 读取 `GET /app/getfilelist` 验证原厂JSON `result=0` / `info`。不因SSID相同就宣称眼镜已就绪。
-3. **新扫描成功**：依旧遵循旧版真实已测的 `FRESH_UNIQUE` / 1.8秒新扫描稳定规则，再执行一次精确SSID/WPA2 Android `requestNetwork`；不能连接其它热点，不凭扫描结果宣称Wi-Fi已连通。
-4. **扫描12秒无可靠本次新结果**：如果**AA13开AP写入回调status0、AA14 `0x25` SSID字节/校验合法、没有已发出Network请求、未出现多个同SSID不同BSSID歧义**，则**只对BLE确认的准确SSID**用先前v0.1.6/v0.1.10成功的 `WifiNetworkSpecifier`+OEM WPA2密钥申请一次Android目标网络。Android是否提示授权、`onAvailable`、真实网关和原厂HTTP列表是否存在，才是最终判断；失败明确停止，不再次写BLE、不反复Wi-Fi重试、不猜邻居SSID。
-5. **建连成功后取消旧90秒连接超时**，让拍照前基线+最多120秒/3张连续监听不被建连超时误停。手动按实体快门，HTTP每约450ms找相对旧基线的新文件并稳定两次再GET原始照片。保留旧的文件名/URL/尺寸/32MB安全限制，只在内存显示，不上传、不存相册、不删眼镜照片。
+## 原失败与本次唯一连接方向
 
-## 实机验证指引
-1. 不需要进入Android WLAN手动猜SSID。关闭HeyCyan，手机蓝牙/WLAN开，授予所需蓝牙/附近Wi-Fi/位置权限，打开 **独立v0.1.15**。
-2. 点击 **「连接M02S并开启Wi-Fi、自动等待照片」** 一次，不再重复点；Android系统如果弹出眼镜Wi-Fi授权，请选择允许。
-3. 日志应出现 `收到AA14 0x25准确SSID`，然后根据实际情况显示“复用已有目标Network”“已看到新AP”“扫描12秒回退，仅请求一次准确SSID”其中之一；接着**必须**有`Network onAvailable`或复用真实Network、原厂HTTP200照片列表通过、旧照片基线建立。
-4. **只有显示“旧照片基线已建立”后**才按眼镜实体快门一次，观察有没有真实快门动作，以及是否出现新文件/下载高清图；第一张确认后再按第二和第三次。
-5. 若走到 `onAvailable` 但原厂HTTP失败，请复制安全日志以定位网关/原厂接口；若AP已连接但眼镜实体按键拍照没反应，记录**固件可能拍照/传输互斥**，不要重试旧蓝牙拍照链路。
-6. **测试边界**：本轮仅保证代码能编译并在Android中尝试一次安全回退，不保证眼镜AP真的允许手动快门，亦不保证“按键到高清原图≤3秒”。用户的全流程OCR/TTS尚未添加；单次Wi-Fi GET过去真机实测约475～758ms是已有事实，端到端速度仍待测。
+v0.1.14 实机 BLE `0x39/0x30` 已成功启动 AP 并收到 `0x25` SSID，仍在后续新扫描检查阶段失败，未能验证 Wi-Fi 已连接时按实体快门。v0.1.15 增加了12秒SSID-only回退，但其 `scanRequestedAtUs` 从收到 `0x25` 时才记录；若热点广播出现在发出BLE启动命令之后、收到SSID之前，旧逻辑会把真实本轮广播视为旧缓存。
 
-## 开源与版本隔离
-- 复用本仓库旧实验已验证的 `M02sPhotoTransport`、`M02sPhotoListReader`、`M02sFreshPhotoPolicy`，WPA2与BLE AA14/AA13控制，以及 `M02sApScanPolicy` / `M02sApReadinessPolicy`。参考 MIT `sctg-development/ai-smart-glasses-e09-reverse` 源码 `Constants.swift`、`WifiMediaManager.swift`，许可证和署名保存在 `E09_SOURCE_LICENSE.md`。
-- 新隔离分支 `exp/m02s-ap-ssid-fallback-v0115-20261114`，实验目录 `experiments/m02s-wifi-only-lab`。独立Android App ID `com.vobichngan.bluestar.m02sapfallbacklab`，versionCode16/versionName0.1.15，与旧v0.1.14、v0.1.13、v0.1.12及正式蓝星向导RC25共存，Windows OCR/原厂App均不动。
-- 新增 `M02sApConnectPolicy` + JUnit回归测试覆盖无扫描/只有旧缓存可安全回退、12秒前不回退、没BLE写确认/无效SSID/已请求过网络/同名多热点不回退等。CI成功≠真机连接成功或手动快门验证成功。
+已真实成功的另一个 v0.1.13 E09 直播实验在同一 vivo 手机使用 **`setSsidPattern(PATTERN_LITERAL)` + 新鲜目标 `setBssid`** 建立了 Android Wi-Fi Network（注意那次是直播AP而非照片AP，不能视为此次结果已获证明）。
+
+本版仅修改 Wi-Fi 连接层：
+1. **时间锚点前移到本轮已验证BLE AP指令发送时**，接受之后新扫描到、且10秒内的唯一真实目标BSSID；仍保持已存在的1.8秒稳定观察及SSID验证。
+2. vivo 首次且唯一的 Wi-Fi 请求改用 OEM 同路线 **SSID字面量PatternMatcher**，有本轮唯一新鲜BSSID时精确pin BSSID；没有可靠扫描则保留有界的12秒回退，但仅匹配BLE提供的SSID，不瞎填BSSID。其他手机保持旧策略。
+3. onUnavailable 增加本轮回调身份检查和请求实际耗时日志，不能把回调当做固件拒绝的充分证据。
+4. 保留 `Network.onAvailable` + 私有网关 + 原厂 `GET /app/getfilelist` HTTP200/JSON 的安全核验。若建连成功，本实验**不在下载后主动断Wi-Fi**，仍只由用户点击停止/退出或网络真实断开释放网络请求。
+
+## 完全不改的行为
+
+- BLE仅精确发送一次经真实M02S证实的 `0x39/0x30` 开AP命令，**不发送蓝牙拍照指令、不刷写固件、不发送0x44/OTA、不删除眼镜照片**。
+- 连接后先建立旧照片列表基线，**用户亲自按眼镜实体拍照键**。每450ms只读查询新文件，两次稳定后下载高清JPEG，仅保存在手机RAM；最多3张、120秒（监听计时结束后网络请求仍存在，直到退出App或用户主动断开）。
+- 这是**首次要真正验证“Wi-Fi已连接状态下实体快门能否拍照”**，不是已经证明可以。
+- 只在前台运行；Android系统/眼镜固件仍可能主动关闭连接，不能保证永不断线，也不承诺续航改善。
+
+## 一次真机验证
+
+关闭原厂HeyCyan及其它眼镜控制App，安装本版 APK，允许蓝牙与附近Wi-Fi权限。点 **「连接M02S并开启Wi-Fi、自动等待照片」**，等到同时出现“Android onAvailable/私有网关”与“旧照片基线已建立”，再**只按眼镜实体快门**，不得点App内蓝牙拍照按钮（本版根本没有）。观察快门声与新文件／原图下载，再试第二张。若Wi-Fi连接失败或按键无声，立即复制匿名完整日志，不需反复尝试。
+
+之前 v0.1.15、v0.1.14 的源码、Release及正式蓝星向导RC25、Windows OCR和原厂App不受修改。

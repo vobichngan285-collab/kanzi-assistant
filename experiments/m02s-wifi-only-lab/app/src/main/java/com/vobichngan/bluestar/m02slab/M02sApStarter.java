@@ -14,6 +14,7 @@ import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
 import android.net.ConnectivityManager;
+import android.net.MacAddress;
 import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
@@ -24,6 +25,7 @@ import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiNetworkSpecifier;
 import android.os.Build;
 import android.os.Handler;
+import android.os.PatternMatcher;
 import android.os.SystemClock;
 
 import java.net.InetAddress;
@@ -81,6 +83,7 @@ public final class M02sApStarter {
     private long firstFreshSeenAtMs;
     private String freshBssid;
     private long bleCommandAtMs;
+    private long wifiRequestStartedAtMs;
 
     private Runnable bleTimeout;
     private Runnable firstDeviceDelay;
@@ -381,7 +384,11 @@ public final class M02sApStarter {
         expectedSsid = ssid; // only in RAM
         callback.log("收到AA14 0x25准确SSID；先查是否已连接该眼镜网络，未连接则扫描；SSID与凭证不写日志");
         if (tryReuseConnectedTarget(token)) return;
-        scanRequestedAtUs = SystemClock.elapsedRealtime() * 1000L;
+        // A beacon emitted between the actual BLE AP wake command and the 0x25
+        // SSID reply belongs to this AP session. The old post-SSID scan anchor
+        // incorrectly rejected this already-available new hotspot as cached.
+        scanRequestedAtUs = bleCommandAtMs * 1000L;
+        callback.log("热点扫描新鲜度从本轮BLE开AP命令开始计算，而不是收到SSID之后；防漏判最早的新广播");
         firstFreshSeenAtMs = 0;
         freshBssid = null;
         scanChecks = 0;
@@ -504,6 +511,7 @@ public final class M02sApStarter {
                 || !apWriteAcknowledged
                 || !M02sWifiPolicy.isConnectableSsid(expectedSsid)) return;
         startedWifiNetworkRequest = true;
+        wifiRequestStartedAtMs = SystemClock.elapsedRealtime();
         if (scanTimer != null) {
             ui.removeCallbacks(scanTimer);
             scanTimer = null;
@@ -512,10 +520,29 @@ public final class M02sApStarter {
                 ? "检测到目标AP本次新广播并完成稳定等待：申请一次Android精准SSID+WPA2连接"
                 : "仅对BLE证实的精确SSID申请一次Android连接；扫描受限不等于设备已上线，待真实网关和HTTP校验");
         try {
-            WifiNetworkSpecifier spec = new WifiNetworkSpecifier.Builder()
-                    .setSsid(expectedSsid)
-                    .setWpa2Passphrase(OEM_AP_PASSPHRASE)
-                    .build();
+            // On vivo, mirror the actual OEM-style pattern+BSSID request that
+            // succeeded on this M02S in the separate E09 v0.1.13 live test.
+            // Match ONLY the BLE-confirmed SSID, NEVER an unknown nearby AP.
+            WifiNetworkSpecifier.Builder builder = new WifiNetworkSpecifier.Builder()
+                    .setWpa2Passphrase(OEM_AP_PASSPHRASE);
+            if ("vivo".equalsIgnoreCase(Build.BRAND)) {
+                builder.setSsidPattern(new PatternMatcher(
+                        expectedSsid, PatternMatcher.PATTERN_LITERAL));
+                if (observedFreshBeacon) {
+                    if (!M02sApScanPolicy.validBssid(freshBssid)) {
+                        fail(token, "热点BSSID证据无效，禁止猜测目标连接");
+                        return;
+                    }
+                    builder.setBssid(MacAddress.fromString(freshBssid));
+                    callback.log("vivo原厂式Wi-Fi首次申请：SSID字面量Pattern + 本轮唯一新鲜BSSID；不重试");
+                } else {
+                    callback.log("vivo原厂式Wi-Fi扫描受限回退：BLE确认SSID字面量Pattern；不猜BSSID，不重试");
+                }
+            } else {
+                builder.setSsid(expectedSsid);
+                callback.log("非vivo手机保持原SSID精确匹配；没有扩展连接权限");
+            }
+            WifiNetworkSpecifier spec = builder.build();
             NetworkRequest request = new NetworkRequest.Builder()
                     .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
                     .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -547,7 +574,14 @@ public final class M02sApStarter {
                     });
                 }
                 @Override public void onUnavailable() {
-                    ui.post(() -> fail(token, "Android未能连接眼镜AP，拒绝反复申请或猜测热点"));
+                    ui.post(() -> {
+                        if (!valid(token) || networkCallback != this) return;
+                        long elapsed = SystemClock.elapsedRealtime() - wifiRequestStartedAtMs;
+                        callback.log("本轮Android精确Wi-Fi申请onUnavailable，耗时="
+                                + elapsed + "ms；不代表BLE失败，也不等于眼镜固件拒绝");
+                        fail(token, "本轮Wi-Fi请求未满足，耗时=" + elapsed
+                                + "ms；需要核对Android关联状态，未盲目重试");
+                    });
                 }
             };
             connectivity.requestNetwork(request, networkCallback, 48_000);
@@ -603,6 +637,7 @@ public final class M02sApStarter {
         startedApRequest = false;
         apWriteAcknowledged = false;
         startedWifiNetworkRequest = false;
+        wifiRequestStartedAtMs = 0L;
         expectedSsid = null;
         targetNetwork = null;
         targetHost = null;
