@@ -1,3 +1,16 @@
+# 最新｜M02S v0.1.30 极速首帧：最新JPEG优先交付＋可选快门结束后自动导入（2026-11-15，APK已发布，5秒语音目标待验证）
+
+- **用户明确目标**：从眼镜实体快门按下到听到OCR朗读，**3–5秒，不能超过5秒**。在上一轮建议“先把新照片到手机的传输阶段优化，再考虑接OCR/TTS”的基础上授权改代码。此版只完成**首张高清JPEG提前到手机**和硬件传输计时，**没有OCR或TTS组件**，绝不声称已经实现5秒内开口朗读；还需要真机性能证据。0x45拍照活动开始时间戳不一定等于物理按钮电气触发瞬间。
+- **核心基线不可破坏**：v0.1.29用户真机日志16:14–16:19的9次人工导入中，**7次直接成功**，第3次和第8次首次新鲜BSSID Wi-Fi请求以及一次准确SSID-only回退均`onUnavailable`，但已证实原厂**ZERO 44/30/01** GATT status0→眼镜被动isImport=0→**保持BLE、不重新拍照、重新手动导入同一张成功**。成功轮次从15/15一路到21/21张整批GET，原厂FULL状态退出后Network消失；最后16:19:30曾独立出现BLE待机断开，这与两次Wi-Fi失败区别看待。继承v0.1.29，不能再去重做早期常连Wi-Fi或第一轮实验。
+- **源码分支**：`exp/m02s-fast-first-frame-v0130-20261115`从`exp/m02s-oem-wifi-recover-v0129-20261115`派生；独立APP包名 `com.vobichngan.bluestar.m02sfastframe30`、versionCode31/versionName0.1.30。v0.1.28、v0.1.29、Android正式蓝星向导、Windows OCR及以前分支/Release**均未覆盖**。
+- **速度关键变更**：新增纯逻辑`M02sFastDownloadPlan.plan()`和JUnit，取已经经过**两次原厂HTTP完整稳定列表**选出的唯一最新图片，**首先**原厂只读HTTP GET+校验文件头/真实尺寸+原始高清JPEG直接放RAM预览（未来OCR输入接口），无需等待任何旧图，日志标记`【最新高清首帧已就绪／未来OCR入口】`，分别统计本轮取图启动→高清就绪、Wi-Fi就绪→高清就绪、0x45拍照活动开始/结束→高清就绪；此前v0.1.29是全部历史原图下载完才显示最新JPEG。随后仍单线程按原厂列表顺序下载**其余**旧图，若全部成功仍以真实完成数发已连续实测成功的原厂FULL 0x44结束，保持Wi-Fi断开/BLE待机；若旧图中途失败不冒充FULL，只报真正完成数进入PARTIAL/ZERO。JPEG原图无需写相册/上传云端。
+- **可选极速自动实验（每次启动默认为OFF）**：UI新CheckBox“极速自动导入实验”，只有用户主动勾选后且收到眼镜实体快门`0x45 isTakePhoto 1→0`、BLE确实待机、未在传输时，才**自动执行一次**已验证的同一个AP导入入口；不是原来不可靠的250ms从快门开始自动开AP。v0.1.29手动按钮与原来1.8秒新鲜热点唯一BSSID稳定判断完整保留；只在用户开启极速实验时用`M02sApReadinessPolicy.canConnectWithSettling(...,650L)`代替1800ms阈值，仍验证真实BLE SSID、Android onAvailable、IPv4可信网关、原厂HTTP200、两次稳定照片列表。仍保留v0.1.29一次准确SSID-only备用连接与两次失败后的原厂ZERO、BLE与待导入图片恢复。自动模式不发远程0x22快门、不重复BLE开AP、不常连Wi-Fi、不无限重试、不发OTA。
+- **边界**：镜端旧图片累计已超过20张，`M02sOemImportPolicy.MAX_OEM_BATCH_IMAGES=24`的全量批次上限未取消；超过24张/混合文件仍沿用原版“只最新一张+原厂PARTIAL”策略，**尚未验证长期超过24张的真机表现**。用户已明确授权可能清理镜端媒体的原厂FULL指令，但对文件真实删除范围不作未经验证的承诺。
+- **CI/Release真实核查**：新分支当前HEAD `758389fb84a11d54a0e5ed0b4908de87dcf52685`，GitHub Actions [43694951644](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/43694951644) **completed/success**，Gradle`:app:testDebugUnitTest :app:assembleDebug` BUILD SUCCESSFUL、早帧顺序和权限静态断言、最新优先及650ms/1800ms基线分离JUnit、APK v2签名、zipalign及aapt包名均通过。Release `bluestar-m02s-fast-first-frame-v0130-20261115`已返回上传状态`uploaded`；`BlueStar_M02S_FastFirstFrame_0.1.30_Android.apk` 135025字节，SHA256 `65bebe65883e25dda274a2858a6cde9801d14bf9562ca293ca2e5bc5140c0a4c`；直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-m02s-fast-first-frame-v0130-20261115/BlueStar_M02S_FastFirstFrame_0.1.30_Android.apk 。
+- **下一步唯一真机验证**：用v0.1.30先确认默认手动模式仍然连续成功且首图**提前**显示，再开“极速自动导入实验”对照完整物理快门、0x45状态开始→JPEG就绪、Wi-Fi建立、照片开始朗读的潜在预算。重点给`【最新高清首帧已就绪／未来OCR入口】`行的时间、`原厂后台收尾已完成`行的时间，以及成功/失败序列；`≤5000ms`绝非代码已保障。后续按实测瓶颈再决定是否接轻量本地OCR/TTS，不能用JPEG到手机的时间替代语音已经开始的时间。
+
+---
+
 # 最新｜M02S v0.1.29 基于已真机成功6/8轮的v0.1.28：一次SSID备用关联、ZERO结束且BLE不掉线（2026-11-15，已发布APK，待连续真机验证）
 
 - **坚决保留成功基础**：用户v0.1.28真实日志8轮中第1、2、4、5、6、8轮均BLE实体快门→一次开AP→vivo Pattern+新鲜BSSID→HTTP原厂整批GET（6、7、9、10、11、13张）→原厂FULL 0x44 GATT status0→Android旧Network消失→0x45 isImport=0，共**6/8轮成功**。第3、7轮在已通过BLE收到SSID、新鲜唯一BSSID的前提下，Android精确BSSID请求分别3432ms、3152ms返回onUnavailable。**没有证据表明本身是原厂结束帧故障，不重写成功主链**。
