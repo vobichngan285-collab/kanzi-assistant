@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- BLE only from physical-shutter manual import: 0x39/0x30 AP, read-only
-         0x64, and original vendor 0x44 finish, including photo clearing
-         explicitly authorized by the user. Never sends remote shutter/OTA. -->
+    <!-- Default: only verified OEM 0x39/0x30 AP / 0x64 read / 0x44 finish.
+         Separate explicit and exactly once AP-online 0x22/0x31 high-quality
+         photo test. No auto remote shutter, OTA or unknown firmware commands. -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false"/>
     <uses-feature android:name="android.hardware.wifi" android:required="true"/>
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
@@ -16,7 +16,7 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"/>
     <uses-permission android:name="android.permission.INTERNET"/>
-    <application android:label="蓝星 M02S 原厂循环Wi-Fi恢复 v0.1.29"
+    <application android:label="蓝星 M02S AP在线高清拍照实验 v0.1.31"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="true"
         android:allowBackup="false"
