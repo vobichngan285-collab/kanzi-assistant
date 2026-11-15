@@ -1,3 +1,27 @@
+# 最新｜M02S v0.1.26 — 恢复v0.1.24原厂式vivo Wi-Fi建连（不恢复常连）
+
+## 为什么是这个版本
+- v0.1.25真机：14:10:39人工点导入，0x39/0x30写入成功，14:10:40收到0x25准确SSID（551ms），Android设置精确setSsid请求后14:10:46立刻onUnavailable（6596ms），**从未连上Wi-Fi，没有HTTP，没有执行部分结束指令**。
+- v0.1.24真机曾连上眼镜Wi-Fi AP，但在已连接状态下实体快门不工作：**常连拍照已证伪，不能复活**。
+- 对照源码发现v0.1.25是从v0.1.22创建的，丢失了v0.1.24的vivo PatternMatcher、BLE开AP锚点新鲜扫描、唯一BSSID保护，属于程序版本回退。恢复这一已验证可建连的方式，不宣称已经解决M02S重复导入。
+
+## 修改范围（除这些以外保留v0.1.25全部逻辑）
+1. `M02sApStarter.acceptNotification` 收到0x25 SSID后，仍等待真正0x39/0x30写回执，再执行OEM热点关联；**只在用户点「导入高清原图」后发生**。原来的0x45实体快门事件仍只做本地待导入标记，不发Wi-Fi命令。
+2. 完整移植v0.1.24的 `M02sApReadinessPolicy` 和 `M02sApConnectPolicy`（现有主文件哈希相同），以及 `scanForAp`：从本轮BLE开AP写指令时刻而非晚到0x25时刻算广播新鲜度，只接受SSID严格相等、10秒内、唯一BSSID；1.8秒稳定检查，先扫描最多12秒。多个新鲜不同BSSID按旧策略安全拒绝。系统扫描受限时最多一次BLE确证SSID精确回退，**不盲目重试BLE或Wi-Fi**。
+3. vivo首次请求使用 `setSsidPattern(new PatternMatcher(expectedSsid, PATTERN_LITERAL))`，新鲜唯一BSSID存在时额外 `setBssid(MacAddress.fromString(freshBssid))`；没有可信BSSID时只匹配BLE返回的准确SSID，不猜BSSID；非vivo沿旧精确SSID请求。这部分对齐v0.1.24真实用过的连接代码。
+4. Android requestNetwork请求上限恢复到v0.1.24原值48秒；为了不与12秒扫描相冲突，手动导入会话安全上限从39秒调整为75秒。**二者只是失败上限，不是新增等待，更不是强制等待75秒**。本轮若6秒即失败仍立即终止。
+5. **v0.1.25保留**：原厂HTTP200列表连续两次稳定、高清JPEG原字节GET至RAM、不写相册、不上传、旧回调归属保护、BLE被动0x45 isImport、只读0x64项目号、完成时主动释放Android网络而不常连。实验0x44/0x31/0x01只在用户明确勾选+图片列表>=2+本次确认一张成功时允许一次，默认OFF。**严格禁止0x44/0x30/0x00清理/删除，旧0x44/0x30/0x01不启用**。
+
+## 真机一次验证
+事先保存眼镜中的重要照片、关闭其它控制App，运行本独立APK。**首次测试请保持「部分导入结束实验」复选框关闭**，只验证能否复现v0.1.24的原厂式Wi-Fi成功关联。
+- 点「准备蓝牙待机」，眼镜实体快门拍一张；只应显示「待导入」，Wi-Fi不应打开
+- 手动点「导入高清原图」，看日志是否包含「本轮BLE开AP指令为扫描时间锚点」「新鲜AP已稳定」「vivo原厂式首次Wi-Fi请求」或保守回退，之后 `onAvailable` / 网关 / HTTP200 / 高清JPEG
+- **第一轮失败立即停止，复制完整匿名日志**，不再重连重试；第一轮成功后才讨论第二轮结束状态实验，不能把软件构建成功当成真机成功
+
+GitHub原仓库：vobichngan285-collab/kanzi-assistant；分支 `exp/m02s-oem-wifi-restore-v0126-20261115`，独立包名 `com.vobichngan.bluestar.m02soemwifirestore26`，versionCode27/versionName0.1.26。保留原厂APK、v0.1.25、v0.1.24及所有既有实验包。严格不修改正式蓝星向导或Windows OCR。
+
+---
+
 # M02S v0.1.25 — 原厂部分导入结束状态实验（默认关闭）
 
 
