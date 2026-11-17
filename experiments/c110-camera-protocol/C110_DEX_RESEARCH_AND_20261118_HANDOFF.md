@@ -82,3 +82,11 @@ CameraMediaLibFragment.initData()
 M02S/TK8 的已验证事实是 `isImport=1`、AP 在线拍照命令（包括 0x22/0x31）成功写入但多轮 JPEG 列表不新增；此结论**不能外推为 C110 同样禁拍**。C110 的原厂软件链具备快门/目录/下载/预览/模式切换；**还没有 C110 本轮真机通过数据**。不得宣称“始终不断 Wi-Fi”“必然 720p”“16MP 必达实际图像细节”“无需 SD 卡可得原图”“所有版本通用 2015”。
 
 本轮只追加此技术交接和 `main/PROJECT_HANDOFF.md` 摘要；不修改 App、固件、CI、Release，不另建仓库。
+
+
+## 补充：C110 前面状态指示灯能否关闭（2026-11-17）
+
+- **官方证据**：SJCAM C110 系列说明书的前部为「Indicator Light」而非补光灯：蓝色待机亮，拍照或录像时按状态闪烁；绿色 Wi-Fi 开启闪烁、连接后常亮；红色为充电和无卡等指示。官方说明书仅说明这些灯的状态和 App 系统设置入口，**未列出可关闭状态灯的选项**。来源： https://static.sjcam.com/www/uploads/2026/02/C110-series-user-manual20260207.pdf （产品简介/指示灯说明）及 https://static.sjcam.com/www/uploads/2024/12/C110-user-manual.pdf （Indicator Light Description、App Settings）。
+- **APK 实际检索（只读）**：在用户上传的 SJCAM Zone 6.7.3.16 的 classes4.dex 找到 `LED_ON_OFF`、`LED_ON_OFF_RESP`、`led_on_off` 等字符串；方法体证据为 `Lcom/softwinner/un/tool/util/UNIOCtrlDefs$AW_cdr_net_config;->toString` 输出 `led_on_off=` 字段，**归属于 AllWinner 后端**，不代表 C110 固件实现/允许此命令。SJCAM X 1.1.15 的 classes5.dex `SigMaStarCmd.<clinit>` 可见 `Stealth` 文本，也在**其他后端**，不能拿来直接控制 C110。当前没有标准 C110 的 LY 分支关闭指示灯可验证命令。
+- **技术边界**：蓝星向导替代原厂 App 独立获取 Wi-Fi 视频流不等于状态灯自动关闭。关闭 Wi-Fi 也会熄灭其连接指示，但会破坏用户最核心的长连取图需求，不能作为解决方案。
+- **次日动作**：先确认实际 C110 机型/固件/协议分支，再查看匹配原厂 App 的设备设置里是否有 `LED`/`指示灯`/`工作灯` 开关；若不存在，不盲发 AllWinner、SigmaStar 的写命令、不刷固件、不拆机。可另问厂家是否有官方可支持的状态灯开关，但不能承诺软件可控。
