@@ -1,3 +1,11 @@
+# 2026-11-17 用户再次明确 C110 预览最终目标：蓝星直接接管 Wi-Fi 原始视频码流
+
+- 不采用“原厂App预览→豆包屏幕共享→识别”。蓝星**自己连接C110的RTSP/HTTP实时视频流并解码、提帧、云端识别与朗读**；尽量避免中间屏幕采集、二次编码、共享压缩。
+- **注意画质边界**：直接取视频流不会把源流720p变成2K。预览实际分辨率未测；拍照的16MP JPEG与录像2K设置不等同于Wi-Fi预览清晰度。需实机核查是否存在可选更清晰预览流；小字仍走在同一持续Wi-Fi连接下拍照、下载原图的第二通道。
+- 明天优先测蓝星**独立取流**，不是重新证明原厂App+豆包成功；网络分流要求相机Wi-Fi和蜂窝云端并行。专项报告位于 `experiments/c110-camera-protocol/C110_DEX_RESEARCH_AND_20261118_HANDOFF.md`。
+
+---
+
 # 最新｜C110标准版：2026-11-17 专项深挖，2026-11-18 到机直接复用（只读研究）
 
 - **新增关键技术报告**：[`experiments/c110-camera-protocol/C110_DEX_RESEARCH_AND_20261118_HANDOFF.md`](./experiments/c110-camera-protocol/C110_DEX_RESEARCH_AND_20261118_HANDOFF.md)；本轮从 **SJCAM Zone 6.7.3.16 classes5.dex** 独立核实，而非重做 M02S。原始 APK 只读，**没有 App 代码修改、真机测试或安装包构建**。
