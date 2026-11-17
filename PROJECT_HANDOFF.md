@@ -1,3 +1,13 @@
+# 最新｜C110标准版：2026-11-17 专项深挖，2026-11-18 到机直接复用（只读研究）
+
+- **新增关键技术报告**：[`experiments/c110-camera-protocol/C110_DEX_RESEARCH_AND_20261118_HANDOFF.md`](./experiments/c110-camera-protocol/C110_DEX_RESEARCH_AND_20261118_HANDOFF.md)；本轮从 **SJCAM Zone 6.7.3.16 classes5.dex** 独立核实，而非重做 M02S。原始 APK 只读，**没有 App 代码修改、真机测试或安装包构建**。
+- **关键调用链**：`LYCamera.changeCameraModel` → `3001` → `LYCamera$12.onResponse` → `startLiveVideoStream` → **`2015/1`**；视频地址按固件通过 `ISCamera.getVideoPlayUrl` 取得，LY 分支有 RTSP `192.168.1.254:554/xxx.mp4` 与 HTTP `192.168.1.254:8192` 两类候选。未确定 C110 实际协议后禁止盲发。
+- **高清链**：`NewCameraControlActivity.takeClick` 检查 Socket/SD 状态 → `ISCamera.take`；LY 拍照候选 `1001`；`LYCameraFileList$1.run` 读取 DCIM/PHOTO 等目录，`getFileListNew` 解析 `a[href]` 原图路径，`SDownloadTask.run` HTTP 下载。下载 HTTP 结束≠断 Wi-Fi，另有连接页 `onDestroy → WifiHelper.forceDisconnect` 的独立断线路径。快门后视频流是否刷新存在固件分支。
+- **官方规格澄清**：标准 C110 说明书列 16M 照片模式 **4608×3456**；所谓“预览约720p”**没有实测确认**（720p 录像选项不能证明预览规格）。SJCAM 官网将标准版优先归 Zone，X 主要是升级版 C110 Plus 的适配应用。
+- **明天最短验证**：先机型/固件/网关/后端 → 原厂与独立预览实际帧宽高 → 相机 Wi-Fi 与蜂窝云端并行 → 插卡拍新 JPEG、下载、校验真实宽高 → 免切与切回放对照 → **同一 Wi-Fi 会话三轮拍照/下载/恢复**；不重复旧 M02S 失败实验，不将静态代码当作真机成功。
+
+---
+
 # 最新｜C110标准版无卡实时预览接管：SJCAM X原始DEX新证据（2026-11-16）
 
 - **用户新提供的亲测事实**：早前使用 C110（按用户所述为标准版）时**没有插 microSD 卡**，官方 App 仍能以很小的主观延迟实时显示相机移动画面；豆包在手机屏幕共享官方预览画面时，能够识别路标、店铺招牌并语音说明。此为用户实际体验，不是本轮真机复测或量化帧率/分辨率/延迟的结果。
