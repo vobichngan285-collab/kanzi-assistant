@@ -76,7 +76,7 @@ jobs:
           assert 'cmd=2015&par=1' in camera and 'cmd=3001&par=1' in camera
           assert 'live_mode_cmd' in main and 'live_cmd' in main
           assert 'vlc_wifi_bind' in main and 'vlc_vout_count' in main
-          assert 'vlc_phase' in main and 'vlc_event_count' in main
+          assert 'vlc_last_phase' in main and 'vlc_event_count' in main
           assert 'vlc_native_state1' in main and 'vlc_native_state2' in main
           assert 'vlc_is_playing1' in main and 'vlc_is_playing2' in main
           preview=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/C110LivePreview.java').read_text()
