@@ -102,6 +102,7 @@ public final class C110CameraActivity extends Activity {
         setContentView(root);
         say("C110独立实时预览：不拍照、不上传、不修改成功播放流程");
         say("一次按钮：3012设备信息→3016模式查询→3001/1→2015/1→LibVLC");
+        // Stage1: dedicated portrait playback only, preserving OEM startup exactly.
         // Auto-start from the proven dedicated video Activity.
         main.post(this::begin);
     }
