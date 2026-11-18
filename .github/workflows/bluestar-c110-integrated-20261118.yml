@@ -40,7 +40,7 @@ jobs:
           cloud=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/CloudVisionClient.java').read_text()
           manifest=Path('cloud-vision-app/app/src/main/AndroidManifest.xml').read_text()
           gradle=Path('cloud-vision-app/app/build.gradle').read_text()
-          assert "applicationIdSuffix '.c110test'" in gradle
+          assert "applicationIdSuffix '.c110preview'" in gradle
           assert 'captureC110OneShot' in main and 'current.remoteJpeg' in main
           assert 'FrameCompressor.encodeAdjusted(' in main
           assert 'CloudVisionClient.recognize(' in main and 'TargetVisionClient.inspect(' in main
@@ -57,7 +57,14 @@ jobs:
           security=Path('cloud-vision-app/app/src/main/res/xml/c110_network_security_config.xml').read_text()
           assert '<base-config cleartextTrafficPermitted="false"/>' in security
           assert '<domain includeSubdomains="false">192.168.1.254</domain>' in security
-          assert not any(x in camera for x in ['cmd=3037', 'cmd=2015','cmd=2001','cmd=4005'])
+          assert not any(x in camera for x in ['cmd=3037','cmd=2001','cmd=4005'])
+          assert 'cmd=2015&par=1' in camera
+          preview=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/C110LivePreview.java').read_text()
+          assert 'rtsp://192.168.1.254:554/xxx.mp4' in preview
+          assert '.setSocketFactory(cameraNetwork.getSocketFactory())' in preview
+          assert '.setForceUseRtpTcp(true)' in preview
+          assert 'C110预览' in main and 'stopC110LivePreview(false)' in main
+          assert 'media3-exoplayer-rtsp:1.11.1' in gradle
           assert 'blue-star-guide-cloud-rc25-20261108' not in gradle
           print('C110 static isolation/security audit PASS')
           PY
@@ -91,8 +98,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_C110_Integrated_0.1.0.apk
-          test -s out/BlueStar_Guide_C110_Integrated_0.1.0.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_C110_LivePreview_0.1.1.apk
+          test -s out/BlueStar_Guide_C110_LivePreview_0.1.1.apk
           unzip -tq out/*.apk >/dev/null
           unzip -Z1 out/*.apk >out/entries.txt
           grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
@@ -101,14 +108,14 @@ jobs:
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           test -x "$AAPT"
           "$AAPT" dump badging out/*.apk >out/badging.txt
-          grep -Fq "package: name='com.vobich.bluestar.c110test'" out/badging.txt
-          grep -Fq "versionName='1.0.25-c110-lab'" out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110preview'" out/badging.txt
+          grep -Fq "versionName='1.0.26-c110-preview-lab'" out/badging.txt
           grep -q 'application-icon-' out/badging.txt
-          (cd out && sha256sum BlueStar_Guide_C110_Integrated_0.1.0.apk > SHA256SUMS.txt)
+          (cd out && sha256sum BlueStar_Guide_C110_LivePreview_0.1.1.apk > SHA256SUMS.txt)
           cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: BlueStar_Guide_C110_Integrated_0.1.0
+          name: BlueStar_Guide_C110_LivePreview_0.1.1
           path: out/*
           retention-days: 14
       - name: Publish isolated prerelease only if unused tag
@@ -117,12 +124,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG=bluestar-c110-integrated-lab-20261118
+          TAG=bluestar-c110-live-preview-lab-20261118-v011
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Existing C110 integrated prerelease, refusing overwrite" >&2
             exit 1
           fi
-          gh release create "$TAG" "out/BlueStar_Guide_C110_Integrated_0.1.0.apk" \
+          gh release create "$TAG" "out/BlueStar_Guide_C110_LivePreview_0.1.1.apk" \
             --target "$GITHUB_SHA" --prerelease \
-            --title "Blue Star Guide C110 Integrated Cloud OCR Lab v0.1.0" \
-            --notes "Isolated test app derived from verified RC25 cloud OCR/TTS; C110 single-shot remote JPEG path from six successful field cycles, photo mode initialized once per Wi-Fi network. C110 local HTTP via Wi-Fi only; DashScope image request via explicit cellular Network. No default media storage, no deletion, no automatic repeats, no firmware writes. Standalone package com.vobich.bluestar.c110test. Still requires real vivo X200 Pro field validation of cloud+Wi-Fi simultaneity, SSL, full original-image upload, TTS and camera restart. Original RC25 and C110 v0.1.3 unchanged."
+            --title "Blue Star Guide C110 Direct RTSP Preview Cloud OCR Lab v0.1.1" \
+            --notes "Adds user-opt-in C110 live video preview using the SJCAM Zone DEX candidate rtsp://192.168.1.254:554/xxx.mp4 with Media3 and strict WiFi Network socket binding; 2015/par=1 only when preview explicitly tapped. If candidate fails records numeric RTSP error and read-only HTTP8192 response. C110 photo stops preview, reinitializes photo mode, downloads complete original JPEG, runs previous cellular cloud OCR/TTS, then restores preview if still requested. Actual C110 RTSP URL, playback codec, camera mode coexistence remain unverified until user's hardware test. New package com.vobich.bluestar.c110preview; prior releases untouched."

@@ -2831,18 +2831,16 @@ public final class MainActivity extends CameraActivity {
     }
 
     private void startC110LivePreviewAfterPhoto(){
-        // Same user-enabled preview session; cloudBusy is expected while OCR runs.
-        boolean oldBusy=cloudBusy;
-        cloudBusy=false;
-        try{startC110LivePreview();}
-        finally{cloudBusy=oldBusy;}
+        // Continue the user-authorized preview without changing cloudBusy.
+        startC110LivePreview(true);
     }
 
-    private void startC110LivePreview(){
+    private void startC110LivePreview(){startC110LivePreview(false);}
+    private void startC110LivePreview(boolean resumingAfterPhoto){
         if(!uiActive||readingScreen!=null){
             toastShort("请退出阅读页面后打开C110实时预览");return;
         }
-        if(cloudBusy)return;
+        if(cloudBusy&&!resumingAfterPhoto)return;
         c110PreviewWanted=true;
         final int seq=c110PreviewSeq.incrementAndGet();
         if(c110PreviewButton!=null)c110PreviewButton.setText("关闭预览");
@@ -2976,6 +2974,7 @@ public final class MainActivity extends CameraActivity {
                 handler.post(()->{
                     if(token!=requestVersion.get()||!uiActive)return;
                     cloudBusy=false;
+                    if(resumeLiveAfterPhoto)stopC110LivePreview(true);
                     if(diagnostics!=null)diagnostics.event("c110","photo",0,"failed");
                     String message=ex.getMessage()==null?ex.getClass().getSimpleName():ex.getMessage();
                     setResultStatus("C110拍照失败");
