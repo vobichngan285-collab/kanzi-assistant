@@ -79,6 +79,7 @@ jobs:
           assert 'vlc_phase' in main and 'vlc_event_count' in main
           assert 'vlc_native_state1' in main and 'vlc_native_state2' in main
           assert 'vlc_is_playing1' in main and 'vlc_is_playing2' in main
+          preview=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/C110LivePreview.java').read_text()
           assert 'main.postDelayed(delayedPlay,300L)' in preview
           assert 'current.play();' in preview
           assert 'retainedMedia=media' in preview and 'oldMedia.release()' in preview
@@ -88,7 +89,6 @@ jobs:
           assert 'C110PreviewProbe.inspect(wifi)' not in main
           assert 'C110RtspSessionProbe.probe(wifi)' not in main
           assert 'C110LivePreview' in main and 'stopC110LivePreview(false)' in main
-          preview=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/C110LivePreview.java').read_text()
           assert 'rtsp://192.168.1.254:554/xxx.mp4' in preview
           assert 'new LibVLC(' in preview and 'new MediaPlayer(' in preview
           assert 'new VLCVideoLayout(' in preview and 'current.attachViews(view,null,false,false)' in preview
