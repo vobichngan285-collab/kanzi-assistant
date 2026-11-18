@@ -1,3 +1,15 @@
+# 2026-11-19｜C110 原厂成功预览已接入蓝星向导实验版 v0.1.12（CI通过，取帧OCR/TTS待真机）
+
+- **用户正式授权**：在 C110 mini 独立视频首个成功截图后，用户明确说“可以现在接入”。本轮把真正成功的原厂式**最小视频播放流程**接入已有 Blue Star Cloud OCR/TTS 主界面，不改正式RC25，不复活v0.1.11失败的 Surface门控或手写RTSP。
+- **GitHub和基线**：唯一原仓库 vobichngan285-collab/kanzi-assistant，新隔离实验分支 `exp/c110-live-frame-cloud-20261119`（从成功mini `6bd85802a31d0535e4209f8e012ba531297032e9` 继承），已发布 HEAD **`3afc788e689244f0cf4ac39c22da99bf8ef0f17e`**。首次代码提交 `adc53df8e60d3c55dc3477703867a4443bcb63a2`，编译错误修复提交 `3afc788e689244f0cf4ac39c22da99bf8ef0f17e`。新的测试包ID `com.vobich.bluestar.c110liveframe`，版本 `1.0.37-c110-liveframe-lab`，绝不覆盖之前RC25和已真机成功的独立mini包。
+- **视频复制了真正成功路径**：新C110LivePreview保持Activity创建时VLCVideoLayout始终VISIBLE，并在视频时置顶；Native官方LibVLC3.6.5按成功mini使用网络/直播300ms缓存、原厂LY模式1 RTSP候选地址、单次延迟300ms `play()`、VideoHelper自动管理Surface，**无自定义Surface门控/手写RTSP SETUP/PLAY/自动重试**。相机C110WifiCamera.startPreview不再用旧的预先3002检查；按成功mini只读取 `3012→3016` 再 `3001/par1→2015/par1`；C110_PRO特殊版明确排除。Native进程WiFi临时绑定仅限当前App，停止、后台/切高清拍照时恢复之前网络。
+- **独立用户交互与实际OCR链**：顶栏`C110预览`启动实况，用户**点击正在播放的视频画面**（或现有单次任务抓图入口）才通过 Android API26+ `PixelCopy.request`从真实VLC内部SurfaceView取**当前一帧**。非SUCCESS、Surface无效、帧过大、编码失败则明确失败，**不复用过期帧、不重启视频或按相机快门**；成功则内存Bitmap→JPEG质量90、释放Bitmap→现有`Frame.remoteJpeg`→`beginCapturedFrame`→CloudVisionClient/TargetVisionClient→已有本地TTS（保留用户任务、过滤、流式朗读和模型）。新`c110LiveFrame`来源标签与匿名数值诊断便于区分视频截图和高清照片。云端网络仍只使用显式`C110WifiCamera.requireCellular`的Cellular Network；视频WIFI无外网不阻断云请求。
+- **高清拍照与其他功能**：旧`C110拍照`顶栏按钮、相机照片模式0→快门→DCIM原始高清JPEG下载→已有识别/TTS完全保留；旧USB/手机摄像头/阅读/模型及RC25本体未修改。新包与旧包偏好及Key分别保存，用户若要测试云端朗读需在**此实验包**内设置百炼Key并开启手机流量。
+- **CI和发布实际验证**：第一次运行`44359060535`静态隔离/协议测试通过，但Java编译因新增界面先读取`CloudKeyStore.load()`未捕获checked Exception而失败；修复后第二轮 [Actions 44359584719](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44359584719) **completed/success**，Java协议测试、安全隔离检查、固定USB补丁、ARM64 Gradle`:app:assembleDebug`、APK身份/音效/native libvlc/ZIP验证、Artifacts上传和Release均通过。Release [bluestar-c110-live-frame-cloud-20261119-v0112](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-live-frame-cloud-20261119-v0112)，`BlueStar_Guide_C110_LiveFrame_0.1.12.apk` **56,649,997字节**，SHA256 `0992d5f76a3ad0833453aae1ab982eceb13be39b082b14f6824052d5cf827d78`，直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-live-frame-cloud-20261119-v0112/BlueStar_Guide_C110_LiveFrame_0.1.12.apk。
+- **唯一尚未验证项、下一步**：用户手机先连接C110 WiFi，打开新隔离v0.1.12→按C110预览，**首先必须确认仍显示真实连续C110画面**。然后确保在新包设置百炼Key并打开移动数据，**点击视频画面一次**，是否真正通过PixelCopy抓到一帧→云端识别→语音朗读，复制最新`c110_frame`数字日志。**仅原成功mini真机出画过，新集成v0.1.12的预览/PixelCopy/云端OCR/TTS尚未真机验证，不得声称端到端已成功。** 如失败只改新取帧接线，不再改已经成功的原厂播放初始化。高清拍照已验证，不要求重复测试。
+
+---
+
 # 2026-11-19｜C110 原厂流程最小播放器首次真机出画（重大突破，保留成功基线）
 
 - **用户实机验证**：用户安装单独的 `BlueStar_C110_OEM_Minimal_0.1.0.apk` 后发来一张实机屏幕照片，并回复“可以”。截图清晰显示原厂式视频区域中拍到的实体键盘、鼠标和桌面，画面下方有 `C110` 水印，**已确认至少一帧来自 C110 的真实视频画面被新 APK 解码/显示**。静态截图本身不能独立证明连续帧率或长期稳定性；用户的“可以”可作为现场正常显示的反馈。**之前集成v0.1.11只有 `vlc_play_gate=0`、完全不出画，现已突破此关。**
