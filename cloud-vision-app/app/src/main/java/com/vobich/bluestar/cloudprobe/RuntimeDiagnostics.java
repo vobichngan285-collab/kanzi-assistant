@@ -56,7 +56,7 @@ final class RuntimeDiagnostics {
             item.put("at",System.currentTimeMillis());
             item.put("kind",safe(category));
             item.put("stage",safe(stage));
-            item.put("value",Math.max(-1,Math.min(10000000,value)));
+            item.put("value",Math.max(-4096,Math.min(10000000,value))); // preserve Novatek -13/-256 statuses; -4096=unavailable
             item.put("result",safe(outcome));
             events.put(item);
             persist();

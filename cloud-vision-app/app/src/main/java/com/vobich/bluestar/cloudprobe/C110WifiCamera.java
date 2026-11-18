@@ -87,7 +87,7 @@ final class C110WifiCamera {
         Reply response=get(wifi,"/?custom=1&cmd=2015&par=1",MAX_INDEX);
         if(response.http!=200)throw new IOException("预览指令2015 HTTP "+response.http);
         Integer status=C110PhotoPolicy.tagInt(response.text(),"Status");
-        return status==null?Integer.MIN_VALUE:status;
+        return status==null?-4096:status; // -4096 means missing XML Status, not a device error
     }
 
     /** Read-only bounded probe of the alternate OEM HTTP 8192 candidate. */

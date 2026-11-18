@@ -2853,10 +2853,20 @@ public final class MainActivity extends CameraActivity {
             try{
                 android.net.Network wifi=C110WifiCamera.previewNetwork(this);
                 int cmdStatus=c110Camera.startPreview(this,wifi);
+                // Only inspect addresses found in the original LY camera code.
+                // Both port probes and RTSP OPTIONS/DESCRIBE are read-only.
+                C110PreviewProbe.Report check=C110PreviewProbe.inspect(wifi);
                 handler.post(()->{
                     if(seq!=c110PreviewSeq.get()||!uiActive||!c110PreviewWanted)return;
-                    if(diagnostics!=null)
-                        diagnostics.event("c110","live_cmd",cmdStatus,"ok");
+                    if(diagnostics!=null){
+                        diagnostics.event("c110","live_cmd",cmdStatus,
+                            cmdStatus==0?"ok":cmdStatus==-4096?"unknown":"returned");
+                        diagnostics.event("c110","tcp554",check.port554,"probe");
+                        diagnostics.event("c110","rtsp_options",check.options554,"probe");
+                        diagnostics.event("c110","rtsp_describe",check.describe554,"probe");
+                        diagnostics.event("c110","tcp8192",check.port8192,"probe");
+                        diagnostics.event("c110","http8192",check.http8192,"probe");
+                    }
                     // SJCAM Zone DEX contains both this RTSP candidate and HTTP 8192.
                     // Use verified platform RTSP socket routing, never capture another app's screen.
                     c110Preview.view().setVisibility(View.VISIBLE);
@@ -2875,20 +2885,18 @@ public final class MainActivity extends CameraActivity {
                                 diagnostics.event("c110","live_height_px",h,"ok");
                             }
                         }
-                        @Override public void error(int code){
+                        @Override public void error(int code,int reason){
                             if(seq!=c110PreviewSeq.get())return;
-                            if(diagnostics!=null)
+                            if(diagnostics!=null){
                                 diagnostics.event("c110","live_rtsp_error",code,"failed");
-                            setResultStatus("RTSP预览不可播放；保持C110高清拍照功能");
-                            c110PreviewExecutor.submit(()->{
-                                int alt=C110WifiCamera.probeHttp8192(wifi);
-                                handler.post(()->{
-                                    if(seq==c110PreviewSeq.get()&&diagnostics!=null)
-                                        diagnostics.event("c110","live_http8192",alt,
-                                            alt==200?"response":"unknown");
-                                });
+                                diagnostics.event("c110","live_rtsp_cause",reason,"classified");
+                            }
+                            setResultStatus("视频未建立；高清拍照功能不受影响");
+                            toastShort("C110预览失败：请复制运行诊断，检查真实端口与响应");
+                            // Restore the original camera preview instead of keeping a black overlay.
+                            handler.post(()->{
+                                if(seq==c110PreviewSeq.get())stopC110LivePreview(true);
                             });
-                            toastShort("C110视频流还需确认协议，复制运行诊断即可定位");
                         }
                         @Override public void state(int state){
                             if(seq!=c110PreviewSeq.get())return;

@@ -1,12 +1,13 @@
-# C110 高清拍照 + 独立 Wi-Fi 直播预览 v0.1.1（真机预览待验证）
+# C110 预览真实协议诊断 v0.1.2（待真机）
 
-2026-11-18 用户的蓝星向导集成 v0.1.0 日志证实：C110抓拍5888×3312完整原JPEG、通过手机蜂窝调用云端 OCR、流式TTS回调；连续四次相机原图均在约1～1.6秒取到。旧版屏幕只能显示手机Camera2或USB本地画面，是因为没有C110实时视频播放器，不是因为C110固件已证明不支持实时流。
+用户实测 v0.1.1：C110拍照/云端识别成功（22:05:10，JPEG 5888×3312、1,256,313字节、拍照取图1,029ms）；预览失败（22:05:00），旧日志 `live_cmd=-1`、`live_rtsp_error=2000`、`live_width=0/height=0`、`live_http8192=-1`。
 
-## 新改动
-- 新增顶部「C110预览」开关；只在用户点击时，通过已验证身份3012/3002向 `192.168.1.254` 发送一次原厂DEX候选 `2015&par=1`，使用Media3 RTSP播放器直接连接候选 `rtsp://192.168.1.254:554/xxx.mp4`，并使用 Android `Network.getSocketFactory()` 强制绑定原相机Wi-Fi，RTP走TCP，不依赖原厂APP或屏幕截图。
-- **RTSP路径是原SJCAM Zone DEX字符串候选，不是实机成功结果**。若失败记录 `c110.live_cmd/live_rtsp_error/live_http8192`，再通过只读 HTTP 请求探测原厂DEX另一条候选 `http://192.168.1.254:8192`；不盲试未知写指令、未知URL及猜测视频格式。
-- 预览启动不自动抓拍、不上传云端；预览画面点击/顶部C110拍照会停止当前视频播放、重初始化照片模式、继续使用已成功的高清JPEG取图→蜂窝云端OCR/TTS，再按用户先前开启预览的状态尝试恢复视频。退后台释放流，不触碰既有手机/USB/阅读业务。
-- 独立包名 `com.vobich.bluestar.c110preview`，版本 `1.0.26-c110-preview-lab`，不覆盖 RC25、上轮 C110 v0.1.0，API Key需在新包中重新配置。旧的C110实机成功拍照链保留。
+## 直接定位的错误
+1. 旧 `RuntimeDiagnostics.event()` 将负数统一裁剪为 -1，无法区别设备真实 `Status=-256`、`-13` 及其他值。本版仅修复匿名整数状态裁剪范围到 -4096；无原始网络报文记录。
+2. `2000` 是 Media3 `ERROR_CODE_IO_UNSPECIFIED`，不是“URL不支持”的确定证据；旧播放器只保存errorCode，没有根因类别。增加 `live_rtsp_cause` 1=SocketTimeout、2=ConnectException、3=NoRoute、4=SecurityException、5=RTSP专有异常、6=UnknownHost、7=一般IO、9=其他。
+3. 旧 `live_http8192=-1` 可由超时、拒绝连接、非HTTP裸流等多种原因触发，旧方法吞异常导致无法区别。新版在相机Wi-Fi Network上读取：`tcp554` / `tcp8192`：1=TCP可连接、-1=超时、-2=拒绝、-3=无路由、-4=权限、-5=其他；`rtsp_options` / `rtsp_describe`：实际RTSP返回数字状态（如200、404）、-1/-2/-3/-4/-5=连接失败、-6=非RTSP格式、-9=对应端口不可连接；`http8192`：200等HTTP状态或同上分类。**只进行一次只读探测，不抓视频原始报文，不猜新URL，不自动重拍。**
+4. 本版仍只尝试此前SJCAM Zone DEX出现的 `rtsp://192.168.1.254:554/xxx.mp4` 和2015/par=1，不保证实际C110固件使用它们。Media3失败则恢复原手机相机画面，不再显示黑屏。
 
-## 真机测试
-连接C110 Wi-Fi并打开移动数据→安装→打开C110预览按钮。若画面出来，日志应出现 `live_first_ms / live_width_px / live_height_px`；若失败，复制包含 `live_cmd / live_rtsp_error / live_http8192` 的匿名日志，下一轮只调整具体的协议后端。请勿将5888×3312静态照片规格误当实时码流分辨率。预览未证实时不要宣称功能已通。
+旧 v0.1.0 成功的 C110 高分辨率 JPEG→蜂窝百炼识别/TTS 完全保留；实验包为独立 `com.vobich.bluestar.c110probe`，不会覆盖 RC25/集成0.1.0/预览0.1.1；由于CI Debug签名可能变化，避免对同包覆盖更新，API Key须重新配置。
+
+**真机下一步**：手机连接 C110 Wi-Fi，打开诊断版，只点一次「C110预览」，把整个 `c110_live` 段发回。判读 `live_cmd`、`tcp554/rtsp_options/rtsp_describe`、`tcp8192/http8192`、`live_rtsp_error/live_rtsp_cause`。若554 TCP不通或RTSP DESCRIBE非200，应转查原厂对应固件真实传输端点，不盲发其他改状态命令；若DESCRIBE200但Media3报错，继续查SDP/编码/RTP传输兼容性。正式版与固件不变。
