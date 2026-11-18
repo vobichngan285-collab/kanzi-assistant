@@ -1,0 +1,95 @@
+name: C110 OEM Minimal Video Player
+on:
+  push:
+    branches: [ 'exp/c110-oem-minimal-20261119' ]
+    paths:
+      - 'cloud-vision-app/c110mini/**'
+      - 'cloud-vision-app/settings.gradle'
+      - '.github/workflows/c110-oem-minimal-20261119.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  c110-oem-minimal:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - name: Original pinned UVC stack (settings compatibility only)
+        uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify OEM-only commands and original app isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          src=Path('cloud-vision-app/c110mini/src/main/java/com/vobich/bluestar/c110mini/OemVideoActivity.java').read_text()
+          g=Path('cloud-vision-app/c110mini/build.gradle').read_text()
+          m=Path('cloud-vision-app/c110mini/src/main/AndroidManifest.xml').read_text()
+          assert 'get(wifi,3012,-1)' in src and 'get(wifi,3016,-1)' in src
+          assert 'get(wifi,3001,1)' in src and 'get(wifi,2015,1)' in src
+          assert 'private static final String VIDEO_URL="rtsp://192.168.1.254:554/xxx.mp4"' in src
+          assert 'player.attachViews(video,null,false,false)' in src
+          assert 'active.play();' in src and src.count('active.play();')==1
+          assert 'main.postDelayed(delayedPlay,300)' in src
+          assert 'startOnlyWhenSurfaceReady' not in src
+          assert 'playGate' not in src
+          assert 'originalNetwork=cm.getBoundNetworkForProcess()' in src
+          assert 'cm.bindProcessToNetwork(originalNetwork)' in src
+          assert 'com.vobich.bluestar.c110mini' in g
+          assert 'libvlc-all:3.6.5' in g
+          assert 'android.permission.INTERNET' in m
+          assert not any(x in src for x in ['cmd=1001','cmd=3037','cmd=2001','cmd=4005','remoteJpeg','CloudVisionClient','TargetVisionClient'])
+          assert not any(x in src for x in ['private static String API_KEY','getFileListNew','/DCIM/'])
+          print('OEM minimal isolation and command audit PASS')
+          PY
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Build standalone c110mini only
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :c110mini:assembleDebug
+      - name: Validate APK identity and native VLC
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/c110mini/build/outputs/apk/debug/c110mini-debug.apk out/BlueStar_C110_OEM_Minimal_0.1.0.apk
+          unzip -tq out/*.apk >/dev/null
+          unzip -Z1 out/*.apk >out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlc.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlcjni.so' out/entries.txt
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging out/*.apk >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110mini'" out/badging.txt
+          grep -Fq "versionName='0.1.0-oem-minimal'" out/badging.txt
+          (cd out && sha256sum BlueStar_C110_OEM_Minimal_0.1.0.apk >SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_C110_OEM_Minimal_0.1.0
+          path: out/*
+          retention-days: 14
+      - name: Publish unique isolated prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-c110-oem-minimal-20261119-v010
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release exists; refuse overwrite" >&2
+            exit 1
+          fi
+          gh release create "$TAG" out/BlueStar_C110_OEM_Minimal_0.1.0.apk             --target "$GITHUB_SHA" --prerelease             --title "C110 OEM Minimal Video Only v0.1.0"             --notes "Direct SJCAM Zone 6.7.3.16 DEX-backed LY path: read-only 3012 and 3016 then explicit mode 3001/par1, 2015/par1, mode1 mVideoUrl RTSP candidate and open source LibVLC. Always-visible standalone VLCVideoLayout with OEM 300ms delayed play, no external Surface gate, manually composed RTSP or retries. Separate package, no photos, cloud, OCR, TTS, BLE or firmware commands. Actual camera model/version cannot be confirmed from static APK; read-only identity classification is a hint and true video must be verified on the phone. Previous working Blue Star RC25/photo flow not modified."

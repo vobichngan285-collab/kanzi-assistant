@@ -4,3 +4,6 @@ include ':app', ':libausbc', ':libuvc', ':libnative'
 project(':libausbc').projectDir = file('third_party/AndroidUSBCamera/libausbc')
 project(':libuvc').projectDir = file('third_party/AndroidUSBCamera/libuvc')
 project(':libnative').projectDir = file('third_party/AndroidUSBCamera/libnative')
+
+// One-purpose OEM C110 video module; current :app is unchanged.
+include ':c110mini'
