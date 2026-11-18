@@ -80,7 +80,7 @@ jobs:
           assert 'SETUP' in handshake and 'TEARDOWN' in handshake
           assert '192.168.1.254' in handshake and 'RTP/AVP/TCP;unicast' in handshake
           assert 'getSocketFactory().createSocket()' in handshake
-          assert 'return new TrackResult(1,normalized.toString())' in handshake
+          assert 'return normalized.toString()' in handshake
           assert 'videoTargets(describe.body,describe.headers)' in handshake
           assert 'send(out,"PLAY",selected.playUrl,3,' in handshake
           assert 'send(out,"TEARDOWN",selected.playUrl,4,' in handshake
