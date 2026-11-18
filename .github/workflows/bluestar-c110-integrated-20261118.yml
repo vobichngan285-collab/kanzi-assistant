@@ -40,7 +40,7 @@ jobs:
           cloud=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/CloudVisionClient.java').read_text()
           manifest=Path('cloud-vision-app/app/src/main/AndroidManifest.xml').read_text()
           gradle=Path('cloud-vision-app/app/build.gradle').read_text()
-          assert "applicationIdSuffix '.c110probe'" in gradle
+          assert "applicationIdSuffix '.c110liveinit'" in gradle
           assert 'captureC110OneShot' in main and 'current.remoteJpeg' in main
           assert 'FrameCompressor.encodeAdjusted(' in main
           assert 'CloudVisionClient.recognize(' in main and 'TargetVisionClient.inspect(' in main
@@ -59,6 +59,9 @@ jobs:
           assert '<domain includeSubdomains="false">192.168.1.254</domain>' in security
           assert not any(x in camera for x in ['cmd=3037','cmd=2001','cmd=4005'])
           assert 'cmd=2015&par=1' in camera
+          assert 'cmd=3001&par=1' in camera
+          assert 'live_mode_cmd' in main and 'live_rtsp_stage' in main
+          assert 'rtsp_sdp_flags' in main
           preview=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/C110LivePreview.java').read_text()
           assert 'rtsp://192.168.1.254:554/xxx.mp4' in preview
           assert '.setSocketFactory(cameraNetwork.getSocketFactory())' in preview
@@ -107,8 +110,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_C110_PreviewProbe_0.1.2.apk
-          test -s out/BlueStar_Guide_C110_PreviewProbe_0.1.2.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_C110_LiveInit_0.1.3.apk
+          test -s out/BlueStar_Guide_C110_LiveInit_0.1.3.apk
           unzip -tq out/*.apk >/dev/null
           unzip -Z1 out/*.apk >out/entries.txt
           grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
@@ -117,14 +120,14 @@ jobs:
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           test -x "$AAPT"
           "$AAPT" dump badging out/*.apk >out/badging.txt
-          grep -Fq "package: name='com.vobich.bluestar.c110probe'" out/badging.txt
-          grep -Fq "versionName='1.0.27-c110-probe-lab'" out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110liveinit'" out/badging.txt
+          grep -Fq "versionName='1.0.28-c110-liveinit-lab'" out/badging.txt
           grep -q 'application-icon-' out/badging.txt
-          (cd out && sha256sum BlueStar_Guide_C110_PreviewProbe_0.1.2.apk > SHA256SUMS.txt)
+          (cd out && sha256sum BlueStar_Guide_C110_LiveInit_0.1.3.apk > SHA256SUMS.txt)
           cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: BlueStar_Guide_C110_PreviewProbe_0.1.2
+          name: BlueStar_Guide_C110_LiveInit_0.1.3
           path: out/*
           retention-days: 14
       - name: Publish isolated prerelease only if unused tag
@@ -133,12 +136,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG=bluestar-c110-preview-diagnostics-20261118-v012
+          TAG=bluestar-c110-liveinit-diagnostics-20261118-v013
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Existing C110 integrated prerelease, refusing overwrite" >&2
             exit 1
           fi
-          gh release create "$TAG" "out/BlueStar_Guide_C110_PreviewProbe_0.1.2.apk" \
+          gh release create "$TAG" "out/BlueStar_Guide_C110_LiveInit_0.1.3.apk" \
             --target "$GITHUB_SHA" --prerelease \
-            --title "Blue Star Guide C110 Protocol Diagnostic Lab v0.1.2" \
-            --notes "Fixes misleading camera Status=-1 logging. Numeric 2015 status now preserves -256/-13; adds one-time read-only probes of original SJCAM Zone DEX ports 554/8192, RTSP OPTIONS and DESCRIBE status, and sanitized Media3 failure reason class. Does not invent or switch to other video URLs. Stops black preview overlay on failure; proven original JPEG cloud OCR/TTS unchanged. Isolated com.vobich.bluestar.c110probe avoids debug signing conflict and does not replace 0.1.0/0.1.1 or RC25. Real video stream remains UNVERIFIED until hardware test."
+            --title "Blue Star Guide C110 Live Mode / RTSP SDP Lab v0.1.3" \
+            --notes "Experimental preview startup in the SJCAM Zone LY DEX order: explicit video-mode 3001/par=1 then liveview 2015/par=1. Records signed Status values and mode latency; one bounded read-only RTSP DESCRIBE extracts anonymous SDP capability bitflags (no SDP or stream content logged); classifies Media3 RTSP parser vs transport failure. Previous 554/8192 probes, original JPEG cellular-cloud OCR/TTS and UI remain unchanged. Firmware-specific RTSP PLAY success and live picture remain unverified. Isolated package com.vobich.bluestar.c110liveinit. Original RC25 and old releases unchanged."

@@ -1,13 +1,19 @@
-# C110 预览真实协议诊断 v0.1.2（待真机）
+# 蓝星C110 真实预览实验 v0.1.3：先切录像模式，再启动RTSP，检查SDP（2026-11-18）
 
-用户实测 v0.1.1：C110拍照/云端识别成功（22:05:10，JPEG 5888×3312、1,256,313字节、拍照取图1,029ms）；预览失败（22:05:00），旧日志 `live_cmd=-1`、`live_rtsp_error=2000`、`live_width=0/height=0`、`live_http8192=-1`。
+## 上一轮真机最新事实
+用户 v0.1.2 22:15:28与22:15:35两轮独立实验一致：
+- `2015/par=1 Status=-13`，确定控制指令执行失败，不是旧日志将其它负数压成-1。
+- Wi-Fi TCP554 可连；`OPTIONS=200`、`DESCRIBE=200`，意味着候选 `rtsp://192.168.1.254:554/xxx.mp4` 地址能响应RTSP基础协商；**不能推断已成功SETUP/PLAY或能解码出帧**。
+- 8192 TCP拒绝连接（-2），当前固件此端口不可用；不再盲改URL。
+- Media3 `2000`（未分类I/O）、先前细分类5（RTSP类异常）且视频宽高0；具体可能是直播状态未初始化、SDP不合规、RTSP SETUP/PLAY或编码不支持。
+- 同时 22:15:40 的C110高清拍照仍成功：取完整 JPEG 5888×3312、1,379,123B、902ms，云端网络耗时2279ms；正式可用的JPEG→OCR/TTS主链保持不变。
 
-## 直接定位的错误
-1. 旧 `RuntimeDiagnostics.event()` 将负数统一裁剪为 -1，无法区别设备真实 `Status=-256`、`-13` 及其他值。本版仅修复匿名整数状态裁剪范围到 -4096；无原始网络报文记录。
-2. `2000` 是 Media3 `ERROR_CODE_IO_UNSPECIFIED`，不是“URL不支持”的确定证据；旧播放器只保存errorCode，没有根因类别。增加 `live_rtsp_cause` 1=SocketTimeout、2=ConnectException、3=NoRoute、4=SecurityException、5=RTSP专有异常、6=UnknownHost、7=一般IO、9=其他。
-3. 旧 `live_http8192=-1` 可由超时、拒绝连接、非HTTP裸流等多种原因触发，旧方法吞异常导致无法区别。新版在相机Wi-Fi Network上读取：`tcp554` / `tcp8192`：1=TCP可连接、-1=超时、-2=拒绝、-3=无路由、-4=权限、-5=其他；`rtsp_options` / `rtsp_describe`：实际RTSP返回数字状态（如200、404）、-1/-2/-3/-4/-5=连接失败、-6=非RTSP格式、-9=对应端口不可连接；`http8192`：200等HTTP状态或同上分类。**只进行一次只读探测，不抓视频原始报文，不猜新URL，不自动重拍。**
-4. 本版仍只尝试此前SJCAM Zone DEX出现的 `rtsp://192.168.1.254:554/xxx.mp4` 和2015/par=1，不保证实际C110固件使用它们。Media3失败则恢复原手机相机画面，不再显示黑屏。
+## v0.1.3 严格单变量改动
+- 按原厂Zone DEX已有的 `LYCamera.changeCameraModel→startLiveVideoStream→VlcLyCameraPlayer` 顺序，用户手动点「C110预览」后，先仅一次 `3001&par=1` 切录像模式，再仅一次 `2015&par=1` 启动视频；若切录像模式明确失败则不盲发2015并展示已知结果。该操作会改变C110当前模式，需要退出预览后下次高清拍照重新进入照片模式。每次用户点击才发送，不自动重试。
+- 新匿名诊断 `live_mode_cmd`（3001结果）、`live_mode_ms`、`live_cmd`（2015结果）；保留真实负错误码和之前的554/8192端口测试。
+- 在旧RTSP DESCRIBE响应200后，从**同一个已确认URL**再做一次大小≤24KiB的有界只读DESCRIBE，**只在本机解析**媒体类型/参数标记，日志仅记录 `rtsp_sdp_flags` 组合值，不保存 SDP/连接令牌/视频流。比特：1=有v0;2=有m=video;4=H264;8=H265;16=JPEG;32=有sprop-parameter-sets;64=control;128=fmtp;256=rtpmap;512=application/sdp。该字段用于判断Media3所需H264 SPS/PPS是否缺失；缺失不代表一定没直播，也可能用其它方式传输。
+- 播放报错增加 `live_rtsp_stage`，1=ParserException、2=RTSP 461传输错误、3=RTSP其它、4=一般IO、5=IllegalArgument、9=其它。日志不保存异常消息/原始SDP。
+- **不增加猜测的视频URL、不刷机、不删除照片、不自动持续采图；保持已经验证成功的完整JPEG、蜂窝百炼OCR、语音朗读、手机/USB摄像头和RC25源码不变**。本次仍是实验包，不能宣称已在真实C110显示视频。
 
-旧 v0.1.0 成功的 C110 高分辨率 JPEG→蜂窝百炼识别/TTS 完全保留；实验包为独立 `com.vobich.bluestar.c110probe`，不会覆盖 RC25/集成0.1.0/预览0.1.1；由于CI Debug签名可能变化，避免对同包覆盖更新，API Key须重新配置。
-
-**真机下一步**：手机连接 C110 Wi-Fi，打开诊断版，只点一次「C110预览」，把整个 `c110_live` 段发回。判读 `live_cmd`、`tcp554/rtsp_options/rtsp_describe`、`tcp8192/http8192`、`live_rtsp_error/live_rtsp_cause`。若554 TCP不通或RTSP DESCRIBE非200，应转查原厂对应固件真实传输端点，不盲发其他改状态命令；若DESCRIBE200但Media3报错，继续查SDP/编码/RTP传输兼容性。正式版与固件不变。
+## 真机下一步
+连接相机Wi-Fi，打开独立实验包，点一次「C110预览」，只发当次 `c110_live` 日志。优先看 `live_mode_cmd/live_cmd`、`rtsp_sdp_flags`、`live_rtsp_stage`、`live_first_ms`。若两条状态均0却Media3继续解析失败，则结合SDP flags考虑使用原厂的VLC式解码内核；若3001成功让2015从-13变0则证明必须有模式前置。由于新包名，配置百炼Key不是预览验证前提。

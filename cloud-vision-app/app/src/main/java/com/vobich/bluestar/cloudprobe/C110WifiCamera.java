@@ -74,20 +74,39 @@ final class C110WifiCamera {
         return findCameraNetwork(cm);
     }
 
-    /** One OEM LY start-live-video command, not repeated automatically on error. */
-    synchronized int startPreview(Context context,Network wifi) throws IOException {
+    static final class PreviewInit {
+        final int modeStatus;
+        final int startStatus;
+        final long modeMs, startMs;
+        PreviewInit(int modeStatus,int startStatus,long modeMs,long startMs){
+            this.modeStatus=modeStatus;this.startStatus=startStatus;
+            this.modeMs=modeMs;this.startMs=startMs;
+        }
+    }
+
+    /**
+     * Follow the actual original SJCAM LY chain: change video mode (3001/par=1),
+     * then explicitly start live view (2015/par=1). Both commands occur ONLY
+     * after user taps C110 Preview. This never records or deletes media files.
+     */
+    synchronized PreviewInit startPreview(Context context,Network wifi) throws IOException {
         Reply id=get(wifi,"/?custom=1&cmd=3012",MAX_INDEX);
         if(id.http!=200||!Integer.valueOf(0).equals(C110PhotoPolicy.tagInt(id.text(),"Status")))
-            throw new IOException("不是已识别的C110相机，禁止发送预览启动指令");
+            throw new IOException("C110设备探测未通过，不启动视频");
         Reply commands=get(wifi,"/?custom=1&cmd=3002",MAX_INDEX);
-        if(commands.http!=200||!commands.text().contains("<Cmd>1001</Cmd>"))
-            throw new IOException("不符合已验证的C110能力集");
-        // Starting a live-video session may change firmware camera mode.
+        if(commands.http!=200||!commands.text().contains("<Cmd>1001</Cmd>")||
+            !commands.text().contains("<Cmd>3001</Cmd>"))
+            throw new IOException("相机没有返回已验证的LY照片与模式指令");
         photoModeReady=false;
+        Reply mode=get(wifi,"/?custom=1&cmd=3001&par=1",MAX_INDEX);
+        Integer modeValue=C110PhotoPolicy.tagInt(mode.text(),"Status");
+        int modeStatus=mode.http==200?(modeValue==null?-4096:modeValue):-3000-mode.http;
+        // Do not send 2015 if the precondition is explicitly rejected.
+        if(modeStatus!=0)return new PreviewInit(modeStatus,-4095,mode.ms,0);
         Reply response=get(wifi,"/?custom=1&cmd=2015&par=1",MAX_INDEX);
-        if(response.http!=200)throw new IOException("预览指令2015 HTTP "+response.http);
         Integer status=C110PhotoPolicy.tagInt(response.text(),"Status");
-        return status==null?-4096:status; // -4096 means missing XML Status, not a device error
+        int startStatus=response.http==200?(status==null?-4096:status):-3000-response.http;
+        return new PreviewInit(modeStatus,startStatus,mode.ms,response.ms);
     }
 
     /** Read-only bounded probe of the alternate OEM HTTP 8192 candidate. */
@@ -199,6 +218,7 @@ final class C110WifiCamera {
             path.equals("/?custom=1&cmd=3002")||path.equals("/?custom=1&cmd=3015")||
             path.equals("/?custom=1&cmd=1001")||
             path.equals("/?custom=1&cmd=3001&par=0")||
+            path.equals("/?custom=1&cmd=3001&par=1")||
             path.equals("/?custom=1&cmd=2015&par=1");
         boolean media=path.startsWith("/DCIM/")&&!path.contains("..")&&
             !path.contains("\\")&&!path.contains("?")&&!path.contains("#");

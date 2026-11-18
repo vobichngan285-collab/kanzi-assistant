@@ -18,7 +18,7 @@ final class C110LivePreview {
     interface Listener {
         void firstFrame(long elapsedMs);
         void dimensions(int width,int height);
-        void error(int code,int reason);
+        void error(int code,int reason,int stage);
         void state(int state);
     }
     private final PlayerView view;
@@ -47,7 +47,8 @@ final class C110LivePreview {
                 listener.dimensions(size.width,size.height);
             }
             @Override public void onPlayerError(PlaybackException exception){
-                listener.error(exception.errorCode,C110PreviewProbe.playbackKind(exception));
+                listener.error(exception.errorCode,C110PreviewProbe.playbackKind(exception),
+                    C110PreviewProbe.playbackStage(exception));
             }
             @Override public void onPlaybackStateChanged(int state){listener.state(state);}
         });

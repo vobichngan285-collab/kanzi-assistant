@@ -2852,23 +2852,32 @@ public final class MainActivity extends CameraActivity {
         c110PreviewExecutor.submit(()->{
             try{
                 android.net.Network wifi=C110WifiCamera.previewNetwork(this);
-                int cmdStatus=c110Camera.startPreview(this,wifi);
+                C110WifiCamera.PreviewInit init=c110Camera.startPreview(this,wifi);
                 // Only inspect addresses found in the original LY camera code.
                 // Both port probes and RTSP OPTIONS/DESCRIBE are read-only.
                 C110PreviewProbe.Report check=C110PreviewProbe.inspect(wifi);
                 handler.post(()->{
                     if(seq!=c110PreviewSeq.get()||!uiActive||!c110PreviewWanted)return;
                     if(diagnostics!=null){
-                        diagnostics.event("c110","live_cmd",cmdStatus,
-                            cmdStatus==0?"ok":cmdStatus==-4096?"unknown":"returned");
+                        diagnostics.event("c110","live_mode_cmd",init.modeStatus,
+                            init.modeStatus==0?"ok":"returned");
+                        diagnostics.event("c110","live_mode_ms",init.modeMs,"ok");
+                        diagnostics.event("c110","live_cmd",init.startStatus,
+                            init.startStatus==0?"ok":"returned");
                         diagnostics.event("c110","tcp554",check.port554,"probe");
                         diagnostics.event("c110","rtsp_options",check.options554,"probe");
                         diagnostics.event("c110","rtsp_describe",check.describe554,"probe");
+                        diagnostics.event("c110","rtsp_sdp_flags",check.sdpFlags,"probe");
                         diagnostics.event("c110","tcp8192",check.port8192,"probe");
                         diagnostics.event("c110","http8192",check.http8192,"probe");
                     }
-                    // SJCAM Zone DEX contains both this RTSP candidate and HTTP 8192.
-                    // Use verified platform RTSP socket routing, never capture another app's screen.
+                    if(init.modeStatus!=0){
+                        stopC110LivePreview(true);
+                        setResultStatus("相机拒绝进入录像预览模式，高清拍照仍可使用");
+                        return;
+                    }
+                    // RTSP URL is already proven to answer OPTIONS and DESCRIBE,
+                    // but video PLAY/codec still requires physical camera testing.
                     c110Preview.view().setVisibility(View.VISIBLE);
                     c110Preview.view().bringToFront();
                     c110Preview.start(this,wifi,new C110LivePreview.Listener(){
@@ -2885,11 +2894,12 @@ public final class MainActivity extends CameraActivity {
                                 diagnostics.event("c110","live_height_px",h,"ok");
                             }
                         }
-                        @Override public void error(int code,int reason){
+                        @Override public void error(int code,int reason,int stage){
                             if(seq!=c110PreviewSeq.get())return;
                             if(diagnostics!=null){
                                 diagnostics.event("c110","live_rtsp_error",code,"failed");
                                 diagnostics.event("c110","live_rtsp_cause",reason,"classified");
+                                diagnostics.event("c110","live_rtsp_stage",stage,"classified");
                             }
                             setResultStatus("视频未建立；高清拍照功能不受影响");
                             toastShort("C110预览失败：请复制运行诊断，检查真实端口与响应");
