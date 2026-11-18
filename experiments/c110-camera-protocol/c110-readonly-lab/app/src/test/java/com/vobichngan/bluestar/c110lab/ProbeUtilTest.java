@@ -11,4 +11,7 @@ public class ProbeUtilTest {
  @Test public void shutterFail(){assertEquals(Integer.valueOf(-13),ProbeUtil.tagInt("<Status>-13</Status>","Status"));}
  @Test public void noStatus(){assertNull(ProbeUtil.tagInt("<Status>bad</Status>","Status"));}
  @Test public void noBadTag(){assertNull(ProbeUtil.tagInt("<Status>0</Status>","Status|.*"));}
+ @Test public void errorMinus13(){assertEquals("执行失败",ProbeUtil.statusName(-13));}
+ @Test public void errorMinus256(){assertEquals("命令不存在",ProbeUtil.statusName(-256));}
+ @Test public void successStatus(){assertEquals("成功",ProbeUtil.statusName(0));}
 }

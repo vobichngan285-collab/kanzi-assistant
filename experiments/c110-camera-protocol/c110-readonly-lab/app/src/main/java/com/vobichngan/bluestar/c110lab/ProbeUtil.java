@@ -51,6 +51,18 @@ public final class ProbeUtil {
    if(!m.find())return null;
    try{return Integer.valueOf(m.group(1));}catch(NumberFormatException e){return null;}
  }
+ /** Familiar Novatek codes from NT96660 reference manual; device firmware may differ. */
+ public static String statusName(Integer value){
+   if(value==null)return "未返回";
+   switch(value){
+    case 0:return "成功";
+    case -13:return "执行失败";
+    case -256:return "命令不存在";
+    case -11:return "存储已满";
+    case -12:return "目录已满";
+    default:return "未映射";
+   }
+ }
  public static boolean jpegHeaderTail(byte[] start,int tail) {
    return start!=null && start.length>=3 && (start[0]&255)==255 && (start[1]&255)==216 && (start[2]&255)==255 && tail==0xffd9;
  }

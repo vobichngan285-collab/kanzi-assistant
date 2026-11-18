@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class MainActivity extends Activity {
  private final ExecutorService pool=Executors.newSingleThreadExecutor();
  private final AtomicBoolean busy=new AtomicBoolean();
- private final StringBuilder logText=new StringBuilder("蓝星C110拍照取图实验 v0.1.2\n修复3037模式查询误拦截；仅用户确认后发送一次1001快门，不切模式、不删文件、不上传。\n");
+ private final StringBuilder logText=new StringBuilder("蓝星C110拍照取图实验 v0.1.3\n联咏错误码专项：-256命令不存在；-13执行失败。只有点击②并确认，才会切到照片模式再单次拍摄。\n");
  private EditText ipInput;
  private TextView display, details;
  private Network wifi;
@@ -36,22 +36,28 @@ public final class MainActivity extends Activity {
   ScrollView sc=new ScrollView(this);
   LinearLayout root=new LinearLayout(this); root.setOrientation(1);root.setPadding(18,16,18,24);
   sc.addView(root);setContentView(sc);
-  TextView title=new TextView(this);title.setText("C110 拍照取图实验 v0.1.2");title.setTextSize(25);title.setTextColor(Color.BLACK);root.addView(title);
+  TextView title=new TextView(this);title.setText("C110 拍照取图实验 v0.1.3");title.setTextSize(25);title.setTextColor(Color.BLACK);root.addView(title);
   TextView note=new TextView(this);
-  note.setText("先连接 C110 Wi-Fi。①只读检测；②遥控拍照一次并自动下载新JPEG。不会切换拍摄模式。");
+  note.setText("①只读检查。②明确确认后切到照片模式、单次拍照、获取完整JPEG；③不切模式直接拍照用于对照。");
   note.setTextSize(18);root.addView(note);
   ipInput=new EditText(this);ipInput.setTextSize(19);ipInput.setSingleLine(true);
   ipInput.setHint("相机IP（留空则用Wi-Fi网关）");
   root.addView(ipInput);
-  button(root,"① 连接检测 / 照片列表（只读）",()->start("检测与基线",this::check));
-  button(root,"② 遥控拍照一次 → 自动下载原图",()->new android.app.AlertDialog.Builder(this)
-   .setTitle("确认只拍一张")
-   .setMessage("将向已经验证的192.168.1.254发出一次1001快门指令，不切模式、不重复拍照。")
+  button(root,"① 只读检测 / SD卡 / 旧图基线",()->start("检测与基线",this::check));
+  button(root,"② 进入照片模式 → 拍照取高清原图",()->new android.app.AlertDialog.Builder(this)
+   .setTitle("确认切照片模式并拍照")
+   .setMessage("此操作将先发送3001/par=0切换相机到照片模式（可能打断实时预览），成功后才发送一次1001快门；不会自动反复拍照或切回录像模式。")
    .setNegativeButton("取消",null)
-   .setPositiveButton("拍照并取图",(d,w)->start("拍照并取图",this::shutterAndFetch))
+   .setPositiveButton("同意切模式并拍照",(d,w)->start("切照片模式并拍照",()->shutterAndFetch(true)))
    .show());
-  button(root,"③ 下载已有JPEG（只读对照）",()->start("下载现有图",()->downloadExisting(false)));
-  button(root,"④ 原厂App进入回放后的只读对照",()->start("回放只读对照",this::check));
+  button(root,"③ 直接拍照一次（不切模式对照）",()->new android.app.AlertDialog.Builder(this)
+   .setTitle("确认不切模式拍照")
+   .setMessage("仅发送一次1001快门，不改变相机模式。前一版已在该状态下返回-13，此项仅用作对照。")
+   .setNegativeButton("取消",null)
+   .setPositiveButton("直接拍照",(d,w)->start("直接拍照对照",()->shutterAndFetch(false)))
+   .show());
+  button(root,"④ 下载已有JPEG（只读对照）",()->start("下载现有图",()->downloadExisting(false)));
+  button(root,"⑤ 已在原厂App进入回放：只读检查",()->start("回放只读对照",this::check));
   button(root,"复制诊断日志",()->{
    android.content.ClipboardManager c=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
    c.setPrimaryClip(ClipData.newPlainText("C110实验日志",logText.toString()));
@@ -125,7 +131,10 @@ public final class MainActivity extends Activity {
  }
  private Result get(String request) throws IOException {
   boolean shutter=request.equals("/?custom=1&cmd=1001");
-  boolean command=shutter||request.equals("/?custom=1&cmd=3012")||request.equals("/?custom=1&cmd=3037")||request.equals("/?custom=1&cmd=3015");
+  boolean modeChange=request.equals("/?custom=1&cmd=3001&par=0");
+  boolean command=shutter||modeChange||request.equals("/?custom=1&cmd=3012")
+    ||request.equals("/?custom=1&cmd=3015")||request.equals("/?custom=1&cmd=3002")
+    ||request.equals("/?custom=1&cmd=3024")||request.equals("/?custom=1&cmd=1003");
   boolean media=request.startsWith("/DCIM/")&&!request.contains("..")&&!request.contains("\\")&&!request.contains("?")&&!request.contains("#");
   if(!command&&!media)throw new IOException("只读请求白名单拒绝");
   if(wifi==null)throw new IOException("没有Wi-Fi Network");
@@ -133,7 +142,7 @@ public final class MainActivity extends Activity {
   HttpURLConnection conn=null;
   try{
    conn=(HttpURLConnection)wifi.openConnection(new URL("http",ip,80,request));
-   conn.setInstanceFollowRedirects(false);conn.setConnectTimeout(2800);conn.setReadTimeout(shutter?7000:2800);
+   conn.setInstanceFollowRedirects(false);conn.setConnectTimeout(2800);conn.setReadTimeout(shutter||modeChange?7000:2800);
    conn.setUseCaches(false);conn.setRequestProperty("Accept-Encoding","identity");
    int status=conn.getResponseCode();
    byte[] body=new byte[0];
@@ -176,11 +185,18 @@ public final class MainActivity extends Activity {
  }
  private void check() throws Exception {
   selectWifi();
-  for(String cmd:new String[]{"/?custom=1&cmd=3012","/?custom=1&cmd=3037"}){
+  Result device=get("/?custom=1&cmd=3012");
+  Integer ds=ProbeUtil.tagInt(device.text(),"Status");
+  line("设备3012：HTTP"+device.status+"，"+device.body.length+"字节，"+device.ms+"ms；Status="+ds);
+  for(String cmd:new String[]{"3024","3002"}){
    try{
-    Result r=get(cmd);
-    line((cmd.endsWith("3012")?"设备查询3012":"只读模式查询3037")+"：HTTP"+r.status+"，"+r.body.length+"字节，"+r.ms+"ms；响应内容不写入日志");
-   }catch(Exception e){line("只读查询异常："+e.getClass().getSimpleName());}
+    Result r=get("/?custom=1&cmd="+cmd);
+    Integer status=ProbeUtil.tagInt(r.text(),"Status");
+    String extras=cmd.equals("3024")?("；卡状态Value="+ProbeUtil.tagInt(r.text(),"Value")):
+      ("；列出1001="+r.text().contains("<Cmd>1001</Cmd>")+"；列出3001="+r.text().contains("<Cmd>3001</Cmd>"));
+    line("只读"+cmd+"：HTTP"+r.status+"，"+r.body.length+"字节，"+r.ms+"ms；Status="+status+
+      "（"+ProbeUtil.statusName(status)+"）"+extras+"；原文不记录");
+   }catch(Exception e){line("只读"+cmd+"请求异常："+e.getClass().getSimpleName());}
   }
   baseline=list(true);baselineIp=ip;
   state("已记录旧图基线："+baseline.size()+"张；点击②测试拍照");
@@ -197,7 +213,7 @@ public final class MainActivity extends Activity {
   line("候选"+order.size()+"张；选择排序最后1张校验（未保证按时间最新）");
   saveJpeg(order.get(order.size()-1));
  }
- private void shutterAndFetch() throws Exception {
+ private void shutterAndFetch(boolean changeMode) throws Exception {
   selectWifi();
   // Scope the state-changing test to the user's confirmed C110 endpoint.
   if(!"192.168.1.254".equals(ip))throw new IOException("拍照只允许已实测的192.168.1.254；请先连接C110的Wi-Fi");
@@ -205,33 +221,64 @@ public final class MainActivity extends Activity {
   Integer deviceStatus=ProbeUtil.tagInt(device.text(),"Status");
   if(device.status!=200||device.body.length==0||(deviceStatus!=null&&deviceStatus!=0))
    throw new IOException("3012设备探测未通过；没有发送拍照");
-  // 3037 is a read-only *mode-status* query. A nonzero XML Status can report a
-  // mode/state, not necessarily a failed transport or forbidden shutter.
-  // It is diagnostic only: don't gate an explicitly confirmed one-shot shutter.
-  try {
-   Result mode=get("/?custom=1&cmd=3037");
-   Integer modeStatus=ProbeUtil.tagInt(mode.text(),"Status");
-   Integer modeValue=ProbeUtil.tagInt(mode.text(),"Value");
-   line("3037模式诊断：HTTP"+mode.status+"，"+mode.body.length+"字节，"+mode.ms+
-        "ms；Status="+(modeStatus==null?"未提供":modeStatus)+
-        "；Value="+(modeValue==null?"未提供":modeValue)+
-        "；不强制Status=0，不记录原始回包");
-  }catch(IOException e){
-   line("3037模式查询异常："+e.getClass().getSimpleName()+"；仅作诊断，不阻止单次拍照");
-  }
+  // Actual 3037 status -256 matches COMMAND_NOT_FOUND in Novatek docs.
+  // The command is not supported by this camera's observed firmware: don't call it.
+  try{
+   Result sd=get("/?custom=1&cmd=3024");
+   Integer sdStatus=ProbeUtil.tagInt(sd.text(),"Status");
+   Integer sdValue=ProbeUtil.tagInt(sd.text(),"Value");
+   line("SD卡3024：HTTP"+sd.status+"；Status="+sdStatus+"（"+ProbeUtil.statusName(sdStatus)+
+     "）；Value="+(sdValue==null?"未提供":sdValue));
+   if(sd.status==200&&sdStatus!=null&&sdStatus==0&&sdValue!=null&&sdValue==0)
+    throw new IOException("SD卡状态明确显示未插卡，停止拍照");
+  }catch(IOException e){if(e.getMessage()!=null&&e.getMessage().contains("未插卡"))throw e;
+   line("SD卡查询不可用；不把查询失败当成相机禁止拍照");}
+  try{
+   Result supported=get("/?custom=1&cmd=3002");
+   Integer sc=ProbeUtil.tagInt(supported.text(),"Status");
+   line("能力3002：HTTP"+supported.status+"；Status="+sc+"；列出1001="+
+    supported.text().contains("<Cmd>1001</Cmd>")+"；列出3001="+
+    supported.text().contains("<Cmd>3001</Cmd>")+"；不记录完整回包");
+  }catch(IOException e){line("能力3002只读查询失败，不擅自猜测能力");}
   Set<String> oldFiles=list(true);
   baseline=new LinkedHashSet<>(oldFiles);baselineIp=ip;
   line("快门前记录旧图："+oldFiles.size()+"张；不会将旧图判作新图");
+  long totalStart=SystemClock.elapsedRealtime();
+  if(changeMode){
+   // Only after a separate explicit UI confirmation; never retry a mode change.
+   Result switched=get("/?custom=1&cmd=3001&par=0");
+   Integer switchStatus=ProbeUtil.tagInt(switched.text(),"Status");
+   line("切照片模式3001/par=0：HTTP"+switched.status+"，"+switched.ms+"ms；Status="+
+    switchStatus+"（"+ProbeUtil.statusName(switchStatus)+"）");
+   if(switched.status!=200||switchStatus==null||switchStatus!=0){
+    state("切照片模式未确认成功，不发送快门");
+    return;
+   }
+   // Photo readiness is a read-only query; not all firmware provides it.
+   try{
+    Result free=get("/?custom=1&cmd=1003");
+    Integer freeStatus=ProbeUtil.tagInt(free.text(),"Status");
+    Integer freeValue=ProbeUtil.tagInt(free.text(),"Value");
+    line("可拍张数1003：HTTP"+free.status+"，Status="+freeStatus+
+      "（"+ProbeUtil.statusName(freeStatus)+"），Value="+freeValue);
+    if(free.status==200&&freeStatus!=null&&freeStatus==0&&freeValue!=null&&freeValue<=0){
+     state("相机报告可拍张数为0，停止拍照");
+     return;
+    }
+   }catch(IOException e){line("1003只读查询不可用，仍遵守一次快门限制");}
+  }
   long start=SystemClock.elapsedRealtime();
-  // The only state-changing request in this experiment, once per user confirmation.
+  // Exactly one shutter command per explicit confirmation. Never auto-retry.
   Result shot=get("/?custom=1&cmd=1001");
   Integer status=ProbeUtil.tagInt(shot.text(),"Status");
-  line("拍照1001：HTTP"+shot.status+"，"+shot.ms+"ms；状态码="+(status==null?"未提供":status)+"；不记录照片路径");
-  if(shot.status!=200)throw new IOException("快门HTTP失败："+shot.status);
-  if(status!=null&&status!=0) {
-   line("1001返回非零Status，可能是相机拒绝或特殊状态；继续只读观察是否产生真实JPEG，不再发送快门");
+  line("拍照1001：HTTP"+shot.status+"，"+shot.ms+"ms；Status="+status+
+   "（"+ProbeUtil.statusName(status)+"），不记录照片路径");
+  if(shot.status!=200||status!=null&&status!=0){
+   line("快门返回失败，未自动重试；本次不再浪费20秒轮询旧图");
+   state("快门执行失败："+status+"（"+ProbeUtil.statusName(status)+"）；请复制日志");
+   return;
   }
-  state("已请求拍照，等待新JPEG写盘…");
+  state("1001未报告失败，等待新JPEG写盘…");
   int failures=0;boolean detected=false;
   while(SystemClock.elapsedRealtime()-start<20000){
    Set<String> files;
@@ -250,7 +297,7 @@ public final class MainActivity extends Activity {
      try{
       saveJpeg(candidate);
       baseline=new LinkedHashSet<>(files);baselineIp=ip;
-      line("单次快门到完整保存总耗时："+(SystemClock.elapsedRealtime()-start)+"ms");
+      line("快门至JPEG保存："+(SystemClock.elapsedRealtime()-start)+"ms；含模式切换总耗时："+(SystemClock.elapsedRealtime()-totalStart)+"ms");
       ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);
       line("相机Wi-Fi仍可访问："+(cm.getNetworkCapabilities(wifi)!=null));
       return;

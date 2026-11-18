@@ -29,7 +29,7 @@ jobs:
           sha256sum "$APK"
       - uses: actions/upload-artifact@v4
         with:
-          name: BlueStar_C110_Shutter_Lab_0.1.2
+          name: BlueStar_C110_Shutter_Lab_0.1.3
           path: experiments/c110-camera-protocol/c110-readonly-lab/app/build/outputs/apk/debug/app-debug.apk
       - name: Create experimental prerelease
         if: success()
@@ -37,7 +37,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           APK=experiments/c110-camera-protocol/c110-readonly-lab/app/build/outputs/apk/debug/app-debug.apk
-          TAG=bluestar-c110-shutter-jpeg-lab-20261118-v012
-          cp "$APK" "$RUNNER_TEMP/BlueStar_C110_Shutter_Lab_0.1.2.apk"
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --target "$GITHUB_SHA" --prerelease --title "Blue Star C110 One-shot Shutter JPEG Lab v0.1.2" --notes "Diagnostic fix for 3037 mode-response false blocking: explicit one-shot 1001 shutter and new JPEG polling. No mode switching, firmware writes, or OCR. Real-camera shutter not yet verified."
-          gh release upload "$TAG" "$RUNNER_TEMP/BlueStar_C110_Shutter_Lab_0.1.2.apk" --clobber
+          TAG=bluestar-c110-shutter-jpeg-lab-20261118-v013
+          cp "$APK" "$RUNNER_TEMP/BlueStar_C110_Shutter_Lab_0.1.3.apk"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --target "$GITHUB_SHA" --prerelease --title "Blue Star C110 One-shot Shutter JPEG Lab v0.1.3" --notes "New opt-in photo-mode transition 3001/par=0, one-shot shutter 1001 and original JPEG verification. Stops unsupported 3037; logs read-only SD state and capabilities. No firmware writes, deletion, OCR or automatic re-shoot."
+          gh release upload "$TAG" "$RUNNER_TEMP/BlueStar_C110_Shutter_Lab_0.1.3.apk" --clobber
