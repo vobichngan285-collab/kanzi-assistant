@@ -1,3 +1,15 @@
+# 2026-11-18｜C110 v0.1.8 原厂 LibVLC 视频引擎专项已构建发布，待真机验证
+
+- **用户授权与方向**：用户要求突破口优先放在 C110 原厂 SJCAM Zone App，批准开始移植其播放路线，不再继续凭猜测修手写 PLAY URI。2026-11-18 23:23:19/23:23:37 v0.1.7 实测：录像模式/启流命令均Status0、554可达、DESCRIBE200、SDP flags999、视频轨道1、TCP SETUP200、PLAY404、playTarget1、RTP=-9、视频尺寸0，未出画面。拍照 `photo=0` 是用户明确未填测试包百炼 API Key，**不是相机拍照失败，不纳入修复**。
+- **原厂代码依据**：用户提供的 SJCAM Zone 6.7.3.16 APK，LY路径采用 `LYCamera.changeCameraModel(3001)`→`startLiveVideoStream(2015/par1)`→`ISCamera.getVideoPlayUrl`→`VlcLyCameraPlayer.playByUrl`，借助LibVLC处理RTSP并设置网络/直播缓存。原厂播放器包装层没有找到显式强制TCP；**不代表实机一定走UDP**。本轮使用官方VideoLAN开源LibVLC 3.6.5（不是把原厂3.0.x二进制复制进包），按同类架构对照，而非宣称完全复刻原厂所有选项。
+- **v0.1.8变更**：原实验分支 `exp/bluestar-c110-integrated-20261118`，HEAD `7beda3274538b1dc556ac0ed2cb240671acce205`。仅主动预览路径从Media3强制TCP改为`org.videolan.android:libvlc-all:3.6.5`，以原已验证候选 `rtsp://192.168.1.254:554/xxx.mp4` 通过LibVLC播放（由VLC选择RTSP传输），保留实际成功的3001/par1→2015/par1启动命令。**移除当前预览路径的手写RTSP SETUP/PLAY调用以及8192/554重复探测**，保留过去源码与测试作实验档案。
+- **网络和安全边界**：LibVLC原生Socket无法直接使用Media3的`Network SocketFactory`，因此在点击预览时临时调用`ConnectivityManager.bindProcessToNetwork(cameraNetwork)`；停止/报错/Activity暂停/拍照前先释放VLC后恢复原有进程绑定，并校验当前绑定仍是本次C110网络。实验版Manifest新增`CHANGE_NETWORK_STATE`。云端仍使用蜂窝`Network.openConnection`；正式RC25及旧照片版独立包名、已有相机高清JPEG下载/TTS/USB/M02S均未改，未随APK再发布任何原厂专有APK或`.so`。
+- **匿名诊断/验收边界**：`vlc_wifi_bind=1`是Native路由绑定成功，`vlc_state`播放器状态，`vlc_vout_count`和`vlc_vout_ms`说明VLC创建视频输出（**不等于真实首帧已在屏幕渲染**），`live_width_px/height_px`为视频尺寸回调，`vlc_error/reason/stage`为异常分类。12秒没有Vout就结束一次试验；无需API Key，不触发自动拍照或重复PLAY。**真实视频是否显示仍待用户在C110现场目测并发送一次最新c110_live日志**。
+- **构建与发布已回查**：[GitHub Actions 44338653872](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44338653872) `completed/success`，Java回归与安全断言、USB固定补丁、ARM64 Gradle构建、APK包名/音效/native `libvlc.so`及`libvlcjni.so`核查、ZIP完整性、上传和Release均通过。独立包名`com.vobich.bluestar.c110vlc`，版本`1.0.33-c110-libvlc-lab`。
+- **真实Release**：[bluestar-c110-libvlc-oem-player-20261118-v018](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-libvlc-oem-player-20261118-v018)，APK `BlueStar_Guide_C110_LibVLC_0.1.8.apk` **56,650,005字节**、SHA-256 `2f5836e9cc96225548f777a228db2c427b0d211af6af9020c79601858a6a1f1c`；直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-libvlc-oem-player-20261118-v018/BlueStar_Guide_C110_LibVLC_0.1.8.apk。此前所有Release和正式RC25均保留。
+- **下一步唯一测试**：手机先连接C110 Wi-Fi，安装独立v0.1.8，点击一次「C110预览」，观察是相机真实连续画面、黑屏还是错误，复制最新`c110_live`（包括`vlc_wifi_bind`/`vlc_state`/`vlc_vout_count`/宽高/错误）。**不填百炼Key、不再测高清拍照、不对出现Vout夸大为已实现预览**。
+
+---
 # 2026-11-18｜C110 v0.1.6 真机SETUP200/PLAY404 → v0.1.7 PLAY URI专项已通过CI并发布，待真机
 
 - **最新真机反馈（23:09:54、23:10:19）**：C110 v0.1.6两轮均 `live_mode_cmd=0`、`live_cmd=0`、`tcp554=1`、`OPTIONS=200`、`DESCRIBE=200`、`rtsp_sdp_flags=999`、`rtsp_track=1`、`rtsp_tcp_setup=200`，但 `rtsp_tcp_play=404`，RTP=-9且解码画面宽高为0，**视频仍没有真实首帧**。这个404是PLAY目标请求失败，不代表相机没有视频流，-9是还没发起RTP检查。
