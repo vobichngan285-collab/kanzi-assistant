@@ -1,3 +1,16 @@
+# 2026-11-19｜停止补丁式修复：重新对原厂 SJCAM Zone 6.7.3.16 完整核查 C110 视频地址/模式/播放链（只读研究，无新APK）
+
+- **用户最新v0.1.11实机反馈**（00:40:34、00:40:56）：`live_mode_cmd=0`、`live_cmd=0`、`vlc_wifi_bind=1`，但只有`vlc_play_gate=0`，无`vlc_play_gate=1`、无VLC Opening/Playing/Vout。**0是蓝星自加的 Surface 条件没有放行；本次甚至没能调用`current.play()`，不是相机RTSP错误的证据**。用户对反复更版严重不满，要求以原厂APP为突破口，不做无依据补丁。
+- **本轮亲自重新取原文件验证**：用户上传`bdcc3db17ea0e26aecaf22bc01fe99be.apk`（SJCAM Zone `org.jght.sjcam.zone` 6.7.3.16，197152487字节，SHA256 `a07236df9b97b5a202179ab2bd98cead497bdcae5a6aa32e55113d49b37e1274`），重新从其真正`classes5.dex`枚举46636方法ID、34554实现体，对以下方法直接解析字节码、引用与条件跳转；不是仅靠旧报告/字符串搜索。
+- **具体视频URL控制流（DEX事实）**：`LYCamera.<init>()`（code offset `0x18b95c`）初始化`mVideoUrl="rtsp://192.168.1.254:554/xxx.mp4"`；`LYCamera.changeCameraModel(int,...)`（`0x18bb24`）会更新`mVideoUrl`，对于模型/模式参数 **1、3、8、9、10、11** 设置为RTSP（参数2保留已有URL），对于其它值（包含0）设置为`http://192.168.1.254:8192`；同时发送实际模式命令3001。其`handlerConnection`（`0x18c4d8`）也按连接/模式返回设置`mVideoUrl`。**因此普通C110视频模式1实际仍可能按原厂代码使用RTSP xxx.mp4；不能再说mVideoUrl“动态”就证明前8版URL错**。
+- **原厂`getVideoPlayUrl()`（`0x18b11c`）**：对一批特殊型号强制返回RTSP；对包含`C110_PRO`的版本条件可走HTTP8192；对没有命中特殊分支的普通C110从`mVideoUrl`返回。**注意“普通C110”是否属于LYCamera及固件分支、实际版本字符串未取得，不能把C110_PRO硬套给标准版**。`LYCamera.getCameraInfoByRequest()`（`0x18be10`）从相机响应设置`SCameraInfo.setCameraVersion`；`ConnectCameraFragment.onConnCameraSuccess$lambda$17`包含`C110`/`C110_PRO`以及`v1.0.4`/`v1.1.2`版本分流至不同控制页面，必须以实际返回信息确认用户设备分支。
+- **原厂播放顺序（DEX事实）**：`NewCameraControlActivity.playVideo()`（`0x280a7c`）和`LyCameraControlActivity.playVideo()`（`0x2777bc`）均调用当前`ISCamera.getVideoPlayUrl()`并转交`VlcLyCameraPlayer.playByUrl(String,boolean)`（`0x1db198`）；该播放器用`Handler.postDelayed(...,300)`再执行`VlcLyCameraPlayer$1.run()`。原厂是**先确定具体相机/固件、模式、URL，再交播放器**，不是先硬编码候选RTSP然后在播放器外层无限缝补。
+- **这次核查的最大架构差异**：蓝星 v0.1.11 并没有复制原厂“基于实际mode与版本选择URL”的逻辑，而是始终先`3001/par=1`再`2015/par=1`、固定RTSP，此外自定义Surface门控的`vlc_play_gate=0`禁止调用`play()`。**Surface门控未通并不证明原厂存在同样限制**。目前唯一肯定的是自己的门控妨碍了实验；是否因错误选择视频模式/URL导致旧版VLC无Opening，仍没有足够实机证据。
+- **下一步的研究优先级**：先确认实际C110连接时返回的`CameraVersion`和`CameraModel`（仅核查原厂读取方式或用户原厂App设备信息；无需再重复拍照）以及原厂成功预览所处的模式和`getVideoPlayUrl`返回值，只有把这三项对齐，才制作一个**只负责视频的最小独立测试播放器**；复用原厂模式与URL逻辑，杜绝额外Surface播放阻断/猜测端口和额外超时补丁。保留正式RC25、旧高清JPEG→蜂窝云OCR/TTS、USB/M02S全部不动。
+- **实际操作边界**：本轮为原厂APK只读研究及交接事实归档，没有修改蓝星向导源码、没有触发Actions或构建新版本，原隔离分支仍`0ff86facbe7d34c1c0f3d83c1176cfcedcc20231`。不宣称已拿到真机原厂RTSP抓包，也不宣称已找到最终根因。
+
+---
+
 # 2026-11-19｜C110 v0.1.10仅MediaChanged+Native状态0 → v0.1.11 Surface就绪门控诊断已编译发布，待真机
 
 - **真机现状**：用户在v0.1.10于11-19 00:24:18和00:24:55两次开启C110预览：`live_mode_cmd=0`、`live_cmd=0`、`vlc_wifi_bind=1`、`vlc_phase=1..5`，`vlc_native_state1=0`、`vlc_is_playing1=0`；完整第一轮还含`native_state2=0`、`is_playing2=0`、`event_count=1`、`last_event=256`（MediaChanged，非Opening）、`route_alive=1`，App自己的20s无Vout超时代码2302。第二轮只看到第一次Native采样，**不能断言第二轮超时**。目前没有任何真实C110视频首帧证据。
