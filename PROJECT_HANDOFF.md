@@ -1,3 +1,13 @@
+# 2026-11-18｜C110 v0.1.1 真机被3037模式查询误拦截；v0.1.2已修正构建，待1001真机结果
+
+- **v0.1.1实际日志（18:03）**：①已正常检测Wi-Fi网关 `192.168.1.254`，3012 HTTP200/262字节、3037 HTTP200/100字节、媒体索引3015返回0候选但目录GET找到7条JPEG。用户连续两次点击②均被 `3037当前模式查询未通过；没有发送拍照` 拦截。**1001未发，不能把这两次判为相机拒绝遥控拍照。**
+- **原因**：旧代码 `if(mode.status!=200||mode.body.length==0||(modeStatus!=null&&modeStatus!=0)) throw` 将 3037 XML Status非零一概当作失败；但这是当前模式查询，真实C110固件的状态码语义未核实。公开Novatek命令表也称3037为 `get current mode status`，不能在没有数值和固件对照的条件下假定所有非零都禁止拍照。
+- **v0.1.2修正**：在原隔离分支 `exp/c110-readonly-jpeg-lab-20261118` 提交 `9c2c86967374e551870c8d49c90046274e2525b5`。保留设备3012探测和已真机确认IP检查；3037变成只读诊断并打印HTTP、字节数、数值Status/Value（不记录照片名/SSID或原始响应），不因非零而阻止用户明确确认的单次 `1001` 快门。1001非零Status只记录并观察新增文件，不会自动再次拍摄。随后20秒按旧图基线检测真正新JPEG、校验并保存；旧的3001切模式、2015预览、删除/格式化/OTA仍不使用。v0.1.0原有旧图取图验证及正式蓝星向导/M02S不改。
+- **CI/发布**：[Actions 44282141386](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44282141386) `completed/success`，单测+assembleDebug已成功。独立 Release：[bluestar-c110-shutter-jpeg-lab-20261118-v012](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-shutter-jpeg-lab-20261118-v012)；APK `BlueStar_C110_Shutter_Lab_0.1.2.apk` 23973字节，下载地址 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-shutter-jpeg-lab-20261118-v012/BlueStar_C110_Shutter_Lab_0.1.2.apk 。
+- **下一步**：用户连接C110 Wi-Fi，先①后②单次快门；反馈完整诊断中 3037 数值、1001 HTTP/Status、是否新增及完整JPEG、快门到完整保存时间。尚未证实遥控拍照成功、免切模式成功或同会话三轮稳定性。
+
+---
+
 # 2026-11-18｜C110 单次遥控拍照 + 自动取新JPEG实验 v0.1.1（已构建，待真机快门验证）
 
 - **用户实际完成的 v0.1.0 真机结果**：设备查询3012与模式查询3037均在相机 IP `192.168.1.254` 返回HTTP200；媒体索引3015 HTTP200但0候选；读取 DCIM 目录共找到7张 JPEG。通过独立 App 成功下载原图 **1523091 字节、5888×3312、下载+校验304ms**，保存至 `Pictures/BlueStar_C110_Test`。首次 `192.168.10.1` 返回0候选，不应认作目标相机。
