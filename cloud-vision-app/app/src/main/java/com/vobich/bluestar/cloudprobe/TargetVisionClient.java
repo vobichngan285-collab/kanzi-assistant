@@ -1,6 +1,7 @@
 package com.vobich.bluestar.cloudprobe;
 
 import android.util.Base64;
+import android.net.Network;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.BufferedReader;
@@ -28,6 +29,11 @@ final class TargetVisionClient {
     }
     private TargetVisionClient(){}
     static Result inspect(byte[] jpeg,String target,String key,String visualModel) throws Exception {
+        return inspect(jpeg,target,key,visualModel,null);
+    }
+
+    static Result inspect(byte[] jpeg,String target,String key,String visualModel,
+                          Network cloudNetwork) throws Exception {
         if(jpeg==null||jpeg.length<200)throw new Exception("没有有效的照片");
         if(target==null||target.trim().isEmpty())throw new Exception("没有寻找目标");
         if(key==null||key.trim().isEmpty())throw new Exception("请先设置百炼 API Key");
@@ -57,8 +63,9 @@ final class TargetVisionClient {
         if(VisionModelCatalog.isBudgetFlash(model) ||
            VisionModelCatalog.isEmergencyMax(model))
             body.put("enable_thinking",false);
-        HttpURLConnection c=(HttpURLConnection)new URL(
-            "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions").openConnection();
+        URL endpoint=new URL("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions");
+        HttpURLConnection c=(HttpURLConnection)(cloudNetwork==null?
+            endpoint.openConnection():cloudNetwork.openConnection(endpoint));
         c.setRequestMethod("POST");
         c.setConnectTimeout(12000);c.setReadTimeout(45000);
         c.setDoOutput(true);

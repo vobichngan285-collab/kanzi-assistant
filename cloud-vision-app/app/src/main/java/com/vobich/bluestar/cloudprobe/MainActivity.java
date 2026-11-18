@@ -113,6 +113,9 @@ public final class MainActivity extends CameraActivity {
 
     private FrameLayout previewContainer,rootFrame;
     private TextView currentTaskChip,zoomChip,resultChip;
+    private Button c110Button;
+    private final C110WifiCamera c110Camera=new C110WifiCamera();
+    private volatile android.net.Network lastSessionCloudNetwork;
     private View tapOverlay;
     private ScaleGestureDetector zoomDetector;
     private boolean touchMulti;
@@ -226,8 +229,15 @@ public final class MainActivity extends CameraActivity {
         final byte[] pixels;
         final int width, height;
         final long atMs;
+        final byte[] remoteJpeg; // C110 original JPEG, already fully validated in RAM
+        final android.net.Network cloudNetwork; // Cellular only, never camera Wi-Fi
         Frame(byte[] pixels, int width, int height, long atMs) {
-            this.pixels=pixels; this.width=width; this.height=height; this.atMs=atMs;
+            this(pixels,width,height,atMs,null,null);
+        }
+        Frame(byte[] pixels,int width,int height,long atMs,
+              byte[] remoteJpeg,android.net.Network cloudNetwork) {
+            this.pixels=pixels;this.width=width;this.height=height;this.atMs=atMs;
+            this.remoteJpeg=remoteJpeg;this.cloudNetwork=cloudNetwork;
         }
     }
 
@@ -365,6 +375,23 @@ public final class MainActivity extends CameraActivity {
         appTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP,19);
         appTitle.setPadding(dp(6),0,dp(6),0);
         title.addView(appTitle,new LinearLayout.LayoutParams(0,dp(50),1f));
+        c110Button=new Button(this);
+        c110Button.setAllCaps(false);
+        c110Button.setText("C110拍照");
+        c110Button.setTextSize(TypedValue.COMPLEX_UNIT_SP,13);
+        c110Button.setTextColor(Color.WHITE);
+        c110Button.setPadding(dp(4),0,dp(4),0);
+        c110Button.setBackground(roundRect(0xFF196C83,12));
+        c110Button.setContentDescription("C110运动相机高清拍照并由蓝星云端识别朗读");
+        LinearLayout.LayoutParams c110Lp=new LinearLayout.LayoutParams(dp(78),dp(45));
+        c110Lp.rightMargin=dp(6);
+        title.addView(c110Button,c110Lp);
+        c110Button.setOnClickListener(v->captureC110OneShot());
+        c110Button.setOnLongClickListener(v->{
+            c110Camera.resetPhotoMode();
+            toastShort("C110照片模式已标记为待初始化，下次点击将重新进入照片模式");
+            return true;
+        });
         zoomChip=new TextView(this);
         zoomChip.setText("1.0×");
         zoomChip.setGravity(Gravity.CENTER);
@@ -2336,6 +2363,7 @@ public final class MainActivity extends CameraActivity {
         final boolean search=webSearchEnabled;
         final boolean hasContext=lastSessionText!=null&&!lastSessionText.isEmpty();
         final byte[] jpeg=recheckImage?lastSessionJpeg:null;
+        final android.net.Network followupCloudNetwork=lastSessionCloudNetwork;
         final String observed=lastSessionText;
         final String taskName=lastSessionTask;
         final String prompt=recheckImage?
@@ -2370,8 +2398,10 @@ public final class MainActivity extends CameraActivity {
                             TextToSpeech.QUEUE_ADD,null,"follow-"+token+"-"+partIndex);
                     });
                 CloudVisionClient.Result result=recheckImage?
-                    CloudVisionClient.recognize(jpeg,key,ask,selectedModel,speaker,search):
-                    CloudVisionClient.recognizeText(prompt,key,selectedModel,speaker,search);
+                    CloudVisionClient.recognize(jpeg,key,ask,selectedModel,speaker,search,
+                        followupCloudNetwork):
+                    CloudVisionClient.recognizeText(prompt,key,selectedModel,speaker,search,
+                        followupCloudNetwork);
                 if(modelUsage!=null)modelUsage.recordAsync(selectedModel,result.serverModel,
                     result.promptTokens,result.completionTokens,true);
                 handler.post(()->{
@@ -2760,6 +2790,65 @@ public final class MainActivity extends CameraActivity {
         }else beginCapturedFrame(usbShot,now,token,oneShotTask);
     }
 
+    /** User-triggered C110 high-resolution photo -> existing OCR/vision/TTS pipeline. */
+    private void captureC110OneShot(){
+        if(!uiActive||readingScreen!=null){
+            toastShort("请先退出阅读页面，再使用C110高清拍照");return;
+        }
+        if(voiceListening||voiceRecorder.isBusy()||cloudBusy){
+            toastShort("上一项操作未结束，请稍后再拍照");return;
+        }
+        long now=SystemClock.elapsedRealtime();
+        if(now-lastTapMs<1500L){toastShort("拍照间隔太短");return;}
+        lastTapMs=now;
+        invalidate();
+        final int token=requestVersion.get();
+        cloudBusy=true;
+        speechRequestToken=token;
+        speechCaptureAtMs=now;
+        ttsEngineStartMs=-1;ttsAudioCallbackMs=-1;
+        if(diagnostics!=null){
+            diagnostics.begin("c110_photo");
+            diagnostics.event("c110","tap",1,"ok");
+        }
+        setResultStatus("C110：正在取高清照片…");
+        encodingTask=encoder.submit(()->{
+            try{
+                // The phone must have separate cellular INTERNET for DashScope.
+                android.net.Network cellular=C110WifiCamera.requireCellular(this);
+                String key=CloudKeyStore.load(this);
+                if(key.isEmpty())throw new Exception("请先在设置中填写百炼 API Key（C110测试包独立保存）");
+                C110WifiCamera.Photo photo=c110Camera.shoot(this);
+                if(Thread.currentThread().isInterrupted())return;
+                handler.post(()->{
+                    if(!uiActive||token!=requestVersion.get())return;
+                    if(diagnostics!=null){
+                        diagnostics.event("c110","mode_ms",photo.modeMs,"ok");
+                        diagnostics.event("c110","shutter_ms",photo.shutterMs,"ok");
+                        diagnostics.event("c110","discover_ms",photo.discoverMs,"ok");
+                        diagnostics.event("c110","jpeg_ms",photo.downloadMs,"ok");
+                        diagnostics.event("c110","photo_total_ms",photo.totalMs,"ok");
+                        diagnostics.event("c110","wifi_alive",photo.wifiStillPresent?1:0,
+                            photo.wifiStillPresent?"ok":"lost");
+                    }
+                    Frame remote=new Frame(null,photo.width,photo.height,
+                        SystemClock.elapsedRealtime(),photo.jpeg,cellular);
+                    beginCapturedFrame(remote,now,token,null);
+                });
+            }catch(Exception ex){
+                handler.post(()->{
+                    if(token!=requestVersion.get()||!uiActive)return;
+                    cloudBusy=false;
+                    if(diagnostics!=null)diagnostics.event("c110","photo",0,"failed");
+                    String message=ex.getMessage()==null?ex.getClass().getSimpleName():ex.getMessage();
+                    setResultStatus("C110拍照失败");
+                    new AlertDialog.Builder(this).setTitle("C110拍照或网络检查失败")
+                        .setMessage(message).setPositiveButton("知道了",null).show();
+                });
+            }
+        });
+    }
+
     private void beginCapturedFrame(Frame current,long tapAtMs,int token,
                                     TaskCatalog.Task oneShotTask){
         if(!uiActive||token!=requestVersion.get())return;
@@ -2770,6 +2859,7 @@ public final class MainActivity extends CameraActivity {
         lastSessionText="";
         lastSessionTask="";
         lastCloudResult="";
+        lastSessionCloudNetwork=null;
         followupTurns.clear();
         signalCapture();
         cloudBusy=true;
@@ -2786,8 +2876,9 @@ public final class MainActivity extends CameraActivity {
         final TaskCatalog.Task task=oneShotTask==null?currentTask:oneShotTask;
         // A one-shot voice observation should not be hijacked by an ongoing search.
         final String targetToFind=oneShotTask==null?findingTarget:"";
-        final String source=usingPhoneCamera?
-            (phoneFrontFacing?"手机前置":"手机后置"):"USB 外接";
+        final boolean c110Source=current.remoteJpeg!=null;
+        final String source=c110Source?"C110高清原图":(usingPhoneCamera?
+            (phoneFrontFacing?"手机前置":"手机后置"):"USB 外接");
         final String policy=imagePolicy;
         // A "find target" voice intent remains a visual task even if the
         // currently selected desktop preset happens to be 朗读文字.
@@ -2801,31 +2892,36 @@ public final class MainActivity extends CameraActivity {
         if(diagnostics!=null&&TaskCatalog.OCR.equals(task.engine))
             diagnostics.event("ocr","speed_mode",
                 OcrSpeedExperiment.diagnosticValue(thisOcrMode),"ok");
-        final UsbFrameOrientation.Plan usbOrientation=usingPhoneCamera?null:
+        final UsbFrameOrientation.Plan usbOrientation=usingPhoneCamera||c110Source?null:
             UsbFrameOrientation.forSettings(previewRotation,previewMirror,
                 previewVerticalFlip,usbPreviewCorrectMirror);
-        final int photoRotation=usingPhoneCamera?previewRotation:usbOrientation.rotation;
+        final int photoRotation=c110Source?0:
+            (usingPhoneCamera?previewRotation:usbOrientation.rotation);
         // USB controls are in FINAL display coordinates; preview maps them back
         // to local TextureView axes, NV21/JPEG applies them AFTER rotation.
-        final boolean photoMirror=usingPhoneCamera?previewMirror:usbOrientation.displayMirror;
-        final boolean photoFlip=usingPhoneCamera?previewVerticalFlip:usbOrientation.displayFlip;
-        final float photoZoom=usingPhoneCamera?1f:zoom;
+        final boolean photoMirror=c110Source?false:
+            (usingPhoneCamera?previewMirror:usbOrientation.displayMirror);
+        final boolean photoFlip=c110Source?false:
+            (usingPhoneCamera?previewVerticalFlip:usbOrientation.displayFlip);
+        final float photoZoom=c110Source?1f:(usingPhoneCamera?1f:zoom);
         encodingTask=encoder.submit(()->{
             long takenAt=SystemClock.elapsedRealtime();
             try{
-                FrameCompressor.Plan plan=FrameCompressor.choose(
+                FrameCompressor.Plan plan=c110Source?null:FrameCompressor.choose(
                     current.pixels,current.width,current.height,policy);
-                FrameCompressor.EncodedJpeg encoded=FrameCompressor.encodeAdjusted(
+                FrameCompressor.EncodedJpeg encoded=c110Source?null:FrameCompressor.encodeAdjusted(
                     current.pixels,current.width,current.height,plan.limit,
                     photoRotation,photoMirror,photoFlip,photoZoom);
-                byte[] jpeg=encoded.jpeg;
+                // Preserve the actual C110 JPEG (no redundant screen capture,
+                // NV21 conversion or lossy recompression).
+                byte[] jpeg=c110Source?current.remoteJpeg:encoded.jpeg;
                 long encodingMs=SystemClock.elapsedRealtime()-takenAt;
                 if(token!=requestVersion.get())return;
                 if(diagnostics!=null){
                     diagnostics.event("jpeg","encode_ms",encodingMs,"ok");
                     diagnostics.event("jpeg","bytes",jpeg.length,"ok");
-                    diagnostics.event("jpeg","width_px",encoded.width,"ok");
-                    diagnostics.event("jpeg","height_px",encoded.height,"ok");
+                    diagnostics.event("jpeg","width_px",c110Source?current.width:encoded.width,"ok");
+                    diagnostics.event("jpeg","height_px",c110Source?current.height:encoded.height,"ok");
                     diagnostics.event("jpeg","rotation_deg",photoRotation,"ok");
                     diagnostics.event("jpeg","mirror_x",photoMirror?1:0,"ok");
                     diagnostics.event("jpeg","flip_y",photoFlip?1:0,"ok");
@@ -2847,7 +2943,7 @@ public final class MainActivity extends CameraActivity {
                 if(!targetToFind.isEmpty()){
                     long cloudAt=SystemClock.elapsedRealtime();
                     TargetVisionClient.Result inspection=TargetVisionClient.inspect(
-                        jpeg,targetToFind,key,model);
+                        jpeg,targetToFind,key,model,current.cloudNetwork);
                     if(modelUsage!=null)modelUsage.recordAsync(model,inspection.serverModel,
                         inspection.promptTokens,inspection.completionTokens,true);
                     if(diagnostics!=null)diagnostics.event("cloud","target_ms",
@@ -2856,6 +2952,7 @@ public final class MainActivity extends CameraActivity {
                         if(token!=requestVersion.get()||!uiActive)return;
                         cloudBusy=false;
                         lastSessionJpeg=jpeg;
+                        lastSessionCloudNetwork=current.cloudNetwork;
                         lastSessionText=inspection.message;
                         lastSessionTask="寻找"+targetToFind;
                         lastCloudResult=inspection.message;
@@ -2879,7 +2976,7 @@ public final class MainActivity extends CameraActivity {
                         int mode=index==0?TextToSpeech.QUEUE_FLUSH:TextToSpeech.QUEUE_ADD;
                         if(tts.speak(spoken,mode,null,"vision-"+token+"-"+index)
                             ==TextToSpeech.SUCCESS)delivered.incrementAndGet();
-                    }),thisOcrMode);
+                    }),thisOcrMode,current.cloudNetwork);
                 if(modelUsage!=null)modelUsage.recordAsync(result.model,result.serverModel,
                     result.promptTokens,result.completionTokens,true);
                 long overallMs=SystemClock.elapsedRealtime()-tapAtMs;
@@ -2887,6 +2984,7 @@ public final class MainActivity extends CameraActivity {
                     if(token!=requestVersion.get()||!uiActive)return;
                     cloudBusy=false;
                     lastSessionJpeg=jpeg;
+                    lastSessionCloudNetwork=current.cloudNetwork;
                     lastSessionText=result.text;
                     lastSessionTask=task.name;
                     lastCloudResult=result.text;
@@ -2905,7 +3003,7 @@ public final class MainActivity extends CameraActivity {
                     }
                     Log.i(TAG,"Cloud timing: route="+task.engine+" model="+result.model+
                         " capture="+source+" raw="+current.width+"x"+current.height+
-                        " imageLimit="+plan.limit+" jpegBytes="+jpeg.length+
+                        " imageLimit="+(c110Source?current.width:plan.limit)+" jpegBytes="+jpeg.length+
                         " jpegMs="+encodingMs+" uploadMs="+result.uploadMs+
                         " requestMs="+result.networkMs+
                         " firstTextMs="+result.firstTextMs+

@@ -1,6 +1,7 @@
 package com.vobich.bluestar.cloudprobe;
 
 import android.os.SystemClock;
+import android.net.Network;
 import android.util.Base64;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -36,7 +37,7 @@ final class CloudVisionClient {
     static Result recognize(byte[] jpeg,String key,TaskCatalog.Task task,
                             String visionModel,PartListener listener) throws Exception {
         return recognizeInternal(jpeg,key,task,visionModel,listener,false,false,
-            OcrSpeedExperiment.A);
+            OcrSpeedExperiment.A,null);
     }
 
     /** One optional web-enabled recheck of an existing photographed image. */
@@ -44,7 +45,7 @@ final class CloudVisionClient {
                             String visionModel,PartListener listener,
                             boolean allowSearch) throws Exception {
         return recognizeInternal(jpeg,key,task,visionModel,listener,false,allowSearch,
-            OcrSpeedExperiment.A);
+            OcrSpeedExperiment.A,null);
     }
 
     /** Exactly one image request, with OCR playback policy captured at tap time. */
@@ -52,24 +53,45 @@ final class CloudVisionClient {
                             String model,PartListener listener,String ocrSpeedMode)
                             throws Exception {
         return recognizeInternal(jpeg,key,task,model,listener,false,false,
-            OcrSpeedExperiment.normalize(ocrSpeedMode));
+            OcrSpeedExperiment.normalize(ocrSpeedMode),null);
+    }
+
+    /** Route C110 photo cloud traffic explicitly over cellular, NEVER via camera Wi-Fi. */
+    static Result recognize(byte[] jpeg,String key,TaskCatalog.Task task,
+                            String model,PartListener listener,String ocrSpeedMode,
+                            Network network) throws Exception {
+        return recognizeInternal(jpeg,key,task,model,listener,false,false,
+            OcrSpeedExperiment.normalize(ocrSpeedMode),network);
+    }
+
+    static Result recognize(byte[] jpeg,String key,TaskCatalog.Task task,
+                            String model,PartListener listener,boolean allowSearch,
+                            Network network) throws Exception {
+        return recognizeInternal(jpeg,key,task,model,listener,false,allowSearch,
+            OcrSpeedExperiment.A,network);
     }
 
     /** One text-only Chat Completions request; strictly NO JPEG/image_url. */
     static Result recognizeText(String textPrompt,String key,String model,
                                PartListener listener,boolean allowSearch) throws Exception {
+        return recognizeText(textPrompt,key,model,listener,allowSearch,null);
+    }
+
+    static Result recognizeText(String textPrompt,String key,String model,
+                               PartListener listener,boolean allowSearch,Network network)
+                               throws Exception {
         if(textPrompt==null||textPrompt.trim().isEmpty())
             throw new IllegalArgumentException("文字智能分析缺少上下文");
         TaskCatalog.Task task=new TaskCatalog.Task(
             "text-followup","文字智能分析",textPrompt,TaskCatalog.VISION,true,"✦");
         return recognizeInternal(null,key,task,model,listener,true,allowSearch,
-            OcrSpeedExperiment.A);
+            OcrSpeedExperiment.A,network);
     }
 
     private static Result recognizeInternal(byte[] jpeg,String key,TaskCatalog.Task task,
                                String visionModel,PartListener listener,
-                               boolean textOnly,boolean allowSearch,String ocrSpeedMode)
-                               throws Exception {
+                               boolean textOnly,boolean allowSearch,String ocrSpeedMode,
+                               Network cloudNetwork) throws Exception {
         if(key==null||key.trim().isEmpty())
             throw new IllegalArgumentException("请先在设置中配置API Key");
         boolean isOcr=TaskCatalog.OCR.equals(task.engine);
@@ -132,7 +154,9 @@ final class CloudVisionClient {
         if(web)body.put("enable_search",true);
         if(streaming)body.put("stream_options",new JSONObject().put("include_usage",true));
 
-        HttpURLConnection connection=(HttpURLConnection)new URL(ENDPOINT).openConnection();
+        URL endpoint=new URL(ENDPOINT);
+        HttpURLConnection connection=(HttpURLConnection)(cloudNetwork==null?
+            endpoint.openConnection():cloudNetwork.openConnection(endpoint));
         connection.setRequestMethod("POST");
         connection.setConnectTimeout(12000);
         connection.setReadTimeout(web?90000:45000);
