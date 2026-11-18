@@ -6,12 +6,12 @@ android {
         applicationId 'com.vobich.bluestar'
         minSdk 26
         targetSdk 35
-        versionCode 41
-        versionName '1.0.31-c110-track-lab'
+        versionCode 42
+        versionName '1.0.32-c110-playtarget-lab'
         ndk { abiFilters 'arm64-v8a' }
     }
     buildTypes {
-        debug { minifyEnabled false; applicationIdSuffix '.c110track' }
+        debug { minifyEnabled false; applicationIdSuffix '.c110play' }
         release { minifyEnabled false }
     }
     compileOptions {

@@ -20,6 +20,18 @@ public final class C110RtspSessionProbeTest {
         h.put("content-base","rtsp://192.168.1.254:554/xxx.mp4/");
         return h;
     }
+    private static void expectTargets(int kind,String setup,String play,
+        String sdp,Map<String,String> headers){
+        C110RtspSessionProbe.Targets t=C110RtspSessionProbe.videoTargets(sdp,headers);
+        if(kind==-5){
+            if(t.code!=-5)throw new AssertionError("Unsafe session control must be rejected");
+            return;
+        }
+        if(t.code!=1||t.playKind!=kind||!setup.equals(t.setupUrl)||
+            !play.equals(t.playUrl))
+            throw new AssertionError("Bad SDP PLAY target selection: "+t.code+
+                " kind="+t.playKind+" setup="+t.setupUrl+" play="+t.playUrl);
+    }
     public static void main(String[] args)throws Exception{
         String known="rtsp://192.168.1.254:554/xxx.mp4";
         Map<String,String> h=base();
@@ -40,6 +52,21 @@ public final class C110RtspSessionProbeTest {
             new ByteArrayInputStream(response.getBytes(StandardCharsets.US_ASCII)),
             new Socket(),true);
         expect(1,known+"/trackID=1",parsed.body,h);
-        System.out.println("C110 RTSP SDP/track parser regression PASS");
+        // PLAY 404 in v0.1.6: SETUP used the track URI, PLAY always used
+        // /xxx.mp4, even when the SDP did not announce aggregate control.
+        expectTargets(2,known+"/trackID=7",known+"/trackID=7",
+            VIDEO+"a=control:trackID=7\r\n",h);
+        expectTargets(1,known+"/trackID=7",known,
+            "v=0\r\na=control:*\r\n"+VIDEO+"a=control:trackID=7\r\n",h);
+        expectTargets(1,known+"/trackID=7","rtsp://192.168.1.254:554/live",
+            "v=0\r\na=control:/live\r\n"+VIDEO+"a=control:trackID=7\r\n",h);
+        expectTargets(1,known,known,
+            "v=0\r\na=control:*\r\n"+VIDEO,h);
+        expectTargets(1,known+"/trackID=7",known+"/control",
+            "v=0\r\na=control:control\r\n"+VIDEO+"a=control:trackID=7\r\n",h);
+        expectTargets(-5,null,null,
+            "v=0\r\na=control:rtsp://other.host/live\r\n"+VIDEO+
+            "a=control:trackID=7\r\n",h);
+        System.out.println("C110 RTSP SETUP/PLAY target regression PASS");
     }
 }

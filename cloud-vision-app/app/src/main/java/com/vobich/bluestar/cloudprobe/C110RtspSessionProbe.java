@@ -30,9 +30,10 @@ final class C110RtspSessionProbe {
     private static final int LIMIT=16384;
     private static final int CONNECT_MS=1800, READ_MS=1800;
     static final class Report {
-        final int track, setup, play, firstRtp;
-        Report(int track,int setup,int play,int firstRtp){
+        final int track, setup, play, firstRtp, playTarget;
+        Report(int track,int setup,int play,int firstRtp,int playTarget){
             this.track=track;this.setup=setup;this.play=play;this.firstRtp=firstRtp;
+            this.playTarget=playTarget;
         }
     }
     /** Anonymous codes: 1 valid; -2 no control; -3 empty SDP;
@@ -40,6 +41,14 @@ final class C110RtspSessionProbe {
     static final class TrackResult {
         final int code; final String url;
         TrackResult(int code,String url){this.code=code;this.url=url;}
+    }
+    /** PLAY choice: 1=SDP session-level aggregate control; 2=single video track. */
+    static final class Targets {
+        final int code, playKind;
+        final String setupUrl, playUrl;
+        Targets(int code,String setupUrl,String playUrl,int playKind){
+            this.code=code;this.setupUrl=setupUrl;this.playUrl=playUrl;this.playKind=playKind;
+        }
     }
     static final class Response {
         final int code;final Map<String,String> headers;final String body;
@@ -49,30 +58,30 @@ final class C110RtspSessionProbe {
     }
 
     static Report probe(Network wifi){
-        if(wifi==null)return new Report(-5,-9,-9,-9);
-        int track=0, setup=-9, play=-9, firstRtp=-9;
+        if(wifi==null)return new Report(-5,-9,-9,-9,-9);
+        int track=0, setup=-9, play=-9, firstRtp=-9, playTarget=-9;
         try(Socket socket=wifi.getSocketFactory().createSocket()){
             socket.connect(new InetSocketAddress(HOST,554),CONNECT_MS);
             socket.setSoTimeout(READ_MS);
             InputStream input=socket.getInputStream();OutputStream out=socket.getOutputStream();
             send(out,"DESCRIBE",URL,1,"Accept: application/sdp\r\n");
             Response describe=read(input,socket,true);
-            if(describe.code!=200)return new Report(-6,describe.code,-9,-9);
-            TrackResult selected=videoTrack(describe.body,describe.headers);
-            if(selected.code!=1)return new Report(selected.code,-9,-9,-9);
-            String trackUrl=selected.url;
+            if(describe.code!=200)return new Report(-6,describe.code,-9,-9,-9,-9);
+            Targets selected=videoTargets(describe.body,describe.headers);
+            if(selected.code!=1)return new Report(selected.code,-9,-9,-9,-9);
+            playTarget=selected.playKind;
             track=1;
-            send(out,"SETUP",trackUrl,2,
+            send(out,"SETUP",selected.setupUrl,2,
                 "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n");
             Response set=read(input,socket,false);setup=set.code;
-            if(set.code!=200)return new Report(track,setup,-9,-9);
+            if(set.code!=200)return new Report(track,setup,-9,-9,playTarget);
             String session=set.headers.get("session");
-            if(session==null)return new Report(track,setup,-7,-9);
+            if(session==null)return new Report(track,setup,-7,-9,playTarget);
             session=session.split(";",2)[0].trim();
             if(!session.matches("[A-Za-z0-9._-]{1,128}"))
-                return new Report(track,setup,-7,-9);
+                return new Report(track,setup,-7,-9,playTarget);
             try {
-                send(out,"PLAY",URL,3,"Session: "+session+"\r\n");
+                send(out,"PLAY",selected.playUrl,3,"Session: "+session+"\r\n");
                 Response played=read(input,socket,false);play=played.code;
                 if(play==200){
                     try{
@@ -88,14 +97,14 @@ final class C110RtspSessionProbe {
                 }
             }finally{
                 // Teardown only this disposable RTSP Session ID, never camera SD files.
-                try {send(out,"TEARDOWN",URL,4,"Session: "+session+"\r\n");}
+                try {send(out,"TEARDOWN",selected.playUrl,4,"Session: "+session+"\r\n");}
                 catch(IOException ignored){}
             }
-            return new Report(track,setup,play,firstRtp);
+            return new Report(track,setup,play,firstRtp,playTarget);
         }catch(SocketTimeoutException timeout){
-            return new Report(track,setup==-9?-1:setup,play,firstRtp);
+            return new Report(track,setup==-9?-1:setup,play,firstRtp,playTarget);
         }catch(Exception problem){
-            return new Report(track,setup==-9?-5:setup,play,firstRtp);
+            return new Report(track,setup==-9?-5:setup,play,firstRtp,playTarget);
         }
     }
 
@@ -166,9 +175,12 @@ final class C110RtspSessionProbe {
         throw new IOException("RTSP header line too long");
     }
 
-    /** Resolve first VIDEO control, falling back only to session control. */
-    static TrackResult videoTrack(String sdp,Map<String,String> headers){
-        if(sdp==null||sdp.trim().isEmpty())return new TrackResult(-3,null);
+    /** SDP: first video track is for SETUP, session-level control is for PLAY.
+     * A presentation without aggregate control uses that single video's URI.
+     * Do not try multiple PLAY URIs or send a second PLAY on server rejection.
+     */
+    static Targets videoTargets(String sdp,Map<String,String> headers){
+        if(sdp==null||sdp.trim().isEmpty())return new Targets(-3,null,null,-9);
         String sessionControl=null,mediaControl=null;
         boolean mediaSeen=false,inVideo=false,hasVideo=false;
         for(String raw:sdp.split("\\r?\\n")){
@@ -187,13 +199,23 @@ final class C110RtspSessionProbe {
                 else if(inVideo&&mediaControl==null)mediaControl=value;
             }
         }
-        if(!hasVideo)return new TrackResult(-4,null);
-        String control=mediaControl!=null?mediaControl:sessionControl;
-        if(control==null)return new TrackResult(-2,null);
-        // SDP a=control:* is aggregate: use only the known presentation URL.
-        if("*".equals(control))return new TrackResult(1,URL);
+        if(!hasVideo)return new Targets(-4,null,null,-9);
+        String setupControl=mediaControl!=null?mediaControl:sessionControl;
+        if(setupControl==null)return new Targets(-2,null,null,-9);
+        String setup=resolveControl(setupControl,headers);
+        String play=resolveControl(sessionControl!=null?sessionControl:setupControl,headers);
+        if(setup==null||play==null)return new Targets(-5,null,null,-9);
+        return new Targets(1,setup,play,sessionControl!=null?1:2);
+    }
+    /** Compatibility with the v0.1.6 standalone track parser regression. */
+    static TrackResult videoTrack(String sdp,Map<String,String> headers){
+        Targets t=videoTargets(sdp,headers);
+        return new TrackResult(t.code,t.setupUrl);
+    }
+    private static String resolveControl(String control,Map<String,String> headers){
+        if("*".equals(control))return URL;
         try{
-            if(control.contains(".."))return new TrackResult(-5,null);
+            if(control.contains(".."))return null;
             String base=headers.get("content-base");
             if(base==null||base.isEmpty())base=headers.get("content-location");
             if(base==null||base.isEmpty())base=URL;
@@ -212,9 +234,9 @@ final class C110RtspSessionProbe {
                 resolved.getRawUserInfo()!=null||resolved.getRawQuery()!=null||
                 resolved.getRawFragment()!=null||resolved.getPath()==null||
                 resolved.getPath().contains(".."))
-                return new TrackResult(-5,null);
+                return null;
             URI normalized=new URI("rtsp",null,HOST,554,resolved.getPath(),null,null);
-            return new TrackResult(1,normalized.toString());
-        }catch(Exception invalid){return new TrackResult(-5,null);}
+            return normalized.toString();
+        }catch(Exception invalid){return null;}
     }
 }

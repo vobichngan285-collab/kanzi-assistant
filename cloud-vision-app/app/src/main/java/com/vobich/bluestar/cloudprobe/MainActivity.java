@@ -2919,6 +2919,7 @@ public final class MainActivity extends CameraActivity {
                                             diagnostics.event("c110","rtsp_track",report.track,"probe");
                                             diagnostics.event("c110","rtsp_tcp_setup",report.setup,"probe");
                                             diagnostics.event("c110","rtsp_tcp_play",report.play,"probe");
+                                            diagnostics.event("c110","rtsp_play_target",report.playTarget,"classified");
                                             diagnostics.event("c110","rtsp_tcp_rtp",report.firstRtp,"probe");
                                         }
                                     });
