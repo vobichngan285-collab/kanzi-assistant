@@ -2853,9 +2853,6 @@ public final class MainActivity extends CameraActivity {
             try{
                 android.net.Network wifi=C110WifiCamera.previewNetwork(this);
                 C110WifiCamera.PreviewInit init=c110Camera.startPreview(this,wifi);
-                // Only inspect addresses found in the original LY camera code.
-                // Both port probes and RTSP OPTIONS/DESCRIBE are read-only.
-                C110PreviewProbe.Report check=C110PreviewProbe.inspect(wifi);
                 handler.post(()->{
                     if(seq!=c110PreviewSeq.get()||!uiActive||!c110PreviewWanted)return;
                     if(diagnostics!=null){
@@ -2864,28 +2861,29 @@ public final class MainActivity extends CameraActivity {
                         diagnostics.event("c110","live_mode_ms",init.modeMs,"ok");
                         diagnostics.event("c110","live_cmd",init.startStatus,
                             init.startStatus==0?"ok":"returned");
-                        diagnostics.event("c110","tcp554",check.port554,"probe");
-                        diagnostics.event("c110","rtsp_options",check.options554,"probe");
-                        diagnostics.event("c110","rtsp_describe",check.describe554,"probe");
-                        diagnostics.event("c110","rtsp_sdp_flags",check.sdpFlags,"probe");
-                        diagnostics.event("c110","tcp8192",check.port8192,"probe");
-                        diagnostics.event("c110","http8192",check.http8192,"probe");
                     }
-                    if(init.modeStatus!=0){
+                    if(init.modeStatus!=0||init.startStatus!=0){
                         stopC110LivePreview(true);
-                        setResultStatus("相机拒绝进入录像预览模式，高清拍照仍可使用");
+                        setResultStatus("相机视频模式或启流指令未成功，高清拍照仍可使用");
                         return;
                     }
-                    // RTSP URL is already proven to answer OPTIONS and DESCRIBE,
-                    // but video PLAY/codec still requires physical camera testing.
+                    // Follow OEM LibVLC RTSP handling without custom SETUP/PLAY probes.
                     c110Preview.view().setVisibility(View.VISIBLE);
                     c110Preview.view().bringToFront();
                     c110Preview.start(this,wifi,new C110LivePreview.Listener(){
-                        @Override public void firstFrame(long ms){
+                        @Override public void videoOutput(int count,long ms){
                             if(seq!=c110PreviewSeq.get())return;
                             c110PreviewPlaying=true;
-                            if(diagnostics!=null)diagnostics.event("c110","live_first_ms",ms,"ok");
-                            setResultStatus("C110实时预览已显示 · 点击画面拍高清照片");
+                            if(diagnostics!=null){
+                                diagnostics.event("c110","vlc_vout_count",count,"probe");
+                                diagnostics.event("c110","vlc_vout_ms",ms,"probe");
+                            }
+                            setResultStatus("C110 VLC已创建视频输出，请确认是否出现真实画面");
+                        }
+                        @Override public void routing(int status){
+                            if(seq!=c110PreviewSeq.get())return;
+                            if(diagnostics!=null)
+                                diagnostics.event("c110","vlc_wifi_bind",status,"probe");
                         }
                         @Override public void dimensions(int w,int h){
                             if(seq!=c110PreviewSeq.get())return;
@@ -2897,39 +2895,18 @@ public final class MainActivity extends CameraActivity {
                         @Override public void error(int code,int reason,int stage){
                             if(seq!=c110PreviewSeq.get())return;
                             if(diagnostics!=null){
-                                diagnostics.event("c110","live_rtsp_error",code,"failed");
-                                diagnostics.event("c110","live_rtsp_cause",reason,"classified");
-                                diagnostics.event("c110","live_rtsp_stage",stage,"classified");
+                                diagnostics.event("c110","vlc_error",code,"failed");
+                                diagnostics.event("c110","vlc_reason",reason,"classified");
+                                diagnostics.event("c110","vlc_stage",stage,"classified");
                             }
-                            setResultStatus("视频未建立；高清拍照功能不受影响");
-                            toastShort("C110预览失败：请复制运行诊断，检查真实端口与响应");
-                            // Release failed Media3 session before a bounded RTSP TCP
-                            // handshake test, preventing session contention.
-                            handler.post(()->{
-                                if(seq!=c110PreviewSeq.get())return;
-                                stopC110LivePreview(true);
-                                final int closedSeq=c110PreviewSeq.get();
-                                c110PreviewExecutor.submit(()->{
-                                    C110RtspSessionProbe.Report report=
-                                        C110RtspSessionProbe.probe(wifi);
-                                    handler.post(()->{
-                                        if(!uiActive||cloudBusy||
-                                           c110PreviewSeq.get()!=closedSeq)return;
-                                        if(diagnostics!=null){
-                                            diagnostics.event("c110","rtsp_track",report.track,"probe");
-                                            diagnostics.event("c110","rtsp_tcp_setup",report.setup,"probe");
-                                            diagnostics.event("c110","rtsp_tcp_play",report.play,"probe");
-                                            diagnostics.event("c110","rtsp_play_target",report.playTarget,"classified");
-                                            diagnostics.event("c110","rtsp_tcp_rtp",report.firstRtp,"probe");
-                                        }
-                                    });
-                                });
-                            });
+                            setResultStatus("C110 VLC预览未建立，高清拍照功能不受影响");
+                            toastShort("C110 VLC预览失败：请复制运行诊断");
+                            stopC110LivePreview(true);
                         }
                         @Override public void state(int state){
                             if(seq!=c110PreviewSeq.get())return;
                             if(diagnostics!=null)
-                                diagnostics.event("c110","live_state",state,"ok");
+                                diagnostics.event("c110","vlc_state",state,"ok");
                         }
                     });
                 });
@@ -2938,7 +2915,7 @@ public final class MainActivity extends CameraActivity {
                     if(seq!=c110PreviewSeq.get())return;
                     stopC110LivePreview(true);
                     if(diagnostics!=null)
-                        diagnostics.event("c110","preview_start",0,"failed");
+                        diagnostics.event("c110","vlc_start",0,"failed");
                     setResultStatus("C110预览连接失败："+ex.getClass().getSimpleName());
                     toastShort("C110预览启动失败："+ex.getMessage());
                 });
