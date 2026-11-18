@@ -1,3 +1,16 @@
+# 2026-11-19｜C110 v0.1.9仅MediaChanged(256) → v0.1.10原厂播放时序与Native状态诊断已CI成功发布，待真机
+
+- **最新用户现场**：2026-11-19 00:07:15 v0.1.9一次C110实时预览：`live_mode_cmd=0`、`live_cmd=0`、`vlc_wifi_bind=1`、`vlc_phase=1..5`、`vlc_last_phase=5`、`vlc_event_count=1`、`vlc_last_event=256`、`vlc_route_alive=1`，没有Vout和视频尺寸，最终`vlc_error=2302`。核查VideoLAN事件枚举：`256`=MediaChanged，`258`=Opening，`259`=Buffering，`260`=Playing；**未收到Opening，仅媒体变更，不得据此宣称RTSP PLAY失败或解码失败**。`2302`依然只是App自己的20秒无输出看门狗。
+- **本轮真正重新查原厂用户APK**：定位用户上传的`bdcc3db17ea0e26aecaf22bc01fe99be.apk`，SHA256 `a07236df9b97b5a202179ab2bd98cead497bdcae5a6aa32e55113d49b37e1274`，直接解析`classes5.dex`方法体，不是转述旧报告。`LYCamera.getVideoPlayUrl()`确实根据`SCameraInfo.getCameraVersion()`作多段型号/固件分支，方法含`rtsp://192.168.1.254:554/xxx.mp4`和`http://192.168.1.254:8192`两种候选及空返回；**当前C110真机的CameraVersion尚未拿到，不能冒用其他固件分支选地址**。而`VlcLyCameraPlayer.playByUrl()`使用`Handler.postDelayed(...,300ms)`后才跑播放器设置/调用play的Runnable；原厂`VlcLyCameraPlayer$1.run()`使用字段持有`Media`，非此前实验版在`setMedia`后立即释放Java Media。这是两项实际可核验的原厂差异。
+- **v0.1.10隔离修正**：继续仅沿用原仓库`vobichngan285-collab/kanzi-assistant`分支`exp/bluestar-c110-integrated-20261118`，**HEAD `308ddf5ba1853ff16e19583154c2f0d29054ad75`**。在完成LibVLC+VLCVideoLayout及Media初始化后通过`Handler.postDelayed(delayedPlay,300L)`执行单次play；停用时移除未执行的回调，防止停止后重启。Media对象保留至stop（先播放器释放后Media释放），按原厂生命周期间隔。保留已经确认的3001/par1→2015/par1、可DESCRIBE200的RTSP候选，不猜测/盲测8192、不强制TCP、不再调用手写SETUP/PLAY探测。
+- **Native状态诊断**：新数字字段`vlc_native_state1`/`vlc_is_playing1`为调用play后1.2s时原生`MediaPlayer.getPlayerState()`/`isPlaying()`；`vlc_native_state2`/`vlc_is_playing2`为超时前采样；每个value只记录状态整数，无原始VLC日志、RTSP URL、媒体数据、照片或密钥。保留`vlc_phase`、事件次数与编号、Wi-Fi绑定、输出尺寸及错误码。原生状态枚举整数与Event编号是两个概念，`isPlaying=0`不单独证明网络错误。Native VLC网络临时绑定C110 Wi-Fi仍在停止/失败/进入后台/拍照前恢复原先绑定。
+- **隔离保障**：不改正式RC25、旧Release、C110已成功高清JPEG取图→蜂窝百炼OCR/TTS、USB和M02S。相机本身未实际连接于CI。用户先前拍照失败系独立测试包缺API Key，与本轮视频功能无关，不重复实验。新独立包名`com.vobich.bluestar.c110oemstart`，versionName`1.0.35-c110-oemstart-lab`，不会覆盖旧实验版。
+- **构建审核**：第一次Actions `44345342317`因工作流**检查脚本提前使用preview变量**失败，非应用源码编译失败；已修复检查脚本并在[GitHub Actions 44345536038](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44345536038) 完成**completed/success**，Java协议/隔离审计、USB固定补丁、ARM64 Gradle、APK身份、VLC原生库/音效/ZIP、Artifact上传及Release全部成功。
+- **已验证Release**：[bluestar-c110-oem-playback-start-20261119-v0110](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-oem-playback-start-20261119-v0110)，APK `BlueStar_Guide_C110_OEMStart_0.1.10.apk` **56,649,993字节**；SHA256 `905cfe3caca921d0f34c0f2de07244a0eac8a2c022e573a7ee6413ea44934757`；直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-oem-playback-start-20261119-v0110/BlueStar_Guide_C110_OEMStart_0.1.10.apk。
+- **下一步真机**：手机连C110 Wi-Fi，安装独立v0.1.10，**只点一次C110预览**；重点发最新`c110_live`看`vlc_native_state1/2`、`vlc_is_playing1/2`、`vlc_last_event`、`vlc_event_count`、`vlc_vout_count`和真实连续视频画面是否可见。无需API Key，不测已成功的照片；**不能仅凭CI构建证明预览成功**。
+
+---
+
 # 2026-11-18｜C110 v0.1.8 双次仅本地超时 → v0.1.9 原厂VLC视图与事件诊断已发布，待真机
 
 - **最新用户真机证据（23:49:12、23:49:25）**：v0.1.8 两次均 `live_mode_cmd=0`、`live_cmd=0`、`vlc_wifi_bind=1`，随后 `vlc_error=2302` / reason2 / stage5，无`vlc_state`、Vout、视频尺寸。**2302 是App自己设的12秒无Vout看门狗，不是相机返回的RTSP错误，更不能断言原生LibVLC已收到404**。用户明确此前两次拍照失败原因是独立测试包未填百炼API Key，禁止把它当相机拍照故障或修改照片路径。
