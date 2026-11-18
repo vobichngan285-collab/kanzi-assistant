@@ -2885,6 +2885,20 @@ public final class MainActivity extends CameraActivity {
                             if(diagnostics!=null)
                                 diagnostics.event("c110","vlc_wifi_bind",status,"probe");
                         }
+                        @Override public void milestone(int phase){
+                            if(seq!=c110PreviewSeq.get())return;
+                            if(diagnostics!=null)
+                                diagnostics.event("c110","vlc_phase",phase,"probe");
+                        }
+                        @Override public void snapshot(int phase,int count,int event,int bound){
+                            if(seq!=c110PreviewSeq.get())return;
+                            if(diagnostics!=null){
+                                diagnostics.event("c110","vlc_last_phase",phase,"classified");
+                                diagnostics.event("c110","vlc_event_count",count,"classified");
+                                diagnostics.event("c110","vlc_last_event",event,"classified");
+                                diagnostics.event("c110","vlc_route_alive",bound,"classified");
+                            }
+                        }
                         @Override public void dimensions(int w,int h){
                             if(seq!=c110PreviewSeq.get())return;
                             if(diagnostics!=null){
@@ -2899,7 +2913,7 @@ public final class MainActivity extends CameraActivity {
                                 diagnostics.event("c110","vlc_reason",reason,"classified");
                                 diagnostics.event("c110","vlc_stage",stage,"classified");
                             }
-                            setResultStatus("C110 VLC预览未建立，高清拍照功能不受影响");
+                            setResultStatus("C110 VLC预览失败；查看最后阶段与VLC事件数");
                             toastShort("C110 VLC预览失败：请复制运行诊断");
                             stopC110LivePreview(true);
                         }

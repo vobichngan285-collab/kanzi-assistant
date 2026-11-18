@@ -7,47 +7,50 @@ import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
-import android.view.SurfaceView;
-import android.widget.FrameLayout;
 import org.videolan.libvlc.LibVLC;
 import org.videolan.libvlc.Media;
 import org.videolan.libvlc.MediaPlayer;
-import org.videolan.libvlc.interfaces.IVLCVout;
+import org.videolan.libvlc.util.VLCVideoLayout;
 import java.util.ArrayList;
 
 /**
- * C110 native LibVLC trial, following original SJCAM Zone's playback engine.
- * Never logs video/SDP/credentials, records media or submits camera commands.
- * Native VLC sockets use a scoped camera Wi-Fi process binding, restored at stop.
+ * C110 isolated OEM LibVLC comparison.
+ *
+ * SJCAM Zone VlcLyCameraPlayer$1.run() uses MediaPlayer.attachViews with
+ * VLCVideoLayout and a 300ms cache plus H.264 decoder options. We follow
+ * that initialization and the original known RTSP URL without copying OEM
+ * libraries or trying guessed camera endpoints.
+ *
+ * This diagnostic never saves video, credentials, SDP, or raw native logs.
+ * LibVLC native sockets temporarily use the selected camera Wi-Fi routing;
+ * the previous process network is restored on stop, pause, or photo capture.
  */
 final class C110LivePreview {
     static final String RTSP_URL="rtsp://192.168.1.254:554/xxx.mp4";
     interface Listener {
-        void videoOutput(int count,long elapsedMs); // Vout is NOT a proven rendered frame
+        void videoOutput(int count,long elapsedMs);
         void dimensions(int width,int height);
         void error(int code,int reason,int stage);
         void state(int state);
         void routing(int status);
+        void milestone(int phase);
+        void snapshot(int phase,int eventCount,int lastEvent,int routeBound);
     }
-    private final FrameLayout view;
-    private final SurfaceView surface;
+    private final VLCVideoLayout view;
     private final Handler main=new Handler(Looper.getMainLooper());
     private LibVLC vlc;
     private MediaPlayer player;
     private ConnectivityManager connectivity;
     private Network priorBinding,cameraBinding;
     private boolean changedBinding,hasVout;
-    private int generation;
+    private int generation,phase,nativeEvents,lastNativeEvent,lastReportedState;
     private Runnable watchdog;
 
     C110LivePreview(Context context){
-        view=new FrameLayout(context);
+        view=new VLCVideoLayout(context);
         view.setKeepScreenOn(true);
-        surface=new SurfaceView(context);
-        surface.setKeepScreenOn(true);
-        view.addView(surface,new FrameLayout.LayoutParams(-1,-1));
     }
-    FrameLayout view(){return view;}
+    VLCVideoLayout view(){return view;}
 
     void start(Context context,Network cameraNetwork,Listener listener){
         stop();
@@ -65,29 +68,33 @@ final class C110LivePreview {
                 changedBinding=true;
             }
             listener.routing(1);
-            // Original Zone uses LibVLC network/live caching. Do not force RTP/TCP.
-            ArrayList<String> opts=new ArrayList<>();
-            opts.add("--network-caching=400");
-            opts.add("--live-caching=300");
-            opts.add("--no-audio");
-            vlc=new LibVLC(context.getApplicationContext(),opts);
+            progress(listener,1);
+
+            // Original Zone VlcLyCameraPlayer defaults to 300ms cache.
+            // Keep transport negotiation inside VideoLAN; do not force RTP/TCP.
+            ArrayList<String> args=new ArrayList<>();
+            args.add("--network-caching=300");
+            args.add("--live-caching=300");
+            args.add("--no-audio");
+            vlc=new LibVLC(context.getApplicationContext(),args);
+            progress(listener,2);
             final MediaPlayer current=new MediaPlayer(vlc);
             player=current;
-            final IVLCVout vout=current.getVLCVout();
-            vout.setVideoView(surface);
-            vout.attachViews((output,w,h,vw,vh,sarNum,sarDen)->main.post(()->{
-                if(id==generation&&player==current&&w>0&&h>0)
-                    listener.dimensions(w,h);
-            }));
+            // Crucial OEM difference from v0.1.8: the original uses VLCVideoLayout
+            // and the MediaPlayer video helper, not a manually attached SurfaceView.
+            current.attachViews(view,null,false,false);
+            progress(listener,3);
             current.setEventListener(event->main.post(()->{
                 if(id!=generation||player!=current)return;
+                nativeEvents++;
+                lastNativeEvent=event.type;
                 switch(event.type){
                     case MediaPlayer.Event.Opening:
-                        listener.state(1);break;
+                        publishState(listener,1);break;
                     case MediaPlayer.Event.Buffering:
-                        listener.state(2);break;
+                        publishState(listener,2);break;
                     case MediaPlayer.Event.Playing:
-                        listener.state(3);break;
+                        publishState(listener,3);break;
                     case MediaPlayer.Event.Vout:
                         int count=event.getVoutCount();
                         if(count>0&&!hasVout){
@@ -96,34 +103,66 @@ final class C110LivePreview {
                         }
                         break;
                     case MediaPlayer.Event.EncounteredError:
+                        listener.snapshot(phase,nativeEvents,lastNativeEvent,boundToCamera()?1:0);
                         listener.error(2301,1,3);break;
                     case MediaPlayer.Event.EndReached:
+                        listener.snapshot(phase,nativeEvents,lastNativeEvent,boundToCamera()?1:0);
                         listener.error(2303,3,4);break;
                     default:break;
                 }
             }));
             Media media=new Media(vlc,Uri.parse(RTSP_URL));
             try{
-                media.addOption(":network-caching=400");
-                media.addOption(":live-caching=300");
-                media.addOption(":codec=mediacodec,iomx,all");
+                // Options verified directly in Zone 6.7.3.16 classes5.dex.
                 media.addOption(":no-audio");
+                media.addOption(":avcodec-skiploopfilter=4");
+                media.addOption(":avcodec-skip-frame=0");
+                media.addOption(":avcodec-skip-idct=0");
+                media.addOption(":no-stats");
+                media.addOption(":sout-mux-caching=300");
+                media.addOption(":live-caching=300");
+                media.addOption(":file-caching=300");
+                media.addOption(":network-caching=300");
+                media.addOption(":codec=mediacodec,iomx,all");
                 current.setMedia(media);
             }finally{media.release();}
+            progress(listener,4);
             current.setVolume(0);
             current.play();
-            // A bounded trial: Playing/Vout do not independently prove real pixels.
+            progress(listener,5);
+            // Timeout is our own watchdog. Record last native event/phase before
+            // reporting it. 2302 is NOT an RTSP status and not a camera error.
             watchdog=()->{
-                if(id==generation&&player==current&&!hasVout)
+                if(id==generation&&player==current&&!hasVout){
+                    listener.snapshot(phase,nativeEvents,lastNativeEvent,boundToCamera()?1:0);
                     listener.error(2302,2,5);
+                }
             };
-            main.postDelayed(watchdog,12000L);
+            main.postDelayed(watchdog,20000L);
         }catch(RuntimeException|LinkageError failure){
+            int stoppedAt=phase;
+            listener.snapshot(stoppedAt,nativeEvents,lastNativeEvent,boundToCamera()?1:0);
             stop();
-            throw failure;
+            listener.error(2304,stoppedAt,6);
         }
     }
 
+    private void progress(Listener listener,int step){
+        phase=step;
+        listener.milestone(step);
+    }
+    private void publishState(Listener listener,int state){
+        if(lastReportedState!=state){
+            lastReportedState=state;
+            listener.state(state);
+        }
+    }
+    private boolean boundToCamera(){
+        try{
+            return connectivity!=null&&cameraBinding!=null&&
+                cameraBinding.equals(connectivity.getBoundNetworkForProcess());
+        }catch(Exception ignored){return false;}
+    }
     void stop(){
         generation++;
         if(watchdog!=null){main.removeCallbacks(watchdog);watchdog=null;}
@@ -131,7 +170,7 @@ final class C110LivePreview {
         if(old!=null){
             try{old.setEventListener(null);}catch(Exception ignored){}
             try{old.stop();}catch(Exception ignored){}
-            try{old.getVLCVout().detachViews();}catch(Exception ignored){}
+            try{old.detachViews();}catch(Exception ignored){}
             try{old.release();}catch(Exception ignored){}
         }
         LibVLC oldVlc=vlc;vlc=null;
@@ -143,6 +182,6 @@ final class C110LivePreview {
             }catch(Exception ignored){}
         }
         changedBinding=false;priorBinding=null;cameraBinding=null;connectivity=null;
-        hasVout=false;
+        hasVout=false;phase=0;nativeEvents=0;lastNativeEvent=0;lastReportedState=0;
     }
 }

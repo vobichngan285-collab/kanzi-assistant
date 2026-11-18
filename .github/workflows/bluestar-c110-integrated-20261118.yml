@@ -53,7 +53,7 @@ jobs:
           cloud=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/CloudVisionClient.java').read_text()
           manifest=Path('cloud-vision-app/app/src/main/AndroidManifest.xml').read_text()
           gradle=Path('cloud-vision-app/app/build.gradle').read_text()
-          assert "applicationIdSuffix '.c110vlc'" in gradle
+          assert "applicationIdSuffix '.c110vlcdiag'" in gradle
           assert 'captureC110OneShot' in main and 'current.remoteJpeg' in main
           assert 'FrameCompressor.encodeAdjusted(' in main
           assert 'CloudVisionClient.recognize(' in main and 'TargetVisionClient.inspect(' in main
@@ -76,6 +76,8 @@ jobs:
           assert 'cmd=2015&par=1' in camera and 'cmd=3001&par=1' in camera
           assert 'live_mode_cmd' in main and 'live_cmd' in main
           assert 'vlc_wifi_bind' in main and 'vlc_vout_count' in main
+          assert 'vlc_phase' in main and 'vlc_event_count' in main
+          assert 'vlc_route_alive' in main and 'vlc_last_event' in main
           assert 'vlc_error' in main and 'vlc_state' in main
           assert 'C110PreviewProbe.inspect(wifi)' not in main
           assert 'C110RtspSessionProbe.probe(wifi)' not in main
@@ -83,6 +85,12 @@ jobs:
           preview=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/C110LivePreview.java').read_text()
           assert 'rtsp://192.168.1.254:554/xxx.mp4' in preview
           assert 'new LibVLC(' in preview and 'new MediaPlayer(' in preview
+          assert 'new VLCVideoLayout(' in preview and 'current.attachViews(view,null,false,false)' in preview
+          assert 'media.addOption(":sout-mux-caching=300")' in preview
+          assert 'media.addOption(":file-caching=300")' in preview
+          assert 'media.addOption(":avcodec-skiploopfilter=4")' in preview
+          assert 'listener.snapshot(phase,nativeEvents,lastNativeEvent' in preview
+          assert 'main.postDelayed(watchdog,20000L)' in preview
           assert 'new Media(' in preview and 'attachViews(' in preview
           assert 'bindProcessToNetwork(cameraNetwork)' in preview
           assert 'connectivity.bindProcessToNetwork(priorBinding)' in preview
@@ -136,8 +144,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_C110_LibVLC_0.1.8.apk
-          test -s out/BlueStar_Guide_C110_LibVLC_0.1.8.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_C110_LibVLCDiag_0.1.9.apk
+          test -s out/BlueStar_Guide_C110_LibVLCDiag_0.1.9.apk
           unzip -tq out/*.apk >/dev/null
           unzip -Z1 out/*.apk >out/entries.txt
           grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
@@ -148,14 +156,14 @@ jobs:
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           test -x "$AAPT"
           "$AAPT" dump badging out/*.apk >out/badging.txt
-          grep -Fq "package: name='com.vobich.bluestar.c110vlc'" out/badging.txt
-          grep -Fq "versionName='1.0.33-c110-libvlc-lab'" out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110vlcdiag'" out/badging.txt
+          grep -Fq "versionName='1.0.34-c110-libvlcdiag-lab'" out/badging.txt
           grep -q 'application-icon-' out/badging.txt
-          (cd out && sha256sum BlueStar_Guide_C110_LibVLC_0.1.8.apk > SHA256SUMS.txt)
+          (cd out && sha256sum BlueStar_Guide_C110_LibVLCDiag_0.1.9.apk > SHA256SUMS.txt)
           cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: BlueStar_Guide_C110_LibVLC_0.1.8
+          name: BlueStar_Guide_C110_LibVLCDiag_0.1.9
           path: out/*
           retention-days: 14
       - name: Publish isolated prerelease only if unused tag
@@ -164,12 +172,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG=bluestar-c110-libvlc-oem-player-20261118-v018
+          TAG=bluestar-c110-libvlc-oem-diagnostics-20261118-v019
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Existing C110 integrated prerelease, refusing overwrite" >&2
             exit 1
           fi
-          gh release create "$TAG" "out/BlueStar_Guide_C110_LibVLC_0.1.8.apk" \
+          gh release create "$TAG" "out/BlueStar_Guide_C110_LibVLCDiag_0.1.9.apk" \
             --target "$GITHUB_SHA" --prerelease \
-            --title "Blue Star Guide C110 Original LibVLC Playback Lab v0.1.8" \
-            --notes "v0.1.7 C110 real device: SETUP200 PLAY404 after successful mode and stream start. OEM SJCAM Zone uses LibVLC for RTSP control. This v0.1.8 isolated test uses official VideoLAN libvlc-all 3.6.5, original LY candidate rtsp://192.168.1.254:554/xxx.mp4 and does not force RTP/TCP. Native VLC temporary Wi-Fi process binding is restored on stop/pause/error/photo capture; cellular cloud uses explicit Network. Logs numeric vlc_wifi_bind, vlc_state, vlc_vout_count, vlc_vout_ms, dimensions, vlc_error. No manual RTSP probe or redundant 8192 port test. Vout event alone does not prove video frame. Original complete JPEG to cellular OCR/TTS, USB and RC25 untouched. Separate app com.vobich.bluestar.c110vlc; no OEM libraries redistributed. Real video preview needs phone confirmation."
+            --title "Blue Star Guide C110 OEM LibVLC Diagnostic Lab v0.1.9" \
+            --notes "C110 v0.1.8 physical tests twice: init 3001=0, stream 2015=0 and Wi-Fi binding=1, but only the app's own 12s vout timeout 2302 was recorded. OEM Zone 6.7.3.16 actual DEX VlcLyCameraPlayer.run uses VLCVideoLayout/MediaPlayer.attachViews and 300ms four caching options with avcodec options. This v0.1.9 isolated trial matches that OEM view/caching architecture while keeping official open-source LibVLC, original RTSP candidate, Wi-Fi binding restoration and existing camera commands. Adds numeric vlc_phase (1=bound,2=LibVLC,3=attached,4=media assigned,5=play called), vlc_last_phase, vlc_event_count, vlc_last_event, vlc_route_alive at error or 20s watchdog. 2302 is local timeout NOT a camera RTSP error. No guessed address, no manual RTSP handshake, no raw OEM binaries/logs or keys. Formal RC25, C110 JPEG/cloud OCR/TTS, M02S untouched. Requires physical device real-video test."
