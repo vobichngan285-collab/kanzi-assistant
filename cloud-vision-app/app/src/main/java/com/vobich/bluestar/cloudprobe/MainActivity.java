@@ -2962,9 +2962,14 @@ public final class MainActivity extends CameraActivity {
         catch(Exception ex){
             toastShort("请开启移动数据，以便C110视频帧进行云端识别");return;
         }
-        if(CloudKeyStore.load(this).isEmpty()){
-            openLargeSettings();
-            if(largeSettings!=null)largeSettings.openApiKey();
+        try{
+            if(CloudKeyStore.load(this).isEmpty()){
+                openLargeSettings();
+                if(largeSettings!=null)largeSettings.openApiKey();
+                return;
+            }
+        }catch(Exception keyError){
+            toastShort("读取百炼 API Key 失败，请检查设置");
             return;
         }
         lastTapMs=now;
