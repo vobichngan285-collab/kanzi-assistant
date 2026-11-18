@@ -159,7 +159,7 @@ public final class MainActivity extends CameraActivity {
     private AspectRatioTextureView cameraTextureView;
     private TextureView phoneTexture;
     private TextView phonePreviewStatus;
-    private Button modeButton, startButton, readingButton, settingsButton;
+    private Button modeButton, startButton, cameraEntryButton, settingsButton;
     private volatile ReadingScreen readingScreen;
     private ReadingLibrary readingLibrary;
     private ReadingNarrationQueue readingNarration;
@@ -320,13 +320,6 @@ public final class MainActivity extends CameraActivity {
         previewContainer.setBackgroundColor(Color.BLACK);
         previewContainer.setClipChildren(true);
         root.addView(previewContainer,new FrameLayout.LayoutParams(-1,-1));
-        c110Preview=new C110LivePreview(this);
-        previewContainer.addView(c110Preview.view(),
-            new FrameLayout.LayoutParams(-1,-1,Gravity.CENTER));
-        // OEM mini succeeded with VLCVideoLayout attached and VISIBLE from
-        // Activity creation. Do not revert to v0.1.11's hidden Surface gate.
-        c110Preview.view().setVisibility(View.VISIBLE);
-
         phoneTexture=new TextureView(this);
         phoneTexture.setOpaque(false);
         phoneTexture.addOnLayoutChangeListener((v,l,t,r,bl,ol,ot,or,ob)->{
@@ -395,35 +388,18 @@ public final class MainActivity extends CameraActivity {
         appTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP,19);
         appTitle.setPadding(dp(6),0,dp(6),0);
         title.addView(appTitle,new LinearLayout.LayoutParams(0,dp(50),1f));
-        c110Button=new Button(this);
-        c110Button.setAllCaps(false);
-        c110Button.setText("C110拍照");
-        c110Button.setTextSize(TypedValue.COMPLEX_UNIT_SP,13);
-        c110Button.setTextColor(Color.WHITE);
-        c110Button.setPadding(dp(4),0,dp(4),0);
-        c110Button.setBackground(roundRect(0xFF196C83,12));
-        c110Button.setContentDescription("C110运动相机高清拍照并由蓝星云端识别朗读");
-        LinearLayout.LayoutParams c110Lp=new LinearLayout.LayoutParams(dp(78),dp(45));
-        c110Lp.rightMargin=dp(6);
-        title.addView(c110Button,c110Lp);
-        c110Button.setOnClickListener(v->captureC110OneShot());
-        c110Button.setOnLongClickListener(v->{
-            c110Camera.resetPhotoMode();
-            toastShort("C110照片模式已标记为待初始化，下次点击将重新进入照片模式");
-            return true;
-        });
-        c110PreviewButton=new Button(this);
-        c110PreviewButton.setAllCaps(false);
-        c110PreviewButton.setText("C110预览");
-        c110PreviewButton.setTextSize(TypedValue.COMPLEX_UNIT_SP,12);
-        c110PreviewButton.setTextColor(Color.WHITE);
-        c110PreviewButton.setPadding(0,0,0,0);
-        c110PreviewButton.setBackground(roundRect(0xFF245477,12));
-        c110PreviewButton.setContentDescription("打开或关闭C110实时Wi-Fi视频预览");
-        LinearLayout.LayoutParams plp=new LinearLayout.LayoutParams(dp(71),dp(45));
-        plp.rightMargin=dp(5);
-        title.addView(c110PreviewButton,plp);
-        c110PreviewButton.setOnClickListener(v->toggleC110LivePreview());
+        // Settings in upper-right; C110 player has its own Activity.
+        settingsButton=new Button(this);
+        settingsButton.setAllCaps(false);
+        settingsButton.setText("⋮");
+        settingsButton.setTextSize(TypedValue.COMPLEX_UNIT_SP,27);
+        settingsButton.setTextColor(Color.WHITE);
+        settingsButton.setBackground(roundRect(0xFF245477,12));
+        settingsButton.setContentDescription("更多选项，打开设置");
+        LinearLayout.LayoutParams slp=new LinearLayout.LayoutParams(dp(48),dp(45));
+        slp.rightMargin=dp(6);
+        title.addView(settingsButton,slp);
+        settingsButton.setOnClickListener(v->openLargeSettings());
         zoomChip=new TextView(this);
         zoomChip.setText("1.0×");
         zoomChip.setGravity(Gravity.CENTER);
@@ -461,21 +437,29 @@ public final class MainActivity extends CameraActivity {
         dock.setBackground(roundRect(0xED091D36,20));
         modeButton=createControlButton("▦\n任务",0xFF2C547D);
         startButton=createControlButton("🎙\nAI对话",0xFF176BAC);
-        readingButton=createControlButton("▤\n阅读",0xFF286FCB);
-        settingsButton=createControlButton("⚙\n设置",0xFF2C547D);
-        for(Button btt:new Button[]{modeButton,startButton,readingButton,settingsButton}){
+        cameraEntryButton=createControlButton("▣\n运动相机",0xFF286FCB);
+        c110Button=createControlButton("▤\n高清拍照",0xFF2C547D);
+        for(Button btt:new Button[]{modeButton,startButton,cameraEntryButton,c110Button}){
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(75),1f);
             lp.setMargins(dp(3),0,dp(3),0);dock.addView(btt,lp);
         }
         root.addView(dock,new FrameLayout.LayoutParams(-1,dp(89),Gravity.BOTTOM));
-        modeButton.setContentDescription("任务选择");
+        modeButton.setContentDescription("任务选择，包含阅读");
         startButton.setContentDescription("AI对话，按住说话，松开发送");
-        readingButton.setContentDescription("阅读，打开书架和整页拍照朗读");
-        settingsButton.setContentDescription("设置");
+        cameraEntryButton.setContentDescription("运动相机，打开C110独立实时预览");
+        c110Button.setContentDescription("C110高清拍照，拍摄原图并识别朗读");
         modeButton.setOnClickListener(v->showTaskSelector());
         startButton.setOnTouchListener((v,event)->handleVoiceButtonTouch(event));
-        readingButton.setOnClickListener(v->openReadingMode());
-        settingsButton.setOnClickListener(v->openLargeSettings());
+        cameraEntryButton.setOnClickListener(v->{
+            if(readingScreen!=null){toastShort("请先退出阅读页面");return;}
+            startActivity(new Intent(this,C110CameraActivity.class));
+        });
+        c110Button.setOnClickListener(v->captureC110OneShot());
+        c110Button.setOnLongClickListener(v->{
+            c110Camera.resetPhotoMode();
+            toastShort("下次C110高清拍照将重新初始化照片模式");
+            return true;
+        });
         return root;
     }
 
@@ -534,6 +518,7 @@ public final class MainActivity extends CameraActivity {
                     setResultStatus("已选择："+task.name);
                 }
                 @Override public void createTask(){editTask(null);}
+                @Override public void openReading(){openReadingMode();}
                 @Override public void removed(TaskCatalog.Task task){
                     if(currentTask!=null&&task.id.equals(currentTask.id)){
                         invalidate();

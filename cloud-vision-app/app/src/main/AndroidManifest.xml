@@ -11,7 +11,7 @@
     </queries>
     <application
         android:allowBackup="false"
-        android:label="蓝星向导 C110测试"
+        android:label="蓝星向导 C110竖屏实验"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/AppTheme"
@@ -28,6 +28,11 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- C110 retains the proven OEM mini pipeline in a distinct portrait Activity. -->
+        <activity android:name=".C110CameraActivity"
+            android:screenOrientation="portrait"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar"
+            android:exported="false"/>
         <!-- Disabled until the in-app USB auto-launch setting enables it.
              Android's USB host resolver/chooser, not an implicit background launch. -->
         <activity-alias

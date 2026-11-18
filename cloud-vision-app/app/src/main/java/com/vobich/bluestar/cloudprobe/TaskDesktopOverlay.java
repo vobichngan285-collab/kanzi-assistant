@@ -37,6 +37,7 @@ final class TaskDesktopOverlay {
         void selected(TaskCatalog.Task task);
         void createTask();
         void removed(TaskCatalog.Task task);
+        void openReading();
     }
     private static final long HOLD_MS=480L;
     private final Activity activity;
@@ -116,6 +117,13 @@ final class TaskDesktopOverlay {
         TextView title=label("选择任务",23,Color.WHITE);
         title.setTypeface(null,android.graphics.Typeface.BOLD);
         top.addView(title,new LinearLayout.LayoutParams(0,dp(58),1f));
+        TextView read=label("▤ 阅读",17,Color.WHITE);
+        read.setBackground(bg(0xFF286FCB,0));
+        read.setContentDescription("阅读，打开书架和整页拍照朗读");
+        read.setClickable(true);read.setFocusable(true);
+        LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(dp(88),dp(50));
+        rp.rightMargin=dp(6);top.addView(read,rp);
+        read.setOnClickListener(v->{dialog.dismiss();listener.openReading();});
         TextView close=label("×",32,Color.WHITE);
         close.setContentDescription("关闭任务选择");
         close.setBackground(bg(0x77203B62,0));
