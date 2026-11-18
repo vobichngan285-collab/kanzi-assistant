@@ -112,9 +112,9 @@ final class C110PreviewProbe {
         try(Socket s=wifi.getSocketFactory().createSocket()){
             s.connect(new InetSocketAddress(IP,554),TIMEOUT_MS);
             s.setSoTimeout(TIMEOUT_MS);
-            String req="DESCRIBE "+RTSP_URL+" RTSP/1.0\\r\\nCSeq: 10\\r\\n"+
-                "Accept: application/sdp\\r\\n"+
-                "User-Agent: BlueStarC110-Diagnostics\\r\\n\\r\\n";
+            String req="DESCRIBE "+RTSP_URL+" RTSP/1.0\r\nCSeq: 10\r\n"+
+                "Accept: application/sdp\r\n"+
+                "User-Agent: BlueStarC110-Diagnostics\r\n\r\n";
             s.getOutputStream().write(req.getBytes(StandardCharsets.US_ASCII));
             s.getOutputStream().flush();
             // Never request SETUP/PLAY here. Cap to 24KiB and stop on declared
@@ -128,7 +128,7 @@ final class C110PreviewProbe {
                 byte[] raw=data.toByteArray();
                 String ascii=new String(raw,StandardCharsets.US_ASCII);
                 if(headerEnd<0){
-                    headerEnd=ascii.indexOf("\\r\\n\\r\\n");
+                    headerEnd=ascii.indexOf("\r\n\r\n");
                     if(headerEnd>=0){
                         String header=ascii.substring(0,headerEnd);
                         Matcher len=Pattern.compile("(?im)^Content-Length:\\s*(\\d+)\\s*$").matcher(header);
@@ -140,7 +140,7 @@ final class C110PreviewProbe {
             }
             String response=data.toString("US-ASCII").toLowerCase(java.util.Locale.ROOT);
             if(!response.startsWith("rtsp/1.0 200"))return -6;
-            int split=response.indexOf("\\r\\n\\r\\n");
+            int split=response.indexOf("\r\n\r\n");
             if(split<0)return -7;
             String body=response.substring(split+4);
             int flags=0;
