@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class MainActivity extends Activity {
  private final ExecutorService pool=Executors.newSingleThreadExecutor();
  private final AtomicBoolean busy=new AtomicBoolean();
- private final StringBuilder logText=new StringBuilder("蓝星C110拍照取图实验 v0.1.1\n只在确认②后发送一次1001快门；不切模式、不删文件、不上传图片。\n");
+ private final StringBuilder logText=new StringBuilder("蓝星C110拍照取图实验 v0.1.2\n修复3037模式查询误拦截；仅用户确认后发送一次1001快门，不切模式、不删文件、不上传。\n");
  private EditText ipInput;
  private TextView display, details;
  private Network wifi;
@@ -36,7 +36,7 @@ public final class MainActivity extends Activity {
   ScrollView sc=new ScrollView(this);
   LinearLayout root=new LinearLayout(this); root.setOrientation(1);root.setPadding(18,16,18,24);
   sc.addView(root);setContentView(sc);
-  TextView title=new TextView(this);title.setText("C110 拍照取图实验 v0.1.1");title.setTextSize(25);title.setTextColor(Color.BLACK);root.addView(title);
+  TextView title=new TextView(this);title.setText("C110 拍照取图实验 v0.1.2");title.setTextSize(25);title.setTextColor(Color.BLACK);root.addView(title);
   TextView note=new TextView(this);
   note.setText("先连接 C110 Wi-Fi。①只读检测；②遥控拍照一次并自动下载新JPEG。不会切换拍摄模式。");
   note.setTextSize(18);root.addView(note);
@@ -205,12 +205,20 @@ public final class MainActivity extends Activity {
   Integer deviceStatus=ProbeUtil.tagInt(device.text(),"Status");
   if(device.status!=200||device.body.length==0||(deviceStatus!=null&&deviceStatus!=0))
    throw new IOException("3012设备探测未通过；没有发送拍照");
-  Result mode=get("/?custom=1&cmd=3037");
-  Integer modeStatus=ProbeUtil.tagInt(mode.text(),"Status");
-  if(mode.status!=200||mode.body.length==0||(modeStatus!=null&&modeStatus!=0))
-   throw new IOException("3037当前模式查询未通过；没有发送拍照");
-  Integer modeValue=ProbeUtil.tagInt(mode.text(),"Value");
-  line("设备/模式只读查询通过；模式值="+(modeValue==null?"未返回":modeValue)+"（模式映射待验证）");
+  // 3037 is a read-only *mode-status* query. A nonzero XML Status can report a
+  // mode/state, not necessarily a failed transport or forbidden shutter.
+  // It is diagnostic only: don't gate an explicitly confirmed one-shot shutter.
+  try {
+   Result mode=get("/?custom=1&cmd=3037");
+   Integer modeStatus=ProbeUtil.tagInt(mode.text(),"Status");
+   Integer modeValue=ProbeUtil.tagInt(mode.text(),"Value");
+   line("3037模式诊断：HTTP"+mode.status+"，"+mode.body.length+"字节，"+mode.ms+
+        "ms；Status="+(modeStatus==null?"未提供":modeStatus)+
+        "；Value="+(modeValue==null?"未提供":modeValue)+
+        "；不强制Status=0，不记录原始回包");
+  }catch(IOException e){
+   line("3037模式查询异常："+e.getClass().getSimpleName()+"；仅作诊断，不阻止单次拍照");
+  }
   Set<String> oldFiles=list(true);
   baseline=new LinkedHashSet<>(oldFiles);baselineIp=ip;
   line("快门前记录旧图："+oldFiles.size()+"张；不会将旧图判作新图");
@@ -220,7 +228,9 @@ public final class MainActivity extends Activity {
   Integer status=ProbeUtil.tagInt(shot.text(),"Status");
   line("拍照1001：HTTP"+shot.status+"，"+shot.ms+"ms；状态码="+(status==null?"未提供":status)+"；不记录照片路径");
   if(shot.status!=200)throw new IOException("快门HTTP失败："+shot.status);
-  if(status!=null&&status!=0)throw new IOException("相机拒绝快门；状态码"+status);
+  if(status!=null&&status!=0) {
+   line("1001返回非零Status，可能是相机拒绝或特殊状态；继续只读观察是否产生真实JPEG，不再发送快门");
+  }
   state("已请求拍照，等待新JPEG写盘…");
   int failures=0;boolean detected=false;
   while(SystemClock.elapsedRealtime()-start<20000){
