@@ -1,3 +1,13 @@
+# 2026-11-18｜C110 v0.1.6 真机SETUP200/PLAY404 → v0.1.7 PLAY URI专项已通过CI并发布，待真机
+
+- **最新真机反馈（23:09:54、23:10:19）**：C110 v0.1.6两轮均 `live_mode_cmd=0`、`live_cmd=0`、`tcp554=1`、`OPTIONS=200`、`DESCRIBE=200`、`rtsp_sdp_flags=999`、`rtsp_track=1`、`rtsp_tcp_setup=200`，但 `rtsp_tcp_play=404`，RTP=-9且解码画面宽高为0，**视频仍没有真实首帧**。这个404是PLAY目标请求失败，不代表相机没有视频流，-9是还没发起RTP检查。
+- **v0.1.6代码确证问题**：SETUP按SDP解析到的视频轨道URI发送，但PLAY与TEARDOWN仍固定发送 `rtsp://192.168.1.254:554/xxx.mp4`。若SDP没有提供聚合控制URI，PLAY与SETUP会指向不同资源；此是待真机验证的可能原因，非确定根因。按照RTSP 1.0（RFC2326）会话级 `a=control` 表示聚合播放控制，媒体级表示轨道控制。
+- **v0.1.7修改严格限制**：原仓库隔离分支 `exp/bluestar-c110-integrated-20261118`，最终 HEAD **`2efa82c1f194d00a6a44902f8def216c3bd06b95`**。增加 `videoTargets`：有会话级SDP控制（含 `*`）时发送聚合PLAY；未声明聚合控制时只对成功SETUP的单视频轨道发送PLAY。相同Session复用一次，TEARDOWN与PLAY一致。不尝试多个URI、无自动第二次PLAY、禁用跨主机/可疑URI；只新增匿名字段 `rtsp_play_target`，1=会话级聚合，2=单轨道，-9=未选出有效目标；保留原track/setup/play/rtp数值。不改Media3主播放器、JPEG拍照、蜂窝OCR/TTS、正式RC25、M02S或固件。
+- **回归与真实编译验证**：新增纯Java测试覆盖无聚合控制、`a=control:*`、会话与媒体目标不同、仅会话控制、非法聚合URI。第一次 CI 发现 `Report` 参数数量错误，第二次处理了静态断言，最终改正后 [GitHub Actions 44333672807](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44333672807) **completed/success**：Java协议/隔离安全、固定USB补丁、arm64 Gradle APK、ZIP校验、包名/音效/native libs、上传和预发布全部通过。不要将此前中间失败Runs认作发布。
+- **已核实Release**：[bluestar-c110-play-target-diagnostics-20261118-v017](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-play-target-diagnostics-20261118-v017)，APK **`BlueStar_Guide_C110_PlayTarget_0.1.7.apk`**、11,834,143字节、sha256 `0d96409860cc9999b5346353c793708e11e366239dbae30a3e49aa2b2a83289e`；安装直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-play-target-diagnostics-20261118-v017/BlueStar_Guide_C110_PlayTarget_0.1.7.apk。独立包名 `com.vobich.bluestar.c110play`，不覆盖RC25/此前验证成功的静态取图APK。
+- **下一步只需一次人工验收**：手机连C110 Wi-Fi，安装 v0.1.7 点一次顶部「C110预览」，复制最新 `c110_live` 整段，重点看 `rtsp_play_target`、`rtsp_tcp_setup`、`rtsp_tcp_play`、`rtsp_tcp_rtp` 和是否有正数首帧/宽高。无需API Key、无需重试已成功的拍照，不应声称本次已实现真实视频预览。若PLAY=200且RTP可见，下一步才去解决Media3播放器显示问题。
+
+---
 # 2026-11-18｜C110 v0.1.5 两次RTSP轨道未识别 → v0.1.6 定向修复已发布，待真机
 
 - **用户最新真机证据（22:49:01与22:49:09）**：在v0.1.5两次单击C110预览，`live_mode_cmd=0`、`live_cmd=0`、`tcp554=1`、`rtsp_options=200`、`rtsp_describe=200`、`rtsp_sdp_flags=999`；但`rtsp_track=-2`、`rtsp_tcp_setup=-9`、`rtsp_tcp_play=-9`、`rtsp_tcp_rtp=-9`、视频宽高=0、Media3错误2000/原因5/阶段3。**-9是请求未进行，不是摄像头拒绝TCP；视频依然没有成功出首帧。**
