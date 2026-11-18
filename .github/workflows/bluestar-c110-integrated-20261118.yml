@@ -33,6 +33,19 @@ jobs:
           SRC=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
           javac -d /tmp/bluestar-c110-test "$SRC/C110PhotoPolicy.java" cloud-vision-app/tests/C110PhotoPolicyTest.java
           java -cp /tmp/bluestar-c110-test com.vobich.bluestar.cloudprobe.C110PhotoPolicyTest
+          mkdir -p /tmp/bluestar-c110-stub/android/net
+          cat > /tmp/bluestar-c110-stub/android/net/Network.java <<'JAVA'
+          package android.net;
+          public class Network {
+              public javax.net.SocketFactory getSocketFactory() {
+                  return javax.net.SocketFactory.getDefault();
+              }
+          }
+          JAVA
+          javac -d /tmp/bluestar-c110-test \
+            /tmp/bluestar-c110-stub/android/net/Network.java \
+            "$SRC/C110RtspSessionProbe.java" cloud-vision-app/tests/C110RtspSessionProbeTest.java
+          java -cp /tmp/bluestar-c110-test com.vobich.bluestar.cloudprobe.C110RtspSessionProbeTest
           python3 - <<'PY'
           from pathlib import Path
           main=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/MainActivity.java').read_text()
@@ -40,7 +53,7 @@ jobs:
           cloud=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/CloudVisionClient.java').read_text()
           manifest=Path('cloud-vision-app/app/src/main/AndroidManifest.xml').read_text()
           gradle=Path('cloud-vision-app/app/build.gradle').read_text()
-          assert "applicationIdSuffix '.c110tcp'" in gradle
+          assert "applicationIdSuffix '.c110track'" in gradle
           assert 'captureC110OneShot' in main and 'current.remoteJpeg' in main
           assert 'FrameCompressor.encodeAdjusted(' in main
           assert 'CloudVisionClient.recognize(' in main and 'TargetVisionClient.inspect(' in main
@@ -67,7 +80,8 @@ jobs:
           assert 'SETUP' in handshake and 'TEARDOWN' in handshake
           assert '192.168.1.254' in handshake and 'RTP/AVP/TCP;unicast' in handshake
           assert 'getSocketFactory().createSocket()' in handshake
-          assert 'return resolved.toString()' in handshake
+          assert 'return new TrackResult(1,normalized.toString())' in handshake
+          assert 'videoTrack(describe.body,describe.headers)' in handshake
           assert "socket.setSoTimeout(1300);" in handshake
           preview=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/C110LivePreview.java').read_text()
           assert 'rtsp://192.168.1.254:554/xxx.mp4' in preview
@@ -117,8 +131,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_C110_RtspTcp_0.1.5.apk
-          test -s out/BlueStar_Guide_C110_RtspTcp_0.1.5.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_C110_RtspTrack_0.1.6.apk
+          test -s out/BlueStar_Guide_C110_RtspTrack_0.1.6.apk
           unzip -tq out/*.apk >/dev/null
           unzip -Z1 out/*.apk >out/entries.txt
           grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
@@ -127,14 +141,14 @@ jobs:
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           test -x "$AAPT"
           "$AAPT" dump badging out/*.apk >out/badging.txt
-          grep -Fq "package: name='com.vobich.bluestar.c110tcp'" out/badging.txt
-          grep -Fq "versionName='1.0.30-c110-tcpsetup-lab'" out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110track'" out/badging.txt
+          grep -Fq "versionName='1.0.31-c110-track-lab'" out/badging.txt
           grep -q 'application-icon-' out/badging.txt
-          (cd out && sha256sum BlueStar_Guide_C110_RtspTcp_0.1.5.apk > SHA256SUMS.txt)
+          (cd out && sha256sum BlueStar_Guide_C110_RtspTrack_0.1.6.apk > SHA256SUMS.txt)
           cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: BlueStar_Guide_C110_RtspTcp_0.1.5
+          name: BlueStar_Guide_C110_RtspTrack_0.1.6
           path: out/*
           retention-days: 14
       - name: Publish isolated prerelease only if unused tag
@@ -143,12 +157,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG=bluestar-c110-tcp-session-diagnostics-20261118-v015
+          TAG=bluestar-c110-track-parser-diagnostics-20261118-v016
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Existing C110 integrated prerelease, refusing overwrite" >&2
             exit 1
           fi
-          gh release create "$TAG" "out/BlueStar_Guide_C110_RtspTcp_0.1.5.apk" \
+          gh release create "$TAG" "out/BlueStar_Guide_C110_RtspTrack_0.1.6.apk" \
             --target "$GITHUB_SHA" --prerelease \
-            --title "Blue Star Guide C110 RTSP TCP Session Lab v0.1.5" \
-            --notes "Targeted post-failure RTSP diagnostic: C110 real 3001/par1 and 2015/par1 both returned Status 0, 554 RTSP OPTIONS/DESCRIBE are 200, SDP describes H264 with SPS/PPS; Media3 forced TCP still fails before first frame. After releasing failed player, issues one bounded disposable RTSP TCP session DESCRIBE→video-track SETUP→PLAY→TEARDOWN using same proven camera URL, logging only numeric track/setup/play/first RTP statuses; no raw SDP or video logged. This differentiates TCP 461 from Media3 protocol failure. No fallback to blind URLs or unknown commands. Existing C110 full-JPEG→cellular cloud OCR/TTS preserved. Isolated package com.vobich.bluestar.c110tcp. Real preview still pending."
+            --title "Blue Star Guide C110 RTSP Track Parser Lab v0.1.6" \
+            --notes "v0.1.5 real-device logs yielded rtsp_track=-2 while SDP flags=999 and DESCRIBE=200, so TCP SETUP was skipped. v0.1.6 handles session/media a=control, wildcard control, missing Content-Length, implicit RTSP port 554, and splits anonymous no-track error codes. Pure Java regression tests added. Single-shot TCP SETUP/PLAY remains unchanged; C110 JPEG-cloud OCR and RC25 untouched. First real video frame NOT yet confirmed. Isolated package com.vobich.bluestar.c110track."

@@ -1,27 +1,16 @@
-# 蓝星C110 RTSP播放会话专项 v0.1.5（2026-11-18）
+# C110 RTSP 轨道解析诊断 v0.1.6（2026-11-18）
 
-## 本轮现场证据
-用户 v0.1.4 两次测试一致：
-- 进入录像模式 `3001/par=1` **Status=0**，启动预览 `2015/par=1` **Status=0**；
-- 相机 `tcp554=1`、`OPTIONS=200`、`DESCRIBE=200`，候选URL `rtsp://192.168.1.254:554/xxx.mp4` 服务真实可达。
-- SDP flags `999`，解码后包含 v=0、m=video、H264、sprop-parameter-sets(SPS/PPS)、a=control、fmtp、rtpmap、application/sdp；不包含H265/MJPEG。**因此缺少H264 SPS/PPS的猜测不再是优先方向**。
-- 现用 Media3 `setForceUseRtpTcp(true)`，仍在首帧前报 `2000`、`Rtsp`类异常、stage=3，宽高为0；可能是 RTSP SETUP/PLAY/传输不兼容而非视频源不存在。原厂采用 VLC。
-- 22:31:23静态高清拍照仍成功，1,127,176B、5888x3312、取图1244ms，云端响应正常。
+## 真机依据
+- v0.1.5 的 22:49:01 和 22:49:09：3001/par1=0、2015/par1=0、554连通、OPTIONS/DESCRIBE=200、SDP flags=999，rtsp_track=-2，SETUP/PLAY/RTP=-9，宽高=0、未出现真实帧。
+- SETUP=-9 是未执行，不是相机拒绝TCP。原版解析只认视频段内的非星号control，DESCRIBE缺Content-Length也会得到空SDP。
 
-## 新实验：用已证实的唯一 RTSP URL 验证完整 TCP 视频会话
-仅用户点击「C110预览」，走原已成功模式切换 + 启流。Media3出错后**先关闭播放器**，在已经绑定C110 Wi-Fi的原 Network 上通过独立一次性 TCP Socket 执行：
-1. **DESCRIBE** 提取真实第一条 video track a=control （不记录SDP或地址），只允许解析到192.168.1.254:554，拒绝其它域名/路径穿越。
-2. **SETUP**：一次 `Transport: RTP/AVP/TCP;unicast;interleaved=0-1`，记录 `rtsp_tcp_setup` 的RTSP状态（200成功、461不接受TCP、其他原码；-1超时、-5其它）。
-3. 若SETUP=200，从本次Session标识**PLAY** 一次，记录 `rtsp_tcp_play`，再限时查看是否收到`$`开头的RTP interleaved头：`rtsp_tcp_rtp=1`(可见)、-1超时、0非RTP或-7关闭。
-4. **TEARDOWN**关闭当前一次性 RTSP Session，不修改SD卡、固件、不录制/存储视频、不上传原始帧。
-5. 记录 `rtsp_track`（1=合法视频轨道、-2未找到、-6 DESCRIBE失败等）、`rtsp_tcp_setup`、`rtsp_tcp_play`、`rtsp_tcp_rtp`。最多约数秒；未出画面不会自动再次触发拍照。
-**仍保留原高清JPEG取图→蜂窝云端OCR/TTS以及手机USB摄像头、正式RC25功能**。此为隔离诊断APK，而不是预览已修复的承诺。
+## v0.1.6 单变量修复
+- DESCRIBE有Content-Length继续定长读取；没有长度时最多读16KiB，并使用短暂空闲超时。
+- 首个video媒体段的control优先；没有时使用全局control；星号只回退到已知的RTSP主地址；相对或绝对URI合法归一化、默认端口554。
+- 固定192.168.1.254:554并拒绝跨主机、危险URI或路径穿越。日志仅记录数字，不保存SDP、轨道URL、RTP。
+- rtsp_track: 1合法、-2无控制、-3正文空、-4无video、-5控制URI非法、-6 DESCRIBE非200。
+- 新增Java回归用例，测试全局/媒体控制、wildcard、缺Content-Length、默认端口、非法地址。
+- 不改Media3播放、TCP SETUP/PLAY指令、已经成功的高清JPEG→蜂窝OCR/TTS、正式RC25、M02S。
 
-## 判读
-- TCP SETUP=461/其它拒绝：原厂VLC可能需UDP RTP；下一阶段选用支持更宽传输兼容性的播放内核并解决Wi-Fi/蜂窝分流。
-- SETUP和PLAY均200，且首个RTP=1：摄像头真实TCP视频输出正常，Media3不兼容可能性大，可切VLC或适配RTSP播放器。
-- SETUP=200但PLAY错误：再对照原厂RTSP会话、Session/Range/header。
-- 没有track：改为比对SDP轨道URI解析，不盲换主URL。
-
-**测试方法**：连接C110 Wi-Fi，点击顶部一次C110预览，失败后复制最新 `c110_live` 日志；不用填API Key或重新测试已成功拍照。
-
+## 验收
+安装隔离包com.vobich.bluestar.c110track，连接C110 Wi-Fi，仅点一次C110预览，复制完整最新c110_live。实时预览仍未证明成功。

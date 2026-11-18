@@ -35,7 +35,13 @@ final class C110RtspSessionProbe {
             this.track=track;this.setup=setup;this.play=play;this.firstRtp=firstRtp;
         }
     }
-    private static final class Response {
+    /** Anonymous codes: 1 valid; -2 no control; -3 empty SDP;
+     * -4 no video; -5 untrusted control URI. */
+    static final class TrackResult {
+        final int code; final String url;
+        TrackResult(int code,String url){this.code=code;this.url=url;}
+    }
+    static final class Response {
         final int code;final Map<String,String> headers;final String body;
         Response(int code,Map<String,String> headers,String body){
             this.code=code;this.headers=headers;this.body=body;
@@ -50,14 +56,15 @@ final class C110RtspSessionProbe {
             socket.setSoTimeout(READ_MS);
             InputStream input=socket.getInputStream();OutputStream out=socket.getOutputStream();
             send(out,"DESCRIBE",URL,1,"Accept: application/sdp\r\n");
-            Response describe=read(input);
+            Response describe=read(input,socket,true);
             if(describe.code!=200)return new Report(-6,describe.code,-9,-9);
-            String trackUrl=videoTrack(describe);
-            if(trackUrl==null)return new Report(-2,-9,-9,-9);
+            TrackResult selected=videoTrack(describe.body,describe.headers);
+            if(selected.code!=1)return new Report(selected.code,-9,-9,-9);
+            String trackUrl=selected.url;
             track=1;
             send(out,"SETUP",trackUrl,2,
                 "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n");
-            Response set=read(input);setup=set.code;
+            Response set=read(input,socket,false);setup=set.code;
             if(set.code!=200)return new Report(track,setup,-9,-9);
             String session=set.headers.get("session");
             if(session==null)return new Report(track,setup,-7,-9);
@@ -66,7 +73,7 @@ final class C110RtspSessionProbe {
                 return new Report(track,setup,-7,-9);
             try {
                 send(out,"PLAY",URL,3,"Session: "+session+"\r\n");
-                Response played=read(input);play=played.code;
+                Response played=read(input,socket,false);play=played.code;
                 if(play==200){
                     try{
                         socket.setSoTimeout(1300);
@@ -99,7 +106,7 @@ final class C110RtspSessionProbe {
         out.write(request.getBytes(StandardCharsets.US_ASCII));out.flush();
     }
 
-    private static Response read(InputStream input)throws IOException {
+    static Response read(InputStream input,Socket socket,boolean describe)throws IOException {
         String first=line(input,256);
         Matcher status=Pattern.compile("^RTSP/1\\.0\\s+([1-5]\\d\\d)\\b")
             .matcher(first);
@@ -120,6 +127,23 @@ final class C110RtspSessionProbe {
                 throw new IOException("Invalid content length");
             }
             if(size<0||size>LIMIT)throw new IOException("Oversized RTSP response");
+        }
+        // Bounded fallback for cameras omitting DESCRIBE Content-Length.
+        if(length==null&&describe){
+            ByteArrayOutputStream body=new ByteArrayOutputStream();
+            byte[] chunk=new byte[1024];
+            socket.setSoTimeout(400);
+            try{
+                while(body.size()<LIMIT){
+                    int n;
+                    try{n=input.read(chunk,0,Math.min(chunk.length,LIMIT-body.size()));}
+                    catch(SocketTimeoutException idle){break;}
+                    if(n<0)break;
+                    if(n>0)body.write(chunk,0,n);
+                }
+            }finally{socket.setSoTimeout(READ_MS);}
+            return new Response(Integer.parseInt(status.group(1)),headers,
+                new String(body.toByteArray(),StandardCharsets.US_ASCII));
         }
         byte[] body=new byte[size];int offset=0;
         while(offset<size){
@@ -142,31 +166,55 @@ final class C110RtspSessionProbe {
         throw new IOException("RTSP header line too long");
     }
 
-    /** Resolve only the VIDEO media's first a=control to the original camera. */
-    private static String videoTrack(Response r){
-        String control=null;boolean inVideo=false;
-        for(String raw:r.body.split("\\r?\\n")){
+    /** Resolve first VIDEO control, falling back only to session control. */
+    static TrackResult videoTrack(String sdp,Map<String,String> headers){
+        if(sdp==null||sdp.trim().isEmpty())return new TrackResult(-3,null);
+        String sessionControl=null,mediaControl=null;
+        boolean mediaSeen=false,inVideo=false,hasVideo=false;
+        for(String raw:sdp.split("\\r?\\n")){
             String row=raw.trim();
-            if(row.startsWith("m="))inVideo=row.toLowerCase(Locale.ROOT).startsWith("m=video");
-            if(inVideo&&row.startsWith("a=control:")&&control==null){
-                String candidate=row.substring("a=control:".length()).trim();
-                if(!candidate.equals("*")&&!candidate.isEmpty())control=candidate;
+            if(row.startsWith("m=")){
+                if(inVideo)break;
+                mediaSeen=true;
+                inVideo=row.toLowerCase(Locale.ROOT).startsWith("m=video");
+                if(inVideo)hasVideo=true;
+                continue;
+            }
+            if(row.regionMatches(true,0,"a=control:",0,10)){
+                String value=row.substring(10).trim();
+                if(value.isEmpty())continue;
+                if(!mediaSeen&&sessionControl==null)sessionControl=value;
+                else if(inVideo&&mediaControl==null)mediaControl=value;
             }
         }
-        if(control==null)return null;
+        if(!hasVideo)return new TrackResult(-4,null);
+        String control=mediaControl!=null?mediaControl:sessionControl;
+        if(control==null)return new TrackResult(-2,null);
+        // SDP a=control:* is aggregate: use only the known presentation URL.
+        if("*".equals(control))return new TrackResult(1,URL);
         try{
-            String base=r.headers.get("content-base");
-            if(base==null||base.isEmpty())base=URL.endsWith("/")?URL:URL+"/";
+            if(control.contains(".."))return new TrackResult(-5,null);
+            String base=headers.get("content-base");
+            if(base==null||base.isEmpty())base=headers.get("content-location");
+            if(base==null||base.isEmpty())base=URL;
             URI resolved;
-            if(control.startsWith("rtsp://"))resolved=URI.create(control);
-            else if(control.startsWith("/"))resolved=URI.create("rtsp://"+HOST+":554"+control);
-            else resolved=URI.create(base.endsWith("/")?base:base+"/").resolve(control);
+            if(control.regionMatches(true,0,"rtsp://",0,7))
+                resolved=URI.create(control);
+            else if(control.startsWith("/"))
+                resolved=URI.create("rtsp://"+HOST+":554"+control);
+            else {
+                URI parent=URI.create(base.endsWith("/")?base:base+"/");
+                resolved=parent.resolve(control);
+            }
             if(!"rtsp".equalsIgnoreCase(resolved.getScheme())||
-                !HOST.equals(resolved.getHost())||resolved.getPort()!=554||
-                resolved.getRawUserInfo()!=null||resolved.getQuery()!=null||
-                resolved.getFragment()!=null||resolved.getRawPath().contains(".."))
-                return null;
-            return resolved.toString();
-        }catch(Exception e){return null;}
+                !HOST.equals(resolved.getHost())||
+                (resolved.getPort()!=-1&&resolved.getPort()!=554)||
+                resolved.getRawUserInfo()!=null||resolved.getRawQuery()!=null||
+                resolved.getRawFragment()!=null||resolved.getPath()==null||
+                resolved.getPath().contains(".."))
+                return new TrackResult(-5,null);
+            URI normalized=new URI("rtsp",null,HOST,554,resolved.getPath(),null,null);
+            return new TrackResult(1,normalized.toString());
+        }catch(Exception invalid){return new TrackResult(-5,null);}
     }
 }
