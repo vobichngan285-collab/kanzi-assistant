@@ -66,7 +66,7 @@ final class C110RtspSessionProbe {
             InputStream input=socket.getInputStream();OutputStream out=socket.getOutputStream();
             send(out,"DESCRIBE",URL,1,"Accept: application/sdp\r\n");
             Response describe=read(input,socket,true);
-            if(describe.code!=200)return new Report(-6,describe.code,-9,-9,-9,-9);
+            if(describe.code!=200)return new Report(-6,describe.code,-9,-9,-9);
             Targets selected=videoTargets(describe.body,describe.headers);
             if(selected.code!=1)return new Report(selected.code,-9,-9,-9,-9);
             playTarget=selected.playKind;
