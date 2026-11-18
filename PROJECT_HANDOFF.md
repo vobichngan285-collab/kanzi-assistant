@@ -1,3 +1,14 @@
+# 2026-11-18｜C110 v0.1.5 两次RTSP轨道未识别 → v0.1.6 定向修复已发布，待真机
+
+- **用户最新真机证据（22:49:01与22:49:09）**：在v0.1.5两次单击C110预览，`live_mode_cmd=0`、`live_cmd=0`、`tcp554=1`、`rtsp_options=200`、`rtsp_describe=200`、`rtsp_sdp_flags=999`；但`rtsp_track=-2`、`rtsp_tcp_setup=-9`、`rtsp_tcp_play=-9`、`rtsp_tcp_rtp=-9`、视频宽高=0、Media3错误2000/原因5/阶段3。**-9是请求未进行，不是摄像头拒绝TCP；视频依然没有成功出首帧。**
+- **源码定位**：v0.1.5的`C110RtspSessionProbe.java`只识别首个video媒体段内的非星号`a=control`，没有解析全局会话级control、通配`*`；当DESCRIBE未提供Content-Length时会把SDP正文当空串；合法无显式554端口的URI也会被拒绝。这些是源码可证实的兼容性限制，但**究竟是哪一条导致用户-2仍需新诊断区分**。
+- **v0.1.6 精确修复**：继续原隔离分支`exp/bluestar-c110-integrated-20261118`，HEAD `90ea48562fc006e729362a07fd3019a2441fa3c2`。只改SDP正文读取与首个视频轨道解析：有Content-Length时定长读，没有时受限16KiB并使用短空闲超时；首个video媒体级control优先，缺失时回退会话级control；星号仅映射已有已验证的主RTSP URL；允许合法相对/绝对track URI和省略默认554端口，但始终约束`192.168.1.254:554`，拒绝跨主机、异常权限/查询/片段与路径穿越。`rtsp_track`分类：1=轨道正常，-2=无控制字段，-3=SDP正文空，-4=无video媒体段，-5=非法/不可信控制URI，-6=DESCRIBE非200。SETUP/PLAY/RTP只在成功提取合法轨道后按上一版协议进行，未更改原媒体播放器、快门、完整JPEG→蜂窝百炼OCR/TTS、RC25或M02S。
+- **代码检查与构建实证**：新增纯Java`C110RtspSessionProbeTest`，覆盖全局/媒体控制、`*`、相对/绝对轨道、默认端口、安全拒绝及缺Content-Length SDP；[GitHub Actions 44331161234](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44331161234) **completed/success**：Java回归/静态隔离、RC25固定USB补丁、ARM64 Gradle构建、APK身份、原生库、音效、签名包及发布全部成功。独立安装包名`com.vobich.bluestar.c110track`，旧Release不覆盖。
+- **真正核实的预发布**：[bluestar-c110-track-parser-diagnostics-20261118-v016](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-track-parser-diagnostics-20261118-v016)，APK `BlueStar_Guide_C110_RtspTrack_0.1.6.apk` **11,834,135字节**，SHA256 `89cd63a4ff6f45f78ff4ea6aef21b686e2055d6a9a841a09c508c3299cabb507`，直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-track-parser-diagnostics-20261118-v016/BlueStar_Guide_C110_RtspTrack_0.1.6.apk。
+- **下一步唯一真机验收**：手机连接C110 Wi-Fi，安装v0.1.6，点击一次顶部C110预览，不必配置API Key或重复已经成功的高清拍照；复制当次`c110_live`全部数字日志。若`rtsp_track=1`，再看SETUP状态是否200/461、PLAY/RTP是否成功；若仍负数按分类定位。**此版本只是修解析+诊断，实时画面尚未实机成功，不得宣称已修复。**
+
+---
+
 # 2026-11-18｜C110视频模式+RTSP DESCRIBE均成功，v0.1.5 RTSP TCP SETUP/PLAY专项已发布
 
 - **用户v0.1.4实机结果（22:31）**：两次「C110预览」均 `live_mode_cmd=0`（3001/par=1录像模式成功）、`live_cmd=0`（2015/par=1启动流成功）、`tcp554=1`、`rtsp_options=200`、`rtsp_describe=200`、`rtsp_sdp_flags=999`，而 `live_width_px=0, live_height_px=0, live_rtsp_error=2000, live_rtsp_cause=5, live_rtsp_stage=3`，**未出现任何视频首帧**。SDP flags 999 = 512(application/sdp)+256(rtpmap)+128(fmtp)+64(control)+32(sprop SPS/PPS)+4(H264)+2(m=video)+1(v=0)：有H264视频描述和SPS/PPS，优先排查 SETUP/PLAY 而非再猜缺SPS/PPS。8192仍TCP拒绝=-2，不继续重复此端口。截图画面来自手机Camera2回退，不是C110真实帧。
