@@ -1,3 +1,13 @@
+# 2026-11-19｜C110 成功播放器独立竖屏接入蓝星向导 v0.1.13（CI成功，真机待测）
+
+- **授权/边界**：用户明确要求先做一个独立「运动相机」板块，打开自动进入实时预览，手机竖屏；坚决复用已真机成功的 C110 OEM Minimal v0.1.0，不重复折腾RTSP、LibVLC及Surface门控。本轮不加分辨率切换、点击视频帧云OCR、相机电量、自动连接或Wi-Fi倒计时。
+- **仓库和代码**：唯一仓库 vobichngan285-collab/kanzi-assistant，新实验分支 exp/c110-portrait-page-20261119，HEAD e3ff7d075f46abfc3927e0d06cfbf30013021045。新增 cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/C110CameraActivity.java，来自成功 mini 的 OemVideoActivity，包名/类名/简化顶部诊断和进入自动 begin 调整；begin→runWhenCurrent 间的成功版 HTTP模式指令、WiFi、LibVLC/Media/Surface/单次300ms播放核心逐字相同。独立 portrait Activity、原Android Light NoActionBar主题，不再把C110播放器嵌进手机/USB预览容器。保留原mini及RC25所有版本。
+- **主界面**：底部「任务/AI对话/运动相机/高清拍照」，「阅读」放在任务宫格顶部快捷入口，「设置」放右上三点。运动相机按钮只打开独立Activity；原C110高清原图拍照与云端OCR/TTS代码未改。独立相机页现阶段只预览，有重连、返回、复制诊断，尚未接入视频点帧OCR，也没有真正验证全屏铺满和流畅度。
+- **CI**：首次Actions 44369842354失败，仅因静态测试的Java字符串转义错误，已修测试；第二轮 https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44370200027 completed/success，成功mini核心一致性断言、Java协议单测、USB既有补丁、Gradle :app:assembleDebug、APK包名/版本/native LibVLC/音效/ZIP、预发布全部通过。
+- **Release**：https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-portrait-player-20261119-v0113；直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-portrait-player-20261119-v0113/BlueStar_Guide_C110_PortraitPlayer_0.1.13.apk；大小56,666,425字节。隔离包名 com.vobich.bluestar.c110page，版本 1.0.38-c110-portrait-page-lab。CI无法证明真机出画。
+- **唯一下一步**：先手动连接C110 Wi-Fi（本版尚无自动WiFi请求），安装隔离v0.1.13，点击底部「运动相机」确认能否自动播放真实连续画面且竖屏显示；若失败请收集页面可复制诊断及截图。未经过真机验证前，勿声称已出画成功；不要先改成功播放器内核，也不重复已经成功的高清照片验证。
+
+---
 # 2026-11-19｜C110 原厂成功预览已接入蓝星向导实验版 v0.1.12（CI通过，取帧OCR/TTS待真机）
 
 - **用户正式授权**：在 C110 mini 独立视频首个成功截图后，用户明确说“可以现在接入”。本轮把真正成功的原厂式**最小视频播放流程**接入已有 Blue Star Cloud OCR/TTS 主界面，不改正式RC25，不复活v0.1.11失败的 Surface门控或手写RTSP。
