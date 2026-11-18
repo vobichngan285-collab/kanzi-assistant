@@ -1,3 +1,14 @@
+# 2026-11-18｜蓝星向导C110预览 v0.1.1：补实时RTSP视频开关，已构建待真机
+
+- **用户新真机证据（21:48–21:50）**：独立集成0.1.0真实多次C110拍照→云端识别，用户明确“可以，而且速度很快”；日志C110完整JPEG均为5888×3312、1.4–1.8MB，`jpeg.encode_ms=0`，`c110.mode_ms=0`，单轮 `c110.photo_total_ms=1001/1112/1172/1619/1121` 等；蜂窝云端 `cloud.response_headers_ms` 多在1.8–1.96s，TTS onStart仅为回调不等于扬声器真实出声。手机后摄旧识别仍可用。用户提出**当前拍照无法看到C110实时预览**，要求先查原因再修改。
+- **源码定位**：旧 C110 接入仅有硬件照片获取 `C110WifiCamera.shoot`、`MainActivity.captureC110OneShot`，主界面依旧展示手机Camera2或USB TextureView。没有C110视频播放器、`2015`启动指令或 RTSP解码器，因此屏幕取景并非C110；不是证明设备本身不支持预览。
+- **原厂APK DEX资料**：`experiments/c110-camera-protocol/C110_DEX_RESEARCH_AND_20261118_HANDOFF.md` 原先发现 LY `2015&par=1`、`rtsp://192.168.1.254:554/xxx.mp4` 及另一候选 `http://192.168.1.254:8192`。它们是该相机后端**代码候选**，当前真机采用哪一条仍须实测；2015是从原厂控制预览链提取，并非已在这台C110验证状态。
+- **v0.1.1本次修改**：沿用原仓库独立测试分支 `exp/bluestar-c110-integrated-20261118`，新 HEAD `4426df88682a49d028fa4518ad50413e2ddf5027`。新增 `C110LivePreview.java`，Android Media3 RTSP播放 `xxx.mp4`，`Network.getSocketFactory()` 显式使用C110 Wi-Fi，`setForceUseRtpTcp(true)` 避免RTP跑错网络。顶部新增手动「C110预览」开关；只在用户点击预览时校验已知C110设备并发一次 `2015&par=1`，播放失败报告 `c110.live_rtsp_error` 与只读 HTTP 8192探测结果；首帧与解码宽高记录 `c110.live_first_ms/live_width_px/live_height_px`。在预览时点击画面/高清快门，先关闭流、重新进入照片模式、保留旧1001→新增完整JPEG→蜂窝云端识别朗读，取图后尝试恢复用户已开启的预览；退后台释放播放器。不抓屏，不自动拍照、不删照片、不刷固件。独立包名 `com.vobich.bluestar.c110preview`，不覆盖RC25/上一集成0.1.0；新包需自行配置API Key。
+- **真实CI/Release**：[Actions 44319037996](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44319037996) `completed/success`（协议单测、静态隔离检查、原RC25 USB patch、Gradle arm64、APK验证及发布成功）。[Release bluestar-c110-live-preview-lab-20261118-v011](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-live-preview-lab-20261118-v011)，APK `BlueStar_Guide_C110_LivePreview_0.1.1.apk`，11,834,143字节，直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-live-preview-lab-20261118-v011/BlueStar_Guide_C110_LivePreview_0.1.1.apk 。
+- **唯一下一步**：请用户连接C110 Wi-Fi、打开移动数据、安装独立包并配置Key，点击「C110预览」，反馈`live_cmd/live_first_ms/live_width_px/live_height_px` 或 `live_rtsp_error/live_http8192`。若真机出实时画面再点击画面验证拍照及恢复预览；此前RTSP网址只具DEX证据，**不能把构建成功当真机预览成功**。不再重复已成功的六轮纯拍照测试，正式蓝星RC25/M02S保持不变。
+
+---
+
 # 2026-11-18｜蓝星向导 RC25 × C110 取图云端OCR独立集成实验 v0.1.0（已构建，待真机）
 
 - **本轮用户正式授权**：「可以，你可以试着接入一下看看」，将 2026-11-18 真机已验证的 C110 六轮遥控拍照→新增JPEG→原图下载链路试着接入蓝星向导原云端视觉/OCR/TTS。用户并未要求改 RC25 正式包；因此从**真实 RC25 源码分支** `feat/bluestar-125-reading-entry-pages-actions-20261108` HEAD `fe848acf87cec87d8d7cba0c739b7be40e31072b` 创建原仓库隔离测试分支 `exp/bluestar-c110-integrated-20261118`；未把旧 `main` 离线OCR代码误当云端版。
