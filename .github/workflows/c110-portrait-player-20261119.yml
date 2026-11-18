@@ -68,8 +68,8 @@ jobs:
           assert 'startActivity(new Intent(this,C110CameraActivity.class));' in main
           assert 'new C110LivePreview(this)' not in main
           assert 'setOnClickListener(v->toggleC110LivePreview())' not in main
-          assert 'createControlButton("▣\n运动相机"' in main
-          assert 'createControlButton("▤\n高清拍照"' in main
+          assert r'createControlButton("▣\n运动相机"' in main
+          assert r'createControlButton("▤\n高清拍照"' in main
           assert 'openReading(){openReadingMode();}' in main
           assert 'listener.openReading()' in overlay
           assert 'captureC110OneShot()' in main and 'photo.jpeg,cellular' in main
