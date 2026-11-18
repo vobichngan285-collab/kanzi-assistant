@@ -1,3 +1,13 @@
+# 2026-11-18｜C110 单次遥控拍照 + 自动取新JPEG实验 v0.1.1（已构建，待真机快门验证）
+
+- **用户实际完成的 v0.1.0 真机结果**：设备查询3012与模式查询3037均在相机 IP `192.168.1.254` 返回HTTP200；媒体索引3015 HTTP200但0候选；读取 DCIM 目录共找到7张 JPEG。通过独立 App 成功下载原图 **1523091 字节、5888×3312、下载+校验304ms**，保存至 `Pictures/BlueStar_C110_Test`。首次 `192.168.10.1` 返回0候选，不应认作目标相机。
+- **新需求**：用户确认 C110 没有实体拍照按钮，只能由手机软件控制。用户授权在原隔离实验工程中增加一次遥控拍照指令与本次新图自动读取。无需重做 APK 逆向。
+- **代码**：沿用原隔离分支 `exp/c110-readonly-jpeg-lab-20261118`，新 HEAD `05346ec6be156d0ace5bac400052452dea91bf0a`。未触碰正式蓝星向导、M02S、Windows、原厂固件以及旧 Release。新版本仅在用户点击②并确认后，在已实测 IP `192.168.1.254` 发单次 LY/Novatek `/?custom=1&cmd=1001`，此前先核对3012/3037 HTTP状态并重新建立拍前照片基线；随后20秒查找真实新增JPEG，验证原图字节、JPEG头尾、响应长度及实际尺寸再存相册。失败不自动重拍、不切模式、不上传、不删照片。返回HTTP200不等于已拍照成功。
+- **构建验证**：GitHub Actions [44280361469](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44280361469) **completed/success**，Java 单元测试和 Android assembleDebug 均通过；APK 已成功发布到独立预发布 [bluestar-c110-shutter-jpeg-lab-20261118](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-shutter-jpeg-lab-20261118)。文件 `BlueStar_C110_Shutter_Lab_0.1.1.apk`，23869字节，安装直链： https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-shutter-jpeg-lab-20261118/BlueStar_C110_Shutter_Lab_0.1.1.apk
+- **下一步唯一真机验证**：连接 C110 Wi-Fi、打开 v0.1.1、点击①、确保相机进入原厂已知可拍照模式后点击②，反馈**完整匿名诊断日志**。核验1001响应状态、是否新增本次JPEG、从拍照到新图可见和完整保存时间、Wi-Fi是否持续存在；此刻不可宣称拍照链已成功或三轮稳定。若1001失败，先分析实际状态与原厂模式，不盲发3001切模式。
+
+---
+
 # 2026-11-18｜C110 独立只读取图实验 v0.1.0（已构建，待真机）
 
 - **已发布，不等于实机成功**：沿用 11-15～11-17 SJCAM Zone/X 的 C110 DEX 研究与免切模式专项结论，在原仓库隔离分支 `exp/c110-readonly-jpeg-lab-20261118` 新增 `experiments/c110-camera-protocol/c110-readonly-lab/` 独立 Android APK。未改正式蓝星向导 RC25、M02S 代码或相机固件；未把原厂 APK 放入仓库。
