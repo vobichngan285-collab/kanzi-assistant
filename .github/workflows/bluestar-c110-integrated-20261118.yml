@@ -53,7 +53,7 @@ jobs:
           cloud=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/CloudVisionClient.java').read_text()
           manifest=Path('cloud-vision-app/app/src/main/AndroidManifest.xml').read_text()
           gradle=Path('cloud-vision-app/app/build.gradle').read_text()
-          assert "applicationIdSuffix '.c110oemstart'" in gradle
+          assert "applicationIdSuffix '.c110surface'" in gradle
           assert 'captureC110OneShot' in main and 'current.remoteJpeg' in main
           assert 'FrameCompressor.encodeAdjusted(' in main
           assert 'CloudVisionClient.recognize(' in main and 'TargetVisionClient.inspect(' in main
@@ -81,6 +81,18 @@ jobs:
           assert 'vlc_is_playing1' in main and 'vlc_is_playing2' in main
           preview=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/C110LivePreview.java').read_text()
           assert 'main.postDelayed(delayedPlay,300L)' in preview
+          assert 'observedSurface=findVideoSurface(view)' in preview
+          assert 'video.getHolder().addCallback(observedCallback)' in preview
+          assert 'observedSurface.getHolder().removeCallback(observedCallback)' in preview
+          assert 'validSurface(observedSurface)' in preview
+          assert 'startOnlyWhenSurfaceReady(id,current,listener)' in preview
+          assert 'if(id!=generation||player!=current||playIssued||!delayExpired)return;' in preview
+          assert 'playIssued=true;' in preview
+          assert 'vlc_surface_width' in main and 'vlc_surface_height' in main
+          assert 'vlc_surface_ready' in main and 'vlc_play_issued' in main
+          assert 'vlc_play_gate' in main
+          assert preview.count('current.play();') == 1
+          assert 'listener.surfaceSnapshot(isSurfaceUsable()?1:0,playIssued?1:0);' in preview
           assert 'current.play();' in preview
           assert 'retainedMedia=media' in preview and 'oldMedia.release()' in preview
           assert 'current.getPlayerState()' in preview and 'current.isPlaying()' in preview
@@ -150,8 +162,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_C110_OEMStart_0.1.10.apk
-          test -s out/BlueStar_Guide_C110_OEMStart_0.1.10.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_C110_Surface_0.1.11.apk
+          test -s out/BlueStar_Guide_C110_Surface_0.1.11.apk
           unzip -tq out/*.apk >/dev/null
           unzip -Z1 out/*.apk >out/entries.txt
           grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
@@ -162,14 +174,14 @@ jobs:
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           test -x "$AAPT"
           "$AAPT" dump badging out/*.apk >out/badging.txt
-          grep -Fq "package: name='com.vobich.bluestar.c110oemstart'" out/badging.txt
-          grep -Fq "versionName='1.0.35-c110-oemstart-lab'" out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110surface'" out/badging.txt
+          grep -Fq "versionName='1.0.36-c110-surface-lab'" out/badging.txt
           grep -q 'application-icon-' out/badging.txt
-          (cd out && sha256sum BlueStar_Guide_C110_OEMStart_0.1.10.apk > SHA256SUMS.txt)
+          (cd out && sha256sum BlueStar_Guide_C110_Surface_0.1.11.apk > SHA256SUMS.txt)
           cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: BlueStar_Guide_C110_OEMStart_0.1.10
+          name: BlueStar_Guide_C110_Surface_0.1.11
           path: out/*
           retention-days: 14
       - name: Publish isolated prerelease only if unused tag
@@ -178,12 +190,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG=bluestar-c110-oem-playback-start-20261119-v0110
+          TAG=bluestar-c110-surface-gate-20261119-v0111
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Existing C110 integrated prerelease, refusing overwrite" >&2
             exit 1
           fi
-          gh release create "$TAG" "out/BlueStar_Guide_C110_OEMStart_0.1.10.apk" \
+          gh release create "$TAG" "out/BlueStar_Guide_C110_Surface_0.1.11.apk" \
             --target "$GITHUB_SHA" --prerelease \
-            --title "Blue Star Guide C110 OEM Play Startup Lab v0.1.10" \
-            --notes "C110 v0.1.9 real test 2026-11-19 00:07:15: camera mode=0, live cmd=0, WiFi bind=1, phase 1-5, only one VLC native MediaChanged event (256), no Opening (258), no video; code2302 is own timeout. Inspected exact OEM SJCAM Zone 6.7.3.16 classes5.dex: VlcLyCameraPlayer.playByUrl posts its playback setup runnable with 300ms Handler delay, and retains Media as a field; our prior build started immediately and released Java Media after setMedia(). This isolated v0.1.10 aligns those two OEM lifecycle differences and records native MediaPlayer.getPlayerState()/isPlaying() at +1.2s and at 20s watchdog; no sensitive native text. OEM LYCamera.getVideoPlayUrl returns RTSP/HTTP depending on firmware; no actual firmware ID in test, so keeps the previously SDP200-proven RTSP candidate and does not guess alternate URL. Retains existing WiFi bind restoration, official open-source LibVLC, JPEG/cellular OCR/TTS/USB and RC25. Separate package com.vobich.bluestar.c110oemstart. Not yet real-device-confirmed to output video."
+            --title "Blue Star Guide C110 Surface Gate Lab v0.1.11" \
+            --notes "C110 v0.1.10 two real tests: camera mode0, stream0, WiFi bind1, phase1-5, nativePlayerState0 isPlaying0, only MediaChanged256, no Opening/Playing/Vout. Confirmed LibVLC MediaPlayer.play may defer nativePlay while Android video Surface is not ready. This v0.1.11 isolated experiment observes the actual inflated SurfaceView from OEM-style VLCVideoLayout and its SurfaceHolder create/change/destroy lifecycle, requires attached valid positive-size Surface before issuing the single play() after OEM 300ms minimum delay; no repeat calls or automatic reconnect. Adds numeric surface event/dimensions, play gate, and surface-ready/play-issued timeout snapshot, bounds events to 24 per operation, removes redundant phase spam. Keeps LibVLC3.6.5, known RTSP candidate, camera mode/start commands, scoped WiFi bind restore, original JPEG and cellular OCR/TTS/USB/RC25 untouched. No raw media, keys or original proprietary APK libraries included. Device-side video frame still unverified."

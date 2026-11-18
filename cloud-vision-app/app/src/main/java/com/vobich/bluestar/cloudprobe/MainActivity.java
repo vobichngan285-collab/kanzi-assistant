@@ -2858,7 +2858,6 @@ public final class MainActivity extends CameraActivity {
                     if(diagnostics!=null){
                         diagnostics.event("c110","live_mode_cmd",init.modeStatus,
                             init.modeStatus==0?"ok":"returned");
-                        diagnostics.event("c110","live_mode_ms",init.modeMs,"ok");
                         diagnostics.event("c110","live_cmd",init.startStatus,
                             init.startStatus==0?"ok":"returned");
                     }
@@ -2886,9 +2885,26 @@ public final class MainActivity extends CameraActivity {
                                 diagnostics.event("c110","vlc_wifi_bind",status,"probe");
                         }
                         @Override public void milestone(int phase){
-                            if(seq!=c110PreviewSeq.get())return;
-                            if(diagnostics!=null)
-                                diagnostics.event("c110","vlc_phase",phase,"probe");
+                            // The final internal phase is emitted on failure,
+                            // not 5 redundant events per tap (24-event limit).
+                        }
+                        @Override public void surface(int event,int width,int height,int valid){
+                            if(seq!=c110PreviewSeq.get()||diagnostics==null)return;
+                            if(event==2){
+                                diagnostics.event("c110","vlc_surface_width",width,"probe");
+                                diagnostics.event("c110","vlc_surface_height",height,"probe");
+                            }else{
+                                diagnostics.event("c110","vlc_surface_event",event,"probe");
+                            }
+                        }
+                        @Override public void playGate(int gate){
+                            if(seq!=c110PreviewSeq.get()||diagnostics==null)return;
+                            diagnostics.event("c110","vlc_play_gate",gate,"probe");
+                        }
+                        @Override public void surfaceSnapshot(int valid,int issued){
+                            if(seq!=c110PreviewSeq.get()||diagnostics==null)return;
+                            diagnostics.event("c110","vlc_surface_ready",valid,"classified");
+                            diagnostics.event("c110","vlc_play_issued",issued,"classified");
                         }
                         @Override public void nativeStatus(int sample,int state,int playing){
                             if(seq!=c110PreviewSeq.get())return;

@@ -7,6 +7,11 @@ import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.view.Surface;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
+import android.view.View;
+import android.view.ViewGroup;
 import org.videolan.libvlc.LibVLC;
 import org.videolan.libvlc.Media;
 import org.videolan.libvlc.MediaPlayer;
@@ -37,12 +42,21 @@ final class C110LivePreview {
         void snapshot(int phase,int eventCount,int lastEvent,int routeBound);
         /** getPlayerState() and isPlaying() sampled from native LibVLC. */
         void nativeStatus(int when,int state,int playing);
+        /** 1=SurfaceCreated, 2=SurfaceChanged, 3=Destroyed, 4=already valid. */
+        void surface(int event,int width,int height,int valid);
+        /** 0=waiting for real Surface; 1=single play() issued after ready. */
+        void playGate(int gate);
+        void surfaceSnapshot(int valid,int playIssued);
     }
     private final VLCVideoLayout view;
     private final Handler main=new Handler(Looper.getMainLooper());
     private LibVLC vlc;
     private MediaPlayer player;
     private Media retainedMedia; // OEM holds Media until next playback/release
+    private SurfaceView observedSurface;
+    private SurfaceHolder.Callback observedCallback;
+    private boolean surfaceReady,delayExpired,playIssued,readySizeReported,waitingLogged;
+    private int surfaceWidth,surfaceHeight;
     private ConnectivityManager connectivity;
     private Network priorBinding,cameraBinding;
     private boolean changedBinding,hasVout;
@@ -87,6 +101,27 @@ final class C110LivePreview {
             // and the MediaPlayer video helper, not a manually attached SurfaceView.
             current.attachViews(view,null,false,false);
             progress(listener,3);
+            // VideoHelper inflates a single video SurfaceView when subtitles=false.
+            // Observe that real inflated view, not VLCVideoLayout itself.
+            observedSurface=findVideoSurface(view);
+            if(observedSurface==null)
+                throw new IllegalStateException("VLC video SurfaceView was not inflated");
+            final SurfaceView video=observedSurface;
+            observedCallback=new SurfaceHolder.Callback(){
+                @Override public void surfaceCreated(SurfaceHolder holder){
+                    onSurface(id,current,listener,1,video.getWidth(),video.getHeight());
+                }
+                @Override public void surfaceChanged(SurfaceHolder holder,int format,int w,int h){
+                    onSurface(id,current,listener,2,w,h);
+                }
+                @Override public void surfaceDestroyed(SurfaceHolder holder){
+                    onSurface(id,current,listener,3,0,0);
+                }
+            };
+            video.getHolder().addCallback(observedCallback);
+            // A surface may predate the callback registration.
+            if(validSurface(video))
+                onSurface(id,current,listener,4,video.getWidth(),video.getHeight());
             current.setEventListener(event->main.post(()->{
                 if(id!=generation||player!=current)return;
                 nativeEvents++;
@@ -106,9 +141,11 @@ final class C110LivePreview {
                         }
                         break;
                     case MediaPlayer.Event.EncounteredError:
+                        listener.surfaceSnapshot(isSurfaceUsable()?1:0,playIssued?1:0);
                         listener.snapshot(phase,nativeEvents,lastNativeEvent,boundToCamera()?1:0);
                         listener.error(2301,1,3);break;
                     case MediaPlayer.Event.EndReached:
+                        listener.surfaceSnapshot(isSurfaceUsable()?1:0,playIssued?1:0);
                         listener.snapshot(phase,nativeEvents,lastNativeEvent,boundToCamera()?1:0);
                         listener.error(2303,3,4);break;
                     default:break;
@@ -137,29 +174,19 @@ final class C110LivePreview {
             }
             progress(listener,4);
             current.setVolume(0);
-            // OEM playByUrl() posts its player initialization runnable
-            // after 300ms. Previous lab called play() immediately.
+            // OEM delays setup by 300ms, but a delay alone does not prove
+            // the Android Surface is created. The only play() call is gated.
             delayedPlay=()->{
                 if(id!=generation||player!=current)return;
-                try{
-                    current.play();
-                    progress(listener,5);
-                    stateProbe=()->{
-                        if(id==generation&&player==current)
-                            reportNativeStatus(current,listener,1);
-                    };
-                    main.postDelayed(stateProbe,1200L);
-                }catch(RuntimeException|LinkageError startFailure){
-                    listener.snapshot(phase,nativeEvents,lastNativeEvent,
-                        boundToCamera()?1:0);
-                    listener.error(2304,phase,6);
-                }
+                delayExpired=true;
+                startOnlyWhenSurfaceReady(id,current,listener);
             };
             main.postDelayed(delayedPlay,300L);
             // A local timer is not an RTSP/server error.
             watchdog=()->{
                 if(id==generation&&player==current&&!hasVout){
                     reportNativeStatus(current,listener,2);
+                    listener.surfaceSnapshot(isSurfaceUsable()?1:0,playIssued?1:0);
                     listener.snapshot(phase,nativeEvents,lastNativeEvent,boundToCamera()?1:0);
                     listener.error(2302,2,5);
                 }
@@ -167,9 +194,83 @@ final class C110LivePreview {
             main.postDelayed(watchdog,20000L);
         }catch(RuntimeException|LinkageError failure){
             int stoppedAt=phase;
+            listener.surfaceSnapshot(isSurfaceUsable()?1:0,playIssued?1:0);
             listener.snapshot(stoppedAt,nativeEvents,lastNativeEvent,boundToCamera()?1:0);
             stop();
             listener.error(2304,stoppedAt,6);
+        }
+    }
+
+    private static SurfaceView findVideoSurface(View node){
+        if(node instanceof SurfaceView)return (SurfaceView)node;
+        if(node instanceof ViewGroup){
+            ViewGroup group=(ViewGroup)node;
+            for(int i=0;i<group.getChildCount();i++){
+                SurfaceView found=findVideoSurface(group.getChildAt(i));
+                if(found!=null)return found;
+            }
+        }
+        return null;
+    }
+
+    private static boolean validSurface(SurfaceView target){
+        if(target==null)return false;
+        SurfaceHolder holder=target.getHolder();
+        Surface surface=holder==null?null:holder.getSurface();
+        return target.isAttachedToWindow() && surface!=null && surface.isValid();
+    }
+    private boolean isSurfaceUsable(){
+        return surfaceReady && validSurface(observedSurface) &&
+            surfaceWidth>0 && surfaceHeight>0;
+    }
+
+    private void onSurface(int id,MediaPlayer current,Listener listener,
+                           int event,int width,int height){
+        if(id!=generation||player!=current)return;
+        if(event==3){
+            surfaceReady=false;
+            surfaceWidth=0;surfaceHeight=0;
+            listener.surface(event,0,0,0);
+            return;
+        }
+        if(width>0&&height>0){surfaceWidth=width;surfaceHeight=height;}
+        surfaceReady=validSurface(observedSurface);
+        // Record the first Created/Changed/previously-valid fact and the first
+        // actual positive size. Avoid filling the 24-event privacy ledger.
+        if(event==1 || (event==4 && surfaceReady))
+            listener.surface(event,surfaceWidth,surfaceHeight,surfaceReady?1:0);
+        if(surfaceReady&&surfaceWidth>0&&surfaceHeight>0&&!readySizeReported){
+            readySizeReported=true;
+            listener.surface(2,surfaceWidth,surfaceHeight,1);
+        }
+        startOnlyWhenSurfaceReady(id,current,listener);
+    }
+
+    private void startOnlyWhenSurfaceReady(int id,MediaPlayer current,Listener listener){
+        if(id!=generation||player!=current||playIssued||!delayExpired)return;
+        if(!isSurfaceUsable()){
+            if(!waitingLogged){
+                waitingLogged=true;
+                listener.playGate(0);
+            }
+            return;
+        }
+        // One user gesture = one native play() call; SurfaceChanged callbacks
+        // cannot repeatedly restart the player or send a second RTSP request.
+        playIssued=true;
+        listener.playGate(1);
+        try{
+            current.play();
+            progress(listener,5);
+            stateProbe=()->{
+                if(id==generation&&player==current)
+                    reportNativeStatus(current,listener,1);
+            };
+            main.postDelayed(stateProbe,1200L);
+        }catch(RuntimeException|LinkageError startFailure){
+            listener.surfaceSnapshot(isSurfaceUsable()?1:0,1);
+            listener.snapshot(phase,nativeEvents,lastNativeEvent,boundToCamera()?1:0);
+            listener.error(2304,phase,6);
         }
     }
 
@@ -200,6 +301,11 @@ final class C110LivePreview {
         if(watchdog!=null){main.removeCallbacks(watchdog);watchdog=null;}
         if(delayedPlay!=null){main.removeCallbacks(delayedPlay);delayedPlay=null;}
         if(stateProbe!=null){main.removeCallbacks(stateProbe);stateProbe=null;}
+        if(observedSurface!=null&&observedCallback!=null){
+            try{observedSurface.getHolder().removeCallback(observedCallback);}
+            catch(RuntimeException ignored){}
+        }
+        observedSurface=null;observedCallback=null;
         MediaPlayer old=player;player=null;
         if(old!=null){
             try{old.setEventListener(null);}catch(Exception ignored){}
@@ -219,5 +325,7 @@ final class C110LivePreview {
         }
         changedBinding=false;priorBinding=null;cameraBinding=null;connectivity=null;
         hasVout=false;phase=0;nativeEvents=0;lastNativeEvent=0;lastReportedState=0;
+        surfaceReady=false;delayExpired=false;playIssued=false;
+        readySizeReported=false;waitingLogged=false;surfaceWidth=0;surfaceHeight=0;
     }
 }

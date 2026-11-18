@@ -1,19 +1,21 @@
-# C110 v0.1.10：原厂播放启动顺序 / 原生状态专项 (2026-11-19)
+# C110 Surface Ready Gating 实验 v0.1.11（2026-11-19）
 
-## v0.1.9 真机证据
-2026-11-19 00:07:15：`live_mode_cmd=0`、`live_cmd=0`、`vlc_wifi_bind=1`、`vlc_phase=1..5`、`vlc_last_phase=5`、`vlc_event_count=1`、`vlc_last_event=256`（原生MediaChanged）、`vlc_route_alive=1`、`vlc_error=2302`（App自己的20秒无Vout超时）。**没有发现Opening(258)/Playing(260)原生事件**，不能从2302判断RTSP错误、视频服务不支持或解码失败。
+## 唯一真机新证据
+v0.1.10 两轮 00:24:18和00:24:55：3001/par1与2015/par1均0；绑定C110 Wi-Fi=1；VLC phase1..5；`vlc_native_state1/2=0`、`vlc_is_playing1/2=0`；完整第一轮`vlc_event_count=1`、`vlc_last_event=256`（MediaChanged）、`vlc_route_alive=1`、`vlc_error=2302`（自设无Vout超时）。未观察到Opening(258)、Playing(260)，不能推断相机已经拒绝RTSP PLAY。
 
-## 本次直接对照用户提供的原厂 SJCAM Zone 6.7.3.16 `classes5.dex`
-- 实际反汇编 `LYCamera.getVideoPlayUrl()`：根据 `SCameraInfo.getCameraVersion()` 的多组固件条件选择返回`rtsp://192.168.1.254:554/xxx.mp4`、`http://192.168.1.254:8192`或空值。此前只观察到相机对已知RTSP源的OPTIONS/DESCRIBE=200，不知道实际C110固件版本，因此**不能把另一个候选地址臆造为真实流地址**，也不能认为对某个服务返回200证明能够播放。
-- 原厂 `VlcLyCameraPlayer.playByUrl()` 方法体确证使用 `Handler.postDelayed(...,300)`，然后执行 `VlcLyCameraPlayer$1.run()` 中的 MediaPlayer.attachViews/setEventListener/Media设置/播放。v0.1.9立即play而不是匹配原厂的300ms延迟。
-- 原厂Media作为播放器对象字段持有，直到换流/释放。v0.1.9调用setMedia后立刻`Media.release()`（Java层正常引用计数可能允许，但非原厂生命周期）。
+## 源码/推断分界
+- VideoLAN LibVLC Java MediaPlayer.play()会在AWindow.areSurfacesWaiting()时只记录播放请求，暂不调用nativePlay；可在onSurfacesCreated后继续播放。此为LibVLC源码机制；是否在v0.1.10真机上发生仍属于待验证假设。
+- `VLCVideoLayout`通过VideoHelper动态inflate SurfaceView（不是VLCVideoLayout本体）。上一版未记录Surface生命周期，可能误把初始化成功当作Surface已就绪。
+- 本轮没有再次猜测C110固件动态getVideoPlayUrl；当前设备的实际CameraVersion仍未知，之前已知候选RTSP只确认DESCRIBE200，无法据此证明可PLAY。
 
-## v0.1.10仅对隔离实验包做两项原厂时序适配 + 状态诊断
-- 在旧顺序已创建LibVLC和VLCVideoLayout、已完成Media设置后，`Handler.postDelayed(delayedPlay,300L)` 调用`current.play()`；停止/暂停/拍照/错误时主动removeCallbacks，防止关闭后迟到播放。
-- 将Media对象保留到`stop()`，播放器stop/release以后才release Media，避免过早释放；仍仅一次用户触发的连接，不盲目重试。
-- 新增仅匿名数值：`vlc_native_state1`/`vlc_is_playing1` 是play后1.2秒原生MediaPlayer状态、`vlc_native_state2`/`vlc_is_playing2` 是20秒本地watchdog前的状态。原`vlc_phase`/event_count/last_event/route_alive和error保持。没有记录网络封包、原始VLC日志、SDP、视频、任何密钥。
-- `getPlayerState()` 是内部Media状态枚举编号，不等同于Event编号；`isPlaying=0`只代表采样瞬间非播放，需结合事件与状态判读。
-- 不改原厂候选URL、模式指令3001/2015、不强制TCP、不触碰高清JPEG/蜂窝OCR/TTS/USB/M02S及正式RC25。新独立包名`com.vobich.bluestar.c110oemstart`，避免覆盖任何旧测试版。
+## v0.1.11隔离实验版改动
+- 按用户已授权的方案，保持当前官方开源LibVLC3.6.5及VLCVideoLayout、已实测的相机3001/par1和2015/par1，唯一改变播放触发：找到VideoHelper已经inflated的video SurfaceView，添加SurfaceHolder.Callback记录创建、正尺寸变更、销毁。只有目标View处于attached、Surface有效并有正宽高，且原厂300ms延迟已到，才**单次**调用`current.play()`；Surface重复回调不能自动重放。关闭/拍照/Activity暂停时先注销callback与delayed Runnable、关闭LibVLC、恢复原Wi-Fi进程绑定。
+- 新匿名数值：`vlc_surface_event` 1=created、3=destroyed、4=已有效，`vlc_surface_width/height`是第一组有效Surface大小，`vlc_play_gate`=0等待/1已发起唯一play；异常/看门狗还有`vlc_surface_ready`、`vlc_play_issued`，配合`vlc_native_state1/2`和`vlc_event_count/last_event`判读。此尺寸是**显示Surface尺寸，不是C110编码视频分辨率**。为了24条每会话上限不再重复记录vlc_phase1..5，仅保留`vlc_last_phase`。
+- 不改URL、端口、播放缓存、云端API Key、已成功的JPEG→蜂窝OCR、TTS、正式RC25/USB/M02S，绝不上传原厂APK/专有so或原始视频流。独立包`com.vobich.bluestar.c110surface`，不覆盖任何旧包。
 
-## 真机验收
-连接C110 Wi-Fi、安装v0.1.10、点一次C110预览，目视判断是否真实连续相机画面；复制最新完整`c110_live`。重点`vlc_phase`、`vlc_event_count`、`vlc_last_event`、`vlc_native_state1/2`、`vlc_is_playing1/2`、`vlc_vout_count`、`vlc_error`。不必填API Key或再测试拍照。
+## 唯一验收
+安装v0.1.11、连C110 Wi-Fi，只按一次预览。复制最新`c110_live`完整日志并告知是否有**真实来自C110的连续画面**。重点区分：
+- Surface无创建或正尺寸：检查布局/Surface生命周期；
+- Surface有效但未发送play：检查状态门控逻辑；
+- Surface有效、play=1、仍只有MediaChanged：检查LibVLC内部播放器启动与相机真实固件播放地址；
+- 出现Opening或Vout：进入视频流解析/首帧实测，而不是重复视频启动测试。
