@@ -2903,9 +2903,26 @@ public final class MainActivity extends CameraActivity {
                             }
                             setResultStatus("视频未建立；高清拍照功能不受影响");
                             toastShort("C110预览失败：请复制运行诊断，检查真实端口与响应");
-                            // Restore the original camera preview instead of keeping a black overlay.
+                            // Release failed Media3 session before a bounded RTSP TCP
+                            // handshake test, preventing session contention.
                             handler.post(()->{
-                                if(seq==c110PreviewSeq.get())stopC110LivePreview(true);
+                                if(seq!=c110PreviewSeq.get())return;
+                                stopC110LivePreview(true);
+                                final int closedSeq=c110PreviewSeq.get();
+                                c110PreviewExecutor.submit(()->{
+                                    C110RtspSessionProbe.Report report=
+                                        C110RtspSessionProbe.probe(wifi);
+                                    handler.post(()->{
+                                        if(!uiActive||cloudBusy||
+                                           c110PreviewSeq.get()!=closedSeq)return;
+                                        if(diagnostics!=null){
+                                            diagnostics.event("c110","rtsp_track",report.track,"probe");
+                                            diagnostics.event("c110","rtsp_tcp_setup",report.setup,"probe");
+                                            diagnostics.event("c110","rtsp_tcp_play",report.play,"probe");
+                                            diagnostics.event("c110","rtsp_tcp_rtp",report.firstRtp,"probe");
+                                        }
+                                    });
+                                });
                             });
                         }
                         @Override public void state(int state){

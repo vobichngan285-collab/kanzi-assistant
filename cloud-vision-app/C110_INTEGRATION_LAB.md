@@ -1,22 +1,27 @@
-# 蓝星C110 真实预览实验 v0.1.4：先切录像模式，再启动RTSP，检查SDP（2026-11-18）
+# 蓝星C110 RTSP播放会话专项 v0.1.5（2026-11-18）
 
-## 上一轮真机最新事实
-用户 v0.1.2 22:15:28与22:15:35两轮独立实验一致：
-- `2015/par=1 Status=-13`，确定控制指令执行失败，不是旧日志将其它负数压成-1。
-- Wi-Fi TCP554 可连；`OPTIONS=200`、`DESCRIBE=200`，意味着候选 `rtsp://192.168.1.254:554/xxx.mp4` 地址能响应RTSP基础协商；**不能推断已成功SETUP/PLAY或能解码出帧**。
-- 8192 TCP拒绝连接（-2），当前固件此端口不可用；不再盲改URL。
-- Media3 `2000`（未分类I/O）、先前细分类5（RTSP类异常）且视频宽高0；具体可能是直播状态未初始化、SDP不合规、RTSP SETUP/PLAY或编码不支持。
-- 同时 22:15:40 的C110高清拍照仍成功：取完整 JPEG 5888×3312、1,379,123B、902ms，云端网络耗时2279ms；正式可用的JPEG→OCR/TTS主链保持不变。
+## 本轮现场证据
+用户 v0.1.4 两次测试一致：
+- 进入录像模式 `3001/par=1` **Status=0**，启动预览 `2015/par=1` **Status=0**；
+- 相机 `tcp554=1`、`OPTIONS=200`、`DESCRIBE=200`，候选URL `rtsp://192.168.1.254:554/xxx.mp4` 服务真实可达。
+- SDP flags `999`，解码后包含 v=0、m=video、H264、sprop-parameter-sets(SPS/PPS)、a=control、fmtp、rtpmap、application/sdp；不包含H265/MJPEG。**因此缺少H264 SPS/PPS的猜测不再是优先方向**。
+- 现用 Media3 `setForceUseRtpTcp(true)`，仍在首帧前报 `2000`、`Rtsp`类异常、stage=3，宽高为0；可能是 RTSP SETUP/PLAY/传输不兼容而非视频源不存在。原厂采用 VLC。
+- 22:31:23静态高清拍照仍成功，1,127,176B、5888x3312、取图1244ms，云端响应正常。
 
-## v0.1.3 严格单变量改动
-- 按原厂Zone DEX已有的 `LYCamera.changeCameraModel→startLiveVideoStream→VlcLyCameraPlayer` 顺序，用户手动点「C110预览」后，先仅一次 `3001&par=1` 切录像模式，再仅一次 `2015&par=1` 启动视频；若切录像模式明确失败则不盲发2015并展示已知结果。该操作会改变C110当前模式，需要退出预览后下次高清拍照重新进入照片模式。每次用户点击才发送，不自动重试。
-- 新匿名诊断 `live_mode_cmd`（3001结果）、`live_mode_ms`、`live_cmd`（2015结果）；保留真实负错误码和之前的554/8192端口测试。
-- 在旧RTSP DESCRIBE响应200后，从**同一个已确认URL**再做一次大小≤24KiB的有界只读DESCRIBE，**只在本机解析**媒体类型/参数标记，日志仅记录 `rtsp_sdp_flags` 组合值，不保存 SDP/连接令牌/视频流。比特：1=有v0;2=有m=video;4=H264;8=H265;16=JPEG;32=有sprop-parameter-sets;64=control;128=fmtp;256=rtpmap;512=application/sdp。该字段用于判断Media3所需H264 SPS/PPS是否缺失；缺失不代表一定没直播，也可能用其它方式传输。
-- 播放报错增加 `live_rtsp_stage`，1=ParserException、2=RTSP 461传输错误、3=RTSP其它、4=一般IO、5=IllegalArgument、9=其它。日志不保存异常消息/原始SDP。
-- **不增加猜测的视频URL、不刷机、不删除照片、不自动持续采图；保持已经验证成功的完整JPEG、蜂窝百炼OCR、语音朗读、手机/USB摄像头和RC25源码不变**。本次仍是实验包，不能宣称已在真实C110显示视频。
+## 新实验：用已证实的唯一 RTSP URL 验证完整 TCP 视频会话
+仅用户点击「C110预览」，走原已成功模式切换 + 启流。Media3出错后**先关闭播放器**，在已经绑定C110 Wi-Fi的原 Network 上通过独立一次性 TCP Socket 执行：
+1. **DESCRIBE** 提取真实第一条 video track a=control （不记录SDP或地址），只允许解析到192.168.1.254:554，拒绝其它域名/路径穿越。
+2. **SETUP**：一次 `Transport: RTP/AVP/TCP;unicast;interleaved=0-1`，记录 `rtsp_tcp_setup` 的RTSP状态（200成功、461不接受TCP、其他原码；-1超时、-5其它）。
+3. 若SETUP=200，从本次Session标识**PLAY** 一次，记录 `rtsp_tcp_play`，再限时查看是否收到`$`开头的RTP interleaved头：`rtsp_tcp_rtp=1`(可见)、-1超时、0非RTP或-7关闭。
+4. **TEARDOWN**关闭当前一次性 RTSP Session，不修改SD卡、固件、不录制/存储视频、不上传原始帧。
+5. 记录 `rtsp_track`（1=合法视频轨道、-2未找到、-6 DESCRIBE失败等）、`rtsp_tcp_setup`、`rtsp_tcp_play`、`rtsp_tcp_rtp`。最多约数秒；未出画面不会自动再次触发拍照。
+**仍保留原高清JPEG取图→蜂窝云端OCR/TTS以及手机USB摄像头、正式RC25功能**。此为隔离诊断APK，而不是预览已修复的承诺。
 
-## 真机下一步
-连接相机Wi-Fi，打开独立实验包，点一次「C110预览」，只发当次 `c110_live` 日志。优先看 `live_mode_cmd/live_cmd`、`rtsp_sdp_flags`、`live_rtsp_stage`、`live_first_ms`。若两条状态均0却Media3继续解析失败，则结合SDP flags考虑使用原厂的VLC式解码内核；若3001成功让2015从-13变0则证明必须有模式前置。由于新包名，配置百炼Key不是预览验证前提。
+## 判读
+- TCP SETUP=461/其它拒绝：原厂VLC可能需UDP RTP；下一阶段选用支持更宽传输兼容性的播放内核并解决Wi-Fi/蜂窝分流。
+- SETUP和PLAY均200，且首个RTP=1：摄像头真实TCP视频输出正常，Media3不兼容可能性大，可切VLC或适配RTSP播放器。
+- SETUP=200但PLAY错误：再对照原厂RTSP会话、Session/Range/header。
+- 没有track：改为比对SDP轨道URI解析，不盲换主URL。
 
-## 诊断版发布说明
-修正此前诊断稿新加 SDP 只读探测错误的双反斜线换行（RTSP请求现发送实际 CRLF 字节）。之前中间构建的v0.1.3不应供真机试用，唯一建议用户安装v0.1.4，保持原成功拍照通路。
+**测试方法**：连接C110 Wi-Fi，点击顶部一次C110预览，失败后复制最新 `c110_live` 日志；不用填API Key或重新测试已成功拍照。
+
