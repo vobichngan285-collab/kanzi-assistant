@@ -1,3 +1,13 @@
+# 2026-11-18｜蓝星向导 RC25 × C110 取图云端OCR独立集成实验 v0.1.0（已构建，待真机）
+
+- **本轮用户正式授权**：「可以，你可以试着接入一下看看」，将 2026-11-18 真机已验证的 C110 六轮遥控拍照→新增JPEG→原图下载链路试着接入蓝星向导原云端视觉/OCR/TTS。用户并未要求改 RC25 正式包；因此从**真实 RC25 源码分支** `feat/bluestar-125-reading-entry-pages-actions-20261108` HEAD `fe848acf87cec87d8d7cba0c739b7be40e31072b` 创建原仓库隔离测试分支 `exp/bluestar-c110-integrated-20261118`；未把旧 `main` 离线OCR代码误当云端版。
+- **代码/功能**：新测试分支 HEAD `a9419d5af14cdf0713df388067d936d33978f094`。新增 `C110PhotoPolicy.java`、`C110WifiCamera.java`、独立Java协议单元测试和 `cloud-vision-app/C110_INTEGRATION_LAB.md`。复用实机验证的 `192.168.1.254`/3012/3002/3001-par0/1001/DCIM原JPEG流程：用户顶部点击**C110拍照**后，单次取最新真实新图（不取旧图），首次进入照片模式，**同一 Network 后续免切模式直接1001**；仅由手动点击触发，不自动重拍，不删相机文件，不保存手机相册、不切回放/OTA。遥控失败时清除模式已就绪标记，长按按钮可手动重初始化。接原 `CloudVisionClient`/ `TargetVisionClient` 云端模型及 C 模式流式中文TTS，**直接用完整JPEG字节**而不重新NV21编码/缩图；用户可选择「朗读文字」任务。原手机/USB相机、阅读书页、语音追问等现有代码保留，**C110尚未接入实时视频预览或书页存档按钮**。
+- **网络路径安全**：相机仅使用已知Wi-Fi `Network.openConnection` 访问局域网目标IP，Android `networkSecurityConfig` 仅允许 `192.168.1.254` 明文HTTP、默认禁止其他明文；图像云端请求在 `CloudVisionClient` 和寻找目标分支 `TargetVisionClient` 中只走**显式选中的蜂窝 `Network.openConnection` HTTPS**（不调用全局 `bindProcessToNetwork`），无蜂窝网络则不发快门并提示。只读/快门白名单和本次新图校验已加；API Key仍存Android Keystore；不提交照片、密钥、语音数据到GitHub。此双网络分流功能**尚未在用户vivo/Android16真机验证**，语音ASR网络路由亦未全部专项验证。
+- **构建/发布实证**：GitHub Actions [44286786286](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44286786286) `completed/success`：协议纯Java测试、静态白名单/隔离审计、沿用RC25 pinned AUSBC USB patch、Gradle Android ARM64 debug build、APK ZIP/USB native lib/音效/包名/version校验全通过。独立包名 **`com.vobich.bluestar.c110test`**，版本 `1.0.25-c110-lab`，不会覆盖 RC25 `com.vobich.bluestar.rc25`，后者本机的 API Key/书籍不会自动迁移。预发布 [bluestar-c110-integrated-lab-20261118](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-integrated-lab-20261118)；APK `BlueStar_Guide_C110_Integrated_0.1.0.apk` **8634676字节**；直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-integrated-lab-20261118/BlueStar_Guide_C110_Integrated_0.1.0.apk 。
+- **下一步现场验收**：手机开启移动数据并在Wi-Fi设定里连接C110，**测试版需单独填写百炼API Key**；在蓝星选「朗读文字」，点击顶部「C110拍照」，提供匿名运行诊断，判断手机是否能同时保持C110 Wi-Fi与蜂窝公网、HTTPS云端识别、真实本地TTS出声，并核查首次/第二次耗时、相机重启状态。若需要补救，根据日志逐项修复，不盲目修改 USB、正式版或C110固件。**现阶段不可宣称用户实机已跑通云端识别或实时视频预览。**
+
+---
+
 # 2026-11-18｜C110 v0.1.3 六轮连续拍照与完整JPEG取回成功（含2轮不切模式）
 
 - **现场日志（18:18–18:22，用户真实复测）**：原C110 Wi-Fi设备 `192.168.1.254`；从7张旧JPEG开始，六轮逐次增加为8、9、10、11、12、13张，每轮都是本次新增加一张、完整校验 JPEG、系统相册保存成功。所有成功照片都是 **5888×3312**。
