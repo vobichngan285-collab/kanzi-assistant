@@ -18,11 +18,11 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Independent, intentionally read-only C110 diagnostic. No remote shutter or mode changes. */
+/** Independent C110 JPEG photo experiment: explicit one-shot shutter, no mode changes. */
 public final class MainActivity extends Activity {
  private final ExecutorService pool=Executors.newSingleThreadExecutor();
  private final AtomicBoolean busy=new AtomicBoolean();
- private final StringBuilder logText=new StringBuilder("蓝星C110只读实验 v0.1.0\n仅请求相机已有文件；不会远程拍照、切模式、修改固件或上传照片。\n");
+ private final StringBuilder logText=new StringBuilder("蓝星C110拍照取图实验 v0.1.1\n只在确认②后发送一次1001快门；不切模式、不删文件、不上传图片。\n");
  private EditText ipInput;
  private TextView display, details;
  private Network wifi;
@@ -36,17 +36,22 @@ public final class MainActivity extends Activity {
   ScrollView sc=new ScrollView(this);
   LinearLayout root=new LinearLayout(this); root.setOrientation(1);root.setPadding(18,16,18,24);
   sc.addView(root);setContentView(sc);
-  TextView title=new TextView(this);title.setText("C110 高清照片实验");title.setTextSize(25);title.setTextColor(Color.BLACK);root.addView(title);
+  TextView title=new TextView(this);title.setText("C110 拍照取图实验 v0.1.1");title.setTextSize(25);title.setTextColor(Color.BLACK);root.addView(title);
   TextView note=new TextView(this);
-  note.setText("手机先连接 C110 的 Wi-Fi。只读检测相机照片，发现完整 JPEG 后保存到手机相册；不发送快门和切模式命令。");
+  note.setText("先连接 C110 Wi-Fi。①只读检测；②遥控拍照一次并自动下载新JPEG。不会切换拍摄模式。");
   note.setTextSize(18);root.addView(note);
   ipInput=new EditText(this);ipInput.setTextSize(19);ipInput.setSingleLine(true);
   ipInput.setHint("相机IP（留空则用Wi-Fi网关）");
   root.addView(ipInput);
-  button(root,"① 检查 Wi-Fi / 读取列表 / 建立旧图基线",()->start("检测与基线",this::check));
-  button(root,"② 下载已有最新候选 JPEG（只读）",()->start("下载现有图",()->downloadExisting(false)));
-  button(root,"③ 20秒监测新图（按相机实体快门）",()->start("监测新图",this::watchNew));
-  button(root,"④ 已在原厂App进入回放：重新检查",()->start("回放只读对照",this::check));
+  button(root,"① 连接检测 / 照片列表（只读）",()->start("检测与基线",this::check));
+  button(root,"② 遥控拍照一次 → 自动下载原图",()->new android.app.AlertDialog.Builder(this)
+   .setTitle("确认只拍一张")
+   .setMessage("将向已经验证的192.168.1.254发出一次1001快门指令，不切模式、不重复拍照。")
+   .setNegativeButton("取消",null)
+   .setPositiveButton("拍照并取图",(d,w)->start("拍照并取图",this::shutterAndFetch))
+   .show());
+  button(root,"③ 下载已有JPEG（只读对照）",()->start("下载现有图",()->downloadExisting(false)));
+  button(root,"④ 原厂App进入回放后的只读对照",()->start("回放只读对照",this::check));
   button(root,"复制诊断日志",()->{
    android.content.ClipboardManager c=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
    c.setPrimaryClip(ClipData.newPlainText("C110实验日志",logText.toString()));
@@ -119,7 +124,8 @@ public final class MainActivity extends Activity {
   String text(){return new String(body,StandardCharsets.UTF_8);}
  }
  private Result get(String request) throws IOException {
-  boolean command=request.equals("/?custom=1&cmd=3012")||request.equals("/?custom=1&cmd=3037")||request.equals("/?custom=1&cmd=3015");
+  boolean shutter=request.equals("/?custom=1&cmd=1001");
+  boolean command=shutter||request.equals("/?custom=1&cmd=3012")||request.equals("/?custom=1&cmd=3037")||request.equals("/?custom=1&cmd=3015");
   boolean media=request.startsWith("/DCIM/")&&!request.contains("..")&&!request.contains("\\")&&!request.contains("?")&&!request.contains("#");
   if(!command&&!media)throw new IOException("只读请求白名单拒绝");
   if(wifi==null)throw new IOException("没有Wi-Fi Network");
@@ -127,7 +133,7 @@ public final class MainActivity extends Activity {
   HttpURLConnection conn=null;
   try{
    conn=(HttpURLConnection)wifi.openConnection(new URL("http",ip,80,request));
-   conn.setInstanceFollowRedirects(false);conn.setConnectTimeout(2800);conn.setReadTimeout(2800);
+   conn.setInstanceFollowRedirects(false);conn.setConnectTimeout(2800);conn.setReadTimeout(shutter?7000:2800);
    conn.setUseCaches(false);conn.setRequestProperty("Accept-Encoding","identity");
    int status=conn.getResponseCode();
    byte[] body=new byte[0];
@@ -177,7 +183,7 @@ public final class MainActivity extends Activity {
    }catch(Exception e){line("只读查询异常："+e.getClass().getSimpleName());}
   }
   baseline=list(true);baselineIp=ip;
-  state("已建立旧图基线："+baseline.size()+"条。可以按③等待新图");
+  state("已记录旧图基线："+baseline.size()+"张；点击②测试拍照");
  }
  private void downloadExisting(boolean newOnly) throws Exception {
   selectWifi();
@@ -191,27 +197,64 @@ public final class MainActivity extends Activity {
   line("候选"+order.size()+"张；选择排序最后1张校验（未保证按时间最新）");
   saveJpeg(order.get(order.size()-1));
  }
- private void watchNew() throws Exception {
+ private void shutterAndFetch() throws Exception {
   selectWifi();
-  if(baseline==null||!ip.equals(baselineIp)){
-   baseline=list(true);baselineIp=ip;line("自动建立基线："+baseline.size()+"张");
-  }
+  // Scope the state-changing test to the user's confirmed C110 endpoint.
+  if(!"192.168.1.254".equals(ip))throw new IOException("拍照只允许已实测的192.168.1.254；请先连接C110的Wi-Fi");
+  Result device=get("/?custom=1&cmd=3012");
+  Integer deviceStatus=ProbeUtil.tagInt(device.text(),"Status");
+  if(device.status!=200||device.body.length==0||(deviceStatus!=null&&deviceStatus!=0))
+   throw new IOException("3012设备探测未通过；没有发送拍照");
+  Result mode=get("/?custom=1&cmd=3037");
+  Integer modeStatus=ProbeUtil.tagInt(mode.text(),"Status");
+  if(mode.status!=200||mode.body.length==0||(modeStatus!=null&&modeStatus!=0))
+   throw new IOException("3037当前模式查询未通过；没有发送拍照");
+  Integer modeValue=ProbeUtil.tagInt(mode.text(),"Value");
+  line("设备/模式只读查询通过；模式值="+(modeValue==null?"未返回":modeValue)+"（模式映射待验证）");
+  Set<String> oldFiles=list(true);
+  baseline=new LinkedHashSet<>(oldFiles);baselineIp=ip;
+  line("快门前记录旧图："+oldFiles.size()+"张；不会将旧图判作新图");
   long start=SystemClock.elapsedRealtime();
-  state("请在20秒内按相机实体快门，等待新JPEG出现…");
+  // The only state-changing request in this experiment, once per user confirmation.
+  Result shot=get("/?custom=1&cmd=1001");
+  Integer status=ProbeUtil.tagInt(shot.text(),"Status");
+  line("拍照1001：HTTP"+shot.status+"，"+shot.ms+"ms；状态码="+(status==null?"未提供":status)+"；不记录照片路径");
+  if(shot.status!=200)throw new IOException("快门HTTP失败："+shot.status);
+  if(status!=null&&status!=0)throw new IOException("相机拒绝快门；状态码"+status);
+  state("已请求拍照，等待新JPEG写盘…");
+  int failures=0;boolean detected=false;
   while(SystemClock.elapsedRealtime()-start<20000){
-   Set<String> files=list(false);Set<String> added=new LinkedHashSet<>(files);added.removeAll(baseline);
+   Set<String> files;
+   try{files=list(false);failures=0;}
+   catch(IOException e){
+    if(++failures>=3)throw new IOException("三次连续读取列表失败，请检查相机Wi-Fi",e);
+    line("列表暂时无法读取："+failures+"/3");
+    Thread.sleep(450);continue;
+   }
+   Set<String> added=new LinkedHashSet<>(files);added.removeAll(oldFiles);
    if(!added.isEmpty()){
-    line("新增候选："+added.size()+"；首次出现距监听开始"+(SystemClock.elapsedRealtime()-start)+"ms");
+    if(!detected){detected=true;line("首次发现新增JPEG："+added.size()+"张，距快门"+(SystemClock.elapsedRealtime()-start)+"ms");}
     ArrayList<String> order=new ArrayList<>(added);Collections.sort(order);
-    for(int retry=1;retry<=5;retry++){
-     try{saveJpeg(order.get(order.size()-1));baseline=files;return;}
-     catch(IOException e){line("JPEG未就绪/不完整，复核"+retry+"/5："+e.getClass().getSimpleName());if(retry==5)throw e;Thread.sleep(650);}
+    String candidate=order.get(order.size()-1);
+    for(int attempt=1;attempt<=5;attempt++){
+     try{
+      saveJpeg(candidate);
+      baseline=new LinkedHashSet<>(files);baselineIp=ip;
+      line("单次快门到完整保存总耗时："+(SystemClock.elapsedRealtime()-start)+"ms");
+      ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);
+      line("相机Wi-Fi仍可访问："+(cm.getNetworkCapabilities(wifi)!=null));
+      return;
+     }catch(IOException e){
+      line("JPEG尚未完整可读："+attempt+"/5（"+e.getClass().getSimpleName()+"）");
+      if(attempt==5)throw e;
+      Thread.sleep(550);
+     }
     }
    }
-   Thread.sleep(700);
+   Thread.sleep(450);
   }
-  state("20秒没有发现新照片；请查看连接和媒体模式");
-  line("监测超时：未将旧图误判为新图");
+  line("20秒无本次新增JPEG；HTTP200不能证明已经拍照");
+  state("未确认新图，请复制诊断日志");
  }
  private void saveJpeg(String path) throws IOException {
   if(ProbeUtil.path(path,"/DCIM/",ip,false)==null)throw new IOException("不允许非DCIM照片路径");

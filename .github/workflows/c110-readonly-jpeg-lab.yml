@@ -1,4 +1,4 @@
-name: C110 Read-only JPEG Lab APK
+name: C110 One-shot Shutter JPEG Lab APK
 on:
   push:
     branches: [ 'exp/c110-readonly-jpeg-lab-20261118' ]
@@ -29,7 +29,7 @@ jobs:
           sha256sum "$APK"
       - uses: actions/upload-artifact@v4
         with:
-          name: BlueStar_C110_ReadOnly_Lab_0.1.0
+          name: BlueStar_C110_Shutter_Lab_0.1.1
           path: experiments/c110-camera-protocol/c110-readonly-lab/app/build/outputs/apk/debug/app-debug.apk
       - name: Create experimental prerelease
         if: success()
@@ -37,7 +37,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           APK=experiments/c110-camera-protocol/c110-readonly-lab/app/build/outputs/apk/debug/app-debug.apk
-          TAG=bluestar-c110-readonly-jpeg-lab-20261118
-          cp "$APK" "$RUNNER_TEMP/BlueStar_C110_ReadOnly_Lab_0.1.0.apk"
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --target "$GITHUB_SHA" --prerelease --title "Blue Star C110 Read-Only JPEG Lab v0.1.0" --notes "Independent Android 16 Wi-Fi JPEG diagnostics. No remote shutter, mode switching, firmware, or OCR; field verification pending."
-          gh release upload "$TAG" "$RUNNER_TEMP/BlueStar_C110_ReadOnly_Lab_0.1.0.apk" --clobber
+          TAG=bluestar-c110-shutter-jpeg-lab-20261118
+          cp "$APK" "$RUNNER_TEMP/BlueStar_C110_Shutter_Lab_0.1.1.apk"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --target "$GITHUB_SHA" --prerelease --title "Blue Star C110 One-shot Shutter JPEG Lab v0.1.1" --notes "Experimental one-shot HTTP 1001 shutter plus Wi-Fi new JPEG detection/download. No mode switching, firmware writes, or OCR. Real-camera shutter not yet verified."
+          gh release upload "$TAG" "$RUNNER_TEMP/BlueStar_C110_Shutter_Lab_0.1.1.apk" --clobber

@@ -44,6 +44,13 @@ public final class ProbeUtil {
    }
    return result;
  }
+ /** Parse only a numeric protocol tag; never log FPATH or camera IDs. */
+ public static Integer tagInt(String xml,String tag) {
+   if(xml==null||tag==null||!tag.matches("[A-Za-z]{1,16}"))return null;
+   Matcher m=Pattern.compile("(?is)<"+tag+">\\s*(-?\\d+)\\s*</"+tag+">").matcher(xml);
+   if(!m.find())return null;
+   try{return Integer.valueOf(m.group(1));}catch(NumberFormatException e){return null;}
+ }
  public static boolean jpegHeaderTail(byte[] start,int tail) {
    return start!=null && start.length>=3 && (start[0]&255)==255 && (start[1]&255)==216 && (start[2]&255)==255 && tail==0xffd9;
  }
