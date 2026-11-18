@@ -1,3 +1,13 @@
+# 2026-11-18｜C110 v0.1.2 真机查清 -256 / -13，v0.1.3 照片模式切换实验已发布
+
+- **v0.1.2 用户真实日志（18:10–18:11）**：`192.168.1.254` 的 Wi-Fi、3012 HTTP200/262字节、3037 HTTP200/100字节、3015 HTTP200无JPEG候选，但 DCIM 两次均列出7张旧图。拍照前旧图为7张；3037返回 `Status=-256`，单次 `1001` 两次均返回 HTTP200/`Status=-13`（15ms、14ms）；首次等待20秒没有新JPEG。**发送1001已确认，但拍照尚未成功，旧图读取仍正常；不可把HTTP200当快门成功。**
+- **进一步证据（注意是联咏NT96660参考资料，并非本C110固件源码）**：`WIFIAPP_RET_CMD_NOTFOUND=-256` 是“命令不存在”；`WIFIAPP_RET_FAIL=-13` 是“执行失败”。文档明确1001仅允许在照片模式，3001/par=0是照片模式、1录像、2回放；见 https://www.mputek.store/filedown/Survey3-WIFI-Manual.pdf 第5.1.1、5.3.1、8节。v0.1.2误将3037的非零状态仅作模糊“当前模式状态”，本轮已明确更正：不再依赖不支持的3037；-13是否由当前非照片模式引起仍未实机确认。
+- **v0.1.3已提交**：原隔离分支 `exp/c110-readonly-jpeg-lab-20261118` HEAD `3cb029beeede614467b03ded25b37f35b51ec375`。①只读3012/3024 SD状态/3002支持命令及旧图基线；②用户必须点击确认才执行一次 `3001&par=0` 切照片模式（可能中断预览），确认返回成功后可选查1003可拍张数，再仅发一次1001快门，原有新增JPEG完整验证、保存相册、耗时诊断保留；③不切模式直接拍照仅用作对照。1001立即返回非零错误时停止，不再白等20秒；不会自动重拍/切回、删除、格式化、OTA或上传。切模式是用户显式确认的实验操作，并非最终产品每次拍照必须切模式的结论。
+- **构建/发布**：[Actions 44283665330](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44283665330) `completed/success`（单测+assembleDebug）；独立新预发布 [bluestar-c110-shutter-jpeg-lab-20261118-v013](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-shutter-jpeg-lab-20261118-v013)，APK `BlueStar_C110_Shutter_Lab_0.1.3.apk` 26081字节，直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-shutter-jpeg-lab-20261118-v013/BlueStar_C110_Shutter_Lab_0.1.3.apk。之前 v0.1.0～0.1.2 Release保留，正式蓝星向导/M02S不改。
+- **下一步现场唯一动作**：用户在连接C110 Wi-Fi状态下安装0.1.3，点击①，再明确确认②，记录3001/par0的HTTP/Status和1001的HTTP/Status以及新图是否完成下载。若3001失败或1001仍-13，先检查原厂 App 初始化/相机当前模式/卡状态，不盲改固件或发其他写指令。
+
+---
+
 # 2026-11-18｜C110 v0.1.1 真机被3037模式查询误拦截；v0.1.2已修正构建，待1001真机结果
 
 - **v0.1.1实际日志（18:03）**：①已正常检测Wi-Fi网关 `192.168.1.254`，3012 HTTP200/262字节、3037 HTTP200/100字节、媒体索引3015返回0候选但目录GET找到7条JPEG。用户连续两次点击②均被 `3037当前模式查询未通过；没有发送拍照` 拦截。**1001未发，不能把这两次判为相机拒绝遥控拍照。**
