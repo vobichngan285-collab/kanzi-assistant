@@ -35,16 +35,19 @@ final class C110LivePreview {
         void routing(int status);
         void milestone(int phase);
         void snapshot(int phase,int eventCount,int lastEvent,int routeBound);
+        /** getPlayerState() and isPlaying() sampled from native LibVLC. */
+        void nativeStatus(int when,int state,int playing);
     }
     private final VLCVideoLayout view;
     private final Handler main=new Handler(Looper.getMainLooper());
     private LibVLC vlc;
     private MediaPlayer player;
+    private Media retainedMedia; // OEM holds Media until next playback/release
     private ConnectivityManager connectivity;
     private Network priorBinding,cameraBinding;
     private boolean changedBinding,hasVout;
     private int generation,phase,nativeEvents,lastNativeEvent,lastReportedState;
-    private Runnable watchdog;
+    private Runnable watchdog,delayedPlay,stateProbe;
 
     C110LivePreview(Context context){
         view=new VLCVideoLayout(context);
@@ -125,15 +128,38 @@ final class C110LivePreview {
                 media.addOption(":network-caching=300");
                 media.addOption(":codec=mediacodec,iomx,all");
                 current.setMedia(media);
-            }finally{media.release();}
+                // OEM VlcLyCameraPlayer stores Media in a field; do not
+                // release the Java owner immediately after setMedia().
+                retainedMedia=media;
+            }catch(RuntimeException|LinkageError failure){
+                media.release();
+                throw failure;
+            }
             progress(listener,4);
             current.setVolume(0);
-            current.play();
-            progress(listener,5);
-            // Timeout is our own watchdog. Record last native event/phase before
-            // reporting it. 2302 is NOT an RTSP status and not a camera error.
+            // OEM playByUrl() posts its player initialization runnable
+            // after 300ms. Previous lab called play() immediately.
+            delayedPlay=()->{
+                if(id!=generation||player!=current)return;
+                try{
+                    current.play();
+                    progress(listener,5);
+                    stateProbe=()->{
+                        if(id==generation&&player==current)
+                            reportNativeStatus(current,listener,1);
+                    };
+                    main.postDelayed(stateProbe,1200L);
+                }catch(RuntimeException|LinkageError startFailure){
+                    listener.snapshot(phase,nativeEvents,lastNativeEvent,
+                        boundToCamera()?1:0);
+                    listener.error(2304,phase,6);
+                }
+            };
+            main.postDelayed(delayedPlay,300L);
+            // A local timer is not an RTSP/server error.
             watchdog=()->{
                 if(id==generation&&player==current&&!hasVout){
+                    reportNativeStatus(current,listener,2);
                     listener.snapshot(phase,nativeEvents,lastNativeEvent,boundToCamera()?1:0);
                     listener.error(2302,2,5);
                 }
@@ -157,6 +183,12 @@ final class C110LivePreview {
             listener.state(state);
         }
     }
+    private void reportNativeStatus(MediaPlayer current,Listener listener,int sample){
+        int state=-4096,playing=-4096;
+        try{state=current.getPlayerState();}catch(RuntimeException|LinkageError unavailable){}
+        try{playing=current.isPlaying()?1:0;}catch(RuntimeException|LinkageError unavailable){}
+        listener.nativeStatus(sample,state,playing);
+    }
     private boolean boundToCamera(){
         try{
             return connectivity!=null&&cameraBinding!=null&&
@@ -166,6 +198,8 @@ final class C110LivePreview {
     void stop(){
         generation++;
         if(watchdog!=null){main.removeCallbacks(watchdog);watchdog=null;}
+        if(delayedPlay!=null){main.removeCallbacks(delayedPlay);delayedPlay=null;}
+        if(stateProbe!=null){main.removeCallbacks(stateProbe);stateProbe=null;}
         MediaPlayer old=player;player=null;
         if(old!=null){
             try{old.setEventListener(null);}catch(Exception ignored){}
@@ -173,6 +207,8 @@ final class C110LivePreview {
             try{old.detachViews();}catch(Exception ignored){}
             try{old.release();}catch(Exception ignored){}
         }
+        Media oldMedia=retainedMedia;retainedMedia=null;
+        if(oldMedia!=null)try{oldMedia.release();}catch(Exception ignored){}
         LibVLC oldVlc=vlc;vlc=null;
         if(oldVlc!=null)try{oldVlc.release();}catch(Exception ignored){}
         if(changedBinding&&connectivity!=null&&cameraBinding!=null){

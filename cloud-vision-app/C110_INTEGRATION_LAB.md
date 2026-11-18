@@ -1,19 +1,19 @@
-# C110 原厂 VLCVideoLayout / VLC 诊断 v0.1.9（2026-11-18）
+# C110 v0.1.10：原厂播放启动顺序 / 原生状态专项 (2026-11-19)
 
-## 真机结果
-v0.1.8 23:49:12与23:49:25：3001/par1=0、2015/par1=0、vlc_wifi_bind=1，之后只有vlc_error=2302（本应用自己设置的12秒无Vout定时器）、reason=2/stage=5。没有vlc_state/Vout/视频尺寸。**没有观察到原生错误事件不等于相机或VLC确认无问题**，不能从2302推断RTSP 404。
+## v0.1.9 真机证据
+2026-11-19 00:07:15：`live_mode_cmd=0`、`live_cmd=0`、`vlc_wifi_bind=1`、`vlc_phase=1..5`、`vlc_last_phase=5`、`vlc_event_count=1`、`vlc_last_event=256`（原生MediaChanged）、`vlc_route_alive=1`、`vlc_error=2302`（App自己的20秒无Vout超时）。**没有发现Opening(258)/Playing(260)原生事件**，不能从2302判断RTSP错误、视频服务不支持或解码失败。
 
-## 直接从用户原厂 SJCAM Zone 6.7.3.16 APK classes5.dex 新复核
-- `VlcLyCameraPlayer$1.run`先创建LibVLC/MediaPlayer，再`MediaPlayer.attachViews(VLCVideoLayout,...)`、设置EventListener、创建Media、添加编码/缓存选项、setMedia、play。v0.1.8 用原生Vout人工attach SurfaceView；与原厂不同。
-- 原版构造函数 `cache=300`，Media选项有`:sout-mux-caching=300`、`:live-caching=300`、`:file-caching=300`、`:network-caching=300`、`:avcodec-skiploopfilter=4`、`:avcodec-skip-frame=0`、`:avcodec-skip-idct=0`、`:no-stats`、`:codec=mediacodec,iomx,all`，禁音。
-- `LYCamera.getVideoPlayUrl()`按相机固件版本字段判断并根据路由返回RTSP/HTTP/mVideoUrl，并非全机型统一RTSP。未获得当前C110实机固件版本，不凭猜测改掉已经返回过DESCRIBE200的已知RTSP URL，也不重复无效8192端口探测。
+## 本次直接对照用户提供的原厂 SJCAM Zone 6.7.3.16 `classes5.dex`
+- 实际反汇编 `LYCamera.getVideoPlayUrl()`：根据 `SCameraInfo.getCameraVersion()` 的多组固件条件选择返回`rtsp://192.168.1.254:554/xxx.mp4`、`http://192.168.1.254:8192`或空值。此前只观察到相机对已知RTSP源的OPTIONS/DESCRIBE=200，不知道实际C110固件版本，因此**不能把另一个候选地址臆造为真实流地址**，也不能认为对某个服务返回200证明能够播放。
+- 原厂 `VlcLyCameraPlayer.playByUrl()` 方法体确证使用 `Handler.postDelayed(...,300)`，然后执行 `VlcLyCameraPlayer$1.run()` 中的 MediaPlayer.attachViews/setEventListener/Media设置/播放。v0.1.9立即play而不是匹配原厂的300ms延迟。
+- 原厂Media作为播放器对象字段持有，直到换流/释放。v0.1.9调用setMedia后立刻`Media.release()`（Java层正常引用计数可能允许，但非原厂生命周期）。
 
-## 本版仅隔离实验包（RC25/照片JPEG/云端OCR/M02S不动）
-- 使用开源官方 LibVLC 3.6.5，`VLCVideoLayout`+ `MediaPlayer.attachViews(view,null,false,false)`，原厂四缓存300与上述解码参数，不强制TCP。
-- 继续仅用户点击C110预览后启动3001/2015和绑定C110 Wi-Fi，停止/错误/拍照/Activity暂停时恢复先前网络，按既有路径走蜂窝云端。
-- 匿名数字进程诊断：`vlc_phase`=1绑定成功、2 LibVLC构造、3视图挂接、4媒体设置、5调用play；错误/超时时记录`vlc_last_phase`、`vlc_event_count`、`vlc_last_event`(VLC原生枚举值，0代表没有事件)以及`vlc_route_alive`。重复buffer事件不反复刷日志。仅记录状态数值，绝不保存原厂原生日志、网址/视频流、SDP、密钥。
-- 超时从12秒改为一次20秒，code2302仍明确表示**应用自身无Vout超时**，不是原厂错误；native Error是2301。Vout不是屏幕真实首帧，需要用户目视。
-- 版本`1.0.34-c110-libvlcdiag-lab`；新独立安装包`com.vobich.bluestar.c110vlcdiag`。
+## v0.1.10仅对隔离实验包做两项原厂时序适配 + 状态诊断
+- 在旧顺序已创建LibVLC和VLCVideoLayout、已完成Media设置后，`Handler.postDelayed(delayedPlay,300L)` 调用`current.play()`；停止/暂停/拍照/错误时主动removeCallbacks，防止关闭后迟到播放。
+- 将Media对象保留到`stop()`，播放器stop/release以后才release Media，避免过早释放；仍仅一次用户触发的连接，不盲目重试。
+- 新增仅匿名数值：`vlc_native_state1`/`vlc_is_playing1` 是play后1.2秒原生MediaPlayer状态、`vlc_native_state2`/`vlc_is_playing2` 是20秒本地watchdog前的状态。原`vlc_phase`/event_count/last_event/route_alive和error保持。没有记录网络封包、原始VLC日志、SDP、视频、任何密钥。
+- `getPlayerState()` 是内部Media状态枚举编号，不等同于Event编号；`isPlaying=0`只代表采样瞬间非播放，需结合事件与状态判读。
+- 不改原厂候选URL、模式指令3001/2015、不强制TCP、不触碰高清JPEG/蜂窝OCR/TTS/USB/M02S及正式RC25。新独立包名`com.vobich.bluestar.c110oemstart`，避免覆盖任何旧测试版。
 
-## 验收
-手机连接C110 Wi-Fi，安装v0.1.9，点击一次C110预览，只观察真实画面及最新c110_live日志。特别关注`vlc_phase`、`vlc_last_phase`、`vlc_event_count`、`vlc_last_event`、`vlc_route_alive`、`vlc_vout_count`和`vlc_error`。不用配置Key或重试拍照；若没有Vout，不能宣称取流成功。
+## 真机验收
+连接C110 Wi-Fi、安装v0.1.10、点一次C110预览，目视判断是否真实连续相机画面；复制最新完整`c110_live`。重点`vlc_phase`、`vlc_event_count`、`vlc_last_event`、`vlc_native_state1/2`、`vlc_is_playing1/2`、`vlc_vout_count`、`vlc_error`。不必填API Key或再测试拍照。

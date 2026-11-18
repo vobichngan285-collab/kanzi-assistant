@@ -2890,6 +2890,17 @@ public final class MainActivity extends CameraActivity {
                             if(diagnostics!=null)
                                 diagnostics.event("c110","vlc_phase",phase,"probe");
                         }
+                        @Override public void nativeStatus(int sample,int state,int playing){
+                            if(seq!=c110PreviewSeq.get())return;
+                            if(diagnostics!=null){
+                                diagnostics.event("c110",
+                                    sample==1?"vlc_native_state1":"vlc_native_state2",
+                                    state,"classified");
+                                diagnostics.event("c110",
+                                    sample==1?"vlc_is_playing1":"vlc_is_playing2",
+                                    playing,"classified");
+                            }
+                        }
                         @Override public void snapshot(int phase,int count,int event,int bound){
                             if(seq!=c110PreviewSeq.get())return;
                             if(diagnostics!=null){
