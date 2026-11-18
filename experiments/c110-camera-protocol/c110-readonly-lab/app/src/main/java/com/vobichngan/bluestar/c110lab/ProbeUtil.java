@@ -1,0 +1,50 @@
+package com.vobichngan.bluestar.c110lab;
+import java.net.URI;
+import java.util.*;
+import java.util.regex.*;
+public final class ProbeUtil {
+ private ProbeUtil() {}
+ private static final Pattern HREF=Pattern.compile("(?i)href\\s*=\\s*[\"']([^\"']+)[\"']");
+ private static final Pattern FPATH=Pattern.compile("(?is)<FPATH>\\s*([^<]+)\\s*</FPATH>");
+ private static final Pattern DCIM=Pattern.compile("(?i)/?DCIM/[A-Za-z0-9_%./()-]+\\.(?:jpg|jpeg)");
+ public static String path(String input,String dir,String host,boolean folder) {
+   if(input==null)return null;
+   String v=input.trim().replace("&amp;","&");
+   if(v.length()>512 || v.contains("..") || v.contains("\\") || v.contains("?") || v.contains("#"))return null;
+   try {
+     URI u=new URI(v);
+     if(u.isAbsolute()){
+       if(!"http".equalsIgnoreCase(u.getScheme())||!host.equalsIgnoreCase(u.getHost())||(u.getPort()!=-1&&u.getPort()!=80))return null;
+       v=u.getRawPath();
+     } else if(v.startsWith("//"))return null;
+     else if(!v.startsWith("/"))v=dir+v;
+     if(!v.startsWith("/"))v="/"+v;
+     if(!v.toUpperCase(Locale.ROOT).startsWith("/DCIM/"))return null;
+     return folder ? (v.endsWith("/")?v:null) : (v.toLowerCase(Locale.ROOT).matches(".*\\.jpe?g$")?v:null);
+   } catch(Exception e){return null;}
+ }
+ public static Set<String> jpegs(String text,String dir,String host) {
+   LinkedHashSet<String> files=new LinkedHashSet<>();
+   for(Pattern p:new Pattern[]{HREF,FPATH,DCIM}) {
+     Matcher m=p.matcher(text);
+     while(m.find()) {
+       String val=p==DCIM?m.group():m.group(1);
+       String f=path(val,dir,host,false);
+       if(f!=null)files.add(f);
+     }
+   }
+   return files;
+ }
+ public static Set<String> dirs(String text,String dir,String host) {
+   LinkedHashSet<String> result=new LinkedHashSet<>();
+   Matcher m=HREF.matcher(text);
+   while(m.find()){
+     String p=path(m.group(1),dir,host,true);
+     if(p!=null&&!p.equals(dir))result.add(p);
+   }
+   return result;
+ }
+ public static boolean jpegHeaderTail(byte[] start,int tail) {
+   return start!=null && start.length>=3 && (start[0]&255)==255 && (start[1]&255)==216 && (start[2]&255)==255 && tail==0xffd9;
+ }
+}

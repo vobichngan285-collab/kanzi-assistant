@@ -1,0 +1,43 @@
+name: C110 Read-only JPEG Lab APK
+on:
+  push:
+    branches: [ 'exp/c110-readonly-jpeg-lab-20261118' ]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install SDK platform
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Run Java tests and build Android APK
+        run: |
+          gradle --no-daemon -p experiments/c110-camera-protocol/c110-readonly-lab :app:testDebugUnitTest :app:assembleDebug
+          APK=experiments/c110-camera-protocol/c110-readonly-lab/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          sha256sum "$APK"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_C110_ReadOnly_Lab_0.1.0
+          path: experiments/c110-camera-protocol/c110-readonly-lab/app/build/outputs/apk/debug/app-debug.apk
+      - name: Create experimental prerelease
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          APK=experiments/c110-camera-protocol/c110-readonly-lab/app/build/outputs/apk/debug/app-debug.apk
+          TAG=bluestar-c110-readonly-jpeg-lab-20261118
+          cp "$APK" "$RUNNER_TEMP/BlueStar_C110_ReadOnly_Lab_0.1.0.apk"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --target "$GITHUB_SHA" --prerelease --title "Blue Star C110 Read-Only JPEG Lab v0.1.0" --notes "Independent Android 16 Wi-Fi JPEG diagnostics. No remote shutter, mode switching, firmware, or OCR; field verification pending."
+          gh release upload "$TAG" "$RUNNER_TEMP/BlueStar_C110_ReadOnly_Lab_0.1.0.apk" --clobber
