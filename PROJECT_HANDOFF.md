@@ -1,3 +1,14 @@
+# 2026-11-18｜C110 独立只读取图实验 v0.1.0（已构建，待真机）
+
+- **已发布，不等于实机成功**：沿用 11-15～11-17 SJCAM Zone/X 的 C110 DEX 研究与免切模式专项结论，在原仓库隔离分支 `exp/c110-readonly-jpeg-lab-20261118` 新增 `experiments/c110-camera-protocol/c110-readonly-lab/` 独立 Android APK。未改正式蓝星向导 RC25、M02S 代码或相机固件；未把原厂 APK 放入仓库。
+- **源码 HEAD**：`e6bcc92dc16cb5356639102a7e4d2d30cccae90a`；GitHub Actions [44274477132](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44274477132) **completed/success**（Gradle Java 单元测试 + assembleDebug 完成）；前几轮构建仅因 CI Android SDK 环境配置失败，现已修正。
+- **独立预发布**：[bluestar-c110-readonly-jpeg-lab-20261118](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-readonly-jpeg-lab-20261118)；直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-readonly-jpeg-lab-20261118/BlueStar_C110_ReadOnly_Lab_0.1.0.apk（大小 21857 bytes）。独立包名 `com.vobichngan.bluestar.c110lab`，不会覆盖 RC25。
+- **功能**：手机连接 C110 Wi-Fi 后取网关/手工私有 IP，采用 Android 指定 Wi-Fi Network 发只读 `3012`/`3037`/`3015` 和 `/DCIM/PHOTO/` 等目录请求；先建立旧图基线，再比较真实新增 JPEG；读取同源 URL，校验 HTTP 长度、JPEG 头尾、图片解码尺寸，验证通过才保存到手机 `Pictures/BlueStar_C110_Test`；界面有 20 秒观察、已有图测试、日志复制与对照检测。
+- **安全边界**：不发 `1001` 遥控拍照、不发 `3001` 切模式、不发 `2015` 预览启动、不发删除/格式化/OTA，不上传云端，无 OCR/TTS。手动使用相机实体快门后检查，查询接口只是针对 LY/Novatek 候选后端，固件若不同应停测而非盲发。不能把“找到了旧图”当“新拍自动取图成功”。本版没有在用户 vivo X200 Pro / 实体 C110 上完成通信验证。
+- **下一步只需用户真机日志**：连接实际相机 Wi-Fi，先按①查看基线，再按③并使用相机实体快门，记录是不是新增真正可解码的 JPEG；如 A 组在拍照模式失败，再用原厂 App 自己切到媒体模式，回实验版按④做只读对照，注意 App 页面切换可能影响 Wi-Fi。另需独立验证 C110 预览码流与蜂窝云端分流，仍是最终蓝星视觉方案的主线。未经真机证据不承诺免切模式一定可用，更不承诺 5 秒朗读。
+
+---
+
 # 2026-11-17 澄清｜相机指示灯只是闲聊，不是项目需求
 
 - 用户明确澄清：前面的“所有灯都不亮”只是闲聊，黑色胶带即可解决；**不列为蓝星向导功能需求、研发任务、验收条件或选型门槛**，后续不要继续围绕 LED 研究。
