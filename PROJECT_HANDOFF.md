@@ -1,3 +1,13 @@
+# 2026-11-18｜C110 预览失败真实日志→v0.1.2 无损状态码与RTSP双端口诊断包
+
+- **用户最新现场（22:05）**：蓝星向导 C110 预览0.1.1的高清拍照仍成功：`c110.photo_total_ms=1029`、`mode_ms=17`、`shutter_ms=406`、JPEG **1,256,313 字节、5888×3312**，百炼云端 `cloud.network_ms=3173`，继续证明高清静态拍照→上传云端可用。视频端 `preview_try=1`、`live_cmd=-1`、`live_rtsp_error=2000`、`live_width_px=0/live_height_px=0`、`live_http8192=-1`，没有任何实际解码视频帧。
+- **源码精确原因及解释**：v0.1.1 `RuntimeDiagnostics.event()` 将负数状态统一 `Math.max(-1,...)`，`live_cmd=-1` 不能辨认原厂2015是否返回 `-13`、`-256` 或其他状态；旧8192读请求吞掉异常返回-1，也无法区分HTTP/原始码流、TCP拒绝或超时。Media3 `PlaybackException.ERROR_CODE_IO_UNSPECIFIED=2000` 为未分类I/O失败，并不单独证明RTSP地址无效。原厂DEX记录有 `3001 mode→2015启动→获取机型URL→播放器` 链，但本次只发送2015，是否欠缺切录像模式/不同URL或SDP/RTP兼容性仍需真机判别，**不可根据-1武断下结论**。
+- **本轮仅做明确诊断修复**：原仓库隔离实验分支 `exp/bluestar-c110-integrated-20261118` 新HEAD `c68f95dff9d140a5adaf4d8b01adda161de3135b`。新增 `C110PreviewProbe.java`，只对已在SJCAM Zone DEX发现的相机 `192.168.1.254:554` / `:8192` 使用正确 Android Wi-Fi `Network.getSocketFactory()` 检测TCP端口，读一次 RTSP `OPTIONS`/`DESCRIBE` 响应码及HTTP 8192响应码，不存储源图/SDP/原始流，不尝试猜测新写命令或陌生地址。保留来自2015的负值状态（未知XML状态使用-4096），增加 Media3异常类别 `live_rtsp_cause` ；如播放器失败自动收起黑视频播放器，原C110高清照片→蜂窝云端OCR/TTS不改。新的诊断字段：`live_cmd, tcp554, rtsp_options, rtsp_describe, tcp8192, http8192, live_rtsp_error, live_rtsp_cause`。TCP探针码：1=开放，-1=超时，-2=拒绝，-3=无路由，-4=安全限制，-5=其他；RTSP返回HTTP式3位状态码、-6=非RTSP首行、-9=端口未开放。Media3根因类别1=timeout、2=connect、3=noRoute、4=security、5=Rtsp内部、6=DNS、7=IO、9=其他。
+- **构建与发布已核实**：[Actions 44321365510](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44321365510) `completed/success`（协议测试、静态安全审计、原USB补丁、arm64编译、APK身份/原生库/音效校验、GitHub Release发布成功）。独立新包名 `com.vobich.bluestar.c110probe`，避免不同GitHub runner的调试签名不一致导致覆盖安装失败；不会覆盖正式RC25或上一实验v0.1.1，测试预览不需要设置百炼API Key（如需测试云端另填）。[Release bluestar-c110-preview-diagnostics-20261118-v012](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-preview-diagnostics-20261118-v012)，APK `BlueStar_Guide_C110_PreviewProbe_0.1.2.apk` **11,834,135 字节**；直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-preview-diagnostics-20261118-v012/BlueStar_Guide_C110_PreviewProbe_0.1.2.apk 。
+- **下一步唯一现场测试**：连接 C110 Wi-Fi，打开新独立测试包，点击一次顶部「C110预览」，复制当次`c110_live`完整匿名诊断；从真实2015返回与554/8192连通和RTSP DESCRIBE码决定是缺前置模式、视频端口关闭、URL不匹配、RTSP不支持TCP还是解码问题。**当前尚未完成真实C110视频显示**。不要重复已成功的六轮纯拍照，也不改相机固件、正式RC25或旧Release。
+
+---
+
 # 2026-11-18｜蓝星向导C110预览 v0.1.1：补实时RTSP视频开关，已构建待真机
 
 - **用户新真机证据（21:48–21:50）**：独立集成0.1.0真实多次C110拍照→云端识别，用户明确“可以，而且速度很快”；日志C110完整JPEG均为5888×3312、1.4–1.8MB，`jpeg.encode_ms=0`，`c110.mode_ms=0`，单轮 `c110.photo_total_ms=1001/1112/1172/1619/1121` 等；蜂窝云端 `cloud.response_headers_ms` 多在1.8–1.96s，TTS onStart仅为回调不等于扬声器真实出声。手机后摄旧识别仍可用。用户提出**当前拍照无法看到C110实时预览**，要求先查原因再修改。
