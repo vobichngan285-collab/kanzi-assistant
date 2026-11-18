@@ -1,3 +1,15 @@
+# 2026-11-19｜SJCAM C110 原厂设备识别→模式→视频最小独立程序完成（源码/CI/Release均核验；尚未真机出帧）
+
+- **用户背景和权限**：v0.1.11 真机 11-19 00:40:34、00:40:56 两次：`live_mode_cmd=0`、`live_cmd=0`、`vlc_wifi_bind=1`，只有`vlc_play_gate=0`，没有本应用放行`play()`。用户明确不接受补丁式、无限实验 APK，授权改为完全以原厂 App 为主，追踪设备身份、实际模式和视频URL，在确认代码路径后做最小视频播放器，不碰既有正式程序和照片链。
+- **从用户原厂APK重新实查到的证据**：APK `bdcc3db17ea0e26aecaf22bc01fe99be.apk`，SJCAM Zone 6.7.3.16的`classes5.dex`直接解码方法体和常量：`LYCamera.connection()`→`getCameraVersion()`→`LYCamera$3.run()`发送只读`cmd3012`→`LYCamera$3$1.onResponse`解析包含`<String>`的设备信息，再进入`getCameraInfoByRequest`与`handlerConnection`；`handlerConnection()`读`cmd3016`当前状态，此外在不同条件下可读/写`2016/3014`，不应把所有分支指令当统一启动步骤；`changeCameraModel(1,...)`会将`mVideoUrl`设为`rtsp://192.168.1.254:554/xxx.mp4`、发送`3001/par1`，其`LYCamera$12.onResponse`启动`2015/par1`；`getVideoPlayUrl`对`C110_PRO`有额外固件分支，对普通LY模式1通常使用其`mVideoUrl`。原`VlcLyCameraPlayer.playByUrl()`延迟300ms、`VLCVideoLayout`由LibVLC自身维护Surface。**目前没有连接到用户实机获取具体CameraVersion或原厂成功流抓包**，即使静态分支明确也不能说真实C110已完全复现。
+- **本轮变更的隔离策略**：未再修改已失败的集成v0.1.11分支，没有改`main`的任何应用业务代码。仍在**同一GitHub仓库**中新建独立分支`exp/c110-oem-minimal-20261119`，HEAD `6bd85802a31d0535e4209f8e012ba531297032e9`，单独新增Gradle子模块`cloud-vision-app/c110mini`，包名`com.vobich.bluestar.c110mini`、版本`0.1.0-oem-minimal`，唯一单屏App只负责：按用户一次点击→连接网关为192.168.1.254的Wi-Fi→读取`3012`设备类别线索、`3016`当前数值状态→对标准C110走原厂LY视频模式`3001/par1`→`2015/par1`→原厂LY模式1候选RTSP交给官方开源LibVLC 3.6.5播放。特殊`C110_PRO`分支停止，不猜测HTTP8192；未知原厂型号明确标记未识别。无自动重试。
+- **不再补丁拦截播放**：新Activity从创建起一直可见`VLCVideoLayout`，用LibVLC`MediaPlayer.attachViews`管理Surface并在OEM约定的300ms后直接单次`play`，**没有自写Surface门控、反复RTSP探针、模拟PLAY、强制RTP/TCP或后台录像**。诊断仅屏幕临时文本，包含3012类别、3016数值、3001/2015状态、VLC事件Opening/Playing/Vout/错误及native状态；可单击复制，但不保存原始XML、设备序列号、照片/视频、API密钥。UI仅【识别C110并预览】【停止】【复制诊断】。VLC原生进程Wi-Fi临时绑定仅限本App，停止/退后台恢复原绑定。
+- **安全/保留**：本模块无用户照片、云端OCR/TTS、DCIM、USB、BLE、OTA及固件命令；独立包不覆盖原Blue Star RC25、不动6轮已真机验证的C110 JPEG→蜂窝云OCR/TTS。原厂APK仅用于本地静态研究，未重打包或发布任何专有代码/二进制。没有宣称已在C110实机显示视频。
+- **CI已成功且Release实物核验**：[GitHub Actions 44355342018](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44355342018) `completed/success`，GitHub静态命令隔离检查、Gradle`:c110mini:assembleDebug`、APK身份/ARM64原生libvlc.so/libvlcjni.so、ZIP、Artifact上传/Release均成功。Tag`bluestar-c110-oem-minimal-20261119-v010`、Release https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-oem-minimal-20261119-v010 ；APK`BlueStar_C110_OEM_Minimal_0.1.0.apk` 46,109,677字节，SHA256 `34fc6cc1664493336d13e00b79c6a789824867670254bf7122a6baa1e91d7d98`；直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-oem-minimal-20261119-v010/BlueStar_C110_OEM_Minimal_0.1.0.apk。
+- **下一步仅一次验收**：手机连接C110标准版的Wi-Fi，只启动该独立App并点击一次“识别C110并预览”，观察相机是否显示真实连续图像，复制它的临时诊断输出。不要再让用户安装多版本或测试已经成功的高清拍照；如未出画，首先以具体`3012/3016`和LibVLC事件结果判定真实固件/模式分支，**不得无证据重启补丁循环**。
+
+---
+
 # 2026-11-19｜停止补丁式修复：重新对原厂 SJCAM Zone 6.7.3.16 完整核查 C110 视频地址/模式/播放链（只读研究，无新APK）
 
 - **用户最新v0.1.11实机反馈**（00:40:34、00:40:56）：`live_mode_cmd=0`、`live_cmd=0`、`vlc_wifi_bind=1`，但只有`vlc_play_gate=0`，无`vlc_play_gate=1`、无VLC Opening/Playing/Vout。**0是蓝星自加的 Surface 条件没有放行；本次甚至没能调用`current.play()`，不是相机RTSP错误的证据**。用户对反复更版严重不满，要求以原厂APP为突破口，不做无依据补丁。
