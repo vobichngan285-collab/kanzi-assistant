@@ -67,6 +67,49 @@ final class C110WifiCamera {
 
     synchronized void resetPhotoMode(){photoModeReady=false;}
 
+    /** The caller explicitly taps Preview. This is NOT called by camera shoot(). */
+    static Network previewNetwork(Context context) throws IOException {
+        ConnectivityManager cm=(ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if(cm==null)throw new IOException("Android网络服务不可用");
+        return findCameraNetwork(cm);
+    }
+
+    /** One OEM LY start-live-video command, not repeated automatically on error. */
+    synchronized int startPreview(Context context,Network wifi) throws IOException {
+        Reply id=get(wifi,"/?custom=1&cmd=3012",MAX_INDEX);
+        if(id.http!=200||!Integer.valueOf(0).equals(C110PhotoPolicy.tagInt(id.text(),"Status")))
+            throw new IOException("不是已识别的C110相机，禁止发送预览启动指令");
+        Reply commands=get(wifi,"/?custom=1&cmd=3002",MAX_INDEX);
+        if(commands.http!=200||!commands.text().contains("<Cmd>1001</Cmd>"))
+            throw new IOException("不符合已验证的C110能力集");
+        // Starting a live-video session may change firmware camera mode.
+        photoModeReady=false;
+        Reply response=get(wifi,"/?custom=1&cmd=2015&par=1",MAX_INDEX);
+        if(response.http!=200)throw new IOException("预览指令2015 HTTP "+response.http);
+        Integer status=C110PhotoPolicy.tagInt(response.text(),"Status");
+        return status==null?Integer.MIN_VALUE:status;
+    }
+
+    /** Read-only bounded probe of the alternate OEM HTTP 8192 candidate. */
+    static int probeHttp8192(Network wifi) {
+        HttpURLConnection con=null;
+        try {
+            con=(HttpURLConnection)wifi.openConnection(new URL("http",CAMERA_IP,8192,"/"));
+            con.setRequestMethod("GET");
+            con.setInstanceFollowRedirects(false);
+            con.setConnectTimeout(1500);con.setReadTimeout(1000);
+            int status=con.getResponseCode();
+            if(status==200){
+                try(InputStream input=con.getInputStream()){
+                    byte[] first=new byte[32];
+                    input.read(first);
+                }
+            }
+            return status;
+        } catch(Exception failure){return -1;}
+        finally {if(con!=null)con.disconnect();}
+    }
+
     synchronized Photo shoot(Context context) throws Exception {
         long begin=SystemClock.elapsedRealtime();
         ConnectivityManager cm=(ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -155,7 +198,8 @@ final class C110WifiCamera {
         boolean command=path.equals("/?custom=1&cmd=3012")||
             path.equals("/?custom=1&cmd=3002")||path.equals("/?custom=1&cmd=3015")||
             path.equals("/?custom=1&cmd=1001")||
-            path.equals("/?custom=1&cmd=3001&par=0");
+            path.equals("/?custom=1&cmd=3001&par=0")||
+            path.equals("/?custom=1&cmd=2015&par=1");
         boolean media=path.startsWith("/DCIM/")&&!path.contains("..")&&
             !path.contains("\\")&&!path.contains("?")&&!path.contains("#");
         if(!command&&!media)throw new IOException("C110请求不在严格白名单内");

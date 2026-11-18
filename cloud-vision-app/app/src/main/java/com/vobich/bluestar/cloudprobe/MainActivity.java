@@ -113,7 +113,11 @@ public final class MainActivity extends CameraActivity {
 
     private FrameLayout previewContainer,rootFrame;
     private TextView currentTaskChip,zoomChip,resultChip;
-    private Button c110Button;
+    private Button c110Button,c110PreviewButton;
+    private C110LivePreview c110Preview;
+    private boolean c110PreviewWanted,c110PreviewPlaying;
+    private final ExecutorService c110PreviewExecutor=Executors.newSingleThreadExecutor();
+    private final AtomicInteger c110PreviewSeq=new AtomicInteger();
     private final C110WifiCamera c110Camera=new C110WifiCamera();
     private volatile android.net.Network lastSessionCloudNetwork;
     private View tapOverlay;
@@ -308,6 +312,10 @@ public final class MainActivity extends CameraActivity {
         previewContainer.setBackgroundColor(Color.BLACK);
         previewContainer.setClipChildren(true);
         root.addView(previewContainer,new FrameLayout.LayoutParams(-1,-1));
+        c110Preview=new C110LivePreview(this);
+        previewContainer.addView(c110Preview.view(),
+            new FrameLayout.LayoutParams(-1,-1,Gravity.CENTER));
+        c110Preview.view().setVisibility(View.GONE);
 
         phoneTexture=new TextureView(this);
         phoneTexture.setOpaque(false);
@@ -327,7 +335,9 @@ public final class MainActivity extends CameraActivity {
         tapOverlay=new View(this);
         tapOverlay.setContentDescription("点击拍照识别；双指缩放摄像头画面");
         tapOverlay.setFocusable(true);
-        tapOverlay.setOnClickListener(v->captureOneFrame());
+        tapOverlay.setOnClickListener(v->{
+            if(c110PreviewWanted)captureC110OneShot();else captureOneFrame();
+        });
         zoomDetector=new ScaleGestureDetector(this,new ScaleGestureDetector.SimpleOnScaleGestureListener(){
             @Override public boolean onScaleBegin(ScaleGestureDetector d){
                 touchMulti=true;return true;
@@ -392,6 +402,18 @@ public final class MainActivity extends CameraActivity {
             toastShort("C110照片模式已标记为待初始化，下次点击将重新进入照片模式");
             return true;
         });
+        c110PreviewButton=new Button(this);
+        c110PreviewButton.setAllCaps(false);
+        c110PreviewButton.setText("C110预览");
+        c110PreviewButton.setTextSize(TypedValue.COMPLEX_UNIT_SP,12);
+        c110PreviewButton.setTextColor(Color.WHITE);
+        c110PreviewButton.setPadding(0,0,0,0);
+        c110PreviewButton.setBackground(roundRect(0xFF245477,12));
+        c110PreviewButton.setContentDescription("打开或关闭C110实时Wi-Fi视频预览");
+        LinearLayout.LayoutParams plp=new LinearLayout.LayoutParams(dp(71),dp(45));
+        plp.rightMargin=dp(5);
+        title.addView(c110PreviewButton,plp);
+        c110PreviewButton.setOnClickListener(v->toggleC110LivePreview());
         zoomChip=new TextView(this);
         zoomChip.setText("1.0×");
         zoomChip.setGravity(Gravity.CENTER);
@@ -2790,6 +2812,106 @@ public final class MainActivity extends CameraActivity {
         }else beginCapturedFrame(usbShot,now,token,oneShotTask);
     }
 
+    /** Preview is explicit opt-in; the photo path never launches it automatically. */
+    private void toggleC110LivePreview(){
+        if(c110PreviewWanted){stopC110LivePreview(true);setResultStatus("已关闭C110预览");}
+        else startC110LivePreview();
+    }
+
+    private void stopC110LivePreview(boolean clearIntent){
+        if(clearIntent)c110PreviewWanted=false;
+        c110PreviewPlaying=false;
+        c110PreviewSeq.incrementAndGet();
+        if(c110Preview!=null){
+            c110Preview.stop();
+            c110Preview.view().setVisibility(View.GONE);
+        }
+        if(c110PreviewButton!=null)
+            c110PreviewButton.setText(c110PreviewWanted?"关闭预览":"C110预览");
+    }
+
+    private void startC110LivePreviewAfterPhoto(){
+        // Same user-enabled preview session; cloudBusy is expected while OCR runs.
+        boolean oldBusy=cloudBusy;
+        cloudBusy=false;
+        try{startC110LivePreview();}
+        finally{cloudBusy=oldBusy;}
+    }
+
+    private void startC110LivePreview(){
+        if(!uiActive||readingScreen!=null){
+            toastShort("请退出阅读页面后打开C110实时预览");return;
+        }
+        if(cloudBusy)return;
+        c110PreviewWanted=true;
+        final int seq=c110PreviewSeq.incrementAndGet();
+        if(c110PreviewButton!=null)c110PreviewButton.setText("关闭预览");
+        setResultStatus("正在启动C110原始视频预览…");
+        if(diagnostics!=null){
+            diagnostics.begin("c110_live");
+            diagnostics.event("c110","preview_try",1,"ok");
+        }
+        c110PreviewExecutor.submit(()->{
+            try{
+                android.net.Network wifi=C110WifiCamera.previewNetwork(this);
+                int cmdStatus=c110Camera.startPreview(this,wifi);
+                handler.post(()->{
+                    if(seq!=c110PreviewSeq.get()||!uiActive||!c110PreviewWanted)return;
+                    if(diagnostics!=null)
+                        diagnostics.event("c110","live_cmd",cmdStatus,"ok");
+                    // SJCAM Zone DEX contains both this RTSP candidate and HTTP 8192.
+                    // Use verified platform RTSP socket routing, never capture another app's screen.
+                    c110Preview.view().setVisibility(View.VISIBLE);
+                    c110Preview.view().bringToFront();
+                    c110Preview.start(this,wifi,new C110LivePreview.Listener(){
+                        @Override public void firstFrame(long ms){
+                            if(seq!=c110PreviewSeq.get())return;
+                            c110PreviewPlaying=true;
+                            if(diagnostics!=null)diagnostics.event("c110","live_first_ms",ms,"ok");
+                            setResultStatus("C110实时预览已显示 · 点击画面拍高清照片");
+                        }
+                        @Override public void dimensions(int w,int h){
+                            if(seq!=c110PreviewSeq.get())return;
+                            if(diagnostics!=null){
+                                diagnostics.event("c110","live_width_px",w,"ok");
+                                diagnostics.event("c110","live_height_px",h,"ok");
+                            }
+                        }
+                        @Override public void error(int code){
+                            if(seq!=c110PreviewSeq.get())return;
+                            if(diagnostics!=null)
+                                diagnostics.event("c110","live_rtsp_error",code,"failed");
+                            setResultStatus("RTSP预览不可播放；保持C110高清拍照功能");
+                            c110PreviewExecutor.submit(()->{
+                                int alt=C110WifiCamera.probeHttp8192(wifi);
+                                handler.post(()->{
+                                    if(seq==c110PreviewSeq.get()&&diagnostics!=null)
+                                        diagnostics.event("c110","live_http8192",alt,
+                                            alt==200?"response":"unknown");
+                                });
+                            });
+                            toastShort("C110视频流还需确认协议，复制运行诊断即可定位");
+                        }
+                        @Override public void state(int state){
+                            if(seq!=c110PreviewSeq.get())return;
+                            if(diagnostics!=null)
+                                diagnostics.event("c110","live_state",state,"ok");
+                        }
+                    });
+                });
+            }catch(Exception ex){
+                handler.post(()->{
+                    if(seq!=c110PreviewSeq.get())return;
+                    stopC110LivePreview(true);
+                    if(diagnostics!=null)
+                        diagnostics.event("c110","preview_start",0,"failed");
+                    setResultStatus("C110预览连接失败："+ex.getClass().getSimpleName());
+                    toastShort("C110预览启动失败："+ex.getMessage());
+                });
+            }
+        });
+    }
+
     /** User-triggered C110 high-resolution photo -> existing OCR/vision/TTS pipeline. */
     private void captureC110OneShot(){
         if(!uiActive||readingScreen!=null){
@@ -2801,6 +2923,14 @@ public final class MainActivity extends CameraActivity {
         long now=SystemClock.elapsedRealtime();
         if(now-lastTapMs<1500L){toastShort("拍照间隔太短");return;}
         lastTapMs=now;
+        // RTSP playback may hold the firmware in streaming mode.
+        // Close the player and explicitly re-enter photo mode for this tap,
+        // then resume live preview only after complete original JPEG download.
+        final boolean resumeLiveAfterPhoto=c110PreviewWanted;
+        if(resumeLiveAfterPhoto){
+            stopC110LivePreview(false);
+            c110Camera.resetPhotoMode();
+        }
         invalidate();
         final int token=requestVersion.get();
         cloudBusy=true;
@@ -2834,6 +2964,13 @@ public final class MainActivity extends CameraActivity {
                     Frame remote=new Frame(null,photo.width,photo.height,
                         SystemClock.elapsedRealtime(),photo.jpeg,cellular);
                     beginCapturedFrame(remote,now,token,null);
+                    if(resumeLiveAfterPhoto){
+                        // The user already opted into live preview. Restoring the
+                        // renderer does not trigger another photo or cloud call.
+                        handler.postDelayed(()->{
+                            if(uiActive&&c110PreviewWanted)startC110LivePreviewAfterPhoto();
+                        },100L);
+                    }
                 });
             }catch(Exception ex){
                 handler.post(()->{
@@ -3088,6 +3225,7 @@ public final class MainActivity extends CameraActivity {
         else if(usingPhoneCamera&&!fallback)startPhoneCamera();
     }
     @Override protected void onPause(){
+        stopC110LivePreview(true);
         if(!usingPhoneCamera&&diagnostics!=null){
             diagnostics.event("usb","pause",0,"ok");
             Frame frame=latestUsbFrame;
@@ -3126,6 +3264,8 @@ public final class MainActivity extends CameraActivity {
         super.onPause();
     }
     @Override protected void onDestroy(){
+        stopC110LivePreview(true);
+        c110PreviewExecutor.shutdownNow();
         invalidate();
         if(readingScreen!=null){readingScreen.dispose();readingScreen=null;}
         if(phoneController!=null)phoneController.stop();
