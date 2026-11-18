@@ -1,0 +1,176 @@
+name: Blue Star C110 Proven OEM Video to Cloud OCR Lab
+on:
+  push:
+    branches: [ 'exp/c110-live-frame-cloud-20261119' ]
+    paths:
+      - 'cloud-vision-app/**'
+      - '.github/workflows/c110-live-frame-cloud-20261119.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  c110-integration:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout the exact pinned UVC stack used for RC25
+        uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Java C110 protocol unit tests and isolation assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bluestar-c110-test
+          SRC=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          javac -d /tmp/bluestar-c110-test "$SRC/C110PhotoPolicy.java" cloud-vision-app/tests/C110PhotoPolicyTest.java
+          java -cp /tmp/bluestar-c110-test com.vobich.bluestar.cloudprobe.C110PhotoPolicyTest
+          mkdir -p /tmp/bluestar-c110-stub/android/net
+          cat > /tmp/bluestar-c110-stub/android/net/Network.java <<'JAVA'
+          package android.net;
+          public class Network {
+              public javax.net.SocketFactory getSocketFactory() {
+                  return javax.net.SocketFactory.getDefault();
+              }
+          }
+          JAVA
+          javac -d /tmp/bluestar-c110-test \
+            /tmp/bluestar-c110-stub/android/net/Network.java \
+            "$SRC/C110RtspSessionProbe.java" cloud-vision-app/tests/C110RtspSessionProbeTest.java
+          java -cp /tmp/bluestar-c110-test com.vobich.bluestar.cloudprobe.C110RtspSessionProbeTest
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe')
+          main=(root/'MainActivity.java').read_text()
+          camera=(root/'C110WifiCamera.java').read_text()
+          preview=(root/'C110LivePreview.java').read_text()
+          cloud=(root/'CloudVisionClient.java').read_text()
+          gradle=Path('cloud-vision-app/app/build.gradle').read_text()
+          manifest=Path('cloud-vision-app/app/src/main/AndroidManifest.xml').read_text()
+          assert "applicationIdSuffix '.c110liveframe'" in gradle
+          assert "versionName '1.0.37-c110-liveframe-lab'" in gradle
+          assert 'libvlc-all:3.6.5' in gradle
+          assert 'android.permission.CHANGE_NETWORK_STATE' in manifest
+          assert 'android:networkSecurityConfig="@xml/c110_network_security_config"' in manifest
+          sec=Path('cloud-vision-app/app/src/main/res/xml/c110_network_security_config.xml').read_text()
+          assert '<base-config cleartextTrafficPermitted="false"/>' in sec
+          assert '<domain includeSubdomains="false">192.168.1.254</domain>' in sec
+          # OEM mini's ACTUAL successful sequence (no extra 3002 in video).
+          block=camera.split('synchronized PreviewInit startPreview(')[1].split('Read-only bounded probe')[0]
+          assert block.index('cmd=3012') < block.index('cmd=3016') < block.index('cmd=3001&par=1') < block.index('cmd=2015&par=1')
+          assert 'cmd=3002' not in block and 'cmd=3016' in camera
+          assert 'c110DeviceKind(identity.text())' in camera and 'if(deviceKind==2)' in camera
+          assert 'cmd=1001' in camera and 'cmd=3001&par=0' in camera
+          assert 'c110Camera.shoot(this)' in main and 'photo.jpeg,cellular' in main
+          # The source of the successful video player MUST stay alive and visible.
+          assert 'new VLCVideoLayout(context)' in preview
+          assert 'current.attachViews(view,null,false,false)' in preview
+          assert 'main.postDelayed(delayedPlay,300)' in preview
+          assert preview.count('current.play();')==1
+          assert 'startOnlyWhenSurfaceReady' not in preview
+          assert 'playGate' not in preview and 'vlc_play_gate' not in main
+          assert 'setVisibility(View.GONE)' not in main.split('c110Preview=new C110LivePreview(this);')[1].split('phoneTexture=new TextureView(this);')[0]
+          assert 'C110LivePreview.VIDEO_URL' not in main # player owns proven URL
+          assert 'rtsp://192.168.1.254:554/xxx.mp4' in preview
+          assert 'PixelCopy.request(video,copy,status->' in preview
+          assert 'video.getHolder().getSurface()' in preview
+          assert 'status!=PixelCopy.SUCCESS' in preview
+          assert 'copy.recycle()' in preview
+          assert 'cm.bindProcessToNetwork(previousNetwork)' in preview
+          assert 'cameraNetwork.equals(cm.getBoundNetworkForProcess())' in preview
+          assert 'c110Preview.copyVisibleFrame(' in main
+          assert 'if(c110PreviewWanted)captureC110LiveFrame()' in main
+          assert 'if(c110PreviewWanted){captureC110LiveFrame(oneShotTask);return;}' in main
+          assert 'Bitmap.CompressFormat.JPEG,90' in main
+          assert 'new Frame(null,width,height,' in main
+          assert 'beginCapturedFrame(selected,now,token,oneShotTask)' in main
+          assert 'current.c110LiveFrame?' in main
+          assert 'CloudVisionClient.recognize(jpeg,key,task,model,' in main
+          assert 'TargetVisionClient.inspect(' in main
+          assert 'cloudNetwork.openConnection(endpoint)' in cloud
+          assert 'requireCellular(this)' in main and 'NetworkCapabilities.TRANSPORT_CELLULAR' in camera
+          assert 'lastSessionCloudNetwork=current.cloudNetwork' in main
+          assert 'C110PreviewProbe.inspect(wifi)' not in main
+          assert 'C110RtspSessionProbe.probe(wifi)' not in main
+          assert 'modeStatus' in camera and 'startStatus' in camera
+          assert 'c110_frame' in main and 'frame_width_px' in main and 'frame_height_px' in main
+          assert 'RuntimeDiagnostics' in main
+          assert 'FrameCompressor.encodeAdjusted(' in main  # Existing photo/USB route preserved
+          assert not any(s in preview for s in ['cmd=1001','cmd=3037','cmd=4005',':rtsp-tcp'])
+          print('C110 video-success baseline, frame-copy, cloud route, photo preservation PASS')
+          PY
+      - name: Apply the same safe pinned USB patches as RC25
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_usbmonitor.py cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 cloud-vision-app/scripts/patch_pinned_uvc.py
+          grep -q BSG_CLOUD_RAW5_GATED cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/jni/UVCCamera/UVCPreview.cpp
+          grep -q BSG_CLOUD_CLOSE_BARRIER cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
+      - name: Generate verified original launcher resources
+        run: |
+          cd cloud-vision-app
+          java scripts/GenerateLauncherIcons.java
+          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            test -s "app/src/main/res/mipmap-$d/ic_launcher.png"
+          done
+      - name: Gradle 8.11.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Assemble arm64 integration APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :app:assembleDebug
+      - name: Verify APK identity, native library, TTS audio, version and ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_C110_LiveFrame_0.1.12.apk
+          test -s out/BlueStar_Guide_C110_LiveFrame_0.1.12.apk
+          unzip -tq out/*.apk >/dev/null
+          unzip -Z1 out/*.apk >out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlc.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlcjni.so' out/entries.txt
+          grep -Fxq 'res/raw/c_metal_clack_ding.mp3' out/entries.txt
+          grep -Fxq 'res/raw/voice_send_whoosh.wav' out/entries.txt
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          test -x "$AAPT"
+          "$AAPT" dump badging out/*.apk >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110liveframe'" out/badging.txt
+          grep -Fq "versionName='1.0.37-c110-liveframe-lab'" out/badging.txt
+          grep -q 'application-icon-' out/badging.txt
+          (cd out && sha256sum BlueStar_Guide_C110_LiveFrame_0.1.12.apk > SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_Guide_C110_LiveFrame_0.1.12
+          path: out/*
+          retention-days: 14
+      - name: Publish isolated prerelease only if unused tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-c110-live-frame-cloud-20261119-v0112
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Existing C110 integrated prerelease, refusing overwrite" >&2
+            exit 1
+          fi
+          gh release create "$TAG" "out/BlueStar_Guide_C110_LiveFrame_0.1.12.apk" \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Blue Star Guide C110 Live Video Frame OCR Lab v0.1.12" \
+            --notes "Isolated C110 live-video-to-cloud-OCR/TTS integration v0.1.12. The original standalone OEM minimal C110 mini v0.1.0 was confirmed by a real camera image on the user phone. Integration preserves this exact successful 3012/3016/3001par1/2015par1/LibVLC 3.6.5 startup and always-visible VLCVideoLayout without custom Surface readiness gate, forced TCP or manual RTSP negotiation. User taps video to request one current C110 Surface frame via Android PixelCopy, JPEG quality 90 in RAM, then reuses existing CloudVisionClient/TargetVisionClient and native TTS using explicit cellular Network. A separate C110 Photo button still downloads original full JPEG from camera; no camera shutter or mode change for live-frame OCR. Keeps original RC25, USB/M02S and prior releases untouched. Independent com.vobich.bluestar.c110liveframe install. PixelCopy and end-to-end video OCR require new phone verification: CI only proves compilation and static checks, not actual frame delivery."

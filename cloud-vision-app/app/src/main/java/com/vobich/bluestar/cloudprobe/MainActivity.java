@@ -44,6 +44,7 @@ import android.view.View;
 import android.view.WindowInsets;
 import android.view.ViewGroup;
 import android.view.TextureView;
+import android.view.PixelCopy;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageView;
@@ -235,13 +236,20 @@ public final class MainActivity extends CameraActivity {
         final long atMs;
         final byte[] remoteJpeg; // C110 original JPEG, already fully validated in RAM
         final android.net.Network cloudNetwork; // Cellular only, never camera Wi-Fi
+        final boolean c110LiveFrame; // Distinguish PixelCopy from original JPEG
         Frame(byte[] pixels, int width, int height, long atMs) {
-            this(pixels,width,height,atMs,null,null);
+            this(pixels,width,height,atMs,null,null,false);
         }
         Frame(byte[] pixels,int width,int height,long atMs,
               byte[] remoteJpeg,android.net.Network cloudNetwork) {
+            this(pixels,width,height,atMs,remoteJpeg,cloudNetwork,false);
+        }
+        Frame(byte[] pixels,int width,int height,long atMs,
+              byte[] remoteJpeg,android.net.Network cloudNetwork,
+              boolean c110LiveFrame) {
             this.pixels=pixels;this.width=width;this.height=height;this.atMs=atMs;
             this.remoteJpeg=remoteJpeg;this.cloudNetwork=cloudNetwork;
+            this.c110LiveFrame=c110LiveFrame;
         }
     }
 
@@ -315,7 +323,9 @@ public final class MainActivity extends CameraActivity {
         c110Preview=new C110LivePreview(this);
         previewContainer.addView(c110Preview.view(),
             new FrameLayout.LayoutParams(-1,-1,Gravity.CENTER));
-        c110Preview.view().setVisibility(View.GONE);
+        // OEM mini succeeded with VLCVideoLayout attached and VISIBLE from
+        // Activity creation. Do not revert to v0.1.11's hidden Surface gate.
+        c110Preview.view().setVisibility(View.VISIBLE);
 
         phoneTexture=new TextureView(this);
         phoneTexture.setOpaque(false);
@@ -333,10 +343,10 @@ public final class MainActivity extends CameraActivity {
         root.addView(phonePreviewStatus,new FrameLayout.LayoutParams(-1,dp(104),Gravity.CENTER));
 
         tapOverlay=new View(this);
-        tapOverlay.setContentDescription("点击拍照识别；双指缩放摄像头画面");
+        tapOverlay.setContentDescription("点击当前画面识别文字；双指缩放普通摄像头画面");
         tapOverlay.setFocusable(true);
         tapOverlay.setOnClickListener(v->{
-            if(c110PreviewWanted)captureC110OneShot();else captureOneFrame();
+            if(c110PreviewWanted)captureC110LiveFrame();else captureOneFrame();
         });
         zoomDetector=new ScaleGestureDetector(this,new ScaleGestureDetector.SimpleOnScaleGestureListener(){
             @Override public boolean onScaleBegin(ScaleGestureDetector d){
@@ -2752,6 +2762,7 @@ public final class MainActivity extends CameraActivity {
     /** USB retains its last owned NV21; Camera2 only converts a new frame after tap. */
     private void captureOneFrame(){captureOneFrame(null);}
     private void captureOneFrame(TaskCatalog.Task oneShotTask){
+        if(c110PreviewWanted){captureC110LiveFrame(oneShotTask);return;}
         boolean fromVoice=oneShotTask!=null;
         if(voiceListening||voiceRecorder.isBusy()){
             toastShort("正在录音，请松手后再拍照");return;
@@ -2812,39 +2823,49 @@ public final class MainActivity extends CameraActivity {
         }else beginCapturedFrame(usbShot,now,token,oneShotTask);
     }
 
-    /** Preview is explicit opt-in; the photo path never launches it automatically. */
+    /** Preview uses the already phone-verified OEM minimal playback sequence. */
     private void toggleC110LivePreview(){
-        if(c110PreviewWanted){stopC110LivePreview(true);setResultStatus("已关闭C110预览");}
-        else startC110LivePreview();
+        if(c110PreviewWanted){
+            stopC110LivePreview(true);
+            setResultStatus("已关闭C110预览");
+        }else startC110LivePreview();
     }
 
     private void stopC110LivePreview(boolean clearIntent){
         if(clearIntent)c110PreviewWanted=false;
         c110PreviewPlaying=false;
         c110PreviewSeq.incrementAndGet();
-        if(c110Preview!=null){
-            c110Preview.stop();
-            c110Preview.view().setVisibility(View.GONE);
+        if(c110Preview!=null)c110Preview.stop();
+        // Keep the VLCVideoLayout attached and VISIBLE, as in the working mini.
+        // Return only the draw-order to the normal phone/USB preview.
+        if(previewContainer!=null){
+            if(usingPhoneCamera&&phoneTexture!=null&&
+                phoneTexture.getParent()==previewContainer)
+                phoneTexture.bringToFront();
+            else if(cameraTextureView!=null&&
+                cameraTextureView.getParent()==previewContainer)
+                cameraTextureView.bringToFront();
         }
         if(c110PreviewButton!=null)
             c110PreviewButton.setText(c110PreviewWanted?"关闭预览":"C110预览");
+        if(tapOverlay!=null)
+            tapOverlay.setContentDescription("点击普通摄像头画面识别文字");
     }
 
-    private void startC110LivePreviewAfterPhoto(){
-        // Continue the user-authorized preview without changing cloudBusy.
-        startC110LivePreview(true);
-    }
-
+    private void startC110LivePreviewAfterPhoto(){startC110LivePreview(true);}
     private void startC110LivePreview(){startC110LivePreview(false);}
     private void startC110LivePreview(boolean resumingAfterPhoto){
         if(!uiActive||readingScreen!=null){
             toastShort("请退出阅读页面后打开C110实时预览");return;
         }
-        if(cloudBusy&&!resumingAfterPhoto)return;
+        if(cloudBusy&&!resumingAfterPhoto){
+            toastShort("AI正在处理上一项操作");return;
+        }
         c110PreviewWanted=true;
+        c110PreviewPlaying=false;
         final int seq=c110PreviewSeq.incrementAndGet();
         if(c110PreviewButton!=null)c110PreviewButton.setText("关闭预览");
-        setResultStatus("正在启动C110原始视频预览…");
+        setResultStatus("C110正在按原厂流程启动视频…");
         if(diagnostics!=null){
             diagnostics.begin("c110_live");
             diagnostics.event("c110","preview_try",1,"ok");
@@ -2852,102 +2873,55 @@ public final class MainActivity extends CameraActivity {
         c110PreviewExecutor.submit(()->{
             try{
                 android.net.Network wifi=C110WifiCamera.previewNetwork(this);
+                // Exact successful mini: 3012 -> 3016 -> 3001/1 -> 2015/1.
                 C110WifiCamera.PreviewInit init=c110Camera.startPreview(this,wifi);
                 handler.post(()->{
                     if(seq!=c110PreviewSeq.get()||!uiActive||!c110PreviewWanted)return;
                     if(diagnostics!=null){
+                        diagnostics.event("c110","device_kind",init.deviceKind,"probe");
+                        diagnostics.event("c110","original_mode",init.currentMode,"probe");
                         diagnostics.event("c110","live_mode_cmd",init.modeStatus,
-                            init.modeStatus==0?"ok":"returned");
+                            init.modeStatus==0?"ok":"failed");
                         diagnostics.event("c110","live_cmd",init.startStatus,
-                            init.startStatus==0?"ok":"returned");
+                            init.startStatus==0?"ok":"failed");
                     }
                     if(init.modeStatus!=0||init.startStatus!=0){
                         stopC110LivePreview(true);
-                        setResultStatus("相机视频模式或启流指令未成功，高清拍照仍可使用");
+                        setResultStatus("C110原厂视频指令未成功；高清拍照仍可用");
                         return;
                     }
-                    // Follow OEM LibVLC RTSP handling without custom SETUP/PLAY probes.
-                    c110Preview.view().setVisibility(View.VISIBLE);
+                    // No explicit Surface readiness gate, no manual RTSP PLAY,
+                    // no custom VLC timeout. These broke previous versions.
                     c110Preview.view().bringToFront();
                     c110Preview.start(this,wifi,new C110LivePreview.Listener(){
-                        @Override public void videoOutput(int count,long ms){
-                            if(seq!=c110PreviewSeq.get())return;
-                            c110PreviewPlaying=true;
-                            if(diagnostics!=null){
-                                diagnostics.event("c110","vlc_vout_count",count,"probe");
-                                diagnostics.event("c110","vlc_vout_ms",ms,"probe");
-                            }
-                            setResultStatus("C110 VLC已创建视频输出，请确认是否出现真实画面");
-                        }
-                        @Override public void routing(int status){
+                        @Override public void routeBound(int status){
                             if(seq!=c110PreviewSeq.get())return;
                             if(diagnostics!=null)
-                                diagnostics.event("c110","vlc_wifi_bind",status,"probe");
-                        }
-                        @Override public void milestone(int phase){
-                            // The final internal phase is emitted on failure,
-                            // not 5 redundant events per tap (24-event limit).
-                        }
-                        @Override public void surface(int event,int width,int height,int valid){
-                            if(seq!=c110PreviewSeq.get()||diagnostics==null)return;
-                            if(event==2){
-                                diagnostics.event("c110","vlc_surface_width",width,"probe");
-                                diagnostics.event("c110","vlc_surface_height",height,"probe");
-                            }else{
-                                diagnostics.event("c110","vlc_surface_event",event,"probe");
-                            }
-                        }
-                        @Override public void playGate(int gate){
-                            if(seq!=c110PreviewSeq.get()||diagnostics==null)return;
-                            diagnostics.event("c110","vlc_play_gate",gate,"probe");
-                        }
-                        @Override public void surfaceSnapshot(int valid,int issued){
-                            if(seq!=c110PreviewSeq.get()||diagnostics==null)return;
-                            diagnostics.event("c110","vlc_surface_ready",valid,"classified");
-                            diagnostics.event("c110","vlc_play_issued",issued,"classified");
-                        }
-                        @Override public void nativeStatus(int sample,int state,int playing){
-                            if(seq!=c110PreviewSeq.get())return;
-                            if(diagnostics!=null){
-                                diagnostics.event("c110",
-                                    sample==1?"vlc_native_state1":"vlc_native_state2",
-                                    state,"classified");
-                                diagnostics.event("c110",
-                                    sample==1?"vlc_is_playing1":"vlc_is_playing2",
-                                    playing,"classified");
-                            }
-                        }
-                        @Override public void snapshot(int phase,int count,int event,int bound){
-                            if(seq!=c110PreviewSeq.get())return;
-                            if(diagnostics!=null){
-                                diagnostics.event("c110","vlc_last_phase",phase,"classified");
-                                diagnostics.event("c110","vlc_event_count",count,"classified");
-                                diagnostics.event("c110","vlc_last_event",event,"classified");
-                                diagnostics.event("c110","vlc_route_alive",bound,"classified");
-                            }
-                        }
-                        @Override public void dimensions(int w,int h){
-                            if(seq!=c110PreviewSeq.get())return;
-                            if(diagnostics!=null){
-                                diagnostics.event("c110","live_width_px",w,"ok");
-                                diagnostics.event("c110","live_height_px",h,"ok");
-                            }
-                        }
-                        @Override public void error(int code,int reason,int stage){
-                            if(seq!=c110PreviewSeq.get())return;
-                            if(diagnostics!=null){
-                                diagnostics.event("c110","vlc_error",code,"failed");
-                                diagnostics.event("c110","vlc_reason",reason,"classified");
-                                diagnostics.event("c110","vlc_stage",stage,"classified");
-                            }
-                            setResultStatus("C110 VLC预览失败；查看最后阶段与VLC事件数");
-                            toastShort("C110 VLC预览失败：请复制运行诊断");
-                            stopC110LivePreview(true);
+                                diagnostics.event("c110","vlc_wifi_bind",status,"ok");
                         }
                         @Override public void state(int state){
                             if(seq!=c110PreviewSeq.get())return;
                             if(diagnostics!=null)
-                                diagnostics.event("c110","vlc_state",state,"ok");
+                                diagnostics.event("c110","vlc_state",state,"probe");
+                        }
+                        @Override public void videoOutput(int count,long ms){
+                            if(seq!=c110PreviewSeq.get())return;
+                            c110PreviewPlaying=true;
+                            if(diagnostics!=null){
+                                diagnostics.event("c110","vlc_vout_count",count,"ok");
+                                diagnostics.event("c110","vlc_vout_ms",ms,"ok");
+                            }
+                            setResultStatus("C110实时预览已建立 · 点击画面取帧识别");
+                            if(tapOverlay!=null)
+                                tapOverlay.setContentDescription(
+                                    "C110实时视频，点击抓取当前帧并进行云端识别朗读");
+                        }
+                        @Override public void error(int code){
+                            if(seq!=c110PreviewSeq.get())return;
+                            if(diagnostics!=null)
+                                diagnostics.event("c110","vlc_native_error",code,"failed");
+                            setResultStatus("C110视频播放器报告错误；高清拍照仍可用");
+                            stopC110LivePreview(true);
                         }
                     });
                 });
@@ -2957,10 +2931,102 @@ public final class MainActivity extends CameraActivity {
                     stopC110LivePreview(true);
                     if(diagnostics!=null)
                         diagnostics.event("c110","vlc_start",0,"failed");
-                    setResultStatus("C110预览连接失败："+ex.getClass().getSimpleName());
-                    toastShort("C110预览启动失败："+ex.getMessage());
+                    setResultStatus("C110视频启动失败："+ex.getClass().getSimpleName());
+                    toastShort("C110预览启动失败；请复制运行诊断");
                 });
             }
+        });
+    }
+
+    /**
+     * User-tapped VIDEO frame -> existing cloud recognition/TTS task.
+     * PixelCopy gets the actual C110 video Surface, not a phone/USB frame.
+     * Does not call camera shutter, switch firmware modes or stop RTSP.
+     */
+    private void captureC110LiveFrame(){captureC110LiveFrame(null);}
+    private void captureC110LiveFrame(TaskCatalog.Task oneShotTask){
+        if(!uiActive||readingScreen!=null||c110Preview==null||
+           !c110PreviewWanted||!c110PreviewPlaying||
+           !c110Preview.hasVideoOutput()){
+            toastShort("C110实时画面尚未就绪");return;
+        }
+        if(voiceListening||voiceRecorder.isBusy()||cloudBusy){
+            toastShort("上一项操作未结束，请稍后取帧");return;
+        }
+        long now=SystemClock.elapsedRealtime();
+        if(now-lastTapMs<1500L)return;
+        // The camera AP may have no internet. The current JPEG/CloudVision
+        // code already accepts an explicitly selected cellular Network.
+        final android.net.Network cellular;
+        try{cellular=C110WifiCamera.requireCellular(this);}
+        catch(Exception ex){
+            toastShort("请开启移动数据，以便C110视频帧进行云端识别");return;
+        }
+        if(CloudKeyStore.load(this).isEmpty()){
+            openLargeSettings();
+            if(largeSettings!=null)largeSettings.openApiKey();
+            return;
+        }
+        lastTapMs=now;
+        invalidate();
+        final int token=requestVersion.get();
+        final int seq=c110PreviewSeq.get();
+        cloudBusy=true;
+        speechRequestToken=token;
+        speechCaptureAtMs=now;
+        ttsEngineStartMs=-1;ttsAudioCallbackMs=-1;
+        if(diagnostics!=null){
+            diagnostics.begin("c110_frame");
+            diagnostics.event("c110","frame_tap",1,"ok");
+        }
+        setResultStatus("C110：正在抓取当前视频画面…");
+        c110Preview.copyVisibleFrame((copyStatus,bitmap)->{
+            if(!uiActive||token!=requestVersion.get()||
+               seq!=c110PreviewSeq.get()){
+                if(bitmap!=null)bitmap.recycle();
+                return;
+            }
+            if(copyStatus!=PixelCopy.SUCCESS||bitmap==null){
+                cloudBusy=false;
+                if(diagnostics!=null)
+                    diagnostics.event("c110","pixelcopy",copyStatus,"failed");
+                setResultStatus("C110未取得当前视频帧，请确认预览仍在播放");
+                return;
+            }
+            final int width=bitmap.getWidth(),height=bitmap.getHeight();
+            // Encode just one displayed video frame in RAM. No photo command,
+            // no SD write, no raw logs, no duplicate upload.
+            encodingTask=encoder.submit(()->{
+                byte[] jpeg=null;
+                try{
+                    ByteArrayOutputStream data=new ByteArrayOutputStream();
+                    if(bitmap.compress(Bitmap.CompressFormat.JPEG,90,data))
+                        jpeg=data.toByteArray();
+                }catch(RuntimeException ignored){
+                    // One failed frame must not be replaced with an old frame.
+                }finally{bitmap.recycle();}
+                final byte[] fresh=jpeg;
+                handler.post(()->{
+                    if(!uiActive||token!=requestVersion.get()||
+                       seq!=c110PreviewSeq.get())return;
+                    if(fresh==null||fresh.length<256){
+                        cloudBusy=false;
+                        if(diagnostics!=null)
+                            diagnostics.event("c110","frame_jpeg",0,"failed");
+                        setResultStatus("C110视频取帧编码失败，请重试");
+                        return;
+                    }
+                    if(diagnostics!=null){
+                        diagnostics.event("c110","pixelcopy",copyStatus,"ok");
+                        diagnostics.event("c110","frame_width_px",width,"ok");
+                        diagnostics.event("c110","frame_height_px",height,"ok");
+                        diagnostics.event("c110","frame_bytes",fresh.length,"ok");
+                    }
+                    Frame selected=new Frame(null,width,height,
+                        SystemClock.elapsedRealtime(),fresh,cellular,true);
+                    beginCapturedFrame(selected,now,token,oneShotTask);
+                });
+            });
         });
     }
 
@@ -3055,7 +3121,9 @@ public final class MainActivity extends CameraActivity {
         cloudBusy=true;
         setResultStatus("已拍照 · 正在云端识别…");
         if(diagnostics!=null){
-            if(usingPhoneCamera)
+            if(current.remoteJpeg!=null)
+                diagnostics.event("camera","c110_input",current.c110LiveFrame?2:1,"ok");
+            else if(usingPhoneCamera)
                 diagnostics.event("camera","fresh_frame_ms",
                     Math.max(0,current.atMs-tapAtMs),"ok");
             else diagnostics.event("camera","usb_frame_age_ms",
@@ -3067,7 +3135,8 @@ public final class MainActivity extends CameraActivity {
         // A one-shot voice observation should not be hijacked by an ongoing search.
         final String targetToFind=oneShotTask==null?findingTarget:"";
         final boolean c110Source=current.remoteJpeg!=null;
-        final String source=c110Source?"C110高清原图":(usingPhoneCamera?
+        final String source=c110Source?
+            (current.c110LiveFrame?"C110实时取帧":"C110高清原图"):(usingPhoneCamera?
             (phoneFrontFacing?"手机前置":"手机后置"):"USB 外接");
         final String policy=imagePolicy;
         // A "find target" voice intent remains a visual task even if the

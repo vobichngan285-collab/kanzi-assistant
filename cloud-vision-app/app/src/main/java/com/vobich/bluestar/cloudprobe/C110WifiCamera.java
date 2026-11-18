@@ -20,6 +20,9 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Trial integration of the C110 Novatek photo channel, based on six field-verified
@@ -75,38 +78,56 @@ final class C110WifiCamera {
     }
 
     static final class PreviewInit {
-        final int modeStatus;
-        final int startStatus;
-        final long modeMs, startMs;
-        PreviewInit(int modeStatus,int startStatus,long modeMs,long startMs){
+        final int modeStatus,startStatus,deviceKind,currentMode;
+        final long modeMs,startMs;
+        PreviewInit(int modeStatus,int startStatus,long modeMs,long startMs,
+                    int deviceKind,int currentMode){
             this.modeStatus=modeStatus;this.startStatus=startStatus;
             this.modeMs=modeMs;this.startMs=startMs;
+            this.deviceKind=deviceKind;this.currentMode=currentMode;
         }
     }
 
+    private static int c110DeviceKind(String reply){
+        Matcher m=Pattern.compile("<String>([^<]{0,128})</String>",
+            Pattern.CASE_INSENSITIVE).matcher(reply);
+        boolean ordinary=false;
+        while(m.find()){
+            String hint=m.group(1).toUpperCase(Locale.ROOT);
+            if(hint.contains("C110_PRO"))return 2;
+            if(hint.contains("C110"))ordinary=true;
+        }
+        return ordinary?1:0;
+    }
+
     /**
-     * Follow the actual original SJCAM LY chain: change video mode (3001/par=1),
-     * then explicitly start live view (2015/par=1). Both commands occur ONLY
-     * after user taps C110 Preview. This never records or deletes media files.
+     * The user's first successful C110 OEM minimal startup:
+     * read-only 3012 -> read-only 3016 -> mode 3001/1 -> stream 2015/1.
+     * No custom RTSP probe or extra 3002 before video playback.
      */
     synchronized PreviewInit startPreview(Context context,Network wifi) throws IOException {
-        Reply id=get(wifi,"/?custom=1&cmd=3012",MAX_INDEX);
-        if(id.http!=200||!Integer.valueOf(0).equals(C110PhotoPolicy.tagInt(id.text(),"Status")))
-            throw new IOException("C110设备探测未通过，不启动视频");
-        Reply commands=get(wifi,"/?custom=1&cmd=3002",MAX_INDEX);
-        if(commands.http!=200||!commands.text().contains("<Cmd>1001</Cmd>")||
-            !commands.text().contains("<Cmd>3001</Cmd>"))
-            throw new IOException("相机没有返回已验证的LY照片与模式指令");
+        Reply identity=get(wifi,"/?custom=1&cmd=3012",MAX_INDEX);
+        if(identity.http!=200||
+           !Integer.valueOf(0).equals(C110PhotoPolicy.tagInt(identity.text(),"Status")))
+            throw new IOException("C110设备信息读取失败");
+        int deviceKind=c110DeviceKind(identity.text());
+        if(deviceKind==2)
+            throw new IOException("C110_PRO使用其他视频分支，本次仅验证标准版C110");
+        Reply current=get(wifi,"/?custom=1&cmd=3016",MAX_INDEX);
+        if(current.http!=200)throw new IOException("C110模式信息读取失败");
+        Integer value=C110PhotoPolicy.tagInt(current.text(),"Value");
+        int currentMode=value==null?-4096:value;
         photoModeReady=false;
         Reply mode=get(wifi,"/?custom=1&cmd=3001&par=1",MAX_INDEX);
-        Integer modeValue=C110PhotoPolicy.tagInt(mode.text(),"Status");
-        int modeStatus=mode.http==200?(modeValue==null?-4096:modeValue):-3000-mode.http;
-        // Do not send 2015 if the precondition is explicitly rejected.
-        if(modeStatus!=0)return new PreviewInit(modeStatus,-4095,mode.ms,0);
-        Reply response=get(wifi,"/?custom=1&cmd=2015&par=1",MAX_INDEX);
-        Integer status=C110PhotoPolicy.tagInt(response.text(),"Status");
-        int startStatus=response.http==200?(status==null?-4096:status):-3000-response.http;
-        return new PreviewInit(modeStatus,startStatus,mode.ms,response.ms);
+        Integer m=C110PhotoPolicy.tagInt(mode.text(),"Status");
+        int modeStatus=mode.http==200?(m==null?-4096:m):-3000-mode.http;
+        if(modeStatus!=0)
+            return new PreviewInit(modeStatus,-4095,mode.ms,0,deviceKind,currentMode);
+        Reply stream=get(wifi,"/?custom=1&cmd=2015&par=1",MAX_INDEX);
+        Integer v=C110PhotoPolicy.tagInt(stream.text(),"Status");
+        int startStatus=stream.http==200?(v==null?-4096:v):-3000-stream.http;
+        return new PreviewInit(modeStatus,startStatus,mode.ms,stream.ms,
+            deviceKind,currentMode);
     }
 
     /** Read-only bounded probe of the alternate OEM HTTP 8192 candidate. */
@@ -215,7 +236,8 @@ final class C110WifiCamera {
 
     private static Reply get(Network wifi,String path,int limit) throws IOException {
         boolean command=path.equals("/?custom=1&cmd=3012")||
-            path.equals("/?custom=1&cmd=3002")||path.equals("/?custom=1&cmd=3015")||
+            path.equals("/?custom=1&cmd=3002")||path.equals("/?custom=1&cmd=3016")||
+            path.equals("/?custom=1&cmd=3015")||
             path.equals("/?custom=1&cmd=1001")||
             path.equals("/?custom=1&cmd=3001&par=0")||
             path.equals("/?custom=1&cmd=3001&par=1")||
