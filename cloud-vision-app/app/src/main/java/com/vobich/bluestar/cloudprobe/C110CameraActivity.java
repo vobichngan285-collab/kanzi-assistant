@@ -1,7 +1,6 @@
 package com.vobich.bluestar.cloudprobe;
 
 import android.app.Activity;
-import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.os.Bundle;
 import android.content.Intent;
@@ -117,7 +116,8 @@ public final class C110CameraActivity extends Activity {
         View tapSurface=new View(this);
         tapSurface.setFocusable(true);
         tapSurface.setContentDescription("C110实时预览画面，点击立即截取当前帧并识别朗读");
-        tapSurface.setOnClickListener(v->frameReader.tap(video,zoom));
+        tapSurface.setOnClickListener(v->frameReader.tap(video,zoom,fullscreen,
+                                                         c110ViewportAspect()));
         root.addView(tapSurface,new FrameLayout.LayoutParams(-1,-1));
 
         LinearLayout titleRow=new LinearLayout(this);
@@ -235,7 +235,7 @@ public final class C110CameraActivity extends Activity {
         zoomControls.addView(zoomValue,new LinearLayout.LayoutParams(dp(56),dp(47)));
         fullscreenButton=zoomSmallButton("全屏",()->setFullscreen(!fullscreen));
         fullscreenButton.setTextSize(13);
-        fullscreenButton.setContentDescription("切换横屏沉浸式全屏实时预览，不重启相机视频");
+        fullscreenButton.setContentDescription("切换竖屏铺满预览，等比例居中裁切，不旋转手机");
         zoomControls.addView(fullscreenButton,new LinearLayout.LayoutParams(dp(64),dp(47)));
         FrameLayout.LayoutParams zoomParams=new FrameLayout.LayoutParams(-1,dp(53),Gravity.BOTTOM);
         zoomParams.leftMargin=dp(8);zoomParams.rightMargin=dp(8);
@@ -245,11 +245,16 @@ public final class C110CameraActivity extends Activity {
         fullscreenPhoto=zoomSmallButton("高清拍照",this::captureOriginalPhoto);
         fullscreenPhoto.setTextSize(13);
         fullscreenPhoto.setContentDescription("全屏时按一次C110真实快门，按当前缩放区域识别OCR");
-        FrameLayout.LayoutParams fullPhotoParams=new FrameLayout.LayoutParams(dp(96),dp(46),Gravity.TOP|Gravity.LEFT);
-        fullPhotoParams.topMargin=dp(12);fullPhotoParams.leftMargin=dp(12);
+        FrameLayout.LayoutParams fullPhotoParams=new FrameLayout.LayoutParams(dp(120),dp(48),
+            Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);
+        fullPhotoParams.bottomMargin=dp(8);
         root.addView(fullscreenPhoto,fullPhotoParams);
         fullscreenPhoto.setVisibility(View.GONE);
         setContentView(root);
+        // Reflow the SAME VLC view on portrait fullscreen; never rebuild RTSP/VLC.
+        root.addOnLayoutChangeListener((v,l,t,r,b,oldL,oldT,oldR,oldB)->{
+            if(fullscreen)applyVideoViewport();
+        });
         say("C110正在初始化预览；滑动放大后OCR只读对应区域；点击画面取帧，长按状态复制诊断");
         // Proven OEM start sequence remains unchanged below; the request waits for Wi-Fi first.
         main.post(this::connectAndBeginWhenReady);
@@ -293,45 +298,68 @@ public final class C110CameraActivity extends Activity {
         video.setScaleY(zoom);
     }
 
+    /** Width/height of the visible portrait viewport, excluding system insets. */
+    private float c110ViewportAspect(){
+        if(cameraRoot==null)return 9f/16f;
+        int width=cameraRoot.getWidth()-cameraRoot.getPaddingLeft()-
+                  cameraRoot.getPaddingRight();
+        int height=cameraRoot.getHeight()-cameraRoot.getPaddingTop()-
+                   cameraRoot.getPaddingBottom();
+        return width>1&&height>1?width/(float)height:9f/16f;
+    }
+
+    /**
+     * Native 16:9 VLCVideoLayout is enlarged behind the clipped portrait root.
+     * The decoder aspect ratio stays unchanged; the viewport crops left/right.
+     * This changes layout only, never the existing MediaPlayer or stream.
+     */
+    private void applyVideoViewport(){
+        if(cameraRoot==null||video==null)return;
+        FrameLayout.LayoutParams lp=(FrameLayout.LayoutParams)video.getLayoutParams();
+        int width=cameraRoot.getWidth()-cameraRoot.getPaddingLeft()-
+                  cameraRoot.getPaddingRight();
+        int height=cameraRoot.getHeight()-cameraRoot.getPaddingTop()-
+                   cameraRoot.getPaddingBottom();
+        if(width<2||height<2)return;
+        int targetW=fullscreen?Math.max(width,Math.round(height*(16f/9f))):-1;
+        int targetH=fullscreen?Math.max(height,Math.round(width*9f/16f)):-1;
+        if(lp.width!=targetW||lp.height!=targetH||lp.gravity!=Gravity.CENTER){
+            lp.width=targetW;
+            lp.height=targetH;
+            lp.gravity=Gravity.CENTER;
+            video.setLayoutParams(lp);
+        }
+        video.post(this::applyZoomPreview);
+    }
+
     private void applyFullscreenFlags(){
-        if(cameraRoot==null)return;
-        int flags=fullscreen?(
-            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|
-            View.SYSTEM_UI_FLAG_FULLSCREEN|
-            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|
-            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|
-            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION|
-            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-        ):View.SYSTEM_UI_FLAG_VISIBLE;
-        cameraRoot.setSystemUiVisibility(flags);
+        if(cameraRoot!=null)
+            cameraRoot.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
     }
 
     private void setFullscreen(boolean requested){
         if(fullscreen==requested)return;
-        // Rotation must never trigger a new player, a new 1001 shutter, or a
-        // Wi-Fi route switch. Manifest configChanges keeps this Activity alive.
+        // Portrait screen only. SJCAM-style cover, no rotation or VLC restart.
         fullscreen=requested;
-        topControls.setVisibility(fullscreen?View.GONE:View.VISIBLE);
+        topControls.setVisibility(View.VISIBLE);
         bottomControls.setVisibility(fullscreen?View.GONE:View.VISIBLE);
         taskChip.setVisibility(fullscreen?View.GONE:View.VISIBLE);
         output.setVisibility(fullscreen?View.GONE:View.VISIBLE);
         fullscreenPhoto.setVisibility(fullscreen?View.VISIBLE:View.GONE);
         fullscreenButton.setText(fullscreen?"退出":"全屏");
-        fullscreenButton.setContentDescription(fullscreen?"退出横屏全屏，回到竖屏操作页面":
-            "进入横屏沉浸式全屏");
+        fullscreenButton.setContentDescription(fullscreen?
+            "退出竖屏铺满取景，恢复完整画面":"竖屏铺满取景，等比例裁切左右");
         FrameLayout.LayoutParams lp=(FrameLayout.LayoutParams)zoomControls.getLayoutParams();
-        lp.bottomMargin=dp(fullscreen?12:94);
+        lp.bottomMargin=dp(fullscreen?64:94);
         zoomControls.setLayoutParams(lp);
         applyFullscreenFlags();
-        setRequestedOrientation(fullscreen?ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE:
-            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-        video.post(this::applyZoomPreview);
+        applyVideoViewport();
     }
 
     @Override public void onConfigurationChanged(Configuration newConfig){
         super.onConfigurationChanged(newConfig);
-        // Preserve the current proven 150ms VLC session; no decoder/network restart.
-        if(video!=null)video.post(this::applyZoomPreview);
+        // No forced landscape, no Wi-Fi/decoder restart, maintain the same surface.
+        if(video!=null)video.post(this::applyVideoViewport);
         applyFullscreenFlags();
     }
 
@@ -507,6 +535,8 @@ public final class C110CameraActivity extends Activity {
         pendingDeletion=null; // the previous photo can no longer be deleted by mistake
         final int ticket=++photoGeneration;
         final float zoomAtShutter=zoom;
+        final boolean portraitCoverAtShutter=fullscreen;
+        final float viewportAspectAtShutter=c110ViewportAspect();
         final long at=SystemClock.elapsedRealtime();
         // Stop and release the SAME proven video player before 3001/par=0.
         // No Activity finish, no MainActivity re-entry, no delayed callback race.
@@ -523,7 +553,8 @@ public final class C110CameraActivity extends Activity {
                     say("高清原图 "+photo.width+"×"+photo.height+
                         " 已下载，拍摄取图 "+photo.totalMs+"ms，快门命令 "+
                         photo.shutterMs+"ms");
-                    finishPhotoFlow(ticket,photo,zoomAtShutter);
+                    finishPhotoFlow(ticket,photo,zoomAtShutter,
+                                    portraitCoverAtShutter,viewportAspectAtShutter);
                 });
             }catch(Exception ex){
                 final String detail=ex.getMessage()==null?
@@ -532,13 +563,15 @@ public final class C110CameraActivity extends Activity {
                 main.post(()->{
                     if(ticket!=photoGeneration||!pageVisible||isFinishing())return;
                     say("高清拍照未完成："+detail+"。不会自动重拍");
-                    finishPhotoFlow(ticket,null,zoomAtShutter);
+                    finishPhotoFlow(ticket,null,zoomAtShutter,
+                                    portraitCoverAtShutter,viewportAspectAtShutter);
                 });
             }
         });
     }
 
-    private void finishPhotoFlow(int ticket,C110WifiCamera.Photo photo,float zoomAtShutter){
+    private void finishPhotoFlow(int ticket,C110WifiCamera.Photo photo,float zoomAtShutter,
+                                 boolean portraitCoverAtShutter,float viewportAspectAtShutter){
         if(ticket!=photoGeneration||!pageVisible)return;
         photoBusy=false;
         photoJob=null;
@@ -548,7 +581,8 @@ public final class C110CameraActivity extends Activity {
         pendingDeletion=photo==null?null:C110WifiCamera.DeletionCandidate.fromPhoto(photo);
         // 1x: send original bytes; >1x: decode only matching normalized JPEG ROI.
         if(photo!=null&&!frameReader.recognizeOriginalJpeg(
-            photo.jpeg,photo.width,photo.height,zoomAtShutter))
+            photo.jpeg,photo.width,photo.height,zoomAtShutter,
+            portraitCoverAtShutter,viewportAspectAtShutter))
             say("已拍得高清照片，但识别流程未开始");
         // User remains on C110 camera page. Resume OEM playback once only.
         say("正在恢复C110实时预览…");
