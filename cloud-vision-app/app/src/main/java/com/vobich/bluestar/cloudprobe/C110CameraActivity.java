@@ -72,6 +72,10 @@ public final class C110CameraActivity extends Activity {
     private Future<?> photoJob;
     private boolean photoBusy,pageVisible=true;
     private int photoGeneration;
+    private C110WifiBootstrap isolatedWifiBootstrap;
+    private Runnable cameraConnectPoll;
+    private long cameraConnectStartedMs;
+    private boolean waitingForCameraWifi;
 
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
@@ -121,7 +125,11 @@ public final class C110CameraActivity extends Activity {
         beginButton.setContentDescription("重新连接C110实时预览");
         beginButton.setOnClickListener(v->{
             if(photoBusy){say("高清拍照中，请勿切换视频模式");return;}
-            stop(true);begin();
+            stop(true);
+            cancelCameraWait();
+            // Explicit refresh can request a fresh Android Wi-Fi picker.
+            requestC110Network(true);
+            connectAndBeginWhenReady();
         });
         titleRow.addView(beginButton,new LinearLayout.LayoutParams(dp(45),dp(45)));
         Button cameraSettings=new Button(this);
@@ -181,8 +189,8 @@ public final class C110CameraActivity extends Activity {
         root.addView(footer,new FrameLayout.LayoutParams(-1,dp(89),Gravity.BOTTOM));
         setContentView(root);
         say("C110正在初始化预览；点击画面取帧朗读，长按状态复制诊断");
-        // Proven OEM start sequence remains unchanged below.
-        main.post(this::begin);
+        // Proven OEM start sequence remains unchanged below; the request waits for Wi-Fi first.
+        main.post(this::connectAndBeginWhenReady);
     }
 
 
@@ -315,6 +323,75 @@ public final class C110CameraActivity extends Activity {
         begin();
     }
 
+
+    /**
+     * Starting from a home Wi-Fi must not immediately execute 3012 on a missing
+     * C110 network. The request may create a secondary local-only Wi-Fi with
+     * NO default gateway; C110WifiBootstrap verifies 3012 in that case.
+     */
+    private void connectAndBeginWhenReady(){
+        if(!pageVisible||photoBusy||busy||started)return;
+        if(C110WifiBootstrap.connected(this)!=null){
+            cancelCameraWait();
+            begin(); // unchanged OEM 3012 -> 3016 -> 3001/1 -> 2015/1
+            return;
+        }
+        if(waitingForCameraWifi)return;
+        waitingForCameraWifi=true;
+        cameraConnectStartedMs=SystemClock.elapsedRealtime();
+        beginButton.setEnabled(true);
+        say("正在申请连接C110，请允许Android系统的相机Wi-Fi连接提示");
+        requestC110Network(false);
+        cameraConnectPoll=new Runnable(){
+            @Override public void run(){
+                if(!pageVisible||!waitingForCameraWifi||photoBusy)return;
+                if(C110WifiBootstrap.connected(C110CameraActivity.this)!=null){
+                    cancelCameraWait();
+                    say("C110 Wi-Fi已验证，正在开始实时预览");
+                    begin();
+                    return;
+                }
+                if(SystemClock.elapsedRealtime()-cameraConnectStartedMs>=35000L){
+                    cancelCameraWait();
+                    say("C110连接超时。点击左上角 ↻ 可以再次请求系统连接（无需进入手机设置）");
+                    beginButton.setEnabled(true);
+                    return;
+                }
+                main.postDelayed(this,550L);
+            }
+        };
+        main.postDelayed(cameraConnectPoll,550L);
+    }
+
+    private void requestC110Network(boolean explicitRetry){
+        // Keep the MainActivity WifiNetworkSpecifier lease alive while this
+        // independent VLC Activity is on top. Never create competing requests.
+        if(C110WifiBootstrap.requestFromCameraPage(explicitRetry))return;
+        if(isolatedWifiBootstrap==null)
+            isolatedWifiBootstrap=new C110WifiBootstrap(this,this::say);
+        if(explicitRetry)isolatedWifiBootstrap.requestForCameraMode();
+        else isolatedWifiBootstrap.startAtLaunch();
+    }
+
+    private void cancelCameraWait(){
+        waitingForCameraWifi=false;
+        cameraConnectStartedMs=0;
+        if(cameraConnectPoll!=null){
+            main.removeCallbacks(cameraConnectPoll);
+            cameraConnectPoll=null;
+        }
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode,
+        String[] permissions,int[] grantResults){
+        super.onRequestPermissionsResult(requestCode,permissions,grantResults);
+        if(requestCode!=C110WifiBootstrap.PERMISSION_REQUEST||
+           isolatedWifiBootstrap==null)return;
+        boolean granted=grantResults.length>0&&
+            grantResults[0]==android.content.pm.PackageManager.PERMISSION_GRANTED;
+        isolatedWifiBootstrap.onPermissionResult(granted);
+    }
+
     private void begin(){
         if(photoBusy||busy||started||!pageVisible)return;
         final int id=++generation;
@@ -355,6 +432,8 @@ public final class C110CameraActivity extends Activity {
 
     private Network findCameraWifi(){
         if(cm==null)throw new IllegalStateException("没有ConnectivityManager");
+        Network trusted=C110WifiBootstrap.connected(this);
+        if(trusted!=null)return trusted;
         for(Network n:cm.getAllNetworks()){
             NetworkCapabilities caps=cm.getNetworkCapabilities(n);
             LinkProperties lp=cm.getLinkProperties(n);
@@ -509,14 +588,27 @@ public final class C110CameraActivity extends Activity {
         if(beginButton!=null)beginButton.setEnabled(true);
         if(manual)say("已停止并恢复此前网络");
     }
-    @Override protected void onResume(){super.onResume();pageVisible=true;}
+    @Override protected void onResume(){
+        super.onResume();
+        pageVisible=true;
+        if(!photoBusy&&!started&&!busy)main.post(this::connectAndBeginWhenReady);
+    }
     @Override protected void onPause(){
         pageVisible=false;
+        cancelCameraWait();
         photoGeneration++;
         photoBusy=false;
         if(photoJob!=null){photoJob.cancel(true);photoJob=null;}
         stop(false);
         super.onPause();
     }
-    @Override protected void onDestroy(){stop(false);frameReader.shutdown();deviceControls.shutdown();io.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy(){
+        cancelCameraWait();
+        stop(false);
+        if(isolatedWifiBootstrap!=null){
+            isolatedWifiBootstrap.shutdown();isolatedWifiBootstrap=null;
+        }
+        frameReader.shutdown();deviceControls.shutdown();io.shutdownNow();
+        super.onDestroy();
+    }
 }
