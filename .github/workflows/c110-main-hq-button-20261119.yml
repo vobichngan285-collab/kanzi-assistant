@@ -123,12 +123,12 @@ jobs:
           assert 'C110高清拍照失败（不会自动重拍）' in main
           assert '云端识别' in main and '高清照片已拍摄' in main
           assert main.count('void onRequestPermissionsResult(')==1
-          assert 'captureC110OneShot()' in main and 'photo.jpeg,cellular' in main
+          assert 'captureC110OneShot()' in main and 'photo.jpeg,cloudNetwork' in main, 'Camera JPEG goes over cellular'
           assert 'getInt(LIGHT_SECONDS,30)' in controls and 'main.postDelayed(pendingOff,seconds*1000L)' in controls
           assert '((cmd==9011||cmd==9038)&&(par==0||par==1))' in controls
           assert 'android.permission.NEARBY_WIFI_DEVICES' in manifest
           assert '<activity android:name=".C110CameraActivity"' in manifest
-          assert "applicationIdSuffix '.c110inlinehq'" in gradle
+          assert "applicationIdSuffix '.c110mainhq'" in gradle
           assert "versionName '1.0.43-c110-main-hq-button-lab'" in gradle
           print('PASS: OEM player and phone/USB invariants; one-shot photo in-page; PixelCopy, startup Wi-Fi and old features')
           PY
