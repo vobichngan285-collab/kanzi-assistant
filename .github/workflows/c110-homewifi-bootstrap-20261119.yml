@@ -149,7 +149,7 @@ jobs:
           assert '((cmd==9011||cmd==9038)&&(par==0||par==1))' in controls
           assert 'android.permission.NEARBY_WIFI_DEVICES' in manifest
           assert '<activity android:name=".C110CameraActivity"' in manifest
-          assert "applicationIdSuffix '.c110mainhq'" in gradle
+          assert "applicationIdSuffix '.c110homewifi'" in gradle
           assert "versionName '1.0.44-c110-homewifi-bootstrap-lab'" in gradle
           print('PASS: OEM player invariants, home Wi-Fi C110 network callback, bounded camera connection waiting and unchanged photo/LED/USB')
           PY
