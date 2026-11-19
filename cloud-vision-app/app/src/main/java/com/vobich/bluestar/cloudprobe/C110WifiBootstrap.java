@@ -23,6 +23,7 @@ import java.net.Inet4Address;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+import java.lang.ref.WeakReference;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
@@ -38,6 +39,21 @@ final class C110WifiBootstrap {
     static final int PERMISSION_REQUEST=4096;
     private static final String CAMERA_GATEWAY="192.168.1.254";
     private static volatile Network verifiedNetwork;
+    private static WeakReference<C110WifiBootstrap> mainOwner=new WeakReference<>(null);
+
+    /** C110 page uses the existing MainActivity Wi-Fi request lease, not a second competing request. */
+    static boolean requestFromCameraPage(){
+        C110WifiBootstrap controller=mainOwner.get();
+        if(controller==null||controller.closed)return false;
+        controller.main.post(controller::requestForCameraMode);
+        return true;
+    }
+
+    /** A local-only secondary Wi-Fi may have NO default gateway while home Wi-Fi stays active. */
+    static Network preferredNetwork(ConnectivityManager service){
+        Network preferred=verifiedNetwork;
+        return preferred!=null&&isWifiNetwork(service,preferred)?preferred:null;
+    }
     private final Activity owner;
     private final ConnectivityManager cm;
     private final Handler main=new Handler(Looper.getMainLooper());
@@ -51,16 +67,26 @@ final class C110WifiBootstrap {
     C110WifiBootstrap(Activity activity,Consumer<String> updates){
         owner=activity;this.updates=updates;
         cm=(ConnectivityManager)activity.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if(activity instanceof MainActivity)mainOwner=new WeakReference<>(this);
     }
 
     static Network connected(Context context){
-        Network preferred=verifiedNetwork;
         ConnectivityManager service=(ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);
         if(service==null)return null;
-        if(preferred!=null&&validGateway(service,preferred))return preferred;
+        // The verified onAvailable Network is authoritative even without a
+        // default route (Android dual-STA / local-only network case).
+        Network preferred=preferredNetwork(service);
+        if(preferred!=null)return preferred;
         for(Network network:service.getAllNetworks())
             if(validGateway(service,network))return network;
         return null;
+    }
+
+    private static boolean isWifiNetwork(ConnectivityManager cm,Network network){
+        if(cm==null||network==null)return false;
+        NetworkCapabilities caps=cm.getNetworkCapabilities(network);
+        return caps!=null&&caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+            &&cm.getLinkProperties(network)!=null;
     }
 
     private static boolean validGateway(ConnectivityManager cm,Network network){
@@ -97,6 +123,22 @@ final class C110WifiBootstrap {
         requestCamera();
     }
 
+    /** Explicitly entering/refreshing C110 mode may retry a previously failed startup request. */
+    void requestForCameraMode(){
+        if(closed||cm==null)return;
+        if(connected(owner)!=null){
+            report("C110 Wi-Fi已就绪");
+            return;
+        }
+        // Keep only one system chooser active. It must be confirmed by Android.
+        if(requestedCallback!=null){
+            report("正在等待系统确认连接C110，无需进入手机Wi-Fi设置");
+            return;
+        }
+        attempted=false;
+        startAtLaunch();
+    }
+
     void onPermissionResult(boolean granted){
         if(closed)return;
         if(granted)startAtLaunch();
@@ -131,30 +173,55 @@ final class C110WifiBootstrap {
                     verifyAsync(id,network);
                 }
                 @Override public void onUnavailable(){
-                    if(id!=generation||closed)return;
-                    report("没有连接到C110；请确认相机Wi-Fi已开启或在系统Wi-Fi中手动连接");
+                    main.post(()->{
+                        if(id!=generation||closed)return;
+                        report("C110自动连接未成功；可点击相机页左上角重新连接");
+                        clearFailedRequest(cb);
+                    });
                 }
                 @Override public void onLost(Network network){
                     if(network.equals(verifiedNetwork))verifiedNetwork=null;
-                    if(id==generation&&!closed)report("C110 Wi-Fi 已断开");
+                    main.post(()->{
+                        if(id!=generation||closed)return;
+                        report("C110 Wi-Fi已断开；点击重新连接可再次弹出系统连接请求");
+                        clearFailedRequest(cb);
+                    });
                 }
             };
             requestedCallback=cb;
             cm.requestNetwork(request,cb,30000);
         }catch(RuntimeException error){
+            if(requestedCallback!=null){
+                try{cm.unregisterNetworkCallback(requestedCallback);}
+                catch(RuntimeException ignored){}
+            }
             requestedCallback=null;
+            attempted=false;
             report("C110连接请求未发起："+error.getClass().getSimpleName());
         }
+    }
+
+    private void clearFailedRequest(ConnectivityManager.NetworkCallback cb){
+        if(requestedCallback!=cb)return;
+        try{cm.unregisterNetworkCallback(cb);}catch(RuntimeException ignored){}
+        requestedCallback=null;
+        attempted=false;
     }
 
     private volatile Network verifying;
     private void verifyAsync(int id,Network network){
         if(closed||id!=generation||network==null||network.equals(verifying)||
-            network.equals(verifiedNetwork)||!validGateway(cm,network))return;
+            network.equals(verifiedNetwork)||!isWifiNetwork(cm,network))return;
         verifying=network;
         verifier.execute(()->{
             boolean standard=false;
-            try{
+            // onAvailable may precede full DHCP routes. Recheck this strictly
+            // read-only identity query, never switch modes or take a photo.
+            for(int attempt=0;attempt<3&&!standard&&id==generation&&!closed;attempt++){
+              if(attempt>0)try{Thread.sleep(350L);}catch(InterruptedException ex){
+                  Thread.currentThread().interrupt();return;
+              }
+              try{
                 HttpURLConnection conn=(HttpURLConnection)network.openConnection(
                     new URL("http",CAMERA_GATEWAY,80,"/?custom=1&cmd=3012"));
                 try{
@@ -182,12 +249,15 @@ final class C110WifiBootstrap {
                         }
                     }
                 }finally{conn.disconnect();}
-            }catch(Exception ignored){}
+              }catch(Exception ignored){}
+            }
             if(id!=generation||closed)return;
-            if(standard&&validGateway(cm,network)){
+            // Validate the standard C110 via its real 3012 response rather than
+            // assuming a default route on secondary Android local-only Wi-Fi.
+            if(standard&&isWifiNetwork(cm,network)){
                 verifiedNetwork=network;
                 report("标准C110已连接，进入运动相机模式即可预览");
-            }else report("热点已连接，但尚未验证为标准C110");
+            }else report("网络已连上但3012尚未确认标准C110");
             if(verifying==network)verifying=null;
         });
     }
@@ -204,6 +274,7 @@ final class C110WifiBootstrap {
             try{cm.unregisterNetworkCallback(requestedCallback);}catch(RuntimeException ignored){}
         }
         requestedCallback=null;verifiedNetwork=null;
+        if(mainOwner.get()==this)mainOwner.clear();
         verifier.shutdownNow();
     }
 }
