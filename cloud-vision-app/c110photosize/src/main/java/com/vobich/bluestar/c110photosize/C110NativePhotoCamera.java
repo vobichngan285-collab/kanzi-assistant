@@ -30,18 +30,20 @@ import java.util.regex.Pattern;
  * format, reset, file write to phone or other camera setting commands.
  *
  * Original SJCAM Zone 6.7.3.16 classes5.dex:
- *  - assets/cparams/675-C110$1.0.1/1.0.4/1.0.7.json
- *  - Photo Size cmd=1002: [15M,12M,10M,8M,5M,3M(2560x1440),1M]
+ *  - assets/cparams/580-C110+$1.0.7/1.0.8/1.1.2.json
+ *  - C110+ Photo Size cmd=1002:
+ *    [20M 5888x3312,16M,14M,12M,10M,8M,5M,3M 2560x1440,2M 1920x1088]
  *  - LYCamera.setting -> Command.setCmd(cmd), setPar(value) -> getRequestUrl
  *
- * The list index 5 is an OEM CONFIG CANDIDATE.  Firmware on the user's
- * particular standard C110 has NOT been verified to use this mapping.
- * Only a deliberately user-confirmed set can send cmd1002/par5.
+ * The list index 7 is a C110+ OEM CONFIG CANDIDATE. Firmware on the
+ * user's unit has not been verified. The real 5888x3312 JPEG baseline
+ * plus an explicit user confirmation are REQUIRED before cmd1002/par7.
  * The photo's actual SD-resident original JPEG dimensions decide success.
  */
 final class C110NativePhotoCamera {
     static final String IP="192.168.1.254";
-    static final int PHOTO_2K_CANDIDATE_INDEX=5;
+    static final int PHOTO_2K_CANDIDATE_INDEX=7;
+    private boolean verifiedC110Plus20MBaseline;
     private static final int MAX_TEXT=1024*1024, MAX_JPEG=32*1024*1024;
 
     static final class ProbeResult {
@@ -79,15 +81,15 @@ final class C110NativePhotoCamera {
         String text(){return new String(data,StandardCharsets.UTF_8);}
     }
 
-    private static boolean isStandardC110(String text){
+    private static boolean isC110Family(String text){
         Matcher m=Pattern.compile("<String>([^<]{1,128})</String>",
             Pattern.CASE_INSENSITIVE).matcher(text);
         boolean identified=false;
         while(m.find()){
             String name=m.group(1).toUpperCase(Locale.ROOT);
-            if(name.contains("C110_PRO")||name.contains("C110-PRO")||
-               name.contains("C110 PLUS")||name.contains("C110+"))
-                return false;
+            // Original app reports C110+ variants as C110_PRO / C110+;
+            // some devices only report C110.  Do not infer exact model
+            // from this string alone: require a 20M JPEG baseline.
             if(name.contains("C110"))identified=true;
         }
         return identified;
@@ -100,9 +102,9 @@ final class C110NativePhotoCamera {
         return Pattern.compile("<Cmd>\\s*"+cmd+"\\s*</Cmd>",Pattern.CASE_INSENSITIVE)
             .matcher(xml).find();
     }
-    private static void requireUsableStandard(Reply identity)throws IOException{
-        if(!successful(identity)||!isStandardC110(identity.text()))
-            throw new IOException("3012未核实标准C110，拒绝设置或拍照");
+    private static void requireUsableC110Family(Reply identity)throws IOException{
+        if(!successful(identity)||!isC110Family(identity.text()))
+            throw new IOException("3012未识别C110系列设备，拒绝设置或拍照");
     }
     private static void requirePhotoCommands(Reply list,boolean needSetting)throws IOException{
         if(list.http!=200||!advertised(list.text(),1001)||
@@ -133,17 +135,17 @@ final class C110NativePhotoCamera {
         for(Network network:candidates){
             try{
                 Reply response=request(network,"/?custom=1&cmd=3012",MAX_TEXT);
-                if(successful(response)&&isStandardC110(response.text()))
+                if(successful(response)&&isC110Family(response.text()))
                     return network;
             }catch(IOException ignored){}
         }
-        throw new IOException("未找到真实标准C110网络：请先在系统Wi-Fi连接相机热点");
+        throw new IOException("未找到真实C110+相机网络：请先在系统Wi-Fi连接相机热点");
     }
 
     ProbeResult probe(Context ctx)throws Exception {
         Network camera=findCameraWifi(ctx);
         Reply identity=request(camera,"/?custom=1&cmd=3012",MAX_TEXT);
-        requireUsableStandard(identity);
+        requireUsableC110Family(identity);
         Reply support=request(camera,"/?custom=1&cmd=3002",MAX_TEXT);
         boolean sizeCommand=support.http==200&&advertised(support.text(),1002);
         boolean shutter=support.http==200&&advertised(support.text(),1001);
@@ -158,15 +160,25 @@ final class C110NativePhotoCamera {
             values!=null&&advertised(values.text(),1002));
     }
 
+    PhotoResult takeBaselineOriginal(Context ctx)throws Exception{
+        verifiedC110Plus20MBaseline=false;
+        PhotoResult baseline=takeOneOriginal(ctx);
+        verifiedC110Plus20MBaseline=baseline.width==5888&&baseline.height==3312;
+        return baseline;
+    }
+
     SetResult select2kCandidate(Context ctx)throws Exception{
+        if(!verifiedC110Plus20MBaseline)
+            throw new IOException("尚未从本机SD卡读到5888×3312基线，禁止发送C110+尺寸设置");
+        verifiedC110Plus20MBaseline=false; // one-use authorization
         if(Thread.currentThread().isInterrupted())throw new InterruptedException();
         Network camera=findCameraWifi(ctx);
-        requireUsableStandard(request(camera,"/?custom=1&cmd=3012",MAX_TEXT));
+        requireUsableC110Family(request(camera,"/?custom=1&cmd=3012",MAX_TEXT));
         requirePhotoCommands(request(camera,"/?custom=1&cmd=3002",MAX_TEXT),true);
         if(Thread.currentThread().isInterrupted())throw new InterruptedException();
         // THE ONLY setting write permitted in this entire experimental app.
-        // Deliberate one-shot, original LYCamera.setting cmd/par format.
-        Reply result=request(camera,"/?custom=1&cmd=1002&par=5",MAX_TEXT);
+        // Deliberate one-shot, original C110+ LYCamera.setting cmd/par format.
+        Reply result=request(camera,"/?custom=1&cmd=1002&par=7",MAX_TEXT);
         Integer status=PhotoSizePolicy.integerTag(result.text(),"Status");
         return new SetResult(result.http==200,status==null?-4096:status,result.ms);
     }
@@ -174,7 +186,7 @@ final class C110NativePhotoCamera {
     PhotoResult takeOneOriginal(Context ctx)throws Exception {
         long started=SystemClock.elapsedRealtime();
         Network wifi=findCameraWifi(ctx);
-        requireUsableStandard(request(wifi,"/?custom=1&cmd=3012",MAX_TEXT));
+        requireUsableC110Family(request(wifi,"/?custom=1&cmd=3012",MAX_TEXT));
         requirePhotoCommands(request(wifi,"/?custom=1&cmd=3002",MAX_TEXT),false);
         if(Thread.currentThread().isInterrupted())throw new InterruptedException();
         // Proven C110 flow: switch photo mode before baseline directory scan.
@@ -252,7 +264,7 @@ final class C110NativePhotoCamera {
             path.equals("/?custom=1&cmd=3015")||
             path.equals("/?custom=1&cmd=3001&par=0")||
             path.equals("/?custom=1&cmd=1001")||
-            path.equals("/?custom=1&cmd=1002&par=5");
+            path.equals("/?custom=1&cmd=1002&par=7");
         boolean file=path.startsWith("/DCIM/")&&
             !path.contains("..")&&!path.contains("\\")&&
             !path.contains("?")&&!path.contains("#");
