@@ -121,6 +121,7 @@ public final class MainActivity extends CameraActivity {
     private Button c110Button,c110PreviewButton;
     private C110LivePreview c110Preview;
     private C110WifiBootstrap c110WifiBootstrap;
+    private C110QuickShotController quickShot;
     private boolean c110PreviewWanted,c110PreviewPlaying;
     // C110 has independent digital zoom. Never silently reuse phone/USB zoom.
     private float c110PreviewZoom=1f;
@@ -417,7 +418,7 @@ public final class MainActivity extends CameraActivity {
         c110Button.setBackground(roundRect(0xFF245477,12));
         c110Button.setContentDescription("立即触发一次C110+高清拍照与朗读");
         title.addView(c110Button,new LinearLayout.LayoutParams(dp(60),dp(43)));
-        c110Button.setOnClickListener(v->captureC110OneShot());
+        c110Button.setOnClickListener(v->shortcutPhoto());
         Button aiTalk=new Button(this);
         aiTalk.setText("🎙");aiTalk.setTextSize(19);aiTalk.setAllCaps(false);
         aiTalk.setTextColor(Color.WHITE);
@@ -757,8 +758,18 @@ public final class MainActivity extends CameraActivity {
 
     private void shortcutPhoto(){
         if(!uiActive||readingScreen!=null){toastShort("请先退出阅读模式");return;}
-        if(C110WifiBootstrap.connected(this)!=null)captureC110OneShot();
-        else startActivity(new Intent(this,C110QuickPhotoActivity.class));
+        // Connected: preserve the existing real 1001 + livestream resume path.
+        // Not yet connected: retain the SAME one-tap shutter across the
+        // original Android Wi-Fi consent, without opening a second page.
+        if(C110WifiBootstrap.connected(this)!=null){
+            captureC110OneShot();
+        }else{
+            if(quickShot==null){
+                quickShot=new C110QuickShotController(this,this::setResultStatus);
+                quickShot.onResume();
+            }
+            quickShot.trigger();
+        }
     }
     void toastShort(String value){Toast.makeText(this,value,Toast.LENGTH_SHORT).show();}
     List<TextToSpeech.EngineInfo> availableTtsEngines(){
@@ -3475,6 +3486,7 @@ public final class MainActivity extends CameraActivity {
         visionModel=VisionModelCatalog.normalize(
             currentModels.getString(PREF_VISION_MODEL,VisionModelCatalog.DEFAULT));
         uiActive=true;usbForeground=!settingsOnly;
+        if(quickShot!=null)quickShot.onResume();
         if(settingsOnly){
             handler.post(this::openLargeSettings);
             return;
@@ -3514,6 +3526,7 @@ public final class MainActivity extends CameraActivity {
         }
     }
     @Override protected void onPause(){
+        if(quickShot!=null)quickShot.onPause();
         if(volumeShortcut!=null)volumeShortcut.cancel();
         stopC110LivePreview(true);
         if(!usingPhoneCamera&&diagnostics!=null){
@@ -3554,6 +3567,7 @@ public final class MainActivity extends CameraActivity {
         super.onPause();
     }
     @Override protected void onDestroy(){
+        if(quickShot!=null){quickShot.shutdown();quickShot=null;}
         if(c110WifiBootstrap!=null){c110WifiBootstrap.shutdown();c110WifiBootstrap=null;}
         stopC110LivePreview(true);
         c110PreviewExecutor.shutdownNow();
