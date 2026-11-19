@@ -1,0 +1,119 @@
+name: C110 Standalone Preview Latency A-B Lab v0.1.0
+on:
+  push:
+    branches: [ 'exp/c110-latency-lab-20261119' ]
+    paths:
+      - 'cloud-vision-app/c110latency/**'
+      - 'cloud-vision-app/settings.gradle'
+      - '.github/workflows/c110-latency-lab-20261119.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  latency-lab:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pinned UVC stack only for shared settings compatibility
+        uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify safety, minimal scope and original playback invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path('cloud-vision-app')
+          lab=(root/'c110latency/src/main/java/com/vobich/bluestar/c110latency/LatencyActivity.java').read_text()
+          mini=(root/'c110mini/src/main/java/com/vobich/bluestar/c110mini/OemVideoActivity.java').read_text()
+          manifest=(root/'c110latency/src/main/AndroidManifest.xml').read_text()
+          gradle=(root/'c110latency/build.gradle').read_text()
+          settings=(root/'settings.gradle').read_text()
+          assert "include ':c110latency'" in settings
+          assert "include ':c110mini'" in settings and "include ':app'" in settings
+          assert 'private static final String VIDEO_URL="rtsp://192.168.1.254:554/xxx.mp4"' in lab
+          for code in ['get(wifi,3012,-1)','get(wifi,3016,-1)','get(wifi,3001,1)','get(wifi,2015,1)']:
+              assert code in mini and code in lab, f'Proven OEM video command missing: {code}'
+          assert 'player.attachViews(video,null,false,false)' in lab
+          assert 'root.addView(video,new FrameLayout.LayoutParams(-1,-1))' in lab
+          assert lab.count('active.play();')==1
+          assert 'main.postDelayed(delayedPlay,300)' in lab
+          assert ':codec=mediacodec,iomx,all' in lab and ':codec=mediacodec,iomx,all' in mini
+          assert ':file-caching=300' in lab and ':sout-mux-caching=300' in lab
+          assert '--network-caching="+cacheMs' in lab
+          assert '--live-caching="+cacheMs' in lab
+          assert ':network-caching="+cacheMs' in lab
+          assert ':live-caching="+cacheMs' in lab
+          assert 'for(int value:new int[]{300,150,100,50,500})' in lab
+          assert 'if(value<50||value>1500)' in lab
+          assert 'readCounter(stats,"displayedPictures")' in lab
+          assert 'readCounter(stats,"lostPictures")' in lab
+          assert 'android.os.Process.getElapsedCpuTime()' in lab
+          assert 'MediaPlayer.Event.Buffering' in lab
+          assert 'USER_OBSERVATION cache_ms=' in lab
+          assert 'ClipboardManager' in lab and 'MAX_LOG=28000' in lab
+          assert 'Vout is not a visible-pixel timestamp' in lab
+          assert 'stopPlayer(true);' in lab and 'io.shutdownNow()' in lab
+          assert all(s not in lab for s in ['cmd=1001','cmd=9011','cmd=9038','getFileListNew',
+              'CloudVisionClient','CameraManager','FileOutputStream','recordAudio',
+              'startScan','setSsidPattern','requestNetwork(']), 'Video-only tester cannot trigger other functions'
+          assert all(s not in manifest for s in ['permission.CAMERA','permission.RECORD_AUDIO','permission.ACCESS_FINE_LOCATION'])
+          assert 'libvlc-all:3.6.5' in gradle
+          assert "applicationId 'com.vobich.bluestar.c110latency'" in gradle
+          assert "versionName '0.1.0-latency-only'" in gradle
+          print('PASS: controlled cache A/B, offline-only clipboard, OEM RTSP/video core and no shutter/camera/voice/cloud side effects')
+          PY
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Build standalone latency-only APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :c110latency:assembleDebug
+      - name: Validate native VLC, identity and integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/c110latency/build/outputs/apk/debug/c110latency-debug.apk out/BlueStar_C110_Preview_Latency_Lab_0.1.0.apk
+          test -s out/BlueStar_C110_Preview_Latency_Lab_0.1.0.apk
+          unzip -tq out/*.apk >/dev/null
+          unzip -Z1 out/*.apk >out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlc.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlcjni.so' out/entries.txt
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging out/*.apk >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110latency'" out/badging.txt
+          grep -Fq "versionName='0.1.0-latency-only'" out/badging.txt
+          (cd out && sha256sum BlueStar_C110_Preview_Latency_Lab_0.1.0.apk > SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_C110_Preview_Latency_Lab_0.1.0
+          path: out/*
+          retention-days: 14
+      - name: Publish isolated prerelease only for unused tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-c110-latency-lab-20261119-v010
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Existing latency release, refusing overwrite" >&2
+            exit 1
+          fi
+          gh release create "$TAG" "out/BlueStar_C110_Preview_Latency_Lab_0.1.0.apk" \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "C110 Preview Latency Lab v0.1.0 - Video Only" \
+            --notes "Standalone controlled preview latency investigation based on the REAL field-verified C110 OEM 3012/3016/3001-1/2015-1 + LibVLC 3.6.5 video path. A/B paired network+live caching 300/150/100/50/500ms or custom 50-1500, 300ms delayed play and decoder/file/sout cache remain fixed. Collects Playing/Vout startup timings, buffering callbacks, optional native displayed/lost frame counters, 2s FPS and process CPU samples, subjective delay markers; copy plain text in-memory diagnostic. Does NOT measure true camera-to-screen glass-to-glass delay; Vout != rendered-frame timestamp. NO camera/shutter/photo/upload/OCR/TTS/AI/Wi-Fi scanning. Before test, manually connect C110 Wi-Fi in phone settings. App isolated from all prior builds, no verified phone results yet."
