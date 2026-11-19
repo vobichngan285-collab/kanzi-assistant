@@ -27,7 +27,7 @@ import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** One-purpose experiment: standard C110 keypad tone 9011 plus proven 1001 shutter. */
+/** Isolated standard C110 manual setting experiment: validated 9011, OEM 9038/9036, proven 1001 shutter. */
 public final class ToneProbeActivity extends Activity {
     private static final String IP="192.168.1.254";
     private final ExecutorService executor=Executors.newSingleThreadExecutor();
@@ -35,7 +35,7 @@ public final class ToneProbeActivity extends Activity {
     private final C110WifiCamera camera=new C110WifiCamera();
     private final StringBuilder events=new StringBuilder();
     private TextView status,log;
-    private Button detect,mute,photo,restore;
+    private Button detect,mute,photo,restore,ledOff,ledOn,strobeOff,strobeOn;
     private boolean busy,known;
     private volatile int generation;
 
@@ -48,13 +48,14 @@ public final class ToneProbeActivity extends Activity {
         panel.setBackgroundColor(0xFF112238);
         panel.setPadding(dp(16),dp(14),dp(16),dp(20));
         scroll.addView(panel);
-        TextView title=text("C110 机身拍照声实验",23,Color.WHITE);
+        TextView title=text("C110 声音与灯光实验",23,Color.WHITE);
         panel.addView(title);
         TextView instruction=text(
             "已复制蓝星向导真机成功的 C110 高清拍照流程。\n"+
-            "先关闭按键声音，再拍一张听机身是否还会咔嚓响。\n"+
-            "需要先连接 C110 Wi-Fi，并在相机里插入可用存储卡。\n"+
-            "不会自动拍照、上传云端、删除文件或改动播放器。",15,0xFFCBDDE9);
+            "9011 静音已通过真机验证；9038 指示灯及 9036 爆闪灯只来自标准 C110 原厂设置配置，效果未验证。\n"+
+            "每个按钮单独执行一次；关闭后可按对应恢复按钮。\n"+
+            "先连接 C110 Wi-Fi，测试拍照还需相机插入可用存储卡。\n"+
+            "不会自动更改设置、拍照、上传云端、删除文件或改动播放器。",15,0xFFCBDDE9);
         instruction.setPadding(0,dp(12),0,dp(14));
         panel.addView(instruction);
         status=text("检测中…",17,0xFFBFE9F5);
@@ -63,11 +64,19 @@ public final class ToneProbeActivity extends Activity {
         mute=button("① 关闭机身提示音（9011 / 0）",0xFF176A7A);
         photo=button("② 拍一张高清照片，测试声音",0xFF19678C);
         restore=button("③ 恢复机身提示音（9011 / 1）",0xFF575A7C);
-        for(Button b:new Button[]{detect,mute,photo,restore})panel.addView(b,buttonParams());
+        ledOff=button("④ 关闭状态指示灯（9038 / 0）",0xFF176A7A);
+        ledOn=button("⑤ 恢复状态指示灯（9038 / 1）",0xFF575A7C);
+        strobeOff=button("⑥ 关闭爆闪灯（9036 / 0）",0xFF176A7A);
+        strobeOn=button("⑦ 恢复爆闪灯（9036 / 1）",0xFF575A7C);
+        for(Button b:new Button[]{detect,mute,photo,restore,ledOff,ledOn,strobeOff,strobeOn})panel.addView(b,buttonParams());
         detect.setOnClickListener(v->probe());
         mute.setOnClickListener(v->askToggle(0));
         photo.setOnClickListener(v->askPhoto());
         restore.setOnClickListener(v->askToggle(1));
+        ledOff.setOnClickListener(v->askLight(9038,0));
+        ledOn.setOnClickListener(v->askLight(9038,1));
+        strobeOff.setOnClickListener(v->askLight(9036,0));
+        strobeOn.setOnClickListener(v->askLight(9036,1));
         Button copy=button("复制诊断",0xFF344B63);
         panel.addView(copy,buttonParams());
         copy.setOnClickListener(v->{
@@ -112,6 +121,10 @@ public final class ToneProbeActivity extends Activity {
         mute.setEnabled(known&&!busy);
         photo.setEnabled(known&&!busy);
         restore.setEnabled(known&&!busy);
+        ledOff.setEnabled(known&&!busy);
+        ledOn.setEnabled(known&&!busy);
+        strobeOff.setEnabled(known&&!busy);
+        strobeOn.setEnabled(known&&!busy);
     }
     private void addLog(String event){
         if(Looper.myLooper()!=Looper.getMainLooper()){
@@ -187,6 +200,43 @@ public final class ToneProbeActivity extends Activity {
             }catch(Exception e){error(ticket,"按键声音设置失败",e);}
         });
     }
+    /** Manual OEM configuration test only. C110 675-C110$1.0.1/.4/.7 lists 9038 indicator lights and 9036 strobe. */
+    private void askLight(int cmd,int setting){
+        if(!known||busy)return;
+        if(cmd!=9038&&cmd!=9036)return;
+        if(setting!=0&&setting!=1)return;
+        String target=cmd==9038?"状态指示灯":"爆闪灯";
+        String choice=setting==0?"关闭":"开启";
+        new AlertDialog.Builder(this).setTitle("确认"+choice+target+"？")
+            .setMessage("仅向已确认的标准 C110 发送一次 "+cmd+"/par="+setting+"。\n"+
+                "9038 和 9036 均来自原厂 C110 设置文件，但本机实际效果尚未验证。\n"+
+                "两个灯光设置互不联动，不一定覆盖红色充电灯或所有指示状态。\n"+
+                "操作后请观察灯光，用对应恢复按钮复原。不会改变 Wi-Fi 开关、拍照模式或播放器。")
+            .setNegativeButton("取消",null)
+            .setPositiveButton("确认发送",(dialog,which)->toggleLight(cmd,setting)).show();
+    }
+    private void toggleLight(int cmd,int setting){
+        if(!known||busy||(cmd!=9038&&cmd!=9036)||(setting!=0&&setting!=1))return;
+        final int ticket=++generation;
+        busy=true;updateButtons();
+        status.setText("发送灯光设置，等待相机回复…");
+        executor.execute(()->{
+            try{
+                Network wifi=checkC110(); // Revalidate standard model before each change.
+                String response=call(wifi,cmd,setting);
+                final Integer code=C110PhotoPolicy.tagInt(response,"Status");
+                ui.post(()->{
+                    if(ticket!=generation||isFinishing())return;
+                    busy=false;known=true;updateButtons();
+                    String target=cmd==9038?"指示灯":"爆闪灯";
+                    status.setText(target+" "+cmd+"/par="+setting+" 状态="+(code==null?"无Status":code));
+                    addLog(target+"命令 "+cmd+"/par="+setting+" HTTP200 状态="+
+                        (code==null?"未返回":code)+"；仅代表指令回复，真实灯光须肉眼观察");
+                });
+            }catch(Exception e){error(ticket,"灯光设置失败",e);}
+        });
+    }
+
     private void askPhoto(){
         if(!known||busy)return;
         new AlertDialog.Builder(this).setTitle("确认执行一次真实高清拍照？")
@@ -228,8 +278,8 @@ public final class ToneProbeActivity extends Activity {
         });
     }
     private static String call(Network network,int cmd,int par)throws Exception{
-        if(!((cmd==3012&&par==-1)||(cmd==9011&&(par==0||par==1))))
-            throw new IllegalArgumentException("严格限制声音探测指令");
+        if(!((cmd==3012&&par==-1)||((cmd==9011||cmd==9038||cmd==9036)&&(par==0||par==1))))
+            throw new IllegalArgumentException("仅允许只读身份、已验静音和原厂C110灯光开关");
         String path="/?custom=1&cmd="+cmd+(par<0?"":"&par="+par);
         HttpURLConnection conn=null;
         try{
