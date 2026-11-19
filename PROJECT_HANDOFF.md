@@ -1,3 +1,16 @@
+# 2026-11-19｜C110 连接家用Wi-Fi时自动申请相机连接 v0.1.19（CI/Release验证通过，待手机验收）
+
+- **当前用户问题**：手机仍连接家里的Wi-Fi时打开蓝星向导无法连接C110，必须离开软件去系统Wi-Fi设置里手动切换。用户之前明确已验证C110 **真实视频播放、1001高清JPEG、9011静音、9038指示灯熄灭**，不重复和不破坏。
+- **定位的三个代码层问题**：① `C110WifiBootstrap.startAtLaunch()` 在初次 `requestNetwork` 后永久保持`attempted=true`，`onUnavailable`也不释放/重置，之后切到C110页无法重试；② C110页启动就 `begin()`，未等Android系统确认/分配相机Wi-Fi就发3012；③ 旧程序只接受C110网络具有默认路由且网关精确`192.168.1.254`，但Android通过`WifiNetworkSpecifier`将C110作为 **secondary local-only Wi-Fi** 与家用Wi-Fi并存时，C110连接未必有默认路由，导致已接入的C110被误判未连接。官方Android文档明确Local-only Wi-Fi可作为并发第二连接，仅支持的机型能保留家用网络，并且系统弹窗/授权不能跳过。
+- **仅修改连接层**：从已发布 `exp/c110-main-hq-button-20261119` HEAD `0e4cd142a4cd63ace12be632c2478060d72df4d8` 创建新隔离分支 `exp/c110-homewifi-bootstrap-20261119`，HEAD **`285a00031b5692ec606a465ce647c061f229fd1b`**。`C110WifiBootstrap` 仍以默认C110 SSID前缀及默认WPA2密码`12345678`向 Android 发起 **用户批准的** `WifiNetworkSpecifier` 局域网连接请求；只读最多三次`3012`确认真实标准C110（排除Pro/+），将 `onAvailable` 所给的可信Network记录为`preferredNetwork`，**无需默认网关**，不把C110流量路由到家用路由器。超时/`onLost`释放请求状态，允许点击C110模式重新申请；底部高清快门发现未连接时先申请，拒绝未连接就发快门。
+- **C110相机页面入口**：不再一进页面就发相机命令，而是启动限时35秒、每550ms轻量检测一次已验证相机Network的等待状态。连接成立后才启动**原有未重写**`3012→3016→3001/par1→2015/par1→LibVLC`；相机顶栏刷新按钮可主动撤销陈旧请求并重新调起Android系统连接选择；仍超时会提供“重新请求”或“Wi-Fi快捷面板”两条路径。底层真实高清快门 `C110WifiCamera.findCameraNetwork` 优先读取同一`3012`证实的secondary Network，不再依赖默认网关；旧手动连接网关发现回退路径保留。离开页面取消短时等待，避免后台无限轮询。C110页面恢复RTSP也先确认有网络。
+- **未变**：C110单次1001真实JPEG/当前视频画面PixelCopy/手机USB画面/本地TTS/AI/任务/9011静音/9038灯光/移动数据云OCR全不重写；只变C110网络获取、等待和诊断。Android网络授权及连接仍受系统管控，**不能保证不弹系统确认、也不能保证手机同时连两个Wi-Fi**；家用Wi-Fi保留只在手机支持双STA时可能。35秒失败的Wi-Fi快捷面板依旧需要用户选择热点，不声称完全静默自动连通。
+- **测试结果（不能冒充真机）**：新Actions `44481118477` [构建日志](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44481118477) `completed/success`：C110PhotoPolicy/RTSP Java单测，OEM LibVLC核心不变量（新入口只等待网络）、local-only无默认路由与重试静态检查、USB补丁、Gradle Java/NDK完整编译、APP签名包名/版本/LibVLC原生库/TTS音效/ZIP检查、Artifact与独立GitHub Release上传均通过。前两次工作流静态检查失败分别为旧包名断言和变量`camera`未提前声明，已修正后第三轮通过。
+- **实物APK**：包`com.vobich.bluestar.c110homewifi`，版本`1.0.44-c110-homewifi-bootstrap-lab`；Release https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-homewifi-bootstrap-20261119-v0119 ；浏览器直接APK https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-homewifi-bootstrap-20261119-v0119/BlueStar_Guide_C110_HomeWiFi_AutoConnect_0.1.19.apk ；56,682,929字节，SHA256 `9ec52c80a405f658c5be8ace85a02d9292bb5dd1b48c7114989cbd0d6e86d9cd`。与已可用的0.1.18及RC25分包共存，不覆盖。
+- **真机验收**：先让C110开Wi-Fi，手机继续连接家用Wi-Fi→启动v0.1.19，准许附近设备与Android要求的连接提示→右下角模式选C110，观察是否成功显示连续真实相机视频且无需手动打开设置。如果失败，C110页顶栏`↻`再次请求、观察系统是否出现选网弹窗，35秒后的提示及“Wi-Fi快捷面板”。若不支持本机并发双Wi-Fi，应如实提示需系统选择/切换，而非无休止重试。记录页面状态长按复制诊断与系统弹窗结果，绝不宣称CI等于手机实际成功。
+
+---
+
 # 2026-11-19｜修复主界面“高清拍照”误取手机帧 v0.1.18（构建发布通过、待真机）
 
 - **用户反馈**：在蓝星向导「手机摄像头」模式点击底部“高清拍照”，C110 运动相机没有动作，返回的还是手机画面帧。核查 `MainActivity.getRootView()` 确认实际按钮标成“拍照识别”，`c110Button.setOnClickListener(v->captureOneFrame())`，其代码按手机/USB当前取景源采集，**根本没调用C110真实快门**，直接定位到应用按钮绑定错误；不应误诊为相机硬件失效。
