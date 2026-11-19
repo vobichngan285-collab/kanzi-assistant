@@ -15,23 +15,28 @@
     </queries>
     <application
         android:allowBackup="false"
-        android:label="蓝星向导 C110+模型同步"
+        android:label="蓝星向导 快捷拍照实验"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/AppTheme"
         android:supportsRtl="true"
         android:usesCleartextTraffic="false"
         android:networkSecurityConfig="@xml/c110_network_security_config">
-        <activity
-            android:name="com.vobich.bluestar.cloudprobe.MainActivity"
+        <activity android:name=".HomeActivity"
             android:screenOrientation="portrait"
-            android:launchMode="singleTop"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <activity android:name="com.vobich.bluestar.cloudprobe.MainActivity"
+            android:screenOrientation="portrait"
+            android:launchMode="singleTop"
+            android:exported="false"/>
+        <activity android:name=".C110QuickPhotoActivity"
+            android:screenOrientation="portrait"
+            android:exported="false"/>
         <!-- Isolated proven C110 mini VLC Activity with same bottom dock and camera-only settings. -->
         <activity android:name=".C110CameraActivity"
             android:screenOrientation="portrait"
