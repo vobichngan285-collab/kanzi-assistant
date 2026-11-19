@@ -320,7 +320,7 @@ public final class C110CameraActivity extends Activity {
             say("已拍得高清照片，但识别流程未开始");
         // User remains on C110 camera page. Resume OEM playback once only.
         say("正在恢复C110实时预览…");
-        begin();
+        connectAndBeginWhenReady();
     }
 
 
@@ -353,8 +353,23 @@ public final class C110CameraActivity extends Activity {
                 }
                 if(SystemClock.elapsedRealtime()-cameraConnectStartedMs>=35000L){
                     cancelCameraWait();
-                    say("C110连接超时。点击左上角 ↻ 可以再次请求系统连接（无需进入手机设置）");
+                    say("C110连接超时；可以在本页重新请求系统连接");
                     beginButton.setEnabled(true);
+                    new android.app.AlertDialog.Builder(C110CameraActivity.this)
+                        .setTitle("C110 自动连接未成功")
+                        .setMessage("若Android不支持同时连接家用Wi-Fi和相机热点，可先点“重新请求”；仍失败时可直接打开系统Wi-Fi快捷面板选择C110，不必翻找系统设置。")
+                        .setPositiveButton("重新请求",(dialog,which)->{
+                            requestC110Network(true);
+                            connectAndBeginWhenReady();
+                        })
+                        .setNeutralButton("Wi-Fi快捷面板",(dialog,which)->{
+                            try{
+                                startActivity(new Intent(android.provider.Settings.Panel.ACTION_WIFI));
+                            }catch(RuntimeException error){
+                                say("Wi-Fi快捷面板无法打开："+error.getClass().getSimpleName());
+                            }
+                        })
+                        .setNegativeButton("关闭",null).show();
                     return;
                 }
                 main.postDelayed(this,550L);
