@@ -55,7 +55,8 @@ public final class C110QuickPhotoActivity extends Activity {
         back.setOnClickListener(v->finish());layout.addView(back);
         setContentView(layout);
         reader=new C110FrameReader(this,this::setStatus);
-        wifi=new C110WifiBootstrap(this,this::setStatus);
+        // Use the MainActivity Wi-Fi lease if it exists; create an isolated
+        // request only when no main owner is alive, like C110CameraActivity.
         shortcut=new C110VolumeShortcut(this,this::startPhoto);
     }
     private int dp(int px){return Math.round(px*getResources().getDisplayMetrics().density);}
@@ -75,7 +76,10 @@ public final class C110QuickPhotoActivity extends Activity {
         shooting=true;photo.setEnabled(false);
         setStatus("已触发一次快捷拍照，正在检查C110+ Wi-Fi…");
         if(C110WifiBootstrap.connected(this)!=null){capture(id);return;}
-        wifi.requestForCameraMode(); // may show the exact OEM Wi-Fi picker
+        if(!C110WifiBootstrap.requestFromCameraPage(this,false)){
+            if(wifi==null)wifi=new C110WifiBootstrap(this,this::setStatus);
+            wifi.requestForCameraMode(); // exact OEM Wi-Fi picker if needed
+        }
         wifiStartedAt=SystemClock.elapsedRealtime();
         waiting=new Runnable(){
             @Override public void run(){
@@ -122,11 +126,12 @@ public final class C110QuickPhotoActivity extends Activity {
                                                    int[] results){
         super.onRequestPermissionsResult(requestCode,permissions,results);
         boolean granted=results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED;
-        if(wifi!=null){
-            if(requestCode==C110WifiBootstrap.SCAN_PERMISSION_REQUEST)
-                wifi.onScanPermissionResult(this,granted);
-            else if(requestCode==C110WifiBootstrap.PERMISSION_REQUEST)
-                wifi.onPermissionResult(granted);
+        if(requestCode==C110WifiBootstrap.SCAN_PERMISSION_REQUEST){
+            if(wifi!=null)wifi.onScanPermissionResult(this,granted);
+            else C110WifiBootstrap.onScanPermissionFromCameraPage(this,granted);
+        }else if(requestCode==C110WifiBootstrap.PERMISSION_REQUEST){
+            if(wifi!=null)wifi.onPermissionResult(granted);
+            else C110WifiBootstrap.onWifiPermissionFromCameraPage(this,granted);
         }
     }
     @Override public boolean dispatchKeyEvent(KeyEvent event){
