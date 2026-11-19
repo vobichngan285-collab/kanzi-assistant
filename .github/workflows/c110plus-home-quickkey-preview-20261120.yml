@@ -1,4 +1,4 @@
-name: Blue Star C110+ Home Preview Volume Shutter 150ms v1.0.52
+name: Blue Star C110+ Home Preview Volume Shutter 150ms v1.0.53
 on:
   push:
     branches: [ 'exp/c110plus-home-quickkey-preview-settings-20261120' ]
@@ -84,6 +84,8 @@ jobs:
           assert 'settingsOnly' in main and '!settingsOnly&&isUsbVideoDevice(device)' in main
           assert 'launch.getBooleanExtra("bluestar_launch_preview",false)' in main
           assert 'globalSettings.setOnClickListener(v->showC110Settings())' in c110
+          assert 'isolatedWifiBootstrap.requestForCameraMode();' in c110
+          assert 'isolatedWifiBootstrap.startAtLaunch();' not in c110
           assert 'returnToMain("settings")' not in c110
           assert 'new C110FrameReader(this,this::setStatus)' in quick
           assert 'C110WifiCamera.Photo result=camera.shootAfterLivePreview(this)' in quick
@@ -200,8 +202,8 @@ jobs:
           assert 'photo.jpeg,photo.width,photo.height,highPhotoZoomAtTap' in main
           assert 'c110PreviewZoom:zoom' in main
           assert 'final byte[] submitted=photo.jpeg;' in lab, 'Keep OEM 20M/10M/8M size-lab unmodified'
-          assert "applicationIdSuffix '.c110plushome152'" in build
-          assert "versionName '1.0.52-c110plus-home-key-preview'" in build
+          assert "applicationIdSuffix '.c110plushome153'" in build
+          assert "versionName '1.0.53-c110plus-home-key-preview'" in build
           for label,src in [('C110 camera page',c110),('C110 inline preview',inline)]:
               for flag in ['--network-caching=150','--live-caching=150',
                            ':network-caching=150',':live-caching=150']:
@@ -241,8 +243,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_C110Plus_Home_Volume_Key_150ms_1.0.52.apk
-          test -s out/BlueStar_Guide_C110Plus_Home_Volume_Key_150ms_1.0.52.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_C110Plus_Home_Volume_Key_150ms_1.0.53.apk
+          test -s out/BlueStar_Guide_C110Plus_Home_Volume_Key_150ms_1.0.53.apk
           unzip -tq out/*.apk >/dev/null
           unzip -Z1 out/*.apk >out/entries.txt
           grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
@@ -252,14 +254,14 @@ jobs:
           grep -Fxq 'res/raw/voice_send_whoosh.wav' out/entries.txt
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           "$AAPT" dump badging out/*.apk >out/badging.txt
-          grep -Fq "package: name='com.vobich.bluestar.c110plushome152'" out/badging.txt
-          grep -Fq "versionName='1.0.52-c110plus-home-key-preview'" out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110plushome153'" out/badging.txt
+          grep -Fq "versionName='1.0.53-c110plus-home-key-preview'" out/badging.txt
           grep -Fq 'C110ResolutionLabActivity' out/entries.txt || true
-          (cd out && sha256sum BlueStar_Guide_C110Plus_Home_Volume_Key_150ms_1.0.52.apk >SHA256SUMS.txt)
+          (cd out && sha256sum BlueStar_Guide_C110Plus_Home_Volume_Key_150ms_1.0.53.apk >SHA256SUMS.txt)
           cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: BlueStar_Guide_C110Plus_Home_Volume_Key_150ms_1.0.52
+          name: BlueStar_Guide_C110Plus_Home_Volume_Key_150ms_1.0.53
           path: out/*
           retention-days: 14
       - name: Publish safe isolated experimental prerelease
@@ -268,12 +270,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG=bluestar-c110plus-home-quickkey-preview-150ms-20261120-v0152
+          TAG=bluestar-c110plus-home-quickkey-preview-150ms-20261120-v0153
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Existing tag must not be replaced" >&2
             exit 1
           fi
-          gh release create "$TAG" "out/BlueStar_Guide_C110Plus_Home_Volume_Key_150ms_1.0.52.apk" \
+          gh release create "$TAG" "out/BlueStar_Guide_C110Plus_Home_Volume_Key_150ms_1.0.53.apk" \
             --target "$GITHUB_SHA" --prerelease \
-            --title "Blue Star C110+ Home Quick Photo + Volume Gesture + Preview 150ms v1.0.52" \
-            --notes "v1.0.52 isolated C110+ home and volume shutter experiment. New camera-free HomeActivity launcher, Home/Preview/Settings tabs, direct one-shot C110+ photo flow, foreground-only configurable volume up/down double/long press for C110 shutter in Home, phone/USB preview, and C110 video. MainActivity preview auto selects USB if physically attached else phone; settings-only route does not open phone/UVC or C110 streaming. C110 camera page hamburger now opens an in-place settings menu without exiting VLC preview. Original C110 OEM Wi-Fi, one1001, 150ms dual VLC path, native JPEG upload, OCR/vision model prefs, TTS, quiet/lights, portrait cover and 20M/8M photo test preserved. Short volume presses adjust music volume after gesture threshold; device/OS behavior requires vivo physical verification. No background/locked-screen hotkeys, no automatic repeat photos or cloud fallback. CI success is not real-device approval."
+            --title "Blue Star C110+ Home Quick Photo + Volume Gesture + Preview 150ms v1.0.53" \
+            --notes "v1.0.53 isolated C110+ home and volume shutter experiment. New camera-free HomeActivity launcher, Home/Preview/Settings tabs, direct one-shot C110+ photo flow, foreground-only configurable volume up/down double/long press for C110 shutter in Home, phone/USB preview, and C110 video. MainActivity preview auto selects USB if physically attached else phone; settings-only route does not open phone/UVC or C110 streaming. C110 camera page hamburger now opens an in-place settings menu without exiting VLC preview. Original C110 OEM Wi-Fi, one1001, 150ms dual VLC path, native JPEG upload, OCR/vision model prefs, TTS, quiet/lights, portrait cover and 20M/8M photo test preserved. Short volume presses adjust music volume after gesture threshold; device/OS behavior requires vivo physical verification. No background/locked-screen hotkeys, no automatic repeat photos or cloud fallback. CI success is not real-device approval."

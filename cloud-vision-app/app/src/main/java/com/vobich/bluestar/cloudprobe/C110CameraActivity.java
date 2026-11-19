@@ -697,8 +697,10 @@ public final class C110CameraActivity extends Activity {
         if(C110WifiBootstrap.requestFromCameraPage(this,explicitRetry))return;
         if(isolatedWifiBootstrap==null)
             isolatedWifiBootstrap=new C110WifiBootstrap(this,this::say);
-        if(explicitRetry)isolatedWifiBootstrap.requestForCameraMode();
-        else isolatedWifiBootstrap.startAtLaunch();
+        // Direct launch from Home has no MainActivity lease. Ask for the
+        // exact OEM C110 hotspot immediately even on a fresh installation,
+        // rather than waiting 35 seconds without ever opening the picker.
+        isolatedWifiBootstrap.requestForCameraMode();
     }
 
     private void cancelCameraWait(){
