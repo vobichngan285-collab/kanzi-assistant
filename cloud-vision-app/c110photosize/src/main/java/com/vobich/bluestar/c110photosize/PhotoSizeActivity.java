@@ -32,7 +32,7 @@ public final class PhotoSizeActivity extends Activity {
     private TextView headline,details;
     private Future<?> runningJob;
     private volatile boolean visible,closed;
-    private boolean busy,photoSupported,sizeSettingSupported;
+    private boolean busy,photoSupported,sizeSettingSupported,baseline20mConfirmed;
     private int firstWidth=-1,firstHeight=-1;
     private boolean lastSetAcknowledged;
 
@@ -43,7 +43,7 @@ public final class PhotoSizeActivity extends Activity {
         layout.setBackgroundColor(0xFF0D1728);
         layout.setPadding(dp(12),dp(16),dp(12),dp(10));
         TextView title=new TextView(this);
-        title.setText("C110 照片写入尺寸实验");
+        title.setText("C110+ 原生照片尺寸实验");
         title.setTextColor(Color.WHITE);title.setTextSize(23);
         title.setGravity(Gravity.CENTER);
         layout.addView(title);
@@ -51,20 +51,20 @@ public final class PhotoSizeActivity extends Activity {
         TextView instructions=new TextView(this);
         instructions.setText(
             "独立实验：只验证内存卡新照片的真实像素，不开视频、不上传云端、不删除照片。\n"+
-            "先在手机系统 Wi-Fi 连接 C110，再依次点击检查→原档拍照→候选2K设置→再次拍照。");
+            "先在系统 Wi-Fi 连接 C110+；①检查→②拍出20M基线→③候选2K设置→④再拍照。");
         instructions.setTextColor(0xFFD1E2F3);instructions.setTextSize(15);
         instructions.setPadding(0,dp(10),0,dp(10));
         layout.addView(instructions);
 
-        probeButton=button("① 只读检查 C110 / 1002");
+        probeButton=button("① 只读检查 C110+ / 1002");
         probeButton.setOnClickListener(v->runProbe());
         layout.addView(probeButton,params());
 
-        referenceButton=button("② 拍一张原设置照片（基线）");
+        referenceButton=button("② 拍摄20M原图基线");
         referenceButton.setOnClickListener(v->runOnePhoto(true));
         layout.addView(referenceButton,params());
 
-        set2kButton=button("③ 实验设置 2K · 2560×1440");
+        set2kButton=button("③ 设置C110+ 2K · 2560×1440");
         set2kButton.setOnClickListener(v->confirmSizeSetting());
         layout.addView(set2kButton,params());
 
@@ -91,8 +91,8 @@ public final class PhotoSizeActivity extends Activity {
         setContentView(layout);
         update();
         record("实验启动：仅本地内存记录；不含照片/文件路径/密钥");
-        record("原厂配置 675-C110 1.0.1/1.0.4/1.0.7：1002第6项(索引5)=3M 2560×1440");
-        record("候选映射不是当前相机固件的成功证明；最终以SD卡新JPEG实际尺寸判定");
+        record("C110+原厂配置580-C110+ 1.0.7/1.0.8/1.1.2：1002第8项(索引7)=3M 2560×1440");
+        record("只有从本机SD卡读到5888×3312基线，才允许向C110+发单次2K候选设置");
         record("更改相机设置可能保持到下次开机；本实验不会猜测原档值或自动恢复，需用原厂App设置回去");
     }
 
@@ -111,7 +111,7 @@ public final class PhotoSizeActivity extends Activity {
         if(probeButton==null)return;
         probeButton.setEnabled(!busy);
         referenceButton.setEnabled(!busy&&photoSupported);
-        set2kButton.setEnabled(!busy&&sizeSettingSupported);
+        set2kButton.setEnabled(!busy&&sizeSettingSupported&&baseline20mConfirmed);
         verifyButton.setEnabled(!busy&&photoSupported);
         copyButton.setEnabled(true);
     }
@@ -123,9 +123,9 @@ public final class PhotoSizeActivity extends Activity {
                 photoSupported=result.c110&&result.cmd1001;
                 sizeSettingSupported=photoSupported&&result.cmd1002;
                 headline.setText(sizeSettingSupported?
-                    "标准 C110 连接正常；已声明照片尺寸 1002":
+                    "已识别C110系列相机且声明1002；先拍20M基线":
                     "未确认原厂照片尺寸1002，禁止设置");
-                record("3012 标准C110="+result.c110+
+                record("3012 C110系列="+result.c110+
                     "；3002 快门1001="+result.cmd1001+
                     "；拍照尺寸1002="+result.cmd1002);
                 record("3014 只读结果：Status="+result.settingsStatus+
@@ -137,11 +137,11 @@ public final class PhotoSizeActivity extends Activity {
         });
     }
     private void confirmSizeSetting(){
-        if(busy||!sizeSettingSupported)return;
+        if(busy||!sizeSettingSupported||!baseline20mConfirmed)return;
         new AlertDialog.Builder(this)
-            .setTitle("确认改变 C110 内存卡拍照尺寸？")
-            .setMessage("这是原厂 C110 配置表中的 3M / 2560×1440 候选：1002/par=5。\n\n"+
-                "你的实际固件曾拍出5888×3312，不保证索引一致。此操作会真的改变相机设置，并可能在重启后继续生效。\n\n"+
+            .setTitle("确认改变 C110+ 内存卡拍照尺寸？")
+            .setMessage("这是原厂 C110+ 配置表中的 3M / 2560×1440 候选：1002/par=7。\n\n"+
+                "本次已重新读到5888×3312原图基线，但仍未验证固件档位索引。此操作会真的改变相机设置，并可能在重启后继续生效。\n\n"+
                 "本程序不自动恢复原档、不删原照片、不批量操作。测试后如果需要恢复以前的分辨率，请使用原厂 SJCAM Zone 重新设置。\n\n"+
                 "确认只发送一次设置指令？")
             .setPositiveButton("确认：尝试2K设置",(dialog,which)->run2kSetting())
@@ -153,7 +153,7 @@ public final class PhotoSizeActivity extends Activity {
             main.post(()->{
                 if(!visible||closed)return;
                 lastSetAcknowledged=outcome.httpOk&&outcome.status==0;
-                record("1002/par=5 单次回执 HTTP200="+outcome.httpOk+
+                record("1002/par=7 单次回执 HTTP200="+outcome.httpOk+
                     " Status="+outcome.status+" command_ms="+outcome.elapsedMs);
                 if(lastSetAcknowledged){
                     headline.setText("相机接受了设置指令；请按④拍照核实新JPEG尺寸");
@@ -167,12 +167,16 @@ public final class PhotoSizeActivity extends Activity {
     private void runOnePhoto(boolean reference){
         if(!photoSupported)return;
         run(reference?"基线JPEG拍照":"设置后JPEG尺寸验证",()->{
-            C110NativePhotoCamera.PhotoResult shot=camera.takeOneOriginal(this);
+            C110NativePhotoCamera.PhotoResult shot=reference?camera.takeBaselineOriginal(this):camera.takeOneOriginal(this);
             main.post(()->{
                 if(!visible||closed)return;
                 String shape=shot.width+"×"+shot.height;
                 if(reference){
                     firstWidth=shot.width;firstHeight=shot.height;
+                    baseline20mConfirmed=firstWidth==5888&&firstHeight==3312;
+                    if(!baseline20mConfirmed)
+                        record("拒绝设置：当前照片非20M 5888×3312，无法从原图核实C110+配置映射");
+                    update();
                     headline.setText("原档SD原图："+shape);
                     record("BASELINE_SD_JPEG width="+shot.width+" height="+shot.height+
                         " bytes="+shot.byteCount+" before_files="+shot.baselineCount+
