@@ -15,7 +15,7 @@
     </queries>
     <application
         android:allowBackup="false"
-        android:label="蓝星向导 C110原厂连接实验"
+        android:label="蓝星向导 C110缓存150清理验证"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/AppTheme"
