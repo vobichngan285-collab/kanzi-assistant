@@ -6,12 +6,12 @@ android {
         applicationId 'com.vobich.bluestar'
         minSdk 26
         targetSdk 35
-        versionCode 56
-        versionName '1.0.47-c110plus-photo-ocr-upload-ab'
+        versionCode 57
+        versionName '1.0.48-c110plus-zoom-fullscreen-150ms'
         ndk { abiFilters 'arm64-v8a' }
     }
     buildTypes {
-        debug { minifyEnabled false; applicationIdSuffix '.c110plusphotolab' }
+        debug { minifyEnabled false; applicationIdSuffix '.c110pluszoom150' }
         release { minifyEnabled false }
     }
     compileOptions {
