@@ -3,11 +3,11 @@ android {
     namespace 'com.vobich.bluestar.c110photosize'
     compileSdk 36
     defaultConfig {
-        applicationId 'com.vobich.bluestar.c110photosize'
+        applicationId 'com.vobich.bluestar.c110plusphotosize'
         minSdk 26
         targetSdk 35
-        versionCode 1
-        versionName '0.1.0-c110-photo-native-size-lab'
+        versionCode 2
+        versionName '0.2.0-c110plus-photo-size-lab'
         ndk { abiFilters 'arm64-v8a' }
     }
     buildTypes {
