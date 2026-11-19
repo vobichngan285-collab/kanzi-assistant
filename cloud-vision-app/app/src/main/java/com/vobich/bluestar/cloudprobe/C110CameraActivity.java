@@ -264,17 +264,23 @@ public final class C110CameraActivity extends Activity {
 
     private void showC110Settings(){
         new android.app.AlertDialog.Builder(this)
-            .setTitle("C110 相机设置")
+            .setTitle("C110+ 相机 / OCR实验")
             .setItems(new String[]{
+                "照片尺寸·取图·上传·OCR准确率综合实验",
                 "机身设置：声音和指示灯",
-                "试删刚才的高清原图（实验）",
-                "自动清理：尚未启用（需真机验证单张删除）"
+                "安全提示：单张删图暂不开放（需复核C110+）"
             },(dialog,which)->{
-                if(which==0)deviceControls.showSettings();
-                else if(which==1)confirmSingleFileDelete();
+                if(which==0){
+                    if(photoBusy||frameReader.isBusy()){
+                        say("当前拍照或识别仍在进行，请完成后进入实验");return;
+                    }
+                    // Lifecycle stop releases video BEFORE entering isolated experiment.
+                    // No new C110 shutter, parameter change or Wi-Fi logic here.
+                    startActivity(new Intent(this,C110ResolutionLabActivity.class));
+                }else if(which==1)deviceControls.showSettings();
                 else new android.app.AlertDialog.Builder(this)
-                    .setTitle("为何没有直接自动删除？")
-                    .setMessage("原厂APK已确认4003单文件指令，但当前C110固件尚未真机验证。必须先验证只删除新拍的那一张，再决定是否开启后台自动清理。")
+                    .setTitle("C110+原图安全")
+                    .setMessage("原厂4003单文件删除尚未在你的C110+型号上真机复核。本实验包不开放删除，内存卡照片请在原厂App中自行管理。")
                     .setPositiveButton("知道了",null).show();
             }).setNegativeButton("关闭",null).show();
     }
