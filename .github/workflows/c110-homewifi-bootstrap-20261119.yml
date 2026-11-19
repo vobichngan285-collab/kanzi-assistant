@@ -54,6 +54,7 @@ jobs:
           controls=(root/'C110DeviceControls.java').read_text()
           net=(root/'C110WifiBootstrap.java').read_text()
           reader=(root/'C110FrameReader.java').read_text()
+          camera=(root/'C110WifiCamera.java').read_text()
           mini=Path('cloud-vision-app/c110mini/src/main/java/com/vobich/bluestar/c110mini/OemVideoActivity.java').read_text()
           manifest=Path('cloud-vision-app/app/src/main/AndroidManifest.xml').read_text()
           gradle=Path('cloud-vision-app/app/build.gradle').read_text()
@@ -118,7 +119,6 @@ jobs:
           assert 'c110WifiBootstrap.shutdown()' in main
           assert main.count('protected void onActivityResult(')==1, 'No duplicate results handler'
           assert 'photoButton=footerButton("▤\\n高清拍照",this::captureOriginalPhoto)' in page
-          camera=(root/'C110WifiCamera.java').read_text()
           assert 'photoCamera.shootAfterLivePreview(this)' in page, 'Camera page must initiate actual one-shot'
           assert 'frameReader.recognizeOriginalJpeg(' in page, 'Full-resolution JPEG must feed page OCR'
           assert 'finishPhotoFlow(ticket,photo)' in page
