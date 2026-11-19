@@ -1,3 +1,15 @@
+# 2026-11-19｜修复主界面“高清拍照”误取手机帧 v0.1.18（构建发布通过、待真机）
+
+- **用户反馈**：在蓝星向导「手机摄像头」模式点击底部“高清拍照”，C110 运动相机没有动作，返回的还是手机画面帧。核查 `MainActivity.getRootView()` 确认实际按钮标成“拍照识别”，`c110Button.setOnClickListener(v->captureOneFrame())`，其代码按手机/USB当前取景源采集，**根本没调用C110真实快门**，直接定位到应用按钮绑定错误；不应误诊为相机硬件失效。
+- **本轮仅改主界面按钮和C110拍照调用条件**：从 `exp/c110-inline-hq-photo-20261119` 已成功发布HEAD `e8cf271e380d99d8344effd8df7426fc5d2aeb03` 派生独立 `exp/c110-main-hq-button-20261119`，HEAD `0e4cd142a4cd63ace12be632c2478060d72df4d8`。将第三个底部按钮更名为 **“高清拍照”**，绑定 `captureC110OneShot()`，不再绑定 `captureOneFrame()`；**手机或USB取景界面点击底部高清拍照都直接触发一张C110真1001原图**；点击取景区域的旧 `captureOneFrame()` 保留原来手机/USB帧识别，不受影响。C110独立预览页v0.1.17原已修复的高清按钮路径保持不变。
+- **快门被拦截的另一项修正**：旧 `MainActivity.captureC110OneShot()` 把 `requireCellular()`/百炼密钥检查放在调用C110快门前，一旦未开移动数据或未填Key就根本不触发快门。现改为先调用已验证的`C110WifiCamera.shootAfterLivePreview()`，先切`3001/par=0`照片模式、后读取旧目录基线、只发**一次**`1001`命令并下载全新原始JPEG；然后检查独立手机蜂窝网络和API Key，若条件具备则通过既有`beginCapturedFrame`执行云OCR/TTS，不具备则仅提示“高清照片已拍摄但未云端识别”，**不误报相机快门失败，不额外自动拍照**。
+- **保护原则**：用户已确认成功的 LibVLC C110实时预览、预览画面点击PixelCopy取帧、C110独立页真实高清拍照、9011提示音、9038熄灯默认30秒、启动主动请求C110热点、手机及USB预览核心逻辑不修改；旧正式RC25、旧 v0.1.17 APK 不覆盖。新独立测试APK包名 `com.vobich.bluestar.c110mainhq`，versionName `1.0.43-c110-main-hq-button-lab`。
+- **CI和发布已核实**：[Actions 44477167331](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44477167331) `completed/success`，此前失败 `44476965876` 为工作流静态断言仍旧要求旧变量名 `photo.jpeg,cellular`（现在为`photo.jpeg,cloudNetwork`）而非源码编译错误；修正断言并增加“底部高清按钮必须绑定真实C110、预览画面依旧保留手机/USB帧”的回归检查后，协议单测、OEM视频静态一致性、USB补丁、Gradle APK编译、原生LibVLC+TTS音效+APK身份ZIP校验、Artifact/预发布全部成功。
+- **APK**：Release https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-main-hq-button-20261119-v0118 ；直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-main-hq-button-20261119-v0118/BlueStar_Guide_C110_Main_HQPhoto_0.1.18.apk ；56,682,933 字节，SHA256 `5af68c8b9ce66486c7e989e118471a99642c7bab0060fb5550b5ad2fc3684630`。
+- **待验收**：手机先连通C110 Wi-Fi或允许启动时系统连接请求，进主界面「手机摄像头」模式→点击底部**高清拍照**→确认C110实体仅拍1张新图、手机预览不被替换、照片是新5888×3312 JPEG而不是手机画面帧；开启蜂窝+填写本实验包的API Key时检查云端OCR/TTS。手机画面**中心区域**点一下仍应识别手机当前画面。新APK真机表现尚待用户验收，不得以CI成功代替。
+
+---
+
 # 2026-11-19｜C110预览内真正高清快门修复 v0.1.17（CI/预发布成功，真机待验）
 
 - **最新用户问题**：C110预览页面下方「高清拍照」点击后直接跳到蓝星主界面，且有时不触发快门。核查上一版 `C110CameraActivity` 按钮直接 `returnToMain("photo")` 调用 `finish()`，再由 `MainActivity.handleC110PageResult` 通过 250ms 延迟回调 `captureC110OneShot()`。该设计引入了页面切换、onPause/onResume、云端状态门控与快门触发时序依赖，确实是结构问题，不是已证实C110相机硬件故障。
