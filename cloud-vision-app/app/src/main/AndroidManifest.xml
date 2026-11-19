@@ -15,7 +15,7 @@
     </queries>
     <application
         android:allowBackup="false"
-        android:label="蓝星向导 C110+竖屏取景"
+        android:label="蓝星向导 C110+模型同步"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/AppTheme"
