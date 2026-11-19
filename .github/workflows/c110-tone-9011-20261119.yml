@@ -1,0 +1,91 @@
+name: C110 Tone 9011 Photo Shutter Standalone Lab
+on:
+  push:
+    branches: [ 'exp/c110-tone-9011-20261119' ]
+    paths:
+      - 'cloud-vision-app/c110tone/**'
+      - 'cloud-vision-app/settings.gradle'
+      - '.github/workflows/c110-tone-9011-20261119.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  c110-tone-photo:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout original pinned UVC modules for settings.gradle
+        uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify proven photo core unchanged and narrow 9011 surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          original=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe')
+          copied=Path('cloud-vision-app/c110tone/src/main/java/com/vobich/bluestar/c110tone')
+          for name in ['C110WifiCamera.java','C110PhotoPolicy.java']:
+              assert (original/name).read_text().splitlines(keepends=True)[1:]==(copied/name).read_text().splitlines(keepends=True)[1:], name+' changed'
+          src=(copied/'ToneProbeActivity.java').read_text()
+          assert 'C110WifiCamera.Photo image=camera.shoot(this);' in src
+          assert src.count('camera.shoot(this)')==1
+          assert 'call(wifi,9011,setting)' in src
+          assert 'cmd==9011&&(par==0||par==1)' in src
+          assert 'probe(); // Startup only reads 3012.' in src
+          assert 'new AlertDialog.Builder(this)' in src
+          assert 'com.vobich.bluestar.c110tone' in Path('cloud-vision-app/c110tone/build.gradle').read_text()
+          print('PASS: photo core exact, deliberate one-tap shutter and 9011 off/on only')
+          PY
+          mkdir -p /tmp/tone-policy-test
+          javac -d /tmp/tone-policy-test cloud-vision-app/c110tone/src/main/java/com/vobich/bluestar/c110tone/C110PhotoPolicy.java
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Build isolated tone/photo app only
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :c110tone:assembleDebug
+      - name: Validate application package, version, ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/c110tone/build/outputs/apk/debug/c110tone-debug.apk out/C110_Tone9011_PhotoTest_0.1.0.apk
+          unzip -tq out/C110_Tone9011_PhotoTest_0.1.0.apk >/dev/null
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging out/C110_Tone9011_PhotoTest_0.1.0.apk >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110tone'" out/badging.txt
+          grep -Fq "versionName='0.1.0-9011-photo'" out/badging.txt
+          (cd out && sha256sum C110_Tone9011_PhotoTest_0.1.0.apk >SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >>"$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: C110_Tone9011_PhotoTest_0.1.0
+          path: out/*
+          retention-days: 14
+      - name: Publish isolated immutable prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG=bluestar-c110-tone-9011-photo-20261119-v010
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refuse overwrite" >&2
+            exit 1
+          fi
+          gh release create "$TAG" out/C110_Tone9011_PhotoTest_0.1.0.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "C110 keypad-tone 9011 + real photo shutter v0.1.0" \
+            --notes "Isolated C110 lab app. User separately confirms 9011/par=0 off, 9011/par=1 on and a single real photo shutter. Photo code copied intact from six-device-verified C110WifiCamera.shoot: 3012/3002 checks, 3001/par0 photo mode, one 1001, discover and download fresh JPEG to RAM. Keypad tone may not affect shutter. No cloud uploads, file deletion, OTA, Wi-Fi disconnect, auto shooting, or changes to existing working C110 player/Blue Star. Needs C110 Wi-Fi and SD card."
