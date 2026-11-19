@@ -1,0 +1,178 @@
+name: Blue Star C110+ OEM Size OCR Upload A-B v0.1.22
+on:
+  push:
+    branches: [ 'exp/c110plus-photo-ocr-upload-ab-20261119' ]
+    paths:
+      - 'cloud-vision-app/app/**'
+      - 'cloud-vision-app/tests/C110ResolutionScoreTest.java'
+      - 'cloud-vision-app/docs/C110PLUS_PHOTO_OCR_UPLOAD_AB_20261119.md'
+      - '.github/workflows/c110plus-photo-ocr-upload-ab-20261119.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  c110plus-combined-lab:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout same pinned UVC stack as proven Blue Star builds
+        uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: OCR deterministic accuracy tests and preserve C110+ proven integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/c110plus-ab-tests
+          javac -d /tmp/c110plus-ab-tests \
+            "$BASE/C110ResolutionScore.java" cloud-vision-app/tests/C110ResolutionScoreTest.java
+          java -cp /tmp/c110plus-ab-tests com.vobich.bluestar.cloudprobe.C110ResolutionScoreTest
+          javac -d /tmp/c110plus-ab-tests \
+            "$BASE/C110PhotoPolicy.java" cloud-vision-app/tests/C110PhotoPolicyTest.java
+          java -cp /tmp/c110plus-ab-tests com.vobich.bluestar.cloudprobe.C110PhotoPolicyTest
+          javac -d /tmp/c110plus-ab-tests \
+            "$BASE/C110PhotoPolicy.java" "$BASE/C110DeletePolicy.java" \
+            cloud-vision-app/tests/C110DeletePolicyTest.java
+          java -cp /tmp/c110plus-ab-tests com.vobich.bluestar.cloudprobe.C110DeletePolicyTest
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path("cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe")
+          lab=(root/"C110ResolutionLabActivity.java").read_text()
+          score=(root/"C110ResolutionScore.java").read_text()
+          c110=(root/"C110CameraActivity.java").read_text()
+          main=(root/"MainActivity.java").read_text()
+          oem=(root/"C110WifiCamera.java").read_text()
+          cloud=(root/"CloudVisionClient.java").read_text()
+          usb=Path("cloud-vision-app/app/src/main/AndroidManifest.xml").read_text()
+          build=Path("cloud-vision-app/app/build.gradle").read_text()
+          doc=Path("cloud-vision-app/docs/C110PLUS_PHOTO_OCR_UPLOAD_AB_20261119.md").read_text()
+          assert 'C110ResolutionLabActivity' in usb and 'android:exported="false"' in usb
+          assert 'new Intent(this,C110ResolutionLabActivity.class)' in c110
+          assert '照片尺寸·取图·上传·OCR准确率综合实验' in c110
+          # CRITICAL for user-corrected real hardware model: no unsafe 4003 UI path.
+          assert 'else if(which==1)confirmSingleFileDelete()' not in c110
+          assert '安全提示：单张删图暂不开放' in c110
+          assert 'photoCamera.deleteDownloadedOriginal(this,candidate)' in c110, 'Old code history must not be deleted/replaced'
+          # OEM proven Wi-Fi, photo and RTSP retained, not redesigned.
+          for flag in ['--network-caching=150','--live-caching=150',
+                       ':network-caching=150',':live-caching=150',
+                       ':file-caching=300',':sout-mux-caching=300']:
+              assert flag in c110, flag
+          assert 'new VLCVideoLayout(this)' in c110
+          assert 'player.attachViews(video,null,false,false)' in c110
+          assert c110.count('active.play();')==1
+          assert 'main.postDelayed(delayedPlay,300)' in c110
+          assert 'photoCamera.shootAfterLivePreview(this)' in c110
+          assert 'frameReader.recognizeOriginalJpeg(' in c110
+          assert 'new C110WifiBootstrap(this,this::setResultStatus)' in main
+          assert 'c110Button.setOnClickListener(v->captureC110OneShot())' in main
+          assert oem.count('get(wifi,"/?custom=1&cmd=1001"')==1
+          assert 'photoModeReady=false;' in oem
+          assert 'Set<String> previous=list(wifi);' in oem
+          assert 'get(wifi,"/?custom=1&cmd=3001&par=0"' in oem
+          assert 'Network verified=C110WifiBootstrap.preferredNetwork(cm)' in oem
+          assert '.setSsid(ssid).setWpa2Passphrase(password)' in (root/'C110WifiBootstrap.java').read_text()
+          # Experiment only selects an OEM-chosen label, never changes photo size.
+          assert 'LABELS={' in lab and all(x in lab for x in
+               ['20M · 5888×3312','10M · 4320×2432','8M · 3840×2160','3M · 2560×1440'])
+          assert 'photo.width==WIDTHS[slot]' in lab and 'photo.height==HEIGHTS[slot]' in lab
+          assert 'camera.shootAfterLivePreview(this)' in lab
+          assert lab.count('camera.shootAfterLivePreview(this)')==1
+          assert 'final byte[] submitted=photo.jpeg;' in lab
+          assert 'final boolean identical=submitted==photo.jpeg;' in lab
+          assert lab.count('CloudVisionClient.recognize(')==1, 'Exactly one cloud OCR request per tap'
+          assert 'OcrModelCatalog.DEDICATED' in lab and 'TaskCatalog.defaults()[0]' in lab
+          assert 'C110WifiCamera.requireCellular(this)' in lab
+          assert 'C110ResolutionScore.compare(known,result.text)' in lab
+          assert 'prompt_tokens=' in lab and 'completion_tokens=' in lab
+          assert 'jpeg_download_ms=' in lab and 'end_to_end_ms=' in lab
+          assert 'request_write_ms=' in lab and 'cloud_ms=' in lab
+          assert '上传' in lab and 'actual' not in lab.lower(), 'Do not claim server internal processing resolution'
+          assert 'unknown' in lab and 'matches_label' in lab
+          assert 'lastUploadedJpeg=submitted;' in lab
+          assert 'ClipboardManager' in lab and 'copyReport()' in lab
+          assert 'onPause()' in lab and 'running.cancel(true)' in lab
+          assert 'cmd=1002' not in lab and 'cmd=4003' not in lab
+          assert 'deleteDownloadedOriginal' not in lab and 'Bitmap.CompressFormat' not in lab
+          assert 'Base64.encodeToString(jpeg,Base64.NO_WRAP)' in cloud, 'Cloud must use the original JPEG bytes directly'
+          assert 'max_pixels' not in cloud and 'vl_high_resolution_images' not in cloud
+          assert 'cloud_ocr_model_v1' in main and 'cloud_vision_model' in main
+          assert 'PREF_IMAGE_POLICY' in main
+          assert '没有' in doc or '不' in doc
+          assert "applicationIdSuffix '.c110plusphotolab'" in build
+          assert "versionName '1.0.47-c110plus-photo-ocr-upload-ab'" in build
+          print('PASS OEM photo-size manual A/B, single shutter and upload, real size verification, OCR CER scoring, no SD delete or parameter change')
+          PY
+      - name: Apply same safe pinned USB code patches as proven build
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_usbmonitor.py cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 cloud-vision-app/scripts/patch_pinned_uvc.py
+          grep -q BSG_CLOUD_RAW5_GATED cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/jni/UVCCamera/UVCPreview.cpp
+          grep -q BSG_CLOUD_CLOSE_BARRIER cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
+      - name: Generate original icon assets, no placeholder icons
+        run: |
+          cd cloud-vision-app
+          java scripts/GenerateLauncherIcons.java
+          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            test -s "app/src/main/res/mipmap-$d/ic_launcher.png"
+          done
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Build complete Blue Star arm64 app with independent C110+ lab
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :app:assembleDebug
+      - name: Check APK signature identity, LibVLC, TTS effects, ZIP checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_C110Plus_Photo_OCR_Upload_AB_0.1.22.apk
+          test -s out/BlueStar_C110Plus_Photo_OCR_Upload_AB_0.1.22.apk
+          unzip -tq out/*.apk >/dev/null
+          unzip -Z1 out/*.apk >out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlc.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlcjni.so' out/entries.txt
+          grep -Fxq 'res/raw/c_metal_clack_ding.mp3' out/entries.txt
+          grep -Fxq 'res/raw/voice_send_whoosh.wav' out/entries.txt
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging out/*.apk >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110plusphotolab'" out/badging.txt
+          grep -Fq "versionName='1.0.47-c110plus-photo-ocr-upload-ab'" out/badging.txt
+          grep -Fq 'C110ResolutionLabActivity' out/entries.txt || true
+          (cd out && sha256sum BlueStar_C110Plus_Photo_OCR_Upload_AB_0.1.22.apk >SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_C110Plus_Photo_OCR_Upload_AB_0.1.22
+          path: out/*
+          retention-days: 14
+      - name: Publish safe isolated experimental prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-c110plus-photo-ocr-upload-ab-20261119-v0122
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Existing tag must not be replaced" >&2
+            exit 1
+          fi
+          gh release create "$TAG" "out/BlueStar_C110Plus_Photo_OCR_Upload_AB_0.1.22.apk" \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Blue Star C110+ OEM photo 20M 10M 8M 3M OCR+Upload A/B v0.1.22" \
+            --notes "Full-size Blue Star standalone test based on C110 150ms proven RTSP and OEM Wi-Fi. Hardware is SJCAM C110+ confirmed by user. Open Camera page > Camera > Photo/OCR A-B experiment. Change Photo Size MANUALLY in original SJCAM Zone 20M,10M,8M,3M; experiment NEVER sends 1002. Each user-tapped test uses ONE original 1001 JPEG shutter, records true SD JPEG size and per-stage photo times, sends the same untouched byte[] over cellular to dedicated qwen-vl-ocr exactly once, computes deterministic CER against optional user-pasted ground truth and records request-write/network/first-text/total latency, tokens. JPEG preview and OCR full text are on-device memory only; numeric-only diagnostic export. C110+ unverified 4003 deletion removed from camera UI; no auto cleanup. Original main, Wi-Fi, video, TTS, USB, cloud tasks untouched. No fullscreen/rotation or per-model resolution changes. New independent app ID; configure your DashScope API key in this new app before testing. CI is not real camera/accuracy confirmation."
