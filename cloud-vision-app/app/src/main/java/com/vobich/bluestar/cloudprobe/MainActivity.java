@@ -110,6 +110,7 @@ public final class MainActivity extends CameraActivity {
     private static final int REQUEST_VOICE_MIC = 4052;
     private static final int REQUEST_DIAG_EXPORT = 4053;
     private static final int REQUEST_READING_EXPORT = 4054;
+    private static final int REQUEST_C110_PAGE = 4055;
     private static final long USB_MAX_FRAME_AGE_MS=800L; // UVC raw frames are capped near 5Hz
 
     private FrameLayout previewContainer,rootFrame;
@@ -391,11 +392,11 @@ public final class MainActivity extends CameraActivity {
         // Settings in upper-right; C110 player has its own Activity.
         settingsButton=new Button(this);
         settingsButton.setAllCaps(false);
-        settingsButton.setText("⋮");
+        settingsButton.setText("☰");
         settingsButton.setTextSize(TypedValue.COMPLEX_UNIT_SP,27);
         settingsButton.setTextColor(Color.WHITE);
         settingsButton.setBackground(roundRect(0xFF245477,12));
-        settingsButton.setContentDescription("更多选项，打开设置");
+        settingsButton.setContentDescription("打开三横杠菜单，软件设置");
         LinearLayout.LayoutParams slp=new LinearLayout.LayoutParams(dp(48),dp(45));
         slp.rightMargin=dp(6);
         title.addView(settingsButton,slp);
@@ -437,30 +438,64 @@ public final class MainActivity extends CameraActivity {
         dock.setBackground(roundRect(0xED091D36,20));
         modeButton=createControlButton("▦\n任务",0xFF2C547D);
         startButton=createControlButton("🎙\nAI对话",0xFF176BAC);
-        cameraEntryButton=createControlButton("▣\n运动相机",0xFF286FCB);
-        c110Button=createControlButton("▤\n高清拍照",0xFF2C547D);
-        for(Button btt:new Button[]{modeButton,startButton,cameraEntryButton,c110Button}){
+        c110Button=createControlButton("▤\n拍照识别",0xFF2C547D);
+        cameraEntryButton=createControlButton("◉\n模式",0xFF286FCB);
+        for(Button btt:new Button[]{modeButton,startButton,c110Button,cameraEntryButton}){
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(75),1f);
             lp.setMargins(dp(3),0,dp(3),0);dock.addView(btt,lp);
         }
         root.addView(dock,new FrameLayout.LayoutParams(-1,dp(89),Gravity.BOTTOM));
         modeButton.setContentDescription("任务选择，包含阅读");
         startButton.setContentDescription("AI对话，按住说话，松开发送");
-        cameraEntryButton.setContentDescription("运动相机，打开C110独立实时预览");
-        c110Button.setContentDescription("C110高清拍照，拍摄原图并识别朗读");
+        cameraEntryButton.setContentDescription("模式，选择手机摄像头、C110运动相机或USB摄像头");
+        c110Button.setContentDescription("当前摄像头拍照并识别朗读；C110高清快门位于运动相机模式");
         modeButton.setOnClickListener(v->showTaskSelector());
         startButton.setOnTouchListener((v,event)->handleVoiceButtonTouch(event));
-        cameraEntryButton.setOnClickListener(v->{
-            if(readingScreen!=null){toastShort("请先退出阅读页面");return;}
-            startActivity(new Intent(this,C110CameraActivity.class));
-        });
-        c110Button.setOnClickListener(v->captureC110OneShot());
-        c110Button.setOnLongClickListener(v->{
-            c110Camera.resetPhotoMode();
-            toastShort("下次C110高清拍照将重新初始化照片模式");
-            return true;
-        });
+        cameraEntryButton.setOnClickListener(v->showUnifiedModeSelector());
+        c110Button.setOnClickListener(v->captureOneFrame());
         return root;
+    }
+
+    /** Three camera sources, one bottom dock. The proven C110 VLC remains isolated. */
+    private void showUnifiedModeSelector(){
+        if(readingScreen!=null){toastShort("请先退出阅读页面");return;}
+        String[] modes={"手机摄像头","C110 运动相机","USB 摄像头"};
+        new AlertDialog.Builder(this).setTitle("选择模式")
+            .setItems(modes,(dialog,which)->{
+                if(which==1){
+                    startActivityForResult(new Intent(this,C110CameraActivity.class),
+                        REQUEST_C110_PAGE);
+                }else if(which==0){
+                    setCameraSourceFromSettings(phoneFrontFacing?2:1);
+                }else{
+                    setCameraSourceFromSettings(0);
+                }
+            }).setNegativeButton("取消",null).show();
+    }
+
+    /** Return from the proven separate video player to an existing app feature. */
+    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){
+        super.onActivityResult(requestCode,resultCode,data);
+        if(requestCode!=REQUEST_C110_PAGE||resultCode!=RESULT_OK||data==null)return;
+        refreshTask(TaskCatalog.selectedId(this));
+        String action=data.getStringExtra("c110_action");
+        if(action==null)return;
+        // Run after CameraActivity.onResume; the shutter is invoked exactly once.
+        handler.postDelayed(()->{
+            if(!uiActive)return;
+            switch(action){
+                case "photo":captureC110OneShot();break;
+                case "reading":openReadingMode();break;
+                case "mode_phone":setCameraSourceFromSettings(phoneFrontFacing?2:1);break;
+                case "mode_usb":setCameraSourceFromSettings(0);break;
+                case "tasks":showTaskSelector();break;
+                case "settings":openLargeSettings();break;
+                case "ai":
+                    toastShort("按住底部 AI 对话说话，松开发送");
+                    break;
+                default:break;
+            }
+        },250L);
     }
 
     private GradientDrawable roundRect(int color,int radius){
