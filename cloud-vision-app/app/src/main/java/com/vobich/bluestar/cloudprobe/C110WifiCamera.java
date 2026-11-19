@@ -11,7 +11,7 @@ import android.os.SystemClock;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URLEncoder;
+
 import java.net.HttpURLConnection;
 import java.net.Inet4Address;
 import java.net.URL;
@@ -262,14 +262,27 @@ final class C110WifiCamera {
         static DeletionCandidate fromPhoto(Photo photo){
             if(photo==null||photo.sourceCameraPath==null||photo.jpeg==null||
                photo.jpeg.length<256||photo.width<2||photo.height<2)return null;
-            String safe=C110PhotoPolicy.path(photo.sourceCameraPath,
-                "/DCIM/",CAMERA_IP,false);
+            String safe=C110DeletePolicy.exactJpegPath(photo.sourceCameraPath);
             if(safe==null||!safe.equals(photo.sourceCameraPath))return null;
             int n=photo.jpeg.length;
             int tail=((photo.jpeg[n-2]&255)<<8)|(photo.jpeg[n-1]&255);
             if(!C110PhotoPolicy.jpegHeaderTail(photo.jpeg,tail))return null;
             return new DeletionCandidate(safe,n,photo.width,photo.height);
         }
+    }
+
+    private static boolean isDeletionSafeStandardC110(String xml){
+        Matcher m=Pattern.compile("<String>([^<]{1,128})</String>",
+            Pattern.CASE_INSENSITIVE).matcher(xml);
+        boolean found=false;
+        while(m.find()){
+            String name=m.group(1).toUpperCase(Locale.ROOT);
+            if(name.contains("C110_PRO")||name.contains("C110+")||
+               name.contains("C110 PLUS")||name.contains("C110-PRO"))
+                return false;
+            if(name.contains("C110"))found=true;
+        }
+        return found;
     }
 
     static final class DeleteResult {
@@ -296,7 +309,7 @@ final class C110WifiCamera {
     synchronized DeleteResult deleteDownloadedOriginal(Context context,
                                                         DeletionCandidate candidate) throws Exception {
         if(candidate==null)throw new IOException("没有符合条件的新照片，不发送删除指令");
-        String file=C110PhotoPolicy.path(candidate.cameraFile,"/DCIM/",CAMERA_IP,false);
+        String file=C110DeletePolicy.exactJpegPath(candidate.cameraFile);
         if(file==null||!file.equals(candidate.cameraFile)||
            candidate.byteLength<256||candidate.width<2||candidate.height<2)
             throw new IOException("文件路径或下载校验无效，禁止删除");
@@ -306,7 +319,7 @@ final class C110WifiCamera {
         Reply identity=get(wifi,"/?custom=1&cmd=3012",MAX_INDEX);
         if(identity.http!=200||!Integer.valueOf(0).equals(
            C110PhotoPolicy.tagInt(identity.text(),"Status"))||
-           c110DeviceKind(identity.text())!=1)
+           !isDeletionSafeStandardC110(identity.text()))
             throw new IOException("未确认标准C110，禁止删除");
         Reply advertised=get(wifi,"/?custom=1&cmd=3002",MAX_INDEX);
         if(advertised.http!=200||!advertised.text().contains("<Cmd>4003</Cmd>"))
@@ -319,9 +332,7 @@ final class C110WifiCamera {
         if(before.http!=200||!C110PhotoPolicy.jpegs(
             before.text(),directory,CAMERA_IP).contains(file))
             throw new IOException("原图已经不在对应相机目录，禁止删除");
-        String internal="A:\\"+file.substring(1).replace('/','\\');
-        String encoded=URLEncoder.encode(internal,StandardCharsets.UTF_8.name());
-        String endpoint="/?custom=1&cmd=4003&str="+encoded;
+        String endpoint=C110DeletePolicy.oneFileDeleteEndpoint(file);
         long at=SystemClock.elapsedRealtime();
         // Exactly one OEM delete request; not a directory, format, delete-all,
         // or SD-card reset command.
