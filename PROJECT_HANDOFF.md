@@ -1,3 +1,15 @@
+# 2026-11-19｜C110预览内真正高清快门修复 v0.1.17（CI/预发布成功，真机待验）
+
+- **最新用户问题**：C110预览页面下方「高清拍照」点击后直接跳到蓝星主界面，且有时不触发快门。核查上一版 `C110CameraActivity` 按钮直接 `returnToMain("photo")` 调用 `finish()`，再由 `MainActivity.handleC110PageResult` 通过 250ms 延迟回调 `captureC110OneShot()`。该设计引入了页面切换、onPause/onResume、云端状态门控与快门触发时序依赖，确实是结构问题，不是已证实C110相机硬件故障。
+- **本轮单项修复**：从已发布 `exp/c110-live-tap-autowifi-20261119` HEAD `5f5a0078acdda41ba53db16321e893b25cfe5f0e` 创建隔离 `exp/c110-inline-hq-photo-20261119`，最终 HEAD `e8cf271e380d99d8344effd8df7426fc5d2aeb03`。修改三个Java类：`C110CameraActivity` 的高清按钮直接绑定 `captureOriginalPhoto()`，仅在已有活动预览、无别的识别/照片任务时单次执行；**不finish、不返回Main、不通过ActivityResult拍照**；本页面释放LibVLC/RTSP后后台工作线程调用 `C110WifiCamera.shootAfterLivePreview()`，无论取得新完整JPEG或失败都恢复原经过验证的3012→3016→3001/1→2015/1→LibVLC预览；全程防双击、防并发，退后台取消旧任务；拍照失败不自动重发1001。
+- **相机控制顺序的专项修复**：原 `C110WifiCamera.shoot(Context)` 的成功旧路径原样保留，新入口只在「从RTSP视频转真实照片」时提前执行已经验证的`3001/par=0`并回执成功，**先完成切换到照片模式，然后才读取目录旧照片基线**，接下来仅一次 `1001` 快门→查找新增JPEG→下载并校验完整新原图；可避免视频模式下提前读目录造成拍照无法触发，尚待本C110实机确认。失败不重用旧JPEG、不静默重复快门、不删除照片。
+- **云端识别**：`C110FrameReader.recognizeOriginalJpeg(jpeg,width,height)` 复用现有所选任务、OCR/视觉模型、过滤开关与手机TTS，原始完整JPEG不做第二次有损压缩，显式手机蜂窝Network上传云识别；用户始终停在C110预览页面。若无移动数据/Key，快门仍可正常拍摄，云端识别独立报告失败。视频画面单击PixelCopy低分辨率识别方式保持独立不变。
+- **其他边界**：C110 OEM真机成功播放核心没有重写，主界面手机/USB/AI对话/阅读代码未变；C110 `9011` 静音、`9038` 指示灯与延时设置、开机申请C110 WiFi保持旧代码。视频→照片→视频期间实时画面可能短暂停止，**不承诺零中断或当前版本已经在用户真机验证**。C110底部AI对话仍返回主界面执行（不属于本次修复）。
+- **Actions / APK**：[Actions 44468603534](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44468603534) `completed/success`，包括C110PhotoPolicy及RTSP探针Java单测、OEM播放器核心静态比对、只一次1001命令/照片模式先于旧图基线/原JPEG不重编码/没有拍照页面跳转断言、USB稳定性补丁、Gradle Java/NDK构建、APK包标识/ABI/LibVLC/TTS音效/ZIP与GitHub release验证。实验包 `com.vobich.bluestar.c110inlinehq`，`1.0.42-c110-inline-hq-photo-lab`，独立保留v0.1.16/正式RC25。Release https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-inline-hq-photo-20261119-v0117 ，APK直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-inline-hq-photo-20261119-v0117/BlueStar_Guide_C110_Inline_HQPhoto_0.1.17.apk ，56,682,933字节，SHA256 `998eec47066551c38277d2fec176ae18520bea26943508ec1fff84100a98fb36`。
+- **真机验收重点**：C110热点开、手机移动数据开、实验包单独配置百炼Key→C110模式连续出画→点底部「高清拍照」：页面不跳走，相机实体快门只响/闪一次，取得真实5888×3312新JPEG→原本的预览恢复→当前页朗读所选任务。若失败长按状态行复制诊断，看 `高清拍照未完成` 后的具体报错；勿用多次按键掩盖单次失效。
+
+---
+
 # 2026-11-19｜C110实时画面单击取帧朗读 + 蓝星启动主动申请相机Wi-Fi v0.1.16（构建/发布通过，待真机）
 
 - **用户本轮仅要求两点**：①点击C110模式时与普通蓝星主界面类似的整屏相机预览和底部四按钮，预览区域单击直接快速获取当前画面并调用已有云端OCR/TTS；②蓝星向导打开时若C110已开Wi-Fi，主动向Android系统申请连接而非只检查用户此前手动连接。**不重构声音/灯光/高清快门和原已成功LibVLC流程**。
