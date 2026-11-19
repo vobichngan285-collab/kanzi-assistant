@@ -67,6 +67,11 @@ final class C110FrameReader {
     void tap(View videoRoot){tap(videoRoot,1f);}
 
     void tap(View videoRoot,float selectedZoom){
+        tap(videoRoot,selectedZoom,false,1f);
+    }
+
+    void tap(View videoRoot,float selectedZoom,boolean portraitCover,
+             float viewportAspect){
         if(closed||busy)return;
         final float zoomAtTap=C110ZoomGeometry.clamp(selectedZoom);
         long now=SystemClock.elapsedRealtime();
@@ -99,19 +104,22 @@ final class C110FrameReader {
                 }
                 // PixelCopy returns a current frame; any further network wait is off UI.
                 report("已获取实时画面，正在识别…");
-                taskFuture=io.submit(()->analyze(id,image,now,zoomAtTap));
+                taskFuture=io.submit(()->analyze(id,image,now,zoomAtTap,
+                                                   portraitCover,viewportAspect));
             },main);
         }catch(RuntimeException ex){
             busy=false;report("取帧失败："+ex.getClass().getSimpleName());
         }
     }
 
-    private void analyze(int id,Bitmap fresh,long started,float zoomAtTap){
+    private void analyze(int id,Bitmap fresh,long started,float zoomAtTap,
+                         boolean portraitCover,float viewportAspect){
         byte[] jpeg;
         Bitmap region=null;
         try{
-            region=C110ZoomFrames.cropPreviewBitmap(fresh,zoomAtTap);
-            if(zoomAtTap>1.001f)
+            region=C110ZoomFrames.cropPreviewBitmap(fresh,zoomAtTap,
+                                                    portraitCover,viewportAspect);
+            if(zoomAtTap>1.001f||portraitCover)
                 report("视频OCR实际裁剪："+fresh.getWidth()+"×"+fresh.getHeight()+
                     " → "+region.getWidth()+"×"+region.getHeight()+
                     "，倍率"+String.format(Locale.ROOT,"%.1f",zoomAtTap)+"倍");
@@ -142,6 +150,11 @@ final class C110FrameReader {
     }
 
     boolean recognizeOriginalJpeg(byte[] jpeg,int width,int height,float selectedZoom){
+        return recognizeOriginalJpeg(jpeg,width,height,selectedZoom,false,1f);
+    }
+
+    boolean recognizeOriginalJpeg(byte[] jpeg,int width,int height,float selectedZoom,
+                                  boolean portraitCover,float viewportAspect){
         if(closed||busy)return false;
         if(jpeg==null||jpeg.length<256||width<2||height<2){
             report("C110没有返回有效高清原图，未提交云端");return false;
@@ -157,9 +170,10 @@ final class C110FrameReader {
             try{
                 // 1x sends the exact original JPEG, with no extra image decode/encode.
                 C110ZoomFrames.JpegResult region=
-                    C110ZoomFrames.cropNativeJpeg(jpeg,width,height,zoomAtTap);
+                    C110ZoomFrames.cropNativeJpeg(jpeg,width,height,zoomAtTap,
+                                                  portraitCover,viewportAspect);
                 if(id!=request.get()||closed)return;
-                if(zoomAtTap>1.001f)
+                if(zoomAtTap>1.001f||portraitCover)
                     report("高清OCR实际裁剪："+width+"×"+height+" → "+
                         region.width+"×"+region.height+"，倍率"+
                         String.format(Locale.ROOT,"%.1f",zoomAtTap)+"倍");
