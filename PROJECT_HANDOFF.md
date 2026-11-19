@@ -1,3 +1,12 @@
+# 2026-11-19｜C110 机身拍照音 9011 专项实验 v0.1.0（已构建，真机待验证）
+
+- **用户新要求**：相机没有实体拍照键，静音实验工具必须包含蓝星向导已成功的真实远程快门；用户允许独立实验，不修改成功播放器或正式蓝星。
+- **原厂协议证据**：用户上传的 SJCAM Zone v6.7.3.16 APK `assets/cparams/675-C110$1.0.7.json`（旧 `1.0.1`、`1.0.4` 不含此项），以及 SJCAM X v1.1.15 APK `assets/cparams/565-C110$1.0.6.json` 均包含 `cmd=9011`, `按键声音`, 列表 `关`、`开`（Off/On）。仍无法预先证明此固件接受命令或它也控制快门的机身蜂鸣。只作一次用户主动的 `9011/par=0` 与 `9011/par=1` 可恢复设置实验。
+- **隔离实验分支**：`exp/c110-tone-9011-20261119` HEAD `cd0636e75dced9f5172df09449986c1a618647b5`；新增独立 Gradle 模块 `cloud-vision-app/c110tone`，包名 `com.vobich.bluestar.c110tone`，versionName `0.1.0-9011-photo`。无需移植VLC。界面提供检测、`9011/0` 关闭、`9011/1` 恢复、真实 `拍一张高清照片`、复制诊断、退出。仅手动操作和确认；启动时只读3012；防重入。原 `C110WifiCamera.java` 和 `C110PhotoPolicy.java` 仅改 package，内容逐行复制并被CI静态断言：照片路径3012→3002→必要时3001/par0→**单次1001快门**→识别并下载最新JPEG，照片仅内存验证、不上传云端、不写手机相册、不删除/格式化/升级，照片仍留C110存储卡。标准C110身份校验，不向Plus/Pro盲写。参数回执不等于静音真实成功。
+- **CI**：Actions `44438532744` completed/success；源码一致性断言、Java辅助类编译、Gradle `:c110tone:assembleDebug`、APK身份/ZIP、预发布完成。Release：https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-tone-9011-photo-20261119-v010；APK直链：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-tone-9011-photo-20261119-v010/C110_Tone9011_PhotoTest_0.1.0.apk（26,566 bytes）。**实际相机是否静音仍须用户真机测试**。成功的独立视频播放器 v0.1.13及 mini v0.1.0 不改，main app 其他源码未改。
+- **最短验收**：手机连接相机Wi-Fi，C110插可用SD卡；打开实验APP，检测标准C110，依次关闭9011/0→点击工具内拍照（不用相机实体键）→听相机机身声音，再尝试9011/1恢复并拍照对比。若失败复制诊断；不可直接判定固件不支持，需结合HTTP Status/设备回复。相机可能保留修改后的提示音状态。
+
+---
 # 2026-11-19｜C110 成功播放器独立竖屏接入蓝星向导 v0.1.13（CI成功，真机待测）
 
 - **授权/边界**：用户明确要求先做一个独立「运动相机」板块，打开自动进入实时预览，手机竖屏；坚决复用已真机成功的 C110 OEM Minimal v0.1.0，不重复折腾RTSP、LibVLC及Surface门控。本轮不加分辨率切换、点击视频帧云OCR、相机电量、自动连接或Wi-Fi倒计时。
