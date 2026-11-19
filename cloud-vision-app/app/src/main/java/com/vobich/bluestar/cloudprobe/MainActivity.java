@@ -474,9 +474,8 @@ public final class MainActivity extends CameraActivity {
     }
 
     /** Return from the proven separate video player to an existing app feature. */
-    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){
-        super.onActivityResult(requestCode,resultCode,data);
-        if(requestCode!=REQUEST_C110_PAGE||resultCode!=RESULT_OK||data==null)return;
+    private void handleC110PageResult(int resultCode,Intent data){
+        if(resultCode!=RESULT_OK||data==null)return;
         refreshTask(TaskCatalog.selectedId(this));
         String action=data.getStringExtra("c110_action");
         if(action==null)return;
@@ -875,6 +874,7 @@ public final class MainActivity extends CameraActivity {
     }
     @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){
         super.onActivityResult(requestCode,resultCode,data);
+        if(requestCode==REQUEST_C110_PAGE){handleC110PageResult(resultCode,data);return;}
         if(requestCode==REQUEST_READING_EXPORT){
             if(resultCode==RESULT_OK&&data!=null&&data.getData()!=null){
                 final Uri target=data.getData();
