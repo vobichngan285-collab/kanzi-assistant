@@ -151,6 +151,20 @@ final class C110WifiCamera {
     }
 
     synchronized Photo shoot(Context context) throws Exception {
+        return shootInternal(context,false);
+    }
+
+    /**
+     * A C110 live video session needs photo mode BEFORE reading the fresh-JPEG
+     * baseline. The existing proven shoot(Context) order stays unchanged.
+     * The caller must release VLC before invoking this method.
+     */
+    synchronized Photo shootAfterLivePreview(Context context) throws Exception {
+        photoModeReady=false;
+        return shootInternal(context,true);
+    }
+
+    private Photo shootInternal(Context context,boolean fromLiveVideo) throws Exception {
         long begin=SystemClock.elapsedRealtime();
         ConnectivityManager cm=(ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);
         if(cm==null)throw new IOException("网络服务不可用");
@@ -166,8 +180,19 @@ final class C110WifiCamera {
         if(commands.http!=200||!commands.text().contains("<Cmd>1001</Cmd>")||
            !commands.text().contains("<Cmd>3001</Cmd>"))
             throw new IOException("当前相机未返回已验证的C110拍照指令列表");
-        Set<String> previous=list(wifi);
         long modeMs=0;
+        if(fromLiveVideo){
+            // A running RTSP session leaves firmware in video mode. Perform the
+            // single validated 3001/par=0 transition first; only then read
+            // the photo baseline, avoiding directory errors in video mode.
+            Reply photoMode=get(wifi,"/?custom=1&cmd=3001&par=0",MAX_INDEX);
+            modeMs=photoMode.ms;
+            if(photoMode.http!=200||
+               !Integer.valueOf(0).equals(C110PhotoPolicy.tagInt(photoMode.text(),"Status")))
+                throw new IOException("C110视频切换照片模式失败，未发送快门");
+            photoModeReady=true;
+        }
+        Set<String> previous=list(wifi);
         if(!photoModeReady){
             Reply mode=get(wifi,"/?custom=1&cmd=3001&par=0",MAX_INDEX);
             modeMs=mode.ms;
