@@ -238,6 +238,11 @@ final class C110WifiCamera {
     }
 
     private static Network findCameraNetwork(ConnectivityManager cm) throws IOException {
+        // A WifiNetworkSpecifier connection can be Android's secondary
+        // local-only STA without a default route. The 3012-verified Network
+        // from the explicit Wi-Fi request is preferred over gateway discovery.
+        Network verified=C110WifiBootstrap.preferredNetwork(cm);
+        if(verified!=null)return verified;
         for(Network n:cm.getAllNetworks()){
             NetworkCapabilities caps=cm.getNetworkCapabilities(n);
             if(caps==null||!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI))continue;
