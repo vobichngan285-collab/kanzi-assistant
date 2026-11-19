@@ -29,10 +29,14 @@ public final class HomeActivity extends Activity {
     private FrameLayout root;
     private boolean settingsTab;
     private C110VolumeShortcut shortcut;
+    private C110QuickShotController quickShot;
+    private TextView quickStatusView;
+    private String quickStatus="";
 
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
         shortcut=new C110VolumeShortcut(this,this::quickPhoto);
+        quickShot=new C110QuickShotController(this,this::quickStatusChanged);
         root=new FrameLayout(this);
         root.setBackgroundColor(BG);
         root.setOnApplyWindowInsetsListener((view,insets)->{
@@ -84,6 +88,10 @@ public final class HomeActivity extends Activity {
             });
         }else{
             option(content,"▣","快捷拍照","C110+ 原厂高清快门 → OCR → 朗读",this::quickPhoto);
+            quickStatusView=text(quickStatus,15,0xFFC3D7EF);
+            quickStatusView.setPadding(dp(12),dp(5),dp(12),dp(8));
+            quickStatusView.setVisibility(quickStatus.isEmpty()?View.GONE:View.VISIBLE);
+            content.addView(quickStatusView,new LinearLayout.LayoutParams(-1,-2));
             option(content,"▶","C110+ 实时预览","保留 150ms 播放与竖屏裁切",()->
                 startActivity(new Intent(this,C110CameraActivity.class)));
             option(content,"▤","朗读任务","选择当前 OCR 或 AI 任务",this::chooseTask);
@@ -142,7 +150,16 @@ public final class HomeActivity extends Activity {
         parent.addView(line,new LinearLayout.LayoutParams(-1,dp(1)));
     }
     private void quickPhoto(){
-        startActivity(new Intent(this,C110QuickPhotoActivity.class));
+        // No Activity, dialog, camera preview, or experiment screen: the
+        // native photo + existing OCR/TTS starts on THIS homepage.
+        if(quickShot!=null)quickShot.trigger();
+    }
+    private void quickStatusChanged(String message){
+        quickStatus=message==null?"":message;
+        if(quickStatusView!=null){
+            quickStatusView.setText(quickStatus);
+            quickStatusView.setVisibility(quickStatus.isEmpty()?View.GONE:View.VISIBLE);
+        }
     }
     private void openPreview(){
         Intent intent=new Intent(this,MainActivity.class);
@@ -223,8 +240,25 @@ public final class HomeActivity extends Activity {
                 TaskCatalog.select(this,t.id);break;
             }
     }
-    @Override protected void onResume(){super.onResume();if(root!=null)render();}
-    @Override protected void onPause(){if(shortcut!=null)shortcut.cancel();super.onPause();}
+    @Override protected void onResume(){
+        super.onResume();
+        if(quickShot!=null)quickShot.onResume();
+        if(root!=null)render();
+    }
+    @Override protected void onPause(){
+        if(quickShot!=null)quickShot.onPause();
+        if(shortcut!=null)shortcut.cancel();
+        super.onPause();
+    }
+    @Override protected void onDestroy(){
+        if(quickShot!=null){quickShot.shutdown();quickShot=null;}
+        super.onDestroy();
+    }
+    @Override public void onRequestPermissionsResult(int requestCode,
+                                      String[] permissions,int[] results){
+        super.onRequestPermissionsResult(requestCode,permissions,results);
+        if(quickShot!=null)quickShot.onPermissionResult(requestCode,results);
+    }
     @Override public boolean dispatchKeyEvent(KeyEvent event){
         if(shortcut!=null&&shortcut.dispatch(event))return true;
         return super.dispatchKeyEvent(event);
