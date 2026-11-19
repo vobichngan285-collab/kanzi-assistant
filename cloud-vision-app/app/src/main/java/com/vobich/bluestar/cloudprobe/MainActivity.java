@@ -3350,13 +3350,16 @@ public final class MainActivity extends CameraActivity {
             boolean granted=grantResults.length>0&&
                 grantResults[0]==PackageManager.PERMISSION_GRANTED;
             c110WifiBootstrap.onPermissionResult(granted);
+        }else if(requestCode==REQUEST_PHONE_CAMERA&&c110WifiBootstrap!=null){
+            // Request C110 permission only after the camera permission dialog
+            // finishes, avoiding two competing Android permission prompts.
+            c110WifiBootstrap.startAtLaunch();
         }
     }
 
     @Override protected void onResume(){
         super.onResume();
         uiActive=true;usbForeground=true;
-        if(c110WifiBootstrap!=null)c110WifiBootstrap.startAtLaunch();
         if(readingScreen!=null){
             readingAwaitingFrame.set(false);
             suspendReadingCamera();
@@ -3382,7 +3385,10 @@ public final class MainActivity extends CameraActivity {
         if(usingPhoneCamera&&hasConnectedUsbVideoDevice())queueUsbAttachReconcile();
         if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED)
             requestPermissions(new String[]{Manifest.permission.CAMERA},REQUEST_PHONE_CAMERA);
-        else if(usingPhoneCamera&&!fallback)startPhoneCamera();
+        else {
+            if(usingPhoneCamera&&!fallback)startPhoneCamera();
+            if(c110WifiBootstrap!=null)c110WifiBootstrap.startAtLaunch();
+        }
     }
     @Override protected void onPause(){
         stopC110LivePreview(true);
