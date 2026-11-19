@@ -7,3 +7,6 @@ project(':libnative').projectDir = file('third_party/AndroidUSBCamera/libnative'
 
 // One-purpose OEM C110 video module; current :app is unchanged.
 include ':c110mini'
+
+// Standalone controlled C110 video buffer/latency experiment; keeps :app and :c110mini unchanged.
+include ':c110latency'
