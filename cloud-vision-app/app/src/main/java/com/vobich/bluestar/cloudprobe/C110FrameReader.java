@@ -207,7 +207,7 @@ final class C110FrameReader {
             // The camera AP is local-only; all cloud traffic must explicitly use cellular.
             Network cellular=C110WifiCamera.requireCellular(activity);
             String key=CloudKeyStore.load(activity);
-            if(key.isEmpty())throw new IllegalStateException("请先在三横杠设置中填写百炼 API Key");
+            if(key.isEmpty())throw new IllegalStateException("请先在主页的设置中填写百炼 API Key");
             TaskCatalog.Task selected=null;
             String idTask=TaskCatalog.selectedId(activity);
             for(TaskCatalog.Task task:TaskCatalog.all(activity))
