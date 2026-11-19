@@ -2,6 +2,8 @@ package com.vobich.bluestar.cloudprobe;
 
 import android.app.Activity;
 import android.os.Bundle;
+import android.content.Intent;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.content.ClipData;
@@ -57,16 +59,50 @@ public final class C110CameraActivity extends Activity {
     private boolean changedBinding,busy,started;
     private volatile int generation;
     private Runnable delayedPlay;
+    private C110DeviceControls deviceControls;
 
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
         cm=(ConnectivityManager)getSystemService(Context.CONNECTIVITY_SERVICE);
+        deviceControls=new C110DeviceControls(this,this::say);
         FrameLayout root=new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
+        root.setOnApplyWindowInsetsListener((view,insets)->{
+            int top=insets.getSystemWindowInsetTop();
+            int bottom=insets.getSystemWindowInsetBottom();
+            if(view.getPaddingTop()!=top||view.getPaddingBottom()!=bottom)
+                view.setPadding(0,top,0,bottom);
+            return insets;
+        });
+        root.requestApplyInsets();
         video=new VLCVideoLayout(this);
         // Always visible from Activity creation: allow LibVLC VideoHelper to
         // manage its own Surface, exactly as the OEM player does.
         root.addView(video,new FrameLayout.LayoutParams(-1,-1));
+
+        LinearLayout header=new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(dp(10),0,dp(10),0);
+        header.setBackgroundColor(0xE6091D36);
+        TextView title=new TextView(this);
+        title.setText("蓝星向导 · C110");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(19);
+        header.addView(title,new LinearLayout.LayoutParams(0,dp(54),1f));
+        Button cameraSettings=new Button(this);
+        cameraSettings.setText("相机设置");
+        cameraSettings.setAllCaps(false);
+        cameraSettings.setContentDescription("C110机身设置：提示音和指示灯");
+        cameraSettings.setOnClickListener(v->deviceControls.showSettings());
+        header.addView(cameraSettings,new LinearLayout.LayoutParams(dp(108),dp(48)));
+        Button menu=new Button(this);
+        menu.setText("☰");
+        menu.setTextSize(24);
+        menu.setContentDescription("打开三横杠全局设置菜单");
+        menu.setOnClickListener(v->returnToMain("settings"));
+        header.addView(menu,new LinearLayout.LayoutParams(dp(50),dp(48)));
+        root.addView(header,new FrameLayout.LayoutParams(-1,dp(56),Gravity.TOP));
+
         LinearLayout dock=new LinearLayout(this);
         dock.setOrientation(LinearLayout.VERTICAL);
         dock.setPadding(10,8,10,8);
@@ -98,13 +134,78 @@ public final class C110CameraActivity extends Activity {
         output.setPadding(6,4,6,4);
         scroll.addView(output);
         dock.addView(scroll,new LinearLayout.LayoutParams(-1,96));
-        root.addView(dock,new FrameLayout.LayoutParams(-1,-2,Gravity.TOP));
+        FrameLayout.LayoutParams infoPosition=new FrameLayout.LayoutParams(-1,-2,Gravity.TOP);
+        infoPosition.topMargin=dp(56);
+        root.addView(dock,infoPosition);
+
+        LinearLayout footer=new LinearLayout(this);
+        footer.setGravity(Gravity.CENTER);
+        footer.setPadding(dp(7),dp(5),dp(7),dp(7));
+        footer.setBackgroundColor(0xED091D36);
+        Button taskButton=footerButton("▦\n任务",()->showCameraTasks());
+        Button aiButton=footerButton("🎙\nAI对话",()->returnToMain("ai"));
+        Button photoButton=footerButton("▤\n高清拍照",()->returnToMain("photo"));
+        Button modeButton=footerButton("◉\n模式",()->showCameraModes());
+        for(Button b:new Button[]{taskButton,aiButton,photoButton,modeButton}){
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(75),1f);
+            lp.setMargins(dp(3),0,dp(3),0);
+            footer.addView(b,lp);
+        }
+        root.addView(footer,new FrameLayout.LayoutParams(-1,dp(89),Gravity.BOTTOM));
         setContentView(root);
         say("C110独立实时预览：不拍照、不上传、不修改成功播放流程");
         say("一次按钮：3012设备信息→3016模式查询→3001/1→2015/1→LibVLC");
         // Stage1: dedicated portrait playback only, preserving OEM startup exactly.
         // Auto-start from the proven dedicated video Activity.
         main.post(this::begin);
+    }
+
+
+    private int dp(int d){return Math.round(d*getResources().getDisplayMetrics().density);}
+
+    private Button footerButton(String label,Runnable click){
+        Button b=new Button(this);
+        b.setAllCaps(false);
+        b.setText(label);
+        b.setTextColor(Color.WHITE);
+        b.setTextSize(16);
+        b.setContentDescription(label.replace("\n","，"));
+        GradientDrawable bg=new GradientDrawable();
+        bg.setColor(0xFF2C547D);
+        bg.setCornerRadius(dp(15));
+        b.setBackground(bg);
+        b.setOnClickListener(v->click.run());
+        return b;
+    }
+
+    private void returnToMain(String action){
+        Intent result=new Intent();
+        result.putExtra("c110_action",action);
+        setResult(RESULT_OK,result);
+        finish();
+    }
+
+    private void showCameraModes(){
+        new android.app.AlertDialog.Builder(this).setTitle("选择模式")
+            .setItems(new String[]{"手机摄像头","C110 运动相机","USB 摄像头"},(d,i)->{
+                if(i==0)returnToMain("mode_phone");
+                else if(i==2)returnToMain("mode_usb");
+            }).setNegativeButton("取消",null).show();
+    }
+
+    private void showCameraTasks(){
+        TaskDesktopOverlay.show(this,TaskCatalog.all(this),TaskCatalog.selectedId(this),
+            new TaskDesktopOverlay.Listener(){
+                @Override public void selected(TaskCatalog.Task task){
+                    TaskCatalog.select(C110CameraActivity.this,task.id);
+                    say("当前任务："+task.name);
+                }
+                @Override public void createTask(){returnToMain("tasks");}
+                @Override public void openReading(){returnToMain("reading");}
+                @Override public void removed(TaskCatalog.Task task){
+                    say("任务列表已更新："+task.name);
+                }
+            });
     }
 
     private void begin(){
@@ -256,6 +357,7 @@ public final class C110CameraActivity extends Activity {
             };
             main.postDelayed(delayedPlay,300);
             busy=false;started=true;
+            deviceControls.onCameraConnected(wifi);
         }catch(RuntimeException|LinkageError ex){
             say("VLC启动异常："+ex.getClass().getSimpleName());
             stop(false);
@@ -275,6 +377,7 @@ public final class C110CameraActivity extends Activity {
     private void stop(boolean manual){
         generation++;
         busy=false;started=false;
+        deviceControls.onDisconnected();
         if(delayedPlay!=null){main.removeCallbacks(delayedPlay);delayedPlay=null;}
         MediaPlayer p=player;player=null;
         if(p!=null){
@@ -296,5 +399,5 @@ public final class C110CameraActivity extends Activity {
         if(manual)say("已停止并恢复此前网络");
     }
     @Override protected void onPause(){stop(false);super.onPause();}
-    @Override protected void onDestroy(){stop(false);io.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy(){stop(false);deviceControls.shutdown();io.shutdownNow();super.onDestroy();}
 }
