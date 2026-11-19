@@ -1,3 +1,16 @@
+# 2026-11-20｜C110+ 新版主页朗读模型与相机/综合实验云OCR同步 v1.0.50 已CI发布（待真机）
+
+- **用户现象与明确授权**：用户在**同一版蓝星向导主页**选择好朗读OCR模型，手机摄像头可正常识别朗读；进入 C110+ “照片/OCR 综合实验”却固定返回 `HTTP 403 AllocationQuota.FreeTierOnly`，截图底部一直写 `模型=qwen-vl-ocr`。用户明确这是**本新版内部不一致**，授权“现在就开始做”。已检查实际代码，根因是 `C110ResolutionLabActivity` 独自将模型请求**写死** `OcrModelCatalog.DEDICATED = qwen-vl-ocr`；原 `C110FrameReader` 实时预览及专页高清OCR调用原先**已经读取**共享模型偏好。因此无需重写 Wi-Fi、播放器或相机命令。
+- **分支/HEAD/身份**：唯一原仓 `vobichngan285-collab/kanzi-assistant`；从已CI发布 v1.0.49 `exp/c110plus-portrait-cover-roi-20261119` 派生隔离 `exp/c110plus-model-sync-20261120`；最终HEAD `cdd131908fbed3e22c9ee351a707272c60108dce`；完整应用 versionCode59 / versionName `1.0.50-c110plus-model-sync-150ms`，独立 applicationId `com.vobich.bluestar.c110plusmodel150`。**不覆盖** v1.0.49、v1.0.48、四档原厂照片尺寸A/B实验旧包或正式RC25。
+- **模型真正同步**：综合实验页通过 `getSharedPreferences("kanzi_settings",MODE_PRIVATE)` 读取与主页同一 `cloud_ocr_model_v1` 并 `OcrModelCatalog.normalize`，点击拍摄时冻结 `chosenModel` 及同源 `OcrSpeedExperiment.PREF`；原SD完整JPEG、`TaskCatalog.defaults()[0]` 的一致朗读原文指令、原 `CloudVisionClient.recognize` **一次**云端请求不变；不再固定 qwen-vl-ocr，不暗中回退到其他模型/自动重试。每次实验记录真实模型ID和速度模式，比较不同照片档位应固定相同模型、相同提示/速度；混模型不可直接合并排名。综合实验入口直接显示当前模型并可手动改（写回主页共享prefs），拍摄中禁止更改。C110专页“相机”菜单新增文字朗读OCR及视觉任务模型选择（与主页共用两项独立偏好）；MainActivity `onResume` 从 C110 返回后刷新缓存模型字段，主页显示与配置同步。
+- **保持原已成功功能**：C110+ 3012→3016→3001/par1→2015/par1，150ms `C110CameraActivity` + `C110LivePreview` 两条缓存、LibVLC 3.6.5、**竖屏**官方式居中铺满 + 实际OCR ROI、1001只拍一张、原高清照片、机身静音/灯控、TTS/USB/手机摄像头、四档原厂照片尺寸/准确率实验和诊断日志继续保留；不添加 `1002` 写尺寸、不允许尚未真机验证的 C110+ `4003` 删除。
+- **安全与云端费用**：该次截图 403 是 **qwen-vl-ocr 当前免费配额限制**，不是相机取图失败；改用用户主动选择的模型后仍需核实该模型额度及计费，未承诺所有模型无费用或永不403。新独立包需另填百炼 API Key；任何云请求仍仅用户主动触发，不自动换成收费模型。
+- **CI/Release已确认**：新增独立工作流 `.github/workflows/c110plus-model-sync-20261120.yml`，源码静态检查验证共享偏好/按快门冻结模型/诊断真实模型/一次拍摄一次云请求、旧OEM与两路150ms及竖屏ROI原有逻辑、纯Java测试通过；完整 arm64 Android APK、App ID/版本签名、LibVLC/USB so/原音效、ZIP/SHA、Artifact/独立预发布均为成功。**Run [44565962487](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44565962487)** `completed/success`，HEAD及Release target均为 `cdd131908fbed3e22c9ee351a707272c60108dce`。
+- **APK正式直链（56,715,765字节；SHA256 `64b7a2bf18c25cd2698e57a5c6d602a21ce30f2847edcb66fefd7fd0d9ea4a6d`）**：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110plus-model-sync-150ms-20261120-v0150/BlueStar_Guide_C110Plus_Model_Sync_150ms_1.0.50.apk ，Release https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110plus-model-sync-150ms-20261120-v0150 。源码说明 `cloud-vision-app/docs/C110PLUS_MODEL_SYNC_20261120.md`。
+- **下一步真机（未验收）**：v1.0.50**本版自己的主页**选择一项可用 OCR 模型 → 进入 C110+ 专页 → 相机→照片尺寸/OCR综合实验，核对界面当前模型已同步、实际拍一张后所请求模型和诊断记录一致，避免继续走 qwen-vl-ocr 免费配额；切换专页模型后回主页同样生效；实时取帧/高清拍照仍能正确按当前朗读任务和模型朗读。若仍403，先检查新的实际模型ID和该模型配额，不要将网络/相机错误与云配额混淆。此前 20M/10M/8M/3M 四档照片准确率实验仍需用**相同模型**真机完成，v1.0.49 竖屏Cover/ROI 同样待实机检验。CI成功不等于真机效果成功。
+
+---
+
 # 2026-11-19｜C110+ 官方式竖屏铺满预览 + 所见即OCR v1.0.49 已CI发布（待真机）
 
 - **这次用户明确纠正并授权**：用户提供原厂 SJCAM Zone 竖屏预览截图，指出 v1.0.48 的“全屏”错误地强制横屏；明确要求手机**始终竖屏**、视频**等比例铺满屏幕**（可居中裁掉左右两侧，不拉伸）、保留顶部必要操作及底部拍照/变焦；画面所见区域必须与 OCR 提交的区域一致，用户明确“是的，现在改”。**不要再误做强制横屏，不要重写已成功的相机连接/播放器**。
