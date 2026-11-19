@@ -189,7 +189,7 @@ final class C110WifiBootstrap {
                     main.post(()->{
                         if(id!=generation||closed)return;
                         report("C110自动连接未成功；可点击相机页左上角重新连接");
-                        clearFailedRequest(cb);
+                        clearFailedRequest(this);
                     });
                 }
                 @Override public void onLost(Network network){
@@ -197,7 +197,7 @@ final class C110WifiBootstrap {
                     main.post(()->{
                         if(id!=generation||closed)return;
                         report("C110 Wi-Fi已断开；点击重新连接可再次弹出系统连接请求");
-                        clearFailedRequest(cb);
+                        clearFailedRequest(this);
                     });
                 }
             };
