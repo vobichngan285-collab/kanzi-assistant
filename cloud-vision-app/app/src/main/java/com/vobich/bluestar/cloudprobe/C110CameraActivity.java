@@ -146,10 +146,10 @@ public final class C110CameraActivity extends Activity {
         Button aiButton=footerButton("🎙\nAI对话",()->returnToMain("ai"));
         Button photoButton=footerButton("▤\n高清拍照",()->returnToMain("photo"));
         Button modeButton=footerButton("◉\n模式",()->showCameraModes());
-        for(Button b:new Button[]{taskButton,aiButton,photoButton,modeButton}){
+        for(Button footerItem:new Button[]{taskButton,aiButton,photoButton,modeButton}){
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(75),1f);
             lp.setMargins(dp(3),0,dp(3),0);
-            footer.addView(b,lp);
+            footer.addView(footerItem,lp);
         }
         root.addView(footer,new FrameLayout.LayoutParams(-1,dp(89),Gravity.BOTTOM));
         setContentView(root);
