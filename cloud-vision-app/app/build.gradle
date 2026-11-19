@@ -6,12 +6,12 @@ android {
         applicationId 'com.vobich.bluestar'
         minSdk 26
         targetSdk 35
-        versionCode 63
-        versionName '1.0.54-c110plus-home-blue'
+        versionCode 64
+        versionName '1.0.55-c110plus-inline-photo'
         ndk { abiFilters 'arm64-v8a' }
     }
     buildTypes {
-        debug { minifyEnabled false; applicationIdSuffix '.c110plushome154' }
+        debug { minifyEnabled false; applicationIdSuffix '.c110plusinline155' }
         release { minifyEnabled false }
     }
     compileOptions {
