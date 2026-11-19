@@ -42,10 +42,11 @@ final class C110WifiBootstrap {
     private static WeakReference<C110WifiBootstrap> mainOwner=new WeakReference<>(null);
 
     /** C110 page uses the existing MainActivity Wi-Fi request lease, not a second competing request. */
-    static boolean requestFromCameraPage(){
+    static boolean requestFromCameraPage(boolean force){
         C110WifiBootstrap controller=mainOwner.get();
         if(controller==null||controller.closed)return false;
-        controller.main.post(controller::requestForCameraMode);
+        controller.main.post(force?controller::retryForCameraMode:
+            controller::requestForCameraMode);
         return true;
     }
 
@@ -135,6 +136,18 @@ final class C110WifiBootstrap {
             report("正在等待系统确认连接C110，无需进入手机Wi-Fi设置");
             return;
         }
+        attempted=false;
+        startAtLaunch();
+    }
+
+    /** A real user pressing the camera refresh button requests a new chooser. */
+    private void retryForCameraMode(){
+        if(closed||cm==null)return;
+        if(connected(owner)!=null){
+            report("标准C110网络仍在连接中");
+            return;
+        }
+        if(requestedCallback!=null)clearFailedRequest(requestedCallback);
         attempted=false;
         startAtLaunch();
     }
