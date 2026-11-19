@@ -1,6 +1,8 @@
 package com.vobich.bluestar.cloudprobe;
 
 import android.app.Activity;
+import android.content.pm.ActivityInfo;
+import android.content.res.Configuration;
 import android.os.Bundle;
 import android.content.Intent;
 import android.view.View;
@@ -25,6 +27,7 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.SeekBar;
 
 import org.videolan.libvlc.LibVLC;
 import org.videolan.libvlc.Media;
@@ -77,6 +80,14 @@ public final class C110CameraActivity extends Activity {
     private Runnable cameraConnectPoll;
     private long cameraConnectStartedMs;
     private boolean waitingForCameraWifi;
+    // UI-only zoom and fullscreen never alter the verified RTSP/VLC/C110 Wi-Fi commands.
+    private FrameLayout cameraRoot;
+    private LinearLayout topControls,bottomControls,zoomControls;
+    private Button fullscreenButton,fullscreenPhoto;
+    private TextView zoomValue;
+    private SeekBar zoomSeek;
+    private float zoom=1f;
+    private boolean fullscreen;
 
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
@@ -84,6 +95,9 @@ public final class C110CameraActivity extends Activity {
         deviceControls=new C110DeviceControls(this,this::say);
         frameReader=new C110FrameReader(this,this::say);
         FrameLayout root=new FrameLayout(this);
+        cameraRoot=root;
+        root.setClipChildren(true);
+        root.setClipToPadding(true);
         root.setBackgroundColor(Color.BLACK);
         root.setOnApplyWindowInsetsListener((view,insets)->{
             int top=insets.getSystemWindowInsetTop();
@@ -103,10 +117,11 @@ public final class C110CameraActivity extends Activity {
         View tapSurface=new View(this);
         tapSurface.setFocusable(true);
         tapSurface.setContentDescription("C110实时预览画面，点击立即截取当前帧并识别朗读");
-        tapSurface.setOnClickListener(v->frameReader.tap(video));
+        tapSurface.setOnClickListener(v->frameReader.tap(video,zoom));
         root.addView(tapSurface,new FrameLayout.LayoutParams(-1,-1));
 
         LinearLayout titleRow=new LinearLayout(this);
+        topControls=titleRow;
         titleRow.setGravity(Gravity.CENTER_VERTICAL);
         titleRow.setPadding(dp(12),dp(5),dp(12),dp(5));
         titleRow.setBackgroundColor(0xE5091D36);
@@ -174,6 +189,7 @@ public final class C110CameraActivity extends Activity {
         root.addView(output,status);
 
         LinearLayout footer=new LinearLayout(this);
+        bottomControls=footer;
         footer.setGravity(Gravity.CENTER);
         footer.setPadding(dp(7),dp(5),dp(7),dp(7));
         footer.setBackground(roundRect(0xED091D36,20));
@@ -188,14 +204,141 @@ public final class C110CameraActivity extends Activity {
             footer.addView(item,lp);
         }
         root.addView(footer,new FrameLayout.LayoutParams(-1,dp(89),Gravity.BOTTOM));
+
+        // Compact manual slider. At 1x, all cloud paths remain unchanged.
+        zoomControls=new LinearLayout(this);
+        zoomControls.setGravity(Gravity.CENTER_VERTICAL);
+        zoomControls.setPadding(dp(5),dp(2),dp(5),dp(2));
+        zoomControls.setBackground(roundRect(0xEA132B46,18));
+        Button minus=zoomSmallButton("−",()->setZoom(zoom-.25f));
+        Button plus=zoomSmallButton("+",()->setZoom(zoom+.25f));
+        zoomValue=new TextView(this);
+        zoomValue.setGravity(Gravity.CENTER);
+        zoomValue.setTextColor(Color.WHITE);
+        zoomValue.setTextSize(15);
+        zoomValue.setText("1.0×");
+        zoomValue.setContentDescription("当前OCR取景放大倍率1倍");
+        zoomControls.addView(minus,new LinearLayout.LayoutParams(dp(43),dp(47)));
+        zoomSeek=new SeekBar(this);
+        zoomSeek.setMax(30);
+        zoomSeek.setProgress(0);
+        zoomSeek.setContentDescription("手动放大，1到4倍；放大后的区域才发送给OCR");
+        zoomSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            @Override public void onProgressChanged(SeekBar bar,int progress,boolean user){
+                if(user)setZoom(1f+progress/10f);
+            }
+            @Override public void onStartTrackingTouch(SeekBar bar){}
+            @Override public void onStopTrackingTouch(SeekBar bar){}
+        });
+        zoomControls.addView(zoomSeek,new LinearLayout.LayoutParams(0,dp(48),1f));
+        zoomControls.addView(plus,new LinearLayout.LayoutParams(dp(43),dp(47)));
+        zoomControls.addView(zoomValue,new LinearLayout.LayoutParams(dp(56),dp(47)));
+        fullscreenButton=zoomSmallButton("全屏",()->setFullscreen(!fullscreen));
+        fullscreenButton.setTextSize(13);
+        fullscreenButton.setContentDescription("切换横屏沉浸式全屏实时预览，不重启相机视频");
+        zoomControls.addView(fullscreenButton,new LinearLayout.LayoutParams(dp(64),dp(47)));
+        FrameLayout.LayoutParams zoomParams=new FrameLayout.LayoutParams(-1,dp(53),Gravity.BOTTOM);
+        zoomParams.leftMargin=dp(8);zoomParams.rightMargin=dp(8);
+        zoomParams.bottomMargin=dp(94);
+        root.addView(zoomControls,zoomParams);
+
+        fullscreenPhoto=zoomSmallButton("高清拍照",this::captureOriginalPhoto);
+        fullscreenPhoto.setTextSize(13);
+        fullscreenPhoto.setContentDescription("全屏时按一次C110真实快门，按当前缩放区域识别OCR");
+        FrameLayout.LayoutParams fullPhotoParams=new FrameLayout.LayoutParams(dp(96),dp(46),Gravity.TOP|Gravity.LEFT);
+        fullPhotoParams.topMargin=dp(12);fullPhotoParams.leftMargin=dp(12);
+        root.addView(fullscreenPhoto,fullPhotoParams);
+        fullscreenPhoto.setVisibility(View.GONE);
         setContentView(root);
-        say("C110正在初始化预览；点击画面取帧朗读，长按状态复制诊断");
+        say("C110正在初始化预览；滑动放大后OCR只读对应区域；点击画面取帧，长按状态复制诊断");
         // Proven OEM start sequence remains unchanged below; the request waits for Wi-Fi first.
         main.post(this::connectAndBeginWhenReady);
     }
 
 
     private int dp(int d){return Math.round(d*getResources().getDisplayMetrics().density);}
+
+    private Button zoomSmallButton(String label,Runnable click){
+        Button button=new Button(this);
+        button.setAllCaps(false);
+        button.setText(label);
+        button.setTextSize(21);
+        button.setTextColor(Color.WHITE);
+        button.setPadding(0,0,0,0);
+        button.setBackground(roundRect(0xFF235477,12));
+        button.setOnClickListener(v->click.run());
+        return button;
+    }
+
+    private void setZoom(float wanted){
+        if(photoBusy||frameReader.isBusy())return;
+        float next=Math.round(C110ZoomGeometry.clamp(wanted)*10f)/10f;
+        if(Math.abs(zoom-next)<.045f)return;
+        zoom=next;
+        zoomSeek.setProgress(Math.round((zoom-1f)*10f));
+        zoomValue.setText(String.format(Locale.CHINA,"%.1f×",zoom));
+        zoomValue.setContentDescription(String.format(Locale.CHINA,
+            "当前放大%.1f倍，云端仅识别当前对应区域",zoom));
+        applyZoomPreview();
+    }
+
+    private void applyZoomPreview(){
+        if(video==null)return;
+        // Android scales the existing VLCVideoLayout, NOT the decoder/RTSP stream.
+        // PixelCopy reads the underlying unscaled Surface, so C110FrameReader
+        // applies the EXACT same center fraction before cloud upload.
+        video.setPivotX(video.getWidth()/2f);
+        video.setPivotY(video.getHeight()/2f);
+        video.setScaleX(zoom);
+        video.setScaleY(zoom);
+    }
+
+    private void applyFullscreenFlags(){
+        if(cameraRoot==null)return;
+        int flags=fullscreen?(
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|
+            View.SYSTEM_UI_FLAG_FULLSCREEN|
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|
+            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|
+            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION|
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        ):View.SYSTEM_UI_FLAG_VISIBLE;
+        cameraRoot.setSystemUiVisibility(flags);
+    }
+
+    private void setFullscreen(boolean requested){
+        if(fullscreen==requested)return;
+        // Rotation must never trigger a new player, a new 1001 shutter, or a
+        // Wi-Fi route switch. Manifest configChanges keeps this Activity alive.
+        fullscreen=requested;
+        topControls.setVisibility(fullscreen?View.GONE:View.VISIBLE);
+        bottomControls.setVisibility(fullscreen?View.GONE:View.VISIBLE);
+        taskChip.setVisibility(fullscreen?View.GONE:View.VISIBLE);
+        output.setVisibility(fullscreen?View.GONE:View.VISIBLE);
+        fullscreenPhoto.setVisibility(fullscreen?View.VISIBLE:View.GONE);
+        fullscreenButton.setText(fullscreen?"退出":"全屏");
+        fullscreenButton.setContentDescription(fullscreen?"退出横屏全屏，回到竖屏操作页面":
+            "进入横屏沉浸式全屏");
+        FrameLayout.LayoutParams lp=(FrameLayout.LayoutParams)zoomControls.getLayoutParams();
+        lp.bottomMargin=dp(fullscreen?12:94);
+        zoomControls.setLayoutParams(lp);
+        applyFullscreenFlags();
+        setRequestedOrientation(fullscreen?ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE:
+            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+        video.post(this::applyZoomPreview);
+    }
+
+    @Override public void onConfigurationChanged(Configuration newConfig){
+        super.onConfigurationChanged(newConfig);
+        // Do not re-enter begin()/openPlayer(): keep proven VLC 150ms session.
+        if(video!=null)video.post(this::applyZoomPreview);
+        applyFullscreenFlags();
+    }
+
+    @Override public void onWindowFocusChanged(boolean hasFocus){
+        super.onWindowFocusChanged(hasFocus);
+        if(hasFocus&&fullscreen)applyFullscreenFlags();
+    }
 
     private android.graphics.drawable.GradientDrawable roundRect(int color,int radius){
         android.graphics.drawable.GradientDrawable d=new android.graphics.drawable.GradientDrawable();
@@ -363,12 +506,14 @@ public final class C110CameraActivity extends Activity {
         photoBusy=true;
         pendingDeletion=null; // the previous photo can no longer be deleted by mistake
         final int ticket=++photoGeneration;
+        final float zoomAtShutter=zoom;
         final long at=SystemClock.elapsedRealtime();
         // Stop and release the SAME proven video player before 3001/par=0.
         // No Activity finish, no MainActivity re-entry, no delayed callback race.
         stop(false);
         beginButton.setEnabled(false);
         photoButton.setEnabled(false);
+        fullscreenPhoto.setEnabled(false);
         say("C110高清拍照：切换照片模式，执行一次真实快门…");
         photoJob=io.submit(()->{
             try{
@@ -378,7 +523,7 @@ public final class C110CameraActivity extends Activity {
                     say("高清原图 "+photo.width+"×"+photo.height+
                         " 已下载，拍摄取图 "+photo.totalMs+"ms，快门命令 "+
                         photo.shutterMs+"ms");
-                    finishPhotoFlow(ticket,photo);
+                    finishPhotoFlow(ticket,photo,zoomAtShutter);
                 });
             }catch(Exception ex){
                 final String detail=ex.getMessage()==null?
@@ -387,22 +532,23 @@ public final class C110CameraActivity extends Activity {
                 main.post(()->{
                     if(ticket!=photoGeneration||!pageVisible||isFinishing())return;
                     say("高清拍照未完成："+detail+"。不会自动重拍");
-                    finishPhotoFlow(ticket,null);
+                    finishPhotoFlow(ticket,null,zoomAtShutter);
                 });
             }
         });
     }
 
-    private void finishPhotoFlow(int ticket,C110WifiCamera.Photo photo){
+    private void finishPhotoFlow(int ticket,C110WifiCamera.Photo photo,float zoomAtShutter){
         if(ticket!=photoGeneration||!pageVisible)return;
         photoBusy=false;
         photoJob=null;
         photoButton.setEnabled(true);
+        fullscreenPhoto.setEnabled(true);
         beginButton.setEnabled(true);
         pendingDeletion=photo==null?null:C110WifiCamera.DeletionCandidate.fromPhoto(photo);
-        // One original JPEG, one recognition; no PixelCopy or recompression.
+        // 1x: send original bytes; >1x: decode only matching normalized JPEG ROI.
         if(photo!=null&&!frameReader.recognizeOriginalJpeg(
-            photo.jpeg,photo.width,photo.height))
+            photo.jpeg,photo.width,photo.height,zoomAtShutter))
             say("已拍得高清照片，但识别流程未开始");
         // User remains on C110 camera page. Resume OEM playback once only.
         say("正在恢复C110实时预览…");
@@ -698,6 +844,7 @@ public final class C110CameraActivity extends Activity {
     @Override protected void onResume(){
         super.onResume();
         pageVisible=true;
+        if(fullscreen)applyFullscreenFlags();
         if(!photoBusy&&!started&&!busy)main.post(this::connectAndBeginWhenReady);
     }
     @Override protected void onPause(){
