@@ -330,7 +330,7 @@ public final class C110CameraActivity extends Activity {
 
     @Override public void onConfigurationChanged(Configuration newConfig){
         super.onConfigurationChanged(newConfig);
-        // Do not re-enter begin()/openPlayer(): keep proven VLC 150ms session.
+        // Preserve the current proven 150ms VLC session; no decoder/network restart.
         if(video!=null)video.post(this::applyZoomPreview);
         applyFullscreenFlags();
     }
