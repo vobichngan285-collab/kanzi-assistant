@@ -418,6 +418,13 @@ public final class MainActivity extends CameraActivity {
         c110Button.setContentDescription("立即触发一次C110+高清拍照与朗读");
         title.addView(c110Button,new LinearLayout.LayoutParams(dp(60),dp(43)));
         c110Button.setOnClickListener(v->captureC110OneShot());
+        Button aiTalk=new Button(this);
+        aiTalk.setText("🎙");aiTalk.setTextSize(19);aiTalk.setAllCaps(false);
+        aiTalk.setTextColor(Color.WHITE);
+        aiTalk.setBackground(roundRect(0xFF245477,12));
+        aiTalk.setContentDescription("AI对话，按住说话，松开发送");
+        aiTalk.setOnTouchListener((v,event)->handleVoiceButtonTouch(event));
+        title.addView(aiTalk,new LinearLayout.LayoutParams(dp(48),dp(43)));
         zoomChip=new TextView(this);
         zoomChip.setText("1.0×");
         zoomChip.setGravity(Gravity.CENTER);
@@ -542,7 +549,7 @@ public final class MainActivity extends CameraActivity {
         if(currentTask==null)currentTask=tasks.get(0);
         TaskCatalog.select(this,currentTask.id);
         updateTaskBadge();
-        if(modeButton!=null)modeButton.setContentDescription("任务选择，当前："+currentTask.name);
+        if(modeButton!=null)modeButton.setContentDescription("返回主页；当前任务："+currentTask.name);
     }
 
     private void updateTaskBadge(){
