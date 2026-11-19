@@ -64,8 +64,11 @@ final class C110FrameReader {
 
     boolean isBusy(){return busy;}
 
-    void tap(View videoRoot){
+    void tap(View videoRoot){tap(videoRoot,1f);}
+
+    void tap(View videoRoot,float selectedZoom){
         if(closed||busy)return;
+        final float zoomAtTap=C110ZoomGeometry.clamp(selectedZoom);
         long now=SystemClock.elapsedRealtime();
         if(now-lastTapMs<850)return;
         if(!outputReady){report("C110画面尚未显示，请确认视频预览");return;}
@@ -96,28 +99,37 @@ final class C110FrameReader {
                 }
                 // PixelCopy returns a current frame; any further network wait is off UI.
                 report("已获取实时画面，正在识别…");
-                taskFuture=io.submit(()->analyze(id,image,now));
+                taskFuture=io.submit(()->analyze(id,image,now,zoomAtTap));
             },main);
         }catch(RuntimeException ex){
             busy=false;report("取帧失败："+ex.getClass().getSimpleName());
         }
     }
 
-    private void analyze(int id,Bitmap fresh,long started){
+    private void analyze(int id,Bitmap fresh,long started,float zoomAtTap){
         byte[] jpeg;
+        Bitmap region=null;
         try{
+            region=C110ZoomFrames.cropPreviewBitmap(fresh,zoomAtTap);
+            if(zoomAtTap>1.001f)
+                report("视频OCR实际裁剪："+fresh.getWidth()+"×"+fresh.getHeight()+
+                    " → "+region.getWidth()+"×"+region.getHeight()+
+                    "，倍率"+String.format(Locale.ROOT,"%.1f",zoomAtTap)+"倍");
             try(ByteArrayOutputStream bytes=new ByteArrayOutputStream()){
-                if(!fresh.compress(Bitmap.CompressFormat.JPEG,90,bytes))
+                if(!region.compress(Bitmap.CompressFormat.JPEG,90,bytes))
                     throw new IllegalStateException("JPEG编码失败");
                 jpeg=bytes.toByteArray();
             }
         }catch(Exception ex){
             if(id==request.get())main.post(()->{
                 if(id!=request.get()||closed)return;
-                busy=false;report("实时画面编码失败");
+                busy=false;report("实时取景区域编码失败："+ex.getClass().getSimpleName());
             });
             return;
-        }finally{fresh.recycle();}
+        }finally{
+            if(region!=null&&region!=fresh&&!region.isRecycled())region.recycle();
+            fresh.recycle();
+        }
         recognizeJpeg(id,jpeg,started);
     }
 
@@ -126,6 +138,10 @@ final class C110FrameReader {
      * leaving the camera screen. Only a user-tapped 1001 result reaches here.
      */
     boolean recognizeOriginalJpeg(byte[] jpeg,int width,int height){
+        return recognizeOriginalJpeg(jpeg,width,height,1f);
+    }
+
+    boolean recognizeOriginalJpeg(byte[] jpeg,int width,int height,float selectedZoom){
         if(closed||busy)return false;
         if(jpeg==null||jpeg.length<256||width<2||height<2){
             report("C110没有返回有效高清原图，未提交云端");return false;
@@ -136,7 +152,26 @@ final class C110FrameReader {
         lastTapMs=started;
         if(tts!=null)tts.stop();
         report("已下载 C110 高清原图 "+width+"×"+height+"，正在识别…");
-        taskFuture=io.submit(()->recognizeJpeg(id,jpeg,started));
+        final float zoomAtTap=C110ZoomGeometry.clamp(selectedZoom);
+        taskFuture=io.submit(()->{
+            try{
+                // 1x sends the exact original JPEG, with no extra image decode/encode.
+                C110ZoomFrames.JpegResult region=
+                    C110ZoomFrames.cropNativeJpeg(jpeg,width,height,zoomAtTap);
+                if(id!=request.get()||closed)return;
+                if(zoomAtTap>1.001f)
+                    report("高清OCR实际裁剪："+width+"×"+height+" → "+
+                        region.width+"×"+region.height+"，倍率"+
+                        String.format(Locale.ROOT,"%.1f",zoomAtTap)+"倍");
+                recognizeJpeg(id,region.jpeg,started);
+            }catch(Exception e){
+                main.post(()->{
+                    if(id!=request.get()||closed)return;
+                    busy=false;
+                    report("高清缩放区域失败，未上传未裁剪整图："+e.getClass().getSimpleName());
+                });
+            }
+        });
         return true;
     }
 
