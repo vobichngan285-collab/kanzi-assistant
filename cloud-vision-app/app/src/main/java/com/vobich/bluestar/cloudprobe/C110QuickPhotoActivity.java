@@ -67,6 +67,7 @@ public final class C110QuickPhotoActivity extends Activity {
         // The single initial request is only created on first launch.
         // Returning from the system Wi-Fi picker does not fire another shutter.
         if(generation==0)startPhoto();
+        else if(shooting&&waiting!=null)main.postDelayed(waiting,120L);
     }
     private void startPhoto(){
         if(!active||shooting||reader==null||reader.isBusy())return;
@@ -133,14 +134,18 @@ public final class C110QuickPhotoActivity extends Activity {
         return super.dispatchKeyEvent(event);
     }
     @Override protected void onPause(){
-        active=false;++generation;shooting=false;
-        if(waiting!=null){main.removeCallbacks(waiting);waiting=null;}
+        active=false;
+        // Android's Wi-Fi consent screen may pause the Activity. Keep the
+        // one pending user shutter token; resume its connection poll later.
+        if(waiting!=null)main.removeCallbacks(waiting);
         if(shortcut!=null)shortcut.cancel();
         // No second 1001 can start after activity pauses; in-flight HTTP may
         // finish without any callback UI or cloud request.
         super.onPause();
     }
     @Override protected void onDestroy(){
+        ++generation;shooting=false;
+        if(waiting!=null){main.removeCallbacks(waiting);waiting=null;}
         if(wifi!=null)wifi.shutdown();
         if(reader!=null)reader.shutdown();
         worker.shutdownNow();
