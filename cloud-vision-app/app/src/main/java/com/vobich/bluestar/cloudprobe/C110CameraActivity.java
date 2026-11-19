@@ -109,6 +109,9 @@ public final class C110CameraActivity extends Activity {
 
         // Proven OEM player: the exact visible VLCVideoLayout stays attached from creation.
         video=new VLCVideoLayout(this);
+        video.addOnLayoutChangeListener((view,l,t,r,b,oldL,oldT,oldR,oldB)->{
+            if(fullscreen)applyZoomPreview();
+        });
         root.addView(video,new FrameLayout.LayoutParams(-1,-1));
 
         // Match the normal Blue Star screen: one tap anywhere in the live view
@@ -292,10 +295,20 @@ public final class C110CameraActivity extends Activity {
         // Android scales the existing VLCVideoLayout, NOT the decoder/RTSP stream.
         // PixelCopy reads the underlying unscaled Surface, so C110FrameReader
         // applies the EXACT same center fraction before cloud upload.
+        FrameLayout.LayoutParams layout=(FrameLayout.LayoutParams)video.getLayoutParams();
+        float coverScale=1f;
+        if(fullscreen&&cameraRoot!=null&&layout.width>1&&layout.height>1){
+            int width=cameraRoot.getWidth()-cameraRoot.getPaddingLeft()-
+                      cameraRoot.getPaddingRight();
+            int height=cameraRoot.getHeight()-cameraRoot.getPaddingTop()-
+                       cameraRoot.getPaddingBottom();
+            if(width>1&&height>1)
+                coverScale=Math.max(width/(float)layout.width,height/(float)layout.height);
+        }
         video.setPivotX(video.getWidth()/2f);
         video.setPivotY(video.getHeight()/2f);
-        video.setScaleX(zoom);
-        video.setScaleY(zoom);
+        video.setScaleX(zoom*coverScale);
+        video.setScaleY(zoom*coverScale);
     }
 
     /** Width/height of the visible portrait viewport, excluding system insets. */
@@ -321,8 +334,12 @@ public final class C110CameraActivity extends Activity {
         int height=cameraRoot.getHeight()-cameraRoot.getPaddingTop()-
                    cameraRoot.getPaddingBottom();
         if(width<2||height<2)return;
-        int targetW=fullscreen?Math.max(width,Math.round(height*(16f/9f))):-1;
-        int targetH=fullscreen?Math.max(height,Math.round(width*9f/16f)):-1;
+        // Cap the underlying Surface around the proven 2K RTSP size. Only
+        // Android's display transform grows it to fill the portrait viewport.
+        // Avoid a 4K+ Surface allocation/PixelCopy on tall high-DPI phones.
+        int neededW=Math.max(width,Math.round(height*(16f/9f)));
+        int targetW=fullscreen?Math.min(1920,neededW):-1;
+        int targetH=fullscreen?Math.max(2,Math.round(targetW*9f/16f)):-1;
         if(lp.width!=targetW||lp.height!=targetH||lp.gravity!=Gravity.CENTER){
             lp.width=targetW;
             lp.height=targetH;
