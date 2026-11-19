@@ -1,0 +1,222 @@
+name: Blue Star C110 Home Wi-Fi Auto-Connect v0.1.19
+on:
+  push:
+    branches: [ 'exp/c110-homewifi-bootstrap-20261119' ]
+    paths:
+      - 'cloud-vision-app/**'
+      - '.github/workflows/c110-homewifi-bootstrap-20261119.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  c110-integration:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout the exact pinned UVC stack used for RC25
+        uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Java C110 protocol unit tests and isolation assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bluestar-c110-test
+          SRC=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          javac -d /tmp/bluestar-c110-test "$SRC/C110PhotoPolicy.java" cloud-vision-app/tests/C110PhotoPolicyTest.java
+          java -cp /tmp/bluestar-c110-test com.vobich.bluestar.cloudprobe.C110PhotoPolicyTest
+          mkdir -p /tmp/bluestar-c110-stub/android/net
+          cat > /tmp/bluestar-c110-stub/android/net/Network.java <<'JAVA'
+          package android.net;
+          public class Network {
+              public javax.net.SocketFactory getSocketFactory() {
+                  return javax.net.SocketFactory.getDefault();
+              }
+          }
+          JAVA
+          javac -d /tmp/bluestar-c110-test \
+            /tmp/bluestar-c110-stub/android/net/Network.java \
+            "$SRC/C110RtspSessionProbe.java" cloud-vision-app/tests/C110RtspSessionProbeTest.java
+          java -cp /tmp/bluestar-c110-test com.vobich.bluestar.cloudprobe.C110RtspSessionProbeTest
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe')
+          main=(root/'MainActivity.java').read_text()
+          page=(root/'C110CameraActivity.java').read_text()
+          controls=(root/'C110DeviceControls.java').read_text()
+          net=(root/'C110WifiBootstrap.java').read_text()
+          reader=(root/'C110FrameReader.java').read_text()
+          mini=Path('cloud-vision-app/c110mini/src/main/java/com/vobich/bluestar/c110mini/OemVideoActivity.java').read_text()
+          manifest=Path('cloud-vision-app/app/src/main/AndroidManifest.xml').read_text()
+          gradle=Path('cloud-vision-app/app/build.gradle').read_text()
+          def core(source):
+              return source.split('    private void begin(){',1)[1].split('    private void runWhenCurrent(',1)[0]
+          current=core(page)
+          current=current.replace('            deviceControls.onCameraConnected(wifi);\n','')
+          current=current.replace('if(photoBusy||busy||started||!pageVisible)return;',
+                                  'if(busy||started)return;')
+          current=current.replace(
+              '        Network trusted=C110WifiBootstrap.connected(this);\n'
+              '        if(trusted!=null)return trusted;\n','')
+          current=current.replace(
+              'if(event.getVoutCount()>0){\n                            frameReader.setVideoOutputReady(true);\n'
+              '                            say("C110实时画面已就绪，点击画面取帧识别");\n                        }',
+              'if(event.getVoutCount()>0)say("VLC Vout="+event.getVoutCount()+"（请确认真实画面）");')
+          assert current==core(mini), 'OEM 3012/3016/3001/2015 and LibVLC playback core must be unchanged'
+          assert 'new VLCVideoLayout(this)' in page
+          assert 'root.addView(video,new FrameLayout.LayoutParams(-1,-1));' in page
+          assert 'player.attachViews(video,null,false,false)' in page
+          assert 'main.postDelayed(delayedPlay,300)' in page and page.count('active.play();')==1
+          assert 'main.post(this::connectAndBeginWhenReady);' in page and 'setRequestedOrientation' not in page
+          assert 'new C110FrameReader(this,this::say)' in page
+          assert 'tapSurface.setOnClickListener(v->frameReader.tap(video))' in page
+          assert 'new Button[]{tasks,talk,photoButton,modes}' in page
+          assert 'TaskDesktopOverlay.show(this,TaskCatalog.all(this)' in page
+          assert 'R.drawable.bluestar_globe' in page and 'title.setText("蓝星向导")' in page
+          assert 'output.setText(text)' in page
+          assert 'PixelCopy.request(video,image,status->' in reader
+          assert 'findSurface(videoRoot)' in reader
+          assert 'Bitmap.CompressFormat.JPEG,90' in reader
+          assert 'C110WifiCamera.requireCellular(activity)' in reader
+          assert 'CloudVisionClient.recognize(jpeg,key,task,model' in reader
+          assert 'SpeechFilter.apply' in reader
+          assert 'cmd=1001' not in reader and 'createNewFile' not in reader and 'FileOutputStream' not in reader
+          assert 'static Network preferredNetwork(ConnectivityManager service)' in net
+          assert 'if(standard&&isWifiNetwork(cm,network))' in net, 'Secondary C110 network must not require a default route'
+          assert 'Network preferred=preferredNetwork(service)' in net
+          assert 'void requestForCameraMode()' in net
+          assert 'if(requestedCallback!=null)' in net and 'clearFailedRequest(this)' in net
+          assert 'mainOwner=new WeakReference<>(this)' in net
+          assert 'C110WifiBootstrap.requestFromCameraPage(explicitRetry)' in page
+          assert 'if(C110WifiBootstrap.connected(this)!=null)' in page
+          assert 'main.postDelayed(cameraConnectPoll,550L)' in page
+          assert '>=35000L' in page
+          assert 'Settings.Panel.ACTION_WIFI' in page, 'Fallback must stay inside a system-managed Wi-Fi panel'
+          assert 'Network trusted=C110WifiBootstrap.connected(this)' in page
+          assert 'Network verified=C110WifiBootstrap.preferredNetwork(cm)' in camera
+          assert 'if(c110WifiBootstrap!=null)c110WifiBootstrap.requestForCameraMode();' in main
+          assert 'if(C110WifiBootstrap.connected(this)==null)' in main
+          assert 'c110Button.setOnClickListener(v->captureC110OneShot())' in main
+          assert 'new PatternMatcher("C110",PatternMatcher.PATTERN_PREFIX)' in net
+          assert 'cmd=1001' not in net, 'Wi-Fi automatic connection cannot trigger shutter'
+          assert 'WifiNetworkSpecifier.Builder' in net
+          assert 'new PatternMatcher("C110",PatternMatcher.PATTERN_PREFIX)' in net
+          assert '.removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)' in net
+          assert 'cm.requestNetwork(request,cb,30000);' in net
+          assert 'CAMERA_GATEWAY="192.168.1.254"' in net
+          assert 'verifyStandard' not in net or 'String name=names.group(1)' in net
+          assert 'cmd=3012' in net
+          assert 'c110WifiBootstrap.startAtLaunch()' in main
+          assert 'c110WifiBootstrap.shutdown()' in main
+          assert main.count('protected void onActivityResult(')==1, 'No duplicate results handler'
+          assert 'photoButton=footerButton("▤\\n高清拍照",this::captureOriginalPhoto)' in page
+          camera=(root/'C110WifiCamera.java').read_text()
+          assert 'photoCamera.shootAfterLivePreview(this)' in page, 'Camera page must initiate actual one-shot'
+          assert 'frameReader.recognizeOriginalJpeg(' in page, 'Full-resolution JPEG must feed page OCR'
+          assert 'finishPhotoFlow(ticket,photo)' in page
+          assert 'photoJob=io.submit(' in page
+          assert 'photoJob.cancel(true)' in page, 'Do not leave old capture running after background'
+          assert 'stop(false);\n        beginButton.setEnabled(false);' in page
+          assert 'finishPhotoFlow(ticket,null)' in page
+          assert 'returnToMain("photo")' not in page, 'Must never jump back to main on HQ tap'
+          assert 'return shootInternal(context,false);' in camera, 'Proven legacy shoot unchanged'
+          assert 'return shootInternal(context,true);' in camera, 'New RTSP-to-photo entry'
+          assert camera.count('get(wifi,"/?custom=1&cmd=1001"')==1, 'Exactly one physical shutter command'
+          assert camera.index('if(fromLiveVideo){')<camera.index('Set<String> previous=list(wifi);'), 'Photo mode before directory baseline'
+          assert '3001&par=0' in camera and '不会自动重拍' in page
+          assert 'boolean recognizeOriginalJpeg(byte[] jpeg,int width,int height)' in reader
+          assert 'taskFuture=io.submit(()->recognizeJpeg(id,jpeg,started))' in reader
+          assert reader.count('CloudVisionClient.recognize(jpeg,key,task,model')==1
+          assert r'c110Button=createControlButton("▤\n高清拍照"' in main
+          assert 'c110Button.setOnClickListener(v->captureC110OneShot())' in main, 'Main HQ button must trigger C110 shutter'
+          assert 'c110Button.setOnClickListener(v->captureOneFrame())' not in main, 'No phone frame for HQ button'
+          assert 'tapOverlay.setOnClickListener(v->{' in main and 'else captureOneFrame();' in main, 'Ordinary screen tap still uses phone/USB frame'
+          assert main.count('C110WifiCamera.Photo photo=c110Camera.shootAfterLivePreview(this);')==1
+          assert main.index('C110WifiCamera.Photo photo=c110Camera.shootAfterLivePreview(this);')<main.index('cellular=C110WifiCamera.requireCellular(this)',main.index('C110WifiCamera.Photo photo=c110Camera.shootAfterLivePreview(this);')), 'Physical shutter before any cloud check'
+          assert 'C110高清拍照失败（不会自动重拍）' in main
+          assert '云端识别' in main and '高清照片已拍摄' in main
+          assert main.count('void onRequestPermissionsResult(')==1
+          assert 'captureC110OneShot()' in main and 'photo.jpeg,cloudNetwork' in main, 'Camera JPEG goes over cellular'
+          assert 'getInt(LIGHT_SECONDS,30)' in controls and 'main.postDelayed(pendingOff,seconds*1000L)' in controls
+          assert '((cmd==9011||cmd==9038)&&(par==0||par==1))' in controls
+          assert 'android.permission.NEARBY_WIFI_DEVICES' in manifest
+          assert '<activity android:name=".C110CameraActivity"' in manifest
+          assert "applicationIdSuffix '.c110mainhq'" in gradle
+          assert "versionName '1.0.44-c110-homewifi-bootstrap-lab'" in gradle
+          print('PASS: OEM player invariants, home Wi-Fi C110 network callback, bounded camera connection waiting and unchanged photo/LED/USB')
+          PY
+      - name: Apply the same safe pinned USB patches as RC25
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_usbmonitor.py cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 cloud-vision-app/scripts/patch_pinned_uvc.py
+          grep -q BSG_CLOUD_RAW5_GATED cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/jni/UVCCamera/UVCPreview.cpp
+          grep -q BSG_CLOUD_CLOSE_BARRIER cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
+      - name: Generate verified original launcher resources
+        run: |
+          cd cloud-vision-app
+          java scripts/GenerateLauncherIcons.java
+          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            test -s "app/src/main/res/mipmap-$d/ic_launcher.png"
+          done
+      - name: Gradle 8.11.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Assemble arm64 integration APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :app:assembleDebug
+      - name: Verify APK identity, native library, TTS audio, version and ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_C110_HomeWiFi_AutoConnect_0.1.19.apk
+          test -s out/BlueStar_Guide_C110_HomeWiFi_AutoConnect_0.1.19.apk
+          unzip -tq out/*.apk >/dev/null
+          unzip -Z1 out/*.apk >out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlc.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlcjni.so' out/entries.txt
+          grep -Fxq 'res/raw/c_metal_clack_ding.mp3' out/entries.txt
+          grep -Fxq 'res/raw/voice_send_whoosh.wav' out/entries.txt
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          test -x "$AAPT"
+          "$AAPT" dump badging out/*.apk >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110homewifi'" out/badging.txt
+          grep -Fq "versionName='1.0.44-c110-homewifi-bootstrap-lab'" out/badging.txt
+          grep -q 'application-icon-' out/badging.txt
+          (cd out && sha256sum BlueStar_Guide_C110_HomeWiFi_AutoConnect_0.1.19.apk > SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_Guide_C110_HomeWiFi_AutoConnect_0.1.19
+          path: out/*
+          retention-days: 14
+      - name: Publish isolated prerelease only if unused tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-c110-homewifi-bootstrap-20261119-v0119
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Existing C110 integrated prerelease, refusing overwrite" >&2
+            exit 1
+          fi
+          gh release create "$TAG" "out/BlueStar_Guide_C110_HomeWiFi_AutoConnect_0.1.19.apk" \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Blue Star Guide C110 Home Wi-Fi Auto-Connect v0.1.19" \
+            --notes "Fix C110 connection while phone stays on home Wi-Fi: WifiNetworkSpecifier callback validates real standard-C110 3012 on its own secondary local-only Network, which may not have a default gateway. Entering camera mode retries after a failed startup request and awaits verified Wi-Fi before the unchanged OEM VLC playback pipeline. Manual refresh triggers a new Android system chooser; a Wi-Fi quick-panel fallback is available on timeout. Main-screen HQ photo uses the trusted C110 Network even if home Wi-Fi remains default. Android may require system confirmation and cannot be silently bypassed. Standalone test package, prior RTSP/photo/LED/TTS implementations preserved. Physical device acceptance still needed."
