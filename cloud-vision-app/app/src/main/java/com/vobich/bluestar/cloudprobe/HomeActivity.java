@@ -22,7 +22,10 @@ import java.util.List;
 
 /** Small launcher: never constructs a phone/USB controller or an RTSP player. */
 public final class HomeActivity extends Activity {
-    private static final int BG=0xFF07090D,GOLD=0xFFF5C543,WHITE=0xFFF7F7F7;
+    // Use the original Blue Star palette already present in LargeSettingsScreen
+    // and MainActivity, not the yellow/black reference application's colors.
+    private static final int BG=0xFF091B32,ACCENT=0xFFB9DCF8,WHITE=0xFFF3F8FF;
+    private static final int NAV_BG=0xED091D36,NAV_NORMAL=0xFF2C547D,NAV_ACTIVE=0xFF176BAC;
     private FrameLayout root;
     private boolean settingsTab;
     private C110VolumeShortcut shortcut;
@@ -97,7 +100,7 @@ public final class HomeActivity extends Activity {
         }
         LinearLayout dock=new LinearLayout(this);
         dock.setGravity(Gravity.CENTER);
-        dock.setBackground(bg(0xFF191B1E,23));
+        dock.setBackground(bg(NAV_BG,23));
         Button h=nav("⌂\n主页",!settingsTab,()->{settingsTab=false;render();});
         Button p=nav("◎\n预览",false,this::openPreview);
         Button settings=nav("⚙\n设置",settingsTab,()->{settingsTab=true;render();});
@@ -110,8 +113,8 @@ public final class HomeActivity extends Activity {
     private Button nav(String name,boolean selected,Runnable action){
         Button button=new Button(this);
         button.setAllCaps(false);button.setText(name);button.setTextSize(16);
-        button.setTextColor(selected?GOLD:WHITE);
-        button.setBackground(bg(selected?0xFF333334:0xFF191B1E,20));
+        button.setTextColor(WHITE);
+        button.setBackground(bg(selected?NAV_ACTIVE:NAV_NORMAL,20));
         button.setOnClickListener(v->action.run());return button;
     }
     private void option(LinearLayout parent,String symbol,String title,
@@ -119,7 +122,7 @@ public final class HomeActivity extends Activity {
         LinearLayout item=new LinearLayout(this);
         item.setGravity(Gravity.CENTER_VERTICAL);
         item.setPadding(dp(10),dp(14),dp(8),dp(14));
-        TextView sign=text(symbol,28,GOLD);
+        TextView sign=text(symbol,28,ACCENT);
         sign.setGravity(Gravity.CENTER);
         item.addView(sign,new LinearLayout.LayoutParams(dp(45),dp(69)));
         LinearLayout labels=new LinearLayout(this);
@@ -127,7 +130,7 @@ public final class HomeActivity extends Activity {
         TextView name=text(title,21,WHITE);
         name.setTypeface(null,android.graphics.Typeface.BOLD);
         labels.addView(name);
-        TextView sub=text(detail,13,0xFFA8AFB8);
+        TextView sub=text(detail,13,0xFFC3D7EF);
         labels.addView(sub);
         item.addView(labels,new LinearLayout.LayoutParams(0,-2,1f));
         TextView arrow=text("›",30,WHITE);item.addView(arrow);
@@ -135,7 +138,7 @@ public final class HomeActivity extends Activity {
         item.setClickable(true);item.setFocusable(true);
         item.setContentDescription(title+"，"+detail);
         item.setOnClickListener(v->action.run());
-        View line=new View(this);line.setBackgroundColor(0xFF343434);
+        View line=new View(this);line.setBackgroundColor(0xFF265077);
         parent.addView(line,new LinearLayout.LayoutParams(-1,dp(1)));
     }
     private void quickPhoto(){
