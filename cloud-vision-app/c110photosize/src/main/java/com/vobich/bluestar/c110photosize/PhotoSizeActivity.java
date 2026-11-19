@@ -32,7 +32,7 @@ public final class PhotoSizeActivity extends Activity {
     private TextView headline,details;
     private Future<?> runningJob;
     private volatile boolean visible,closed;
-    private boolean busy,commandsVerified;
+    private boolean busy,photoSupported,sizeSettingSupported;
     private int firstWidth=-1,firstHeight=-1;
     private boolean lastSetAcknowledged;
 
@@ -110,9 +110,9 @@ public final class PhotoSizeActivity extends Activity {
     private void update(){
         if(probeButton==null)return;
         probeButton.setEnabled(!busy);
-        referenceButton.setEnabled(!busy&&commandsVerified);
-        set2kButton.setEnabled(!busy&&commandsVerified);
-        verifyButton.setEnabled(!busy&&commandsVerified);
+        referenceButton.setEnabled(!busy&&photoSupported);
+        set2kButton.setEnabled(!busy&&sizeSettingSupported);
+        verifyButton.setEnabled(!busy&&photoSupported);
         copyButton.setEnabled(true);
     }
     private void runProbe(){
@@ -120,8 +120,9 @@ public final class PhotoSizeActivity extends Activity {
             C110NativePhotoCamera.ProbeResult result=camera.probe(this);
             main.post(()->{
                 if(!visible||closed)return;
-                commandsVerified=result.c110&&result.cmd1001&&result.cmd1002;
-                headline.setText(commandsVerified?
+                photoSupported=result.c110&&result.cmd1001;
+                sizeSettingSupported=photoSupported&&result.cmd1002;
+                headline.setText(sizeSettingSupported?
                     "标准 C110 连接正常；已声明照片尺寸 1002":
                     "未确认原厂照片尺寸1002，禁止设置");
                 record("3012 标准C110="+result.c110+
@@ -136,7 +137,7 @@ public final class PhotoSizeActivity extends Activity {
         });
     }
     private void confirmSizeSetting(){
-        if(busy||!commandsVerified)return;
+        if(busy||!sizeSettingSupported)return;
         new AlertDialog.Builder(this)
             .setTitle("确认改变 C110 内存卡拍照尺寸？")
             .setMessage("这是原厂 C110 配置表中的 3M / 2560×1440 候选：1002/par=5。\n\n"+
@@ -164,7 +165,7 @@ public final class PhotoSizeActivity extends Activity {
         });
     }
     private void runOnePhoto(boolean reference){
-        if(!commandsVerified)return;
+        if(!photoSupported)return;
         run(reference?"基线JPEG拍照":"设置后JPEG尺寸验证",()->{
             C110NativePhotoCamera.PhotoResult shot=camera.takeOneOriginal(this);
             main.post(()->{
