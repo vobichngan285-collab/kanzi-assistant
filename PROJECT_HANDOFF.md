@@ -1,3 +1,19 @@
+# 2026-11-19｜重要型号纠正：实体为 SJCAM C110+，专用原生照片写入尺寸实验 v0.2.0 已发布
+
+- **用户明确纠正并提供商品页面**：商品详情显示`SJCAM C110+`（2024-04），用户亲自确认其购买实体**是C110+，不是C110标准版**。此前把相机称为标准C110是错误；今后任何相机型号、照片分辨率映射、权限白名单、删除指令等均按C110+重新对照。既有实测的WiFi视频预览/1001单次高清JPEG/9011静音/9038灯控仍是真机事实，不能因为改了型号称呼就把成功说成未解决；但需检查代码中错误的`C110_PRO`拒绝分支，尤其之前v0.1.21-safe单张删除实验证据只按标准C110门控，**在C110+复核前不要实机试删**。
+- **最关键修正**：前一独立照片尺寸包v0.1.0按**标准C110**`assets/cparams/675-C110$1.0.x.json`误用`1002/par=5`作为2K候选。用户**不要继续运行旧v0.1.0的③设置2K**。已直接重新打开用户原始SJCAM Zone 6.7.3.16 APK `bdcc3db17ea0e26aecaf22bc01fe99be.apk`，逐份解析以下四份**真正C110+**配置：
+  - `assets/cparams/580-C110+$1.0.7.json`
+  - `assets/cparams/580-C110+$1.0.8.json`
+  - `assets/cparams/580-C110+$1.1.2.json`
+  - `assets/cparams/580-C110+_AIC$1.1.8 AIC.json`
+  - 四份的`International[0].section_array[10].row_array[0]` `cmd=1002`选项**完全相同**：index 0:20M 5888×3312；1:16M 5376×3024；2:14M 5008×2816；3:12M 4640×2608；4:10M 4320×2432；5:8M 3840×2160；6:5M 3200×1808；**7:3M 2560×1440（目标2K）**；8:2M 1920×1088（近1080p）。标准版par5实际上可能对应C110+的8M，不可使用。过去用户完整JPEG实测5888×3312，正与C110+原厂20M档相符。但把列表索引按`par`发送仍需**真机尺寸读回验证**，不能仅凭原厂表宣布成功。
+- **专用最小实验**：从原独立尺寸试验分支`exp/c110-native-photo-size-lab-20261119` HEAD `75997527c90266fc8e39714e80b1ff1b56254633` 派生新的独立`exp/c110plus-native-photo-size-lab-20261119`，HEAD `a50009467aee0d4cb00012efd553afc5accb7a70`；更改仅该分支`c110photosize`实验module、独立CI与核查文档。独立包`com.vobich.bluestar.c110plusphotosize`、`0.2.0-c110plus-photo-size-lab`，正式RC25、v0.1.20 OEM连接、v0.1.21-safe、其他原版均未覆盖，原GitHub仓库不变。
+- **防止误操作**：本实验针对C110+的`3012`返回可能用`C110`简写或`C110_PRO`别名，先要求C110家族且3002确认支持1001/1002；然后用户按②完成一次独立1001快门、读取SD新增**真实完整JPEG**；只有新照片实际`5888×3312`、匹配C110+原厂20M配置时，UI及后端的③设置才解锁；再经用户确认**只发送一次**`/?custom=1&cmd=1002&par=7`，消耗一次授权、不重试，随后④重新一次1001快门，从新SD原始JPEG读出是否`2560×1440`及大小耗时。不读图裁切或重采样、不上传云端、不删除或格式化内存卡、不改灯光、没有视频/全屏等功能。相机照片尺寸设置可能持久保存，实验不能安全自动恢复；结束用原厂App按需恢复20M。Android手机需先手动连C110+ Wi-Fi。
+- **验证**：新CI [Actions run 44512880029](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44512880029) **completed/success**，Java图片完整性测试、确保par=7且代码**绝不包含错误par=5**、20M基线一票否决、只有人工确认、Gradle完整APK、仅必要权限、APK完整性、发布结果已核实。Release https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110plus-native-photo-size-lab-20261119-v020 ；真实APK直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110plus-native-photo-size-lab-20261119-v020/BlueStar_C110Plus_NativePhotoSize_Lab_0.2.0.apk （26,162字节，SHA256 `61fac116bfdb58db916a9946fff409376c81bab9a82df0bd2f0f07aeb3ac583b`）。分支说明 `cloud-vision-app/docs/C110_NATIVE_PHOTO_SIZE_LAB_20261119.md`。
+- **下一步**：用户使用**v0.2.0 C110+专用包**①只读检查→②新SD JPEG（若不是20M则程序不允许③，发诊断）→③阅读警告后手动确认一次par7→④新JPEG真实像素核验→复制日志回传。**CI成功≠固件真的拍出了2K**，真机未验证。全屏/旋转仍按用户要求暂缓。
+
+---
+
 # 2026-11-19｜C110 原生照片写入尺寸独立实验 v0.1.0（已成功构建/发布，待真机）
 
 - **明确需求**：用户这轮只验证“相机本身把内存卡新照片写成2K/更低分辨率”，暂缓全屏/旋转，不修改之前v0.1.21-safe及原项目。
