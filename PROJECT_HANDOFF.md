@@ -1,3 +1,16 @@
+# 2026-11-19｜C110 原生照片写入尺寸独立实验 v0.1.0（已成功构建/发布，待真机）
+
+- **明确需求**：用户这轮只验证“相机本身把内存卡新照片写成2K/更低分辨率”，暂缓全屏/旋转，不修改之前v0.1.21-safe及原项目。
+- **原始可靠依据**：再次实际打开用户上传的`bdcc3db17ea0e26aecaf22bc01fe99be.apk`（SJCAM Zone 6.7.3.16），直接读取`assets/cparams/675-C110$1.0.1.json`、`675-C110$1.0.4.json`、`675-C110$1.0.7.json`；其标准版C110 `model=0/model_type=2` “Photo Size” 通过`cmd=1002`设置，索引0=15M 5200×2928、1=12M、2=10M、3=8M、4=5M、**5=3M 2560×1440(2K候选)**、6=1M 1440×816；并且再次解码`classes5.dex` `LYCamera.setting` code_off 0x18d2fc/0x18d24c 实际调用`Command.setCmd`、`setPar`、`getRequestUrl`、OkHttp。`getSettingDefaultValue`的只读查询cmd3014 code_off 0x18c3f4 不应直接当作可靠当前照片尺寸。原用户相机已拍出5888×3312，与上列最高15M不一致，因此**必须实机验证参数映射，不能臆断1002/par5一定得2K**。
+- **仓库隔离**：原仓`vobichngan285-collab/kanzi-assistant`，沿用main交接纪律；从v0.1.21-safe实验分支`exp/c110-preview150-deleteprobe-20261119` HEAD `664da2f89f068bd767b875ba39954eb5d22a33d6` 派生独立`exp/c110-native-photo-size-lab-20261119`，最终HEAD `75997527c90266fc8e39714e80b1ff1b56254633`。只新增`cloud-vision-app/c110photosize/`新Android module、`settings.gradle`的`include ':c110photosize'`、独立测试/工作流/协议审计文档。正式app、v0.1.20/0.1.21、mini/latency原播放器及历史构建代码未修改覆盖。包名`com.vobich.bluestar.c110photosize`，版本`0.1.0-c110-photo-native-size-lab`；**没有全屏/旋转**。
+- **最小真机交互**：需事先在Android**手动连接C110 Wi-Fi**；①只读3012确认**标准C110**（拒绝C110+/PRO）、3002确认1001/1002指令并只读3014设置回执（不导出相机敏感信息）；②以已有真机验证过的 3001/par0 → DCIM前后目录比较 → 单次1001快门 → 下载仅新增一张完整JPEG的流程，BitmapFactory只读取**真实SD原图像素宽高/文件字节/耗时**；③**仅用户再次确认**，且固件确实在3002声明1002时，才允许发送**一次**`/?custom=1&cmd=1002&par=5`（原厂3M/2K候选）；④再真实拍一张，直接比较新SD JPG是否为2560×1440。HTTP200/Status0**不等于成功写出2K**。原JPEG只在内存短暂存在，不保存手机、无云端/模型/音频/RTSP、不压缩、不删除SD、不自动重复快门与设置。日志仅数值和阶段可复制。
+- **重要真实副作用**：更改照片档位可能被相机**持久保存**；因无法可靠从当前固件读出可回滚的原`par`，实验程序明确**不尝试猜测原档并自动恢复**。用户测试后可去原厂SJCAM Zone把图片尺寸恢复。只要未点③确认，程序绝不发1002写命令；②与④会真实各拍一张并写入SD卡。第一次只读若1002不在固件命令列表，③禁用；仍可用②拍摄原图做基线。
+- **已验证CI**：独立`C110 Native SD JPEG Photo Size Experiment 0.1.0` [Actions Run 44511099567](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44511099567)，**completed/success**；纯Java Jpeg/DCIM路径测试、原厂1002/par5白名单、1001只发送一次、安全禁止删除/其它设置/互联网云请求、Android Gradle完整arm64-debug编译、APK包身份/权限/ZIP/SHA、Artifact、GitHub预发布成功。**CI并不等于C110真实支持2K，尚未真机验收**。
+- **最终APK直链**：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-native-photo-size-lab-20261119-v010/BlueStar_C110_NativePhotoSize_Lab_0.1.0.apk ，25,922字节，SHA256 `170080fd47fea9c305b5a2838bf371e8e5e9c30227457a0a2e913431dd1357a1`；Release https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-native-photo-size-lab-20261119-v010 。源分析/实验安全准则`cloud-vision-app/docs/C110_NATIVE_PHOTO_SIZE_LAB_20261119.md`。
+- **下一步**：用户装独立APK，系统手动连C110热点，按①②③④四步（③需清楚理解持久更改），复制日志回传。重点比较基线5888×3312与新SD JPEG宽高；如返回未声明1002/Status失败，不绕过。真机验证原生2K成功后，再考虑原生1080或720档映射；目前**未证明标准照片尺寸有720p选项**。全屏/旋转严格后置。
+
+---
+
 # 2026-11-19｜C110默认缓存150ms＋原厂4003单文件删除安全实验 v0.1.21-safe（已CI/Release，待真机）
 
 - **用户授权**：根据已实测缓存A/B（150ms约106.7秒、0丢帧、稳定约30FPS），下一轮默认C110预览为150ms；再针对C110拍照满SD卡的问题，先从原厂SJCAM Zone APK核对单文件删除指令，严格单张验证，确认安全后才加自动后台删除。未经真机确认绝不自动清理。
