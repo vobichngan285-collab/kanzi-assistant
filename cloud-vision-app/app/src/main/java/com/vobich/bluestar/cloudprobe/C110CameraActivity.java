@@ -381,7 +381,7 @@ public final class C110CameraActivity extends Activity {
     private void requestC110Network(boolean explicitRetry){
         // Keep the MainActivity WifiNetworkSpecifier lease alive while this
         // independent VLC Activity is on top. Never create competing requests.
-        if(C110WifiBootstrap.requestFromCameraPage(explicitRetry))return;
+        if(C110WifiBootstrap.requestFromCameraPage(this,explicitRetry))return;
         if(isolatedWifiBootstrap==null)
             isolatedWifiBootstrap=new C110WifiBootstrap(this,this::say);
         if(explicitRetry)isolatedWifiBootstrap.requestForCameraMode();
@@ -400,11 +400,17 @@ public final class C110CameraActivity extends Activity {
     @Override public void onRequestPermissionsResult(int requestCode,
         String[] permissions,int[] grantResults){
         super.onRequestPermissionsResult(requestCode,permissions,grantResults);
-        if(requestCode!=C110WifiBootstrap.PERMISSION_REQUEST||
-           isolatedWifiBootstrap==null)return;
         boolean granted=grantResults.length>0&&
             grantResults[0]==android.content.pm.PackageManager.PERMISSION_GRANTED;
-        isolatedWifiBootstrap.onPermissionResult(granted);
+        if(requestCode==C110WifiBootstrap.SCAN_PERMISSION_REQUEST){
+            if(isolatedWifiBootstrap!=null)
+                isolatedWifiBootstrap.onScanPermissionResult(this,granted);
+            else C110WifiBootstrap.onScanPermissionFromCameraPage(this,granted);
+        }else if(requestCode==C110WifiBootstrap.PERMISSION_REQUEST){
+            if(isolatedWifiBootstrap!=null)
+                isolatedWifiBootstrap.onPermissionResult(granted);
+            else C110WifiBootstrap.onWifiPermissionFromCameraPage(this,granted);
+        }
     }
 
     private void begin(){
