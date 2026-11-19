@@ -3,6 +3,9 @@ package com.vobich.bluestar.cloudprobe;
 import android.app.Activity;
 import android.os.Bundle;
 import android.content.Intent;
+import android.view.View;
+import android.widget.ImageView;
+import android.util.TypedValue;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Handler;
 import android.os.Looper;
@@ -60,11 +63,14 @@ public final class C110CameraActivity extends Activity {
     private volatile int generation;
     private Runnable delayedPlay;
     private C110DeviceControls deviceControls;
+    private C110FrameReader frameReader;
+    private TextView taskChip;
 
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
         cm=(ConnectivityManager)getSystemService(Context.CONNECTIVITY_SERVICE);
         deviceControls=new C110DeviceControls(this,this::say);
+        frameReader=new C110FrameReader(this,this::say);
         FrameLayout root=new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
         root.setOnApplyWindowInsetsListener((view,insets)->{
@@ -75,93 +81,120 @@ public final class C110CameraActivity extends Activity {
             return insets;
         });
         root.requestApplyInsets();
+
+        // Proven OEM player: the exact visible VLCVideoLayout stays attached from creation.
         video=new VLCVideoLayout(this);
-        // Always visible from Activity creation: allow LibVLC VideoHelper to
-        // manage its own Surface, exactly as the OEM player does.
         root.addView(video,new FrameLayout.LayoutParams(-1,-1));
 
-        LinearLayout header=new LinearLayout(this);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(dp(10),0,dp(10),0);
-        header.setBackgroundColor(0xE6091D36);
+        // Match the normal Blue Star screen: one tap anywhere in the live view
+        // copies ONE fresh VLC Surface frame; no native shutter or page jump.
+        View tapSurface=new View(this);
+        tapSurface.setFocusable(true);
+        tapSurface.setContentDescription("C110实时预览画面，点击立即截取当前帧并识别朗读");
+        tapSurface.setOnClickListener(v->frameReader.tap(video));
+        root.addView(tapSurface,new FrameLayout.LayoutParams(-1,-1));
+
+        LinearLayout titleRow=new LinearLayout(this);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
+        titleRow.setPadding(dp(12),dp(5),dp(12),dp(5));
+        titleRow.setBackgroundColor(0xE5091D36);
+        ImageView brand=new ImageView(this);
+        brand.setImageResource(R.drawable.bluestar_globe);
+        titleRow.addView(brand,new LinearLayout.LayoutParams(dp(40),dp(40)));
         TextView title=new TextView(this);
-        title.setText("蓝星向导 · C110");
+        title.setText("蓝星向导");
         title.setTextColor(Color.WHITE);
-        title.setTextSize(19);
-        header.addView(title,new LinearLayout.LayoutParams(0,dp(54),1f));
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP,19);
+        title.setTypeface(null,android.graphics.Typeface.BOLD);
+        title.setPadding(dp(6),0,0,0);
+        titleRow.addView(title,new LinearLayout.LayoutParams(0,dp(50),1f));
+        beginButton=new Button(this);
+        beginButton.setText("↻");
+        beginButton.setTextSize(24);
+        beginButton.setContentDescription("重新连接C110实时预览");
+        beginButton.setOnClickListener(v->{stop(true);begin();});
+        titleRow.addView(beginButton,new LinearLayout.LayoutParams(dp(45),dp(45)));
         Button cameraSettings=new Button(this);
-        cameraSettings.setText("相机设置");
+        cameraSettings.setText("相机");
         cameraSettings.setAllCaps(false);
         cameraSettings.setContentDescription("C110机身设置：提示音和指示灯");
         cameraSettings.setOnClickListener(v->deviceControls.showSettings());
-        header.addView(cameraSettings,new LinearLayout.LayoutParams(dp(108),dp(48)));
-        Button menu=new Button(this);
-        menu.setText("☰");
-        menu.setTextSize(24);
-        menu.setContentDescription("打开三横杠全局设置菜单");
-        menu.setOnClickListener(v->returnToMain("settings"));
-        header.addView(menu,new LinearLayout.LayoutParams(dp(50),dp(48)));
-        root.addView(header,new FrameLayout.LayoutParams(-1,dp(56),Gravity.TOP));
+        titleRow.addView(cameraSettings,new LinearLayout.LayoutParams(dp(70),dp(45)));
+        Button globalSettings=new Button(this);
+        globalSettings.setText("☰");
+        globalSettings.setTextSize(24);
+        globalSettings.setContentDescription("打开三横杠全局设置");
+        globalSettings.setOnClickListener(v->returnToMain("settings"));
+        titleRow.addView(globalSettings,new LinearLayout.LayoutParams(dp(47),dp(45)));
+        root.addView(titleRow,new FrameLayout.LayoutParams(-1,dp(58),Gravity.TOP));
 
-        LinearLayout dock=new LinearLayout(this);
-        dock.setOrientation(LinearLayout.VERTICAL);
-        dock.setPadding(10,8,10,8);
-        dock.setBackgroundColor(0xD511202B);
-        LinearLayout buttons=new LinearLayout(this);
-        beginButton=new Button(this);
-        beginButton.setAllCaps(false);
-        beginButton.setText("重新连接预览");
-        beginButton.setOnClickListener(v->begin());
-        buttons.addView(beginButton,new LinearLayout.LayoutParams(0,-2,2));
-        Button stop=new Button(this);
-        stop.setText("返回蓝星");
-        stop.setContentDescription("返回蓝星向导主界面");
-        stop.setOnClickListener(v->finish());
-        buttons.addView(stop,new LinearLayout.LayoutParams(0,-2,1));
-        Button copy=new Button(this);
-        copy.setText("复制诊断");
-        copy.setOnClickListener(v->{
-            ClipboardManager c=(ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
-            if(c!=null)c.setPrimaryClip(ClipData.newPlainText("C110 OEM minimal",log.toString()));
-            say("诊断已复制");
-        });
-        buttons.addView(copy,new LinearLayout.LayoutParams(0,-2,1));
-        dock.addView(buttons);
-        ScrollView scroll=new ScrollView(this);
+        taskChip=new TextView(this);
+        taskChip.setTextColor(0xFFECF6FF);
+        taskChip.setTextSize(15);
+        taskChip.setPadding(dp(14),dp(7),dp(14),dp(7));
+        taskChip.setBackground(roundRect(0xD9153359,14));
+        taskChip.setText("任务："+selectedTaskName());
+        FrameLayout.LayoutParams chip=new FrameLayout.LayoutParams(-2,dp(37),
+            Gravity.TOP|Gravity.LEFT);
+        chip.leftMargin=dp(12);chip.topMargin=dp(64);
+        root.addView(taskChip,chip);
+
         output=new TextView(this);
+        output.setGravity(Gravity.CENTER);
         output.setTextColor(Color.WHITE);
         output.setTextSize(13);
-        output.setPadding(6,4,6,4);
-        scroll.addView(output);
-        dock.addView(scroll,new LinearLayout.LayoutParams(-1,96));
-        FrameLayout.LayoutParams infoPosition=new FrameLayout.LayoutParams(-1,-2,Gravity.TOP);
-        infoPosition.topMargin=dp(56);
-        root.addView(dock,infoPosition);
+        output.setMaxLines(2);
+        output.setPadding(dp(10),dp(6),dp(10),dp(6));
+        output.setBackground(roundRect(0xDB163758,13));
+        output.setText("连接C110后，点击画面快速取帧");
+        output.setContentDescription("C110预览状态；长按复制完整诊断");
+        output.setOnLongClickListener(v->{copyDiagnostic();return true;});
+        FrameLayout.LayoutParams status=new FrameLayout.LayoutParams(-1,-2,
+            Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);
+        status.leftMargin=dp(12);status.rightMargin=dp(12);status.bottomMargin=dp(99);
+        root.addView(output,status);
 
         LinearLayout footer=new LinearLayout(this);
         footer.setGravity(Gravity.CENTER);
         footer.setPadding(dp(7),dp(5),dp(7),dp(7));
-        footer.setBackgroundColor(0xED091D36);
-        Button taskButton=footerButton("▦\n任务",()->showCameraTasks());
-        Button aiButton=footerButton("🎙\nAI对话",()->returnToMain("ai"));
-        Button photoButton=footerButton("▤\n高清拍照",()->returnToMain("photo"));
-        Button modeButton=footerButton("◉\n模式",()->showCameraModes());
-        for(Button footerItem:new Button[]{taskButton,aiButton,photoButton,modeButton}){
+        footer.setBackground(roundRect(0xED091D36,20));
+        Button tasks=footerButton("▦\n任务",this::showCameraTasks);
+        Button talk=footerButton("🎙\nAI对话",()->returnToMain("ai"));
+        Button photo=footerButton("▤\n高清拍照",()->returnToMain("photo"));
+        Button modes=footerButton("◉\n模式",this::showCameraModes);
+        for(Button item:new Button[]{tasks,talk,photo,modes}){
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(75),1f);
             lp.setMargins(dp(3),0,dp(3),0);
-            footer.addView(footerItem,lp);
+            footer.addView(item,lp);
         }
         root.addView(footer,new FrameLayout.LayoutParams(-1,dp(89),Gravity.BOTTOM));
         setContentView(root);
-        say("C110独立实时预览：不拍照、不上传、不修改成功播放流程");
-        say("一次按钮：3012设备信息→3016模式查询→3001/1→2015/1→LibVLC");
-        // Stage1: dedicated portrait playback only, preserving OEM startup exactly.
-        // Auto-start from the proven dedicated video Activity.
+        say("C110正在初始化预览；点击画面取帧朗读，长按状态复制诊断");
+        // Proven OEM start sequence remains unchanged below.
         main.post(this::begin);
     }
 
 
     private int dp(int d){return Math.round(d*getResources().getDisplayMetrics().density);}
+
+    private android.graphics.drawable.GradientDrawable roundRect(int color,int radius){
+        android.graphics.drawable.GradientDrawable d=new android.graphics.drawable.GradientDrawable();
+        d.setColor(color);d.setCornerRadius(dp(radius));return d;
+    }
+
+    private String selectedTaskName(){
+        String id=TaskCatalog.selectedId(this);
+        for(TaskCatalog.Task t:TaskCatalog.all(this))
+            if(t.id.equals(id))return t.name;
+        return "朗读文字";
+    }
+
+    private void copyDiagnostic(){
+        ClipboardManager clipboard=(ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+        if(clipboard!=null)
+            clipboard.setPrimaryClip(ClipData.newPlainText("C110 Preview",log.toString()));
+        say("C110诊断已复制");
+    }
 
     private Button footerButton(String label,Runnable click){
         Button b=new Button(this);
@@ -198,6 +231,7 @@ public final class C110CameraActivity extends Activity {
             new TaskDesktopOverlay.Listener(){
                 @Override public void selected(TaskCatalog.Task task){
                     TaskCatalog.select(C110CameraActivity.this,task.id);
+                    if(taskChip!=null)taskChip.setText("任务："+task.name);
                     say("当前任务："+task.name);
                 }
                 @Override public void createTask(){returnToMain("tasks");}
@@ -329,7 +363,10 @@ public final class C110CameraActivity extends Activity {
                     case MediaPlayer.Event.Opening:say("VLC 258 Opening");break;
                     case MediaPlayer.Event.Playing:say("VLC 260 Playing");break;
                     case MediaPlayer.Event.Vout:
-                        if(event.getVoutCount()>0)say("VLC Vout="+event.getVoutCount()+"（请确认真实画面）");
+                        if(event.getVoutCount()>0){
+                            frameReader.setVideoOutputReady(true);
+                            say("C110实时画面已就绪，点击画面取帧识别");
+                        }
                         break;
                     case MediaPlayer.Event.EncounteredError:say("VLC原生 EncounteredError");break;
                     case MediaPlayer.Event.EndReached:say("VLC EndReached");break;
@@ -372,12 +409,13 @@ public final class C110CameraActivity extends Activity {
         }
         log.append(text).append('\n');
         if(log.length()>4500)log.delete(0,log.length()-3000);
-        if(output!=null)output.setText(log.toString());
+        if(output!=null)output.setText(text);
     }
     private void stop(boolean manual){
         generation++;
         busy=false;started=false;
         deviceControls.onDisconnected();
+        if(frameReader!=null)frameReader.stop();
         if(delayedPlay!=null){main.removeCallbacks(delayedPlay);delayedPlay=null;}
         MediaPlayer p=player;player=null;
         if(p!=null){
@@ -399,5 +437,5 @@ public final class C110CameraActivity extends Activity {
         if(manual)say("已停止并恢复此前网络");
     }
     @Override protected void onPause(){stop(false);super.onPause();}
-    @Override protected void onDestroy(){stop(false);deviceControls.shutdown();io.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy(){stop(false);frameReader.shutdown();deviceControls.shutdown();io.shutdownNow();super.onDestroy();}
 }
