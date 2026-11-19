@@ -13,7 +13,7 @@
     </queries>
     <application
         android:allowBackup="false"
-        android:label="蓝星向导 C110高清快门修复"
+        android:label="蓝星向导 C110自动连接实验"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/AppTheme"
