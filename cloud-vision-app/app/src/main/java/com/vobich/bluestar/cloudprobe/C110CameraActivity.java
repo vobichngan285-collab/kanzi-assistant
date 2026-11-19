@@ -41,6 +41,8 @@ import java.util.ArrayList;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import android.os.SystemClock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -65,6 +67,11 @@ public final class C110CameraActivity extends Activity {
     private C110DeviceControls deviceControls;
     private C110FrameReader frameReader;
     private TextView taskChip;
+    private final C110WifiCamera photoCamera=new C110WifiCamera();
+    private Button photoButton;
+    private Future<?> photoJob;
+    private boolean photoBusy,pageVisible=true;
+    private int photoGeneration;
 
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
@@ -112,7 +119,10 @@ public final class C110CameraActivity extends Activity {
         beginButton.setText("↻");
         beginButton.setTextSize(24);
         beginButton.setContentDescription("重新连接C110实时预览");
-        beginButton.setOnClickListener(v->{stop(true);begin();});
+        beginButton.setOnClickListener(v->{
+            if(photoBusy){say("高清拍照中，请勿切换视频模式");return;}
+            stop(true);begin();
+        });
         titleRow.addView(beginButton,new LinearLayout.LayoutParams(dp(45),dp(45)));
         Button cameraSettings=new Button(this);
         cameraSettings.setText("相机");
@@ -160,9 +170,10 @@ public final class C110CameraActivity extends Activity {
         footer.setBackground(roundRect(0xED091D36,20));
         Button tasks=footerButton("▦\n任务",this::showCameraTasks);
         Button talk=footerButton("🎙\nAI对话",()->returnToMain("ai"));
-        Button photo=footerButton("▤\n高清拍照",()->returnToMain("photo"));
+        photoButton=footerButton("▤\n高清拍照",this::captureOriginalPhoto);
+        photoButton.setContentDescription("C110真实高清快门，留在相机页面拍照并识别朗读");
         Button modes=footerButton("◉\n模式",this::showCameraModes);
-        for(Button item:new Button[]{tasks,talk,photo,modes}){
+        for(Button item:new Button[]{tasks,talk,photoButton,modes}){
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(75),1f);
             lp.setMargins(dp(3),0,dp(3),0);
             footer.addView(item,lp);
@@ -242,8 +253,70 @@ public final class C110CameraActivity extends Activity {
             });
     }
 
+    /**
+     * C110 high resolution capture stays in this page.
+     * Close RTSP before entering photo mode; issue exactly one 1001 shutter;
+     * only return to RTSP after a complete fresh JPEG or reported failure.
+     */
+    private void captureOriginalPhoto(){
+        if(photoBusy){
+            say("上一张高清照片仍在获取，请勿重复触发");return;
+        }
+        if(busy||!started){
+            say("C110预览尚未连接，请确认画面后再拍高清照片");return;
+        }
+        if(frameReader.isBusy()){
+            say("上一项AI识别尚未结束，请稍后拍照");return;
+        }
+        photoBusy=true;
+        final int ticket=++photoGeneration;
+        final long at=SystemClock.elapsedRealtime();
+        // Stop and release the SAME proven video player before 3001/par=0.
+        // No Activity finish, no MainActivity re-entry, no delayed callback race.
+        stop(false);
+        beginButton.setEnabled(false);
+        photoButton.setEnabled(false);
+        say("C110高清拍照：切换照片模式，执行一次真实快门…");
+        photoJob=io.submit(()->{
+            try{
+                C110WifiCamera.Photo photo=photoCamera.shootAfterLivePreview(this);
+                main.post(()->{
+                    if(ticket!=photoGeneration||!pageVisible||isFinishing())return;
+                    say("高清原图 "+photo.width+"×"+photo.height+
+                        " 已下载，拍摄取图 "+photo.totalMs+"ms，快门命令 "+
+                        photo.shutterMs+"ms");
+                    finishPhotoFlow(ticket,photo);
+                });
+            }catch(Exception ex){
+                final String detail=ex.getMessage()==null?
+                    ex.getClass().getSimpleName():ex.getMessage();
+                photoCamera.resetPhotoMode();
+                main.post(()->{
+                    if(ticket!=photoGeneration||!pageVisible||isFinishing())return;
+                    say("高清拍照未完成："+detail+"。不会自动重拍");
+                    finishPhotoFlow(ticket,null);
+                });
+            }
+        });
+    }
+
+    private void finishPhotoFlow(int ticket,C110WifiCamera.Photo photo){
+        if(ticket!=photoGeneration||!pageVisible)return;
+        photoBusy=false;
+        photoJob=null;
+        photoButton.setEnabled(true);
+        beginButton.setEnabled(true);
+        // One original JPEG, one recognition; no PixelCopy or recompression.
+        if(photo!=null&&!frameReader.recognizeOriginalJpeg(
+            photo.jpeg,photo.width,photo.height))
+            say("已拍得高清照片，但识别流程未开始");
+        // User remains on C110 camera page. Resume OEM playback once only.
+        say("正在恢复C110实时预览…");
+        begin();
+    }
+
     private void begin(){
-        if(busy||started)return;
+        if(photoBusy||busy||started||!pageVisible)return;
         final int id=++generation;
         busy=true;
         beginButton.setEnabled(false);
@@ -436,6 +509,14 @@ public final class C110CameraActivity extends Activity {
         if(beginButton!=null)beginButton.setEnabled(true);
         if(manual)say("已停止并恢复此前网络");
     }
-    @Override protected void onPause(){stop(false);super.onPause();}
+    @Override protected void onResume(){super.onResume();pageVisible=true;}
+    @Override protected void onPause(){
+        pageVisible=false;
+        photoGeneration++;
+        photoBusy=false;
+        if(photoJob!=null){photoJob.cancel(true);photoJob=null;}
+        stop(false);
+        super.onPause();
+    }
     @Override protected void onDestroy(){stop(false);frameReader.shutdown();deviceControls.shutdown();io.shutdownNow();super.onDestroy();}
 }
