@@ -6,12 +6,12 @@ android {
         applicationId 'com.vobich.bluestar'
         minSdk 26
         targetSdk 35
-        versionCode 52
-        versionName '1.0.43-c110-main-hq-button-lab'
+        versionCode 53
+        versionName '1.0.44-c110-homewifi-bootstrap-lab'
         ndk { abiFilters 'arm64-v8a' }
     }
     buildTypes {
-        debug { minifyEnabled false; applicationIdSuffix '.c110mainhq' }
+        debug { minifyEnabled false; applicationIdSuffix '.c110homewifi' }
         release { minifyEnabled false }
     }
     compileOptions {
