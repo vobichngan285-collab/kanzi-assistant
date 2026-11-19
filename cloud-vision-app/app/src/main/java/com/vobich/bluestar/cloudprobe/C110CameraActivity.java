@@ -456,7 +456,9 @@ public final class C110CameraActivity extends Activity {
             .setItems(new String[]{
                 "照片尺寸·取图·上传·OCR准确率综合实验",
                 "机身设置：声音和指示灯",
-                "安全提示：单张删图暂不开放（需复核C110+）"
+                "安全提示：单张删图暂不开放（需复核C110+）",
+                "切换文字朗读OCR模型（与主页同步）",
+                "切换视觉任务模型（与主页同步）"
             },(dialog,which)->{
                 if(which==0){
                     if(photoBusy||frameReader.isBusy()){
@@ -466,11 +468,36 @@ public final class C110CameraActivity extends Activity {
                     // No new C110 shutter, parameter change or Wi-Fi logic here.
                     startActivity(new Intent(this,C110ResolutionLabActivity.class));
                 }else if(which==1)deviceControls.showSettings();
+                else if(which==3)showC110ModelSelector(true);
+                else if(which==4)showC110ModelSelector(false);
                 else new android.app.AlertDialog.Builder(this)
                     .setTitle("C110+原图安全")
                     .setMessage("原厂4003单文件删除尚未在你的C110+型号上真机复核。本实验包不开放删除，内存卡照片请在原厂App中自行管理。")
                     .setPositiveButton("知道了",null).show();
             }).setNegativeButton("关闭",null).show();
+    }
+
+    private void showC110ModelSelector(boolean readingOcr){
+        if(photoBusy||frameReader.isBusy()){
+            say("正在拍照或识别，请完成本次任务后切换模型");
+            return;
+        }
+        final String key=readingOcr?"cloud_ocr_model_v1":"cloud_vision_model";
+        final String[] ids=readingOcr?OcrModelCatalog.IDS:VisionModelCatalog.IDS;
+        final String[] labels=readingOcr?OcrModelCatalog.LABELS:VisionModelCatalog.LABELS;
+        android.content.SharedPreferences p=getSharedPreferences("kanzi_settings",MODE_PRIVATE);
+        final String current=readingOcr?
+            OcrModelCatalog.normalize(p.getString(key,OcrModelCatalog.DEFAULT)):
+            VisionModelCatalog.normalize(p.getString(key,VisionModelCatalog.DEFAULT));
+        int checked=0;
+        for(int i=0;i<ids.length;i++)if(ids[i].equals(current)){checked=i;break;}
+        new android.app.AlertDialog.Builder(this)
+            .setTitle(readingOcr?"文字朗读OCR模型（与主页共用）":"视觉任务模型（与主页共用）")
+            .setSingleChoiceItems(labels,checked,(dialog,which)->{
+                p.edit().putString(key,ids[which]).apply();
+                say("已选云端模型："+labels[which]+"，下次取帧或拍照生效");
+                dialog.dismiss();
+            }).setNegativeButton("取消",null).show();
     }
 
     private void confirmSingleFileDelete(){
