@@ -117,6 +117,7 @@ public final class MainActivity extends CameraActivity {
     private TextView currentTaskChip,zoomChip,resultChip;
     private Button c110Button,c110PreviewButton;
     private C110LivePreview c110Preview;
+    private C110WifiBootstrap c110WifiBootstrap;
     private boolean c110PreviewWanted,c110PreviewPlaying;
     private final ExecutorService c110PreviewExecutor=Executors.newSingleThreadExecutor();
     private final AtomicInteger c110PreviewSeq=new AtomicInteger();
@@ -1333,6 +1334,7 @@ public final class MainActivity extends CameraActivity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         diagnostics=new RuntimeDiagnostics(this);
+        c110WifiBootstrap=new C110WifiBootstrap(this,this::setResultStatus);
         modelUsage=new ModelUsageLedger(this);
         SharedPreferences prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
         updateUsbAttachAlias(prefs.getBoolean(PREF_USB_AUTO_LAUNCH,true));
@@ -3341,9 +3343,20 @@ public final class MainActivity extends CameraActivity {
         });
     }
 
+    @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,
+                                                       int[] grantResults){
+        super.onRequestPermissionsResult(requestCode,permissions,grantResults);
+        if(requestCode==C110WifiBootstrap.PERMISSION_REQUEST&&c110WifiBootstrap!=null){
+            boolean granted=grantResults.length>0&&
+                grantResults[0]==PackageManager.PERMISSION_GRANTED;
+            c110WifiBootstrap.onPermissionResult(granted);
+        }
+    }
+
     @Override protected void onResume(){
         super.onResume();
         uiActive=true;usbForeground=true;
+        if(c110WifiBootstrap!=null)c110WifiBootstrap.startAtLaunch();
         if(readingScreen!=null){
             readingAwaitingFrame.set(false);
             suspendReadingCamera();
@@ -3411,6 +3424,7 @@ public final class MainActivity extends CameraActivity {
         super.onPause();
     }
     @Override protected void onDestroy(){
+        if(c110WifiBootstrap!=null){c110WifiBootstrap.shutdown();c110WifiBootstrap=null;}
         stopC110LivePreview(true);
         c110PreviewExecutor.shutdownNow();
         invalidate();
