@@ -7,3 +7,6 @@ project(':libnative').projectDir = file('third_party/AndroidUSBCamera/libnative'
 
 // One-purpose OEM C110 video module; current :app is unchanged.
 include ':c110mini'
+
+// User-controlled C110 original SD-card JPEG resolution investigation only.
+include ':c110photosize'
