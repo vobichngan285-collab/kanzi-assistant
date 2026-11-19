@@ -1,0 +1,98 @@
+name: C110 9011 Tone + 9038 Indicator + 9036 Strobe Standalone Lab
+on:
+  push:
+    branches: [ 'exp/c110-light-controls-20261119' ]
+    paths:
+      - 'cloud-vision-app/c110tone/**'
+      - 'cloud-vision-app/settings.gradle'
+      - '.github/workflows/c110-light-controls-20261119.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  c110-tone-photo:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout original pinned UVC modules for settings.gradle
+        uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify photo core unchanged and strict manual 9011/9038/9036 controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          original=Path('cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe')
+          copied=Path('cloud-vision-app/c110tone/src/main/java/com/vobich/bluestar/c110tone')
+          for name in ['C110WifiCamera.java','C110PhotoPolicy.java']:
+              assert (original/name).read_text().splitlines(keepends=True)[1:]==(copied/name).read_text().splitlines(keepends=True)[1:], name+' changed'
+          src=(copied/'ToneProbeActivity.java').read_text()
+          assert 'C110WifiCamera.Photo image=camera.shoot(this);' in src
+          assert src.count('camera.shoot(this)')==1
+          assert 'call(wifi,9011,setting)' in src
+          assert 'cmd==9011||cmd==9038||cmd==9036' in src
+          assert src.count('call(wifi,cmd,setting)')==1
+          assert 'ledOff.setOnClickListener(v->askLight(9038,0));' in src
+          assert 'ledOn.setOnClickListener(v->askLight(9038,1));' in src
+          assert 'strobeOff.setOnClickListener(v->askLight(9036,0));' in src
+          assert 'strobeOn.setOnClickListener(v->askLight(9036,1));' in src
+          assert 'call(wifi,9011,setting)' in src
+          assert src.count('probe(); // Startup only reads 3012.')==1
+          assert 'probe(); // Startup only reads 3012.' in src
+          assert 'new AlertDialog.Builder(this)' in src
+          assert "applicationId 'com.vobich.bluestar.c110lights'" in Path('cloud-vision-app/c110tone/build.gradle').read_text()
+          print('PASS: camera photo core exact; 9011 + manual 9038/9036 strict allowlist')
+          PY
+          mkdir -p /tmp/tone-policy-test
+          javac -d /tmp/tone-policy-test cloud-vision-app/c110tone/src/main/java/com/vobich/bluestar/c110tone/C110PhotoPolicy.java
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Build isolated sound/indicator/strobe test APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :c110tone:assembleDebug
+      - name: Validate application package, version, ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/c110tone/build/outputs/apk/debug/c110tone-debug.apk out/C110_Sound_Lights_Test_0.1.1.apk
+          unzip -tq out/C110_Sound_Lights_Test_0.1.1.apk >/dev/null
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging out/C110_Sound_Lights_Test_0.1.1.apk >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110lights'" out/badging.txt
+          grep -Fq "versionName='0.1.1-sound-lights'" out/badging.txt
+          (cd out && sha256sum C110_Sound_Lights_Test_0.1.1.apk >SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >>"$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: C110_Sound_Lights_Test_0.1.1
+          path: out/*
+          retention-days: 14
+      - name: Publish isolated immutable prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG=bluestar-c110-light-controls-20261119-v011
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refuse overwrite" >&2
+            exit 1
+          fi
+          gh release create "$TAG" out/C110_Sound_Lights_Test_0.1.1.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "C110 manual keypad tone + indicator/strobe lights + real photo v0.1.1" \
+            --notes "Isolated C110 experimental settings app. 9011 mute and real 1001 photo are field-proven. Original SJCAM Zone C110 675-C110 configs identify 9038 Indicator Lights and 9036 Strobe Light as Off(0)/On(1), but light effects are NOT field-proven. Manual confirmation and identity check before each single change. Existing C110WifiCamera.shoot and C110PhotoPolicy remain byte-for-byte identical apart from package declarations. No cloud upload, deletion, OTA, Wi-Fi disconnect, automatic setting changes or changes to working RTSP/LibVLC/Blue Star. Requires standard C110 Wi-Fi; SD card only for test photo."
