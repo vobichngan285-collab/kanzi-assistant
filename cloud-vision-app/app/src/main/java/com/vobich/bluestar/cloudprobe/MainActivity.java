@@ -945,7 +945,7 @@ public final class MainActivity extends CameraActivity {
     boolean isUsbAutoSwitch(){return getSharedPreferences(PREFS,MODE_PRIVATE)
         .getBoolean(PREF_USB_AUTO_SWITCH,true);}
     boolean isUsbAutoLaunch(){return getSharedPreferences(PREFS,MODE_PRIVATE)
-        .getBoolean(PREF_USB_AUTO_LAUNCH,true);}
+        .getBoolean(PREF_USB_AUTO_LAUNCH,false);}
     void setUsbAutoSwitch(boolean enable){
         getSharedPreferences(PREFS,MODE_PRIVATE).edit()
             .putBoolean(PREF_USB_AUTO_SWITCH,enable).apply();
@@ -1374,7 +1374,8 @@ public final class MainActivity extends CameraActivity {
         c110WifiBootstrap=new C110WifiBootstrap(this,this::setResultStatus);
         modelUsage=new ModelUsageLedger(this);
         SharedPreferences prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
-        updateUsbAttachAlias(prefs.getBoolean(PREF_USB_AUTO_LAUNCH,true));
+        // Home-first experiment: USB attachment must not launch preview unasked.
+        updateUsbAttachAlias(prefs.getBoolean(PREF_USB_AUTO_LAUNCH,false));
         usingPhoneCamera=(!settingsOnly&&launch!=null&&
             launch.getBooleanExtra("bluestar_launch_preview",false))?
             !hasConnectedUsbVideoDevice():prefs.getBoolean(PREF_PHONE_CAMERA,false);
@@ -1939,6 +1940,7 @@ public final class MainActivity extends CameraActivity {
     }
 
     @Override protected void onUsbDeviceAttachedForApp(UsbDevice device){
+        if(settingsOnly)return;
         boolean video=isUsbVideoDevice(device);
         if(diagnostics!=null)diagnostics.event("usb","device_attached",
             video?1:0,"ok");
