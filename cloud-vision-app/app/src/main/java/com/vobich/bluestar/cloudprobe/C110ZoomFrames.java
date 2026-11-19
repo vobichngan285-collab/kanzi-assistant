@@ -21,10 +21,17 @@ final class C110ZoomFrames {
     }
 
     static Bitmap cropPreviewBitmap(Bitmap original,float zoom){
+        return cropPreviewBitmap(original,zoom,false,1f);
+    }
+
+    static Bitmap cropPreviewBitmap(Bitmap original,float zoom,
+                                    boolean portraitCover,float viewportAspect){
         if(original==null||original.isRecycled())
             throw new IllegalArgumentException("C110 live bitmap missing");
-        C110ZoomGeometry.Region region=C110ZoomGeometry.centered(
-            original.getWidth(),original.getHeight(),zoom);
+        C110ZoomGeometry.Region region=portraitCover?
+            C110ZoomGeometry.centeredCover(original.getWidth(),original.getHeight(),
+                                            zoom,viewportAspect):
+            C110ZoomGeometry.centered(original.getWidth(),original.getHeight(),zoom);
         if(region.full(original.getWidth(),original.getHeight()))return original;
         return Bitmap.createBitmap(original,
             region.left,region.top,region.width,region.height);
@@ -32,10 +39,17 @@ final class C110ZoomFrames {
 
     static JpegResult cropNativeJpeg(byte[] source,int sourceWidth,int sourceHeight,
                                      float zoom) throws IOException {
+        return cropNativeJpeg(source,sourceWidth,sourceHeight,zoom,false,1f);
+    }
+
+    static JpegResult cropNativeJpeg(byte[] source,int sourceWidth,int sourceHeight,
+                                     float zoom,boolean portraitCover,
+                                     float viewportAspect) throws IOException {
         if(source==null||source.length<256||sourceWidth<2||sourceHeight<2)
             throw new IOException("C110原图不完整，禁止提交OCR");
-        C110ZoomGeometry.Region region=C110ZoomGeometry.centered(
-            sourceWidth,sourceHeight,zoom);
+        C110ZoomGeometry.Region region=portraitCover?
+            C110ZoomGeometry.centeredCover(sourceWidth,sourceHeight,zoom,viewportAspect):
+            C110ZoomGeometry.centered(sourceWidth,sourceHeight,zoom);
         if(region.full(sourceWidth,sourceHeight))
             return new JpegResult(source,sourceWidth,sourceHeight);
         if(!C110ZoomGeometry.photoLooksLikeLandscapeVideo(sourceWidth,sourceHeight))
