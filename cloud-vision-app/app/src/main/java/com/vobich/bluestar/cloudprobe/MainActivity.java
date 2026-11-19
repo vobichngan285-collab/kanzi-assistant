@@ -464,6 +464,9 @@ public final class MainActivity extends CameraActivity {
         new AlertDialog.Builder(this).setTitle("选择模式")
             .setItems(modes,(dialog,which)->{
                 if(which==1){
+                    // Retry after a startup timeout; never launch the player
+                    // against home Wi-Fi as if a C110 network already existed.
+                    if(c110WifiBootstrap!=null)c110WifiBootstrap.requestForCameraMode();
                     startActivityForResult(new Intent(this,C110CameraActivity.class),
                         REQUEST_C110_PAGE);
                 }else if(which==0){
@@ -3069,6 +3072,15 @@ public final class MainActivity extends CameraActivity {
     private void captureC110OneShot(){
         if(!uiActive||readingScreen!=null){
             toastShort("请先退出阅读页面，再使用C110高清拍照");return;
+        }
+        // Home Wi-Fi can remain the internet default while C110 is requested
+        // as a secondary local-only Wi-Fi. Never issue 1001 before a camera
+        // Network has been discovered/verified.
+        if(C110WifiBootstrap.connected(this)==null){
+            if(c110WifiBootstrap!=null)c110WifiBootstrap.requestForCameraMode();
+            setResultStatus("正在申请连接C110。允许系统连接后再点高清拍照");
+            toastShort("请允许Android系统连接C110热点，然后再拍一张");
+            return;
         }
         if(voiceListening||voiceRecorder.isBusy()||cloudBusy){
             toastShort("上一项操作未结束，请稍后再拍照");return;
