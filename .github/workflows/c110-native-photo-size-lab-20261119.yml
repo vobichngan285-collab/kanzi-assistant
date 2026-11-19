@@ -1,0 +1,129 @@
+name: C110 Native SD JPEG Photo Size Experiment 0.1.0
+on:
+  push:
+    branches: [ 'exp/c110-native-photo-size-lab-20261119' ]
+    paths:
+      - 'cloud-vision-app/c110photosize/**'
+      - 'cloud-vision-app/settings.gradle'
+      - 'cloud-vision-app/tests/C110PhotoSizePolicyTest.java'
+      - 'cloud-vision-app/docs/C110_NATIVE_PHOTO_SIZE_LAB_20261119.md'
+      - '.github/workflows/c110-native-photo-size-lab-20261119.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  original-jpeg-size:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned USB modules only for shared Gradle settings
+        uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Photo safety regression and original OEM 1002 contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/c110-jpeg-policy
+          javac -d /tmp/c110-jpeg-policy \
+            cloud-vision-app/c110photosize/src/main/java/com/vobich/bluestar/c110photosize/PhotoSizePolicy.java \
+            cloud-vision-app/tests/C110PhotoSizePolicyTest.java
+          java -cp /tmp/c110-jpeg-policy com.vobich.bluestar.c110photosize.C110PhotoSizePolicyTest
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path('cloud-vision-app/c110photosize')
+          java=root/'src/main/java/com/vobich/bluestar/c110photosize'
+          protocol=(java/'C110NativePhotoCamera.java').read_text()
+          page=(java/'PhotoSizeActivity.java').read_text()
+          manifest=(root/'src/main/AndroidManifest.xml').read_text()
+          settings=Path('cloud-vision-app/settings.gradle').read_text()
+          gradle=(root/'build.gradle').read_text()
+          doc=Path('cloud-vision-app/docs/C110_NATIVE_PHOTO_SIZE_LAB_20261119.md').read_text()
+          assert "include ':c110photosize'" in settings
+          assert "include ':app'" in settings and "include ':c110mini'" in settings
+          assert 'LYCamera.setting' in protocol and 'PHOTO_2K_CANDIDATE_INDEX=5' in protocol
+          assert '675-C110$1.0.4' in doc and '1002' in doc and '2560×1440' in doc
+          assert '3012' in protocol and '3002' in protocol and '3014' in protocol
+          assert 'isStandardC110' in protocol and 'C110_PRO' in protocol and 'C110+' in protocol
+          assert 'requirePhotoCommands(request(camera,"/?custom=1&cmd=3002",MAX_TEXT),true)' in protocol
+          assert 'Reply result=request(camera,"/?custom=1&cmd=1002&par=5",MAX_TEXT)' in protocol
+          assert protocol.count('cmd=1002&par=5')==2, 'One exact setting request and one whitelist, no repeat'
+          assert 'Reply shutter=request(wifi,"/?custom=1&cmd=1001",MAX_TEXT)' in protocol
+          assert protocol.count('cmd=1001')==2, 'One actual shutter request plus whitelist'
+          assert 'Reply mode=request(wifi,"/?custom=1&cmd=3001&par=0",MAX_TEXT)' in protocol
+          assert protocol.index('Reply mode=request(wifi,"/?custom=1&cmd=3001&par=0"')<protocol.index('Set<String> before=listJpegs(wifi);')
+          assert protocol.index('Set<String> before=listJpegs(wifi);')<protocol.index('Reply shutter=request(wifi,"/?custom=1&cmd=1001"')
+          assert 'delta.removeAll(before)' in protocol and 'if(delta.size()>1)' in protocol
+          assert 'PhotoSizePolicy.validJpeg(jpeg.data)' in protocol
+          assert 'bounds.inJustDecodeBounds=true' in protocol
+          assert 'new PhotoResult(bounds.outWidth,bounds.outHeight' in protocol
+          assert 'return width==2560&&height==1440;' in protocol
+          assert 'HttpURLConnection' in protocol and 'wifi.openConnection' in protocol
+          assert 'if(!permitted&&!file)' in protocol
+          assert 'set2kButton.setEnabled(!busy&&sizeSettingSupported)' in page
+          assert 'referenceButton.setEnabled(!busy&&photoSupported)' in page
+          assert 'new AlertDialog.Builder(this)' in page and '确认：尝试2K设置' in page
+          assert 'C110NativePhotoCamera.SetResult outcome=camera.select2kCandidate(this)' in page
+          assert 'C110NativePhotoCamera.PhotoResult shot=camera.takeOneOriginal(this)' in page
+          assert 'String conclusion=shot.exactly2k()' in page
+          assert 'ClipboardManager' in page and 'diagnostics.toString()' in page
+          assert 'onPause()' in page and 'runningJob.cancel(true)' in page
+          assert all(q not in protocol for q in ['cmd=4003','cmd=3011','cmd=9011','cmd=9038','deleteFile','MediaPlayer','LibVLC','CloudVisionClient'])
+          assert all(q not in manifest for q in ['permission.CAMERA','permission.RECORD_AUDIO','permission.ACCESS_FINE_LOCATION','permission.WRITE_EXTERNAL_STORAGE'])
+          assert "applicationId 'com.vobich.bluestar.c110photosize'" in gradle
+          assert "versionName '0.1.0-c110-photo-native-size-lab'" in gradle
+          print('PASS: native camera JPEG size, only confirmed user-visible 1002/par5 candidate; no cloud/photo rewrite/delete')
+          PY
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Build independent native-photo JPEG APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :c110photosize:assembleDebug
+      - name: Check APK package identity, permissions, ZIP and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/c110photosize/build/outputs/apk/debug/c110photosize-debug.apk out/BlueStar_C110_NativePhotoSize_Lab_0.1.0.apk
+          test -s out/BlueStar_C110_NativePhotoSize_Lab_0.1.0.apk
+          unzip -tq out/BlueStar_C110_NativePhotoSize_Lab_0.1.0.apk >/dev/null
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging out/*.apk >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110photosize'" out/badging.txt
+          grep -Fq "versionName='0.1.0-c110-photo-native-size-lab'" out/badging.txt
+          "$AAPT" dump permissions out/*.apk >out/permissions.txt
+          grep -Fq 'android.permission.INTERNET' out/permissions.txt
+          ! grep -Eq 'android.permission.(CAMERA|RECORD_AUDIO|WRITE_EXTERNAL_STORAGE|ACCESS_FINE_LOCATION)' out/permissions.txt
+          (cd out && sha256sum BlueStar_C110_NativePhotoSize_Lab_0.1.0.apk > SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >>"$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_C110_NativePhotoSize_Lab_0.1.0
+          path: out/*
+          retention-days: 14
+      - name: Publish non-overwriting experimental prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-c110-native-photo-size-lab-20261119-v010
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release tag already exists; will not overwrite" >&2
+            exit 1
+          fi
+          gh release create "$TAG" "out/BlueStar_C110_NativePhotoSize_Lab_0.1.0.apk" \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "C110 Original SD JPEG Resolution Lab v0.1.0" \
+            --notes "Minimal standalone size experiment only. Connect phone manually to C110 WiFi. 1. Read-only 3012/3002/3014 camera checks. 2. Exactly one 1001 original-photo shutter + full new DCIM JPEG download, record width/height/bytes. 3. Only after explicit confirmation and firmware advertising cmd1002, try SJCAM Zone standard-C110 config candidate cmd1002/par5 for 3M 2560x1440 ONCE. 4. New 1001 shutter and compare actual SD JPEG dimensions. The mapping is not verified for this particular user's firmware (their prior source JPEG was 5888x3312 vs OEM table 15M max). This setting might persist and cannot be safely auto-restored, so use OEM app to restore desired photo size after the experiment. No cloud, OCR, TTS, video/fullscreen, SD deletion, file storage, retries or firmware updates. CI verifies bytecode/static workflow only; real-camera success not yet established."
