@@ -85,6 +85,13 @@ final class C110FrameReader {
         Surface surface=video.getHolder().getSurface();
         if(surface==null||!surface.isValid()){report("视频表面尚未就绪");return;}
         int width=video.getWidth(),height=video.getHeight();
+        // PixelCopy can downsample from a SurfaceView. Tall high-DPI phones
+        // must not allocate a huge bitmap just to read the 2K C110 stream.
+        if(portraitCover&&(long)width*height>2_073_600L){
+            double scale=Math.sqrt(2_073_600d/((double)width*height));
+            width=Math.max(2,(int)Math.floor(width*scale));
+            height=Math.max(2,(int)Math.floor(height*scale));
+        }
         if((long)width*height>9_000_000L){report("视频画幅过大，已拒绝拷贝");return;}
         final int id=request.incrementAndGet();
         lastTapMs=now;
