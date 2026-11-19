@@ -1,3 +1,19 @@
+# 2026-11-19｜原厂SJCAM Zone DEX核查：C110 vivo热点连接 v0.1.20 已编译发布（待真机验收）
+
+- **最新用户真实问题和截图**：手机连家用Wi-Fi、相机Wi-Fi已开时，蓝星C110页面始终提示“正在申请连接C110，请允许Android系统的相机Wi-Fi连接提示”，没有进入预览；必须去手机系统Wi-Fi手动连接。用户明确要求不要再猜，直接按之前给的**原厂SJCAM Zone APK**连接步骤解决。截图只证明停留在申请阶段，不能据此把问题归咎于C110硬件。
+- **本轮实际重开原APK，静态解析原始DEX**：文件 `bdcc3db17ea0e26aecaf22bc01fe99be.apk`（SJCAM Zone 6.7.3.16，约189MB），实际读取`classes5.dex`、方法表/方法指令调用，不是以前摘要复述或网搜猜测。证据已整理于本分支 `cloud-vision-app/docs/C110_OEM_WIFI_AUDIT_20261119.md`。核心真实方法：
+  - `WifiBottomPopupV2.scanWifi` / `showInputPassword` / `connect`，真实热点扫描/选SSID、密码 → `WifiHelper.connectWifi`。
+  - `WifiHelper$1.run` 0x1b1fd4 会处理旧请求和`WifiManager.disconnect`，并**明确调用isViVoDevice()**。对于vivo走`WifiHelper.setCurrentConnectWifiNetWork`，不是对所有安卓厂商统一走Suggestion。
+  - `WifiHelper.setCurrentConnectWifiNetWork` 0x1b3264 用 **精确setSsid(实际SSID)**、`setWpa2Passphrase(实际密码)`、有BSSID时`setBssid(MacAddress)`，NetworkRequest添加WiFi+能力13(NOT_RESTRICTED)+14(TRUSTED)、移除12(INTERNET)，再`requestNetwork`。不像此前蓝星用**臆测的固定`C110` SSID前缀+写死12345678**。
+  - `WifiHelper$3.onAvailable` 0x1b223c 绑定网络后回调，之后才`SJConnCameraPresenter.connCamera`并进入相机协议。原厂 `LyCameraWifiNetWorkHelper.isTargetGateway` 0x317b40 是**当前默认Wi-Fi网络**网关检测，不能混同Specifier返回的local-only次要Network。
+- **代码修复**：从已验收构建分支`exp/c110-homewifi-bootstrap-20261119` HEAD `285a00031b5692ec606a465ce647c061f229fd1b` 建独立 `exp/c110-oem-vivo-wifi-20261119`，最终HEAD `d55d7d160a54f5d341d9a7cf01369d4fd559dc12`。重写**仅连接层**`C110WifiBootstrap.java`：若首次尚未保存相机真实SSID，进入C110页面在**蓝星内**弹出附近Wi-Fi扫描列表（未授权则请求ACCESS_FINE_LOCATION，扫描不成功可在蓝星内手输真实SSID）；用户确认密码（仅预填原厂通用默认值12345678、可修改）后私有存储精确SSID/BSSID/密码；按vivo同类方法构造exact Specifier而非猜SSID前缀，处理Android系统批准、onAvailable、在相机Network上只读3012验证标准C110，验证通过后才打开未改的3012/3016/3001par1/2015par1/LibVLC链。后续启动已有保存的精确SSID自动请求；↻可重新扫描和更换热点。不将Wi-Fi密码加入诊断日志。新增ACCESS_WIFI_STATE/CHANGE_WIFI_STATE/FINE_LOCATION/NEARBY_WIFI_DEVICES权限，MainActivity和C110CameraActivity统一扫码权限回调；避免在已经后台的MainActivity弹被遮住的热点选择框。
+- **原厂行为中的合理隔离**：原厂仅管理相机可长期bindProcessToNetwork；蓝星还管理手机/USB/移动数据云识别，所以仍由C110视频页按此前真机成功代码仅在播放时临时bindProcessToNetwork，照片/3012通过指定的相机Network访问，避免给全进程云端互联网默认绑上无外网热点。Android可能要求系统授权、Android16扫描还要求FINE_LOCATION和手机定位开关，双STA与系统静默连通不能保证。
+- **严格未触碰功能**：已成功的C110 OEM连续视频、原一次1001完整高清JPEG、9011静音、9038指示灯熄灯、主/USB摄像头、云OCR/TTS和原有按钮绑定都没有改写。v0.1.19、RC25及其他旧APK均保留。仅实验v0.1.20包`com.vobich.bluestar.c110oemvivo`、`1.0.45-c110-oem-vivo-wifi-lab`。
+- **CI与发布**：独立Actions https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44483682193 `completed/success`：Java C110协议回归/独立OEM玩家核心逐项静态一致性、原厂Exact SSID+BSSID/vivo分支/权限检查、USB补丁、Gradle/NDK完整构建、arm64 LibVLC/TTS/包名版本/ZIP、artifact与release全部通过。Release https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-oem-vivo-wifi-20261119-v0120 ；APK直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-oem-vivo-wifi-20261119-v0120/BlueStar_Guide_C110_OEM_VivoWiFi_0.1.20.apk ；56,682,925字节，SHA256 `53f5393c0ee8f9a2f16cf95291adb9c9f9c788b4737f7bb9f520263a7693951c`。
+- **只做一次真机验收**：保持手机家用Wi-Fi+相机已开热点→打开v0.1.20→模式→C110→首次应出现本APP内“选择C110实际Wi-Fi热点”列表/密码确认→批准Android系统连接请求→C110页获取3012后启动真实VLC出画。若扫描不到检查手机定位/FINE_LOCATION（或在本App内手填相机实际SSID）；若系统弹框或网络回调失败记录具体阶段。**CI成功≠用户实际连接成功**，不得再以未经验证的SSID前缀或Android网关做最终判断。
+
+---
+
 # 2026-11-19｜C110 连接家用Wi-Fi时自动申请相机连接 v0.1.19（CI/Release验证通过，待手机验收）
 
 - **当前用户问题**：手机仍连接家里的Wi-Fi时打开蓝星向导无法连接C110，必须离开软件去系统Wi-Fi设置里手动切换。用户之前明确已验证C110 **真实视频播放、1001高清JPEG、9011静音、9038指示灯熄灭**，不重复和不破坏。
