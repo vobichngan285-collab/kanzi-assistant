@@ -37,6 +37,7 @@ import android.speech.tts.UtteranceProgressListener;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
@@ -113,6 +114,8 @@ public final class MainActivity extends CameraActivity {
     private static final int REQUEST_C110_PAGE = 4055;
     private static final long USB_MAX_FRAME_AGE_MS=800L; // UVC raw frames are capped near 5Hz
 
+    private boolean settingsOnly;
+    private C110VolumeShortcut volumeShortcut;
     private FrameLayout previewContainer,rootFrame;
     private TextView currentTaskChip,zoomChip,resultChip;
     private Button c110Button,c110PreviewButton;
@@ -729,7 +732,19 @@ public final class MainActivity extends CameraActivity {
     @Override public void onBackPressed(){
         if(largeSettings!=null&&!largeSettings.isClosed()){largeSettings.back();return;}
         if(readingScreen!=null){closeReadingMode();return;}
+        if(settingsOnly){finish();return;}
         super.onBackPressed();
+    }
+
+    @Override public boolean dispatchKeyEvent(KeyEvent event){
+        if(volumeShortcut!=null&&volumeShortcut.dispatch(event))return true;
+        return super.dispatchKeyEvent(event);
+    }
+
+    private void shortcutPhoto(){
+        if(!uiActive||readingScreen!=null){toastShort("请先退出阅读模式");return;}
+        if(C110WifiBootstrap.connected(this)!=null)captureC110OneShot();
+        else startActivity(new Intent(this,C110QuickPhotoActivity.class));
     }
     void toastShort(String value){Toast.makeText(this,value,Toast.LENGTH_SHORT).show();}
     List<TextToSpeech.EngineInfo> availableTtsEngines(){
@@ -1337,13 +1352,18 @@ public final class MainActivity extends CameraActivity {
     }
 
     @Override public void onCreate(Bundle state) {
+        Intent launch=getIntent();
+        settingsOnly=launch!=null&&launch.getBooleanExtra("bluestar_launch_settings",false);
         super.onCreate(state);
+        volumeShortcut=new C110VolumeShortcut(this,this::shortcutPhoto);
         diagnostics=new RuntimeDiagnostics(this);
         c110WifiBootstrap=new C110WifiBootstrap(this,this::setResultStatus);
         modelUsage=new ModelUsageLedger(this);
         SharedPreferences prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
         updateUsbAttachAlias(prefs.getBoolean(PREF_USB_AUTO_LAUNCH,true));
-        usingPhoneCamera=prefs.getBoolean(PREF_PHONE_CAMERA,false);
+        usingPhoneCamera=(!settingsOnly&&launch!=null&&
+            launch.getBooleanExtra("bluestar_launch_preview",false))?
+            !hasConnectedUsbVideoDevice():prefs.getBoolean(PREF_PHONE_CAMERA,false);
         phoneFrontFacing=prefs.getBoolean(PREF_FRONT_CAMERA,false);
         previewRotation=prefs.getInt(PREF_PREVIEW_ROTATION,0);
         previewMirror=prefs.getBoolean(PREF_PREVIEW_MIRROR,false);
@@ -1911,7 +1931,7 @@ public final class MainActivity extends CameraActivity {
         if(video&&readingScreen==null)queueUsbAttachReconcile();
     }
     @Override protected void onUsbDeviceConnectedForApp(UsbDevice device){
-        if(!isUsbVideoDevice(device))return;
+        if(!isUsbVideoDevice(device)||settingsOnly)return;
         if(readingScreen!=null){
             // During manual reading preview, AUSBC onConnect owns the initial
             // USB open. Never let the queued resumeUsb race a second native open.
@@ -1934,7 +1954,7 @@ public final class MainActivity extends CameraActivity {
         }
     }
     @Override protected boolean shouldAutoOpenUsbCameraForApp(UsbDevice device){
-        return isUsbVideoDevice(device)&&UsbAutoSwitchPolicy.allowNativeUsbOpen(
+        return !settingsOnly&&isUsbVideoDevice(device)&&UsbAutoSwitchPolicy.allowNativeUsbOpen(
             usbForeground,!usingPhoneCamera);
     }
     @Override protected void onUsbDeviceDetachedForApp(UsbDevice device){
@@ -3438,7 +3458,15 @@ public final class MainActivity extends CameraActivity {
             currentModels.getString(PREF_OCR_MODEL,OcrModelCatalog.DEFAULT));
         visionModel=VisionModelCatalog.normalize(
             currentModels.getString(PREF_VISION_MODEL,VisionModelCatalog.DEFAULT));
-        uiActive=true;usbForeground=true;
+        uiActive=true;usbForeground=!settingsOnly;
+        if(settingsOnly){
+            handler.post(this::openLargeSettings);
+            return;
+        }
+        if(getIntent()!=null&&getIntent().getBooleanExtra("bluestar_launch_reading",false)){
+            getIntent().removeExtra("bluestar_launch_reading");
+            handler.postDelayed(()->{if(uiActive)openReadingMode();},600L);
+        }
         if(readingScreen!=null){
             readingAwaitingFrame.set(false);
             suspendReadingCamera();
@@ -3470,6 +3498,7 @@ public final class MainActivity extends CameraActivity {
         }
     }
     @Override protected void onPause(){
+        if(volumeShortcut!=null)volumeShortcut.cancel();
         stopC110LivePreview(true);
         if(!usingPhoneCamera&&diagnostics!=null){
             diagnostics.event("usb","pause",0,"ok");
