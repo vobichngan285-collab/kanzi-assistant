@@ -1,3 +1,15 @@
+# 2026-11-20｜纠正第三方参考图造成的黑黄主页，恢复蓝星原深蓝UI：v1.0.54已CI发布（待真机）
+
+- **用户明确纠错**：第三方「豆芽看见」截图仅供「大字体、功能键纵向排列」的参考，不代表颜色规范。用户强烈要求蓝星向导主页恢复与原有预览/设置一致的**蓝星深蓝色**，不能把黄黑配色直接照搬。此前 v1.0.53 实际主页使用 `#07090D` + `#F5C543`，同时预览和设置仍使用原有的蓝色，导致两套界面割裂。
+- **仓库/基线/安全边界**：唯一原仓 `vobichngan285-collab/kanzi-assistant`；从已发布 v1.0.53 的 commit `52cb9392a1d2991708e1ff2dc0c967246809fb68` 派生 `exp/c110plus-home-bluestar-blue-20261120`；最终 HEAD `9a5e243ac1fa3b1dd5bdb52c984bba4021b09401`；versionCode63、versionName `1.0.54-c110plus-home-blue`、新 `com.vobich.bluestar.c110plushome154`，独立包，**不覆盖**此前任何版本。
+- **本版修改范围极小**：仅 `HomeActivity.java` 中 UI 配色常量和文本/分割线/底部三栏按钮颜色；主页深蓝底 `#091B32`、主字 `#F3F8FF`、副字 `#C3D7EF`、图标浅蓝 `#B9DCF8`、菜单选中 `#176BAC`、普通按钮 `#2C547D`、分割线 `#265077`，复用 `LargeSettingsScreen` 的既有蓝星主题；移除原黄黑 `#F5C543`、`#07090D`。保留原有五项功能键顺序、三栏、朗读任务/模型/语音无障碍、图标/按钮实现，**没有修改**C110、相机、云端或音量快捷键代码，不重新开发成功的 OEM/LibVLC 150ms 等功能。
+- **必须诚实标记已知待修**：用户之前明确报告主页点“快捷拍照”却进入独立 `C110QuickPhotoActivity` 页面而不是按一次直接在主页后台执行并播报，及 vivo 上“双击音量键无效”。v1.0.54 **仅修颜色，不声称已修复这两处行为**。后续若用户授权相关逻辑修复，要先从最小改动和真机日志入手，不要通过反复做更多冗余界面造成退化。CI成功不代表真机无障碍/物理手势通过。
+- **构建/发布核验**：GitHub Actions Run `44581518630` `completed/success`，基于提交 `9a5e243ac1fa3b1dd5bdb52c984bba4021b09401`，编译、旧有 Java/相机集成静态回归、颜色断言、APK身份、LibVLC/USB/TTS资源、上传 Artifact、独立预发布均成功。资产大小 56,732,205 字节，SHA256 `f341e0d0a9c9f2b1b827ef3209ce367f156059eb74d4e4fa43ca22baefcf5503`。
+- **唯一 v1.0.54 APK 直链**：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110plus-blue-home-150ms-20261120-v0154/BlueStar_Guide_C110Plus_Blue_Home_150ms_1.0.54.apk ，Release https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110plus-blue-home-150ms-20261120-v0154 ，Actions https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44581518630 ，技术说明 `cloud-vision-app/docs/C110PLUS_HOME_BLUE_PALETTE_20261120.md`。
+- **后续真机**：先看主页与蓝星预览/设置在颜色上是否统一（此版验证范围）；如接下来重做“一键直接快拍”、音量键快捷触发，请在现有已发布基线修改已有单次拍照路径，不新增诊断页、不换配色、不要再次误报通过。
+
+---
+
 # 2026-11-20｜C110+ v1.0.53 主页/快捷拍照/自定义音量键/预览设置不跳转实验版已发布（待真机）
 
 - **明确用户要求**：仿照用户提供的「豆芽看见」风格，蓝星向导打开默认大字体功能主页，**不自动启动手机/USB摄像头**；顶部第一项「快捷拍照」触发一次 **C110+** 原厂1001高清拍照→完整JPEG→按主页OCR/任务模型朗读；底部「主页 / 预览 / 设置」。点击「预览」如果插着USB则选择USB，否则手机；不进入预览时手机摄像头不启动。增加可配置的**双击音量上/下键、长按音量上/下键（可关闭）**，只绑定C110+快捷拍照，首页、普通手机/USB预览及C110+实时视频预览均支持；仅应用在前台、屏幕亮时拦截，单次音量短按继续调节音量，不承诺后台/息屏。用户还反馈C110预览按「☰」设置会立即回到默认页，要求保持在预览里打开设置。用户明确授权开发独立实验版。
