@@ -439,7 +439,7 @@ public final class MainActivity extends CameraActivity {
         dock.setBackground(roundRect(0xED091D36,20));
         modeButton=createControlButton("▦\n任务",0xFF2C547D);
         startButton=createControlButton("🎙\nAI对话",0xFF176BAC);
-        c110Button=createControlButton("▤\n拍照识别",0xFF2C547D);
+        c110Button=createControlButton("▤\n高清拍照",0xFF2C547D);
         cameraEntryButton=createControlButton("◉\n模式",0xFF286FCB);
         for(Button btt:new Button[]{modeButton,startButton,c110Button,cameraEntryButton}){
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(75),1f);
@@ -449,11 +449,11 @@ public final class MainActivity extends CameraActivity {
         modeButton.setContentDescription("任务选择，包含阅读");
         startButton.setContentDescription("AI对话，按住说话，松开发送");
         cameraEntryButton.setContentDescription("模式，选择手机摄像头、C110运动相机或USB摄像头");
-        c110Button.setContentDescription("当前摄像头拍照并识别朗读；C110高清快门位于运动相机模式");
+        c110Button.setContentDescription("C110运动相机高清拍照，无论正在预览手机或USB摄像头，都发送一次C110真实快门");
         modeButton.setOnClickListener(v->showTaskSelector());
         startButton.setOnTouchListener((v,event)->handleVoiceButtonTouch(event));
         cameraEntryButton.setOnClickListener(v->showUnifiedModeSelector());
-        c110Button.setOnClickListener(v->captureOneFrame());
+        c110Button.setOnClickListener(v->captureC110OneShot());
         return root;
     }
 
@@ -3097,12 +3097,22 @@ public final class MainActivity extends CameraActivity {
         setResultStatus("C110：正在取高清照片…");
         encodingTask=encoder.submit(()->{
             try{
-                // The phone must have separate cellular INTERNET for DashScope.
-                android.net.Network cellular=C110WifiCamera.requireCellular(this);
-                String key=CloudKeyStore.load(this);
-                if(key.isEmpty())throw new Exception("请先在设置中填写百炼 API Key（C110测试包独立保存）");
-                C110WifiCamera.Photo photo=c110Camera.shoot(this);
+                // The C110 shutter is NEVER gated on cloud key or mobile data.
+                // Transition from any previous video-mode session to photo mode
+                // before reading the baseline, then send exactly ONE 1001.
+                C110WifiCamera.Photo photo=c110Camera.shootAfterLivePreview(this);
                 if(Thread.currentThread().isInterrupted())return;
+                android.net.Network cellular=null;
+                String cloudIssue=null;
+                try{
+                    cellular=C110WifiCamera.requireCellular(this);
+                    if(CloudKeyStore.load(this).isEmpty())
+                        cloudIssue="未配置百炼 API Key，高清照片已拍摄但未云端识别";
+                }catch(Exception noCloud){
+                    cloudIssue="手机移动数据不可用或密钥无法读取，高清照片已拍摄但未云端识别";
+                }
+                final android.net.Network cloudNetwork=cellular;
+                final String issue=cloudIssue;
                 handler.post(()->{
                     if(!uiActive||token!=requestVersion.get())return;
                     if(diagnostics!=null){
@@ -3113,13 +3123,21 @@ public final class MainActivity extends CameraActivity {
                         diagnostics.event("c110","photo_total_ms",photo.totalMs,"ok");
                         diagnostics.event("c110","wifi_alive",photo.wifiStillPresent?1:0,
                             photo.wifiStillPresent?"ok":"lost");
+                        diagnostics.event("c110","cloud_ready",issue==null?1:0,
+                            issue==null?"ok":"unavailable");
                     }
-                    Frame remote=new Frame(null,photo.width,photo.height,
-                        SystemClock.elapsedRealtime(),photo.jpeg,cellular);
-                    beginCapturedFrame(remote,now,token,null);
+                    if(issue==null){
+                        Frame remote=new Frame(null,photo.width,photo.height,
+                            SystemClock.elapsedRealtime(),photo.jpeg,cloudNetwork);
+                        beginCapturedFrame(remote,now,token,null);
+                    }else{
+                        cloudBusy=false;
+                        setResultStatus("C110高清原图已拍摄 "+photo.width+"×"+photo.height);
+                        toastShort(issue);
+                    }
                     if(resumeLiveAfterPhoto){
-                        // The user already opted into live preview. Restoring the
-                        // renderer does not trigger another photo or cloud call.
+                        // Restore the optional in-main VLC view only AFTER the
+                        // C110 JPEG completes; never re-trigger the shutter.
                         handler.postDelayed(()->{
                             if(uiActive&&c110PreviewWanted)startC110LivePreviewAfterPhoto();
                         },100L);
@@ -3132,8 +3150,8 @@ public final class MainActivity extends CameraActivity {
                     if(resumeLiveAfterPhoto)stopC110LivePreview(true);
                     if(diagnostics!=null)diagnostics.event("c110","photo",0,"failed");
                     String message=ex.getMessage()==null?ex.getClass().getSimpleName():ex.getMessage();
-                    setResultStatus("C110拍照失败");
-                    new AlertDialog.Builder(this).setTitle("C110拍照或网络检查失败")
+                    setResultStatus("C110高清快门或取图失败");
+                    new AlertDialog.Builder(this).setTitle("C110高清拍照失败（不会自动重拍）")
                         .setMessage(message).setPositiveButton("知道了",null).show();
                 });
             }
