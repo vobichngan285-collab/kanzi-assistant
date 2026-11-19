@@ -1,3 +1,17 @@
+# 2026-11-19｜C110 独立 LibVLC 预览延迟 A/B 实验 v0.1.0（已构建发布，待真机诊断）
+
+- **用户目的与授权**：C110实时预览“会慢半拍”，希望先做**最小独立实验 APK**，手动切换不同缓存档位，软件低开销收集视频链路统计，复制诊断给助理分析。用户不希望擅自碰当前已连通v0.1.20 Wi-Fi、1001高清快门、9011静音、9038指示灯、任务或TTS。
+- **真实代码基线**：原仓库`vobichngan285-collab/kanzi-assistant`；从C110原厂v0.1.20实验分支`exp/c110-oem-vivo-wifi-20261119` HEAD `d55d7d160a54f5d341d9a7cf01369d4fd559dc12` 派生`exp/c110-latency-lab-20261119`。**保留成功的`c110mini/OemVideoActivity.java`、正式app及所有旧实验构建不变**，仅在新分支添加`:c110latency`独立Android模块、Gradle settings.gradle新include、独立CI。CI对应视频实验代码提交`982efe8a86d5fe0ce2c47018cf063e9b42f6a19c`；另有同分支文档`cloud-vision-app/docs/C110_LATENCY_AB_TEST_20261119.md`。
+- **功能**：独立包`com.vobich.bluestar.c110latency`，`0.1.0-latency-only`。**仅原厂已真机验证的`3012→3016→3001/par1→2015/par1`、RTSP `rtsp://192.168.1.254:554/xxx.mp4`、LibVLC 3.6.5与一直可见VLCVideoLayout**。用户可点击`300 / 150 / 100 / 50 / 500ms`档位或手输50–1500ms；仅 **`network-caching`/`live-caching` 一对参数**在每档改变，固定其他视频参数如`file-caching=300`、`sout-mux-caching=300`、原`codec=mediacodec,iomx,all`、原一次性延时300ms播放。每次切换释放/重建播放器，避免跨档缓存残留。无自动快门、无云、无OCR、无TTS、无拍照或音视频保存。
+- **诊断**：每档事件`SESSION`、`play_call_ms`、`Playing`、首次`Vout`、每2s `SAMPLE`、`SUMMARY`；尽力通过LibVLC `Media.getStats()`反射获取`displayedPictures`、`lostPictures`，由差分推导 **显示帧率/丢帧增量**。若绑定不支持统计则明确记录“帧统计API不可用”，FPS标记未知，不能把`Vout`事件数伪装成帧率；采集缓存回调总数、非播放采样总数、进程CPU单核%估算，并允许用户选择主观延迟标签。所有文字仅存在本机运行内存、长度上限约28k字；点击“复制诊断”后手动发给助理，不含图像、文本识别结果、WiFi密码、音频、密钥或远程上传。
+- **严格解释**：仅根据播放器统计 **不能测量真实从C110传感器动作到手机显示像素的端到端glass-to-glass延迟**；`Playing`与`Vout`是播放器启动/输出状态，不是物理像素可见时间。此实验只用于“同环境不同缓存的相对体验、帧率、丢帧和稳定性”验证。如果要客观端到端毫秒数，需外部同步计时/高速相机对照。建议同距离挥手15–30秒每档，并用内置按钮手动标注。太低缓存可能造成卡顿。
+- **网络刻意独立**：为保持实验最小、排除SSID/系统权限干扰，此`c110latency`包**不包含自动热点连接**，运行前用户需在系统WiFi手动连C110热点（默认网关192.168.1.254），与v0.1.20正常使用的原厂自动连接是**两个独立安装包**。实验不作为新的正式连接方案；不要误报自动热点功能回退，原版不变。
+- **CI/Release**：[Actions 44489398040](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44489398040) `completed/success`：原厂视频命令和起播不变量、新档位/统计/无声画云权限静态检查、Gradle `:c110latency:assembleDebug`成功、LibVLC `arm64-v8a/libvlc.so+libvlcjni.so`、独立包名及版本、ZIP完整性、artifact、发布GitHub prerelease成功。
+- **直链**：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-latency-lab-20261119-v010/BlueStar_C110_Preview_Latency_Lab_0.1.0.apk ，`46,109,673`字节，SHA256 `642668583bbce063d2fbc7663a5cb9ef0e2f4cf9a9ed7fdf45ab28e1318a2f0c`。Release https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-latency-lab-20261119-v010 。
+- **下一步**：用户按300→150→100→50→500ms各播放15–30秒，点击“标记体感延迟”，末尾“复制诊断”发送完整文本。根据帧率、丢帧、播放非活跃、主观慢半拍排序选择最小无明显卡顿的档位；**CI通过不等于新实验包已被用户真机验收**，未知时不要声称VLC原生stats一定可用。
+
+---
+
 # 2026-11-19｜原厂SJCAM Zone DEX核查：C110 vivo热点连接 v0.1.20 已编译发布（待真机验收）
 
 - **最新用户真实问题和截图**：手机连家用Wi-Fi、相机Wi-Fi已开时，蓝星C110页面始终提示“正在申请连接C110，请允许Android系统的相机Wi-Fi连接提示”，没有进入预览；必须去手机系统Wi-Fi手动连接。用户明确要求不要再猜，直接按之前给的**原厂SJCAM Zone APK**连接步骤解决。截图只证明停留在申请阶段，不能据此把问题归咎于C110硬件。
