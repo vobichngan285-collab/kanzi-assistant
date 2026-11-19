@@ -118,6 +118,30 @@ final class C110FrameReader {
             });
             return;
         }finally{fresh.recycle();}
+        recognizeJpeg(id,jpeg,started);
+    }
+
+    /**
+     * Hand off the true C110 full-resolution JPEG without recompressing it or
+     * leaving the camera screen. Only a user-tapped 1001 result reaches here.
+     */
+    boolean recognizeOriginalJpeg(byte[] jpeg,int width,int height){
+        if(closed||busy)return false;
+        if(jpeg==null||jpeg.length<256||width<2||height<2){
+            report("C110没有返回有效高清原图，未提交云端");return false;
+        }
+        final int id=request.incrementAndGet();
+        final long started=SystemClock.elapsedRealtime();
+        busy=true;
+        lastTapMs=started;
+        if(tts!=null)tts.stop();
+        report("已下载 C110 高清原图 "+width+"×"+height+"，正在识别…");
+        taskFuture=io.submit(()->recognizeJpeg(id,jpeg,started));
+        return true;
+    }
+
+    private void recognizeJpeg(int id,byte[] jpeg,long started){
+        if(closed||id!=request.get())return;
         if(jpeg.length<256){
             main.post(()->{if(id==request.get()&&!closed){
                 busy=false;report("取得的当前帧无效");}});
