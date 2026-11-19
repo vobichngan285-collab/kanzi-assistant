@@ -1,3 +1,16 @@
+# 2026-11-19｜蓝星向导三种相机模式统一菜单 + C110声音/灯光设置 v0.1.14（CI成功，待真机验收）
+
+- **用户已明确验收的旧成果**：C110独立 OEM Minimal 播放器真机实时出画；`9011/par=0` 真机静音（含开机音）；用户再次确认 `9038/par=0` 实际可使机身指示灯熄灭，`9038/par=1` 回复HTTP200/Status0。已成功的高清拍照与JPEG下载保留，不能误称实时预览或LED熄灭仍未解决。
+- **本轮授权**：界面底部统一为任务、AI对话、拍照、模式；最右模式菜单为手机摄像头/C110运动相机/USB摄像头；软件通用设置改右上角三横杠；阅读继续置于任务宫格；相机专属设置收纳于C110相机页；指示灯连接后默认亮30秒再关，可选15秒、60秒、自定义5–600秒、常亮或立即熄灭；C110提示音手动关闭/恢复。
+- **代码基线/隔离**：原仓库 `vobichngan285-collab/kanzi-assistant`，从 `exp/c110-portrait-page-20261119` HEAD `e3ff7d075f46abfc3927e0d06cfbf30013021045` 建立 `exp/c110-unified-modes-controls-20261119`，最终 HEAD `586df77cde42de2842a93bfffcf4a1907f2ed423`。新 `C110DeviceControls.java` 独立于RTSP/VLC与照片链：每次9011/9038写前只读3012确认标准C110并排除C110_PRO/C110+/PLUS，白名单禁止9036等未纳入新UI的命令；退出C110页取消待发送的LED延时指令；通用UI新增模式选择和C110 Activity回调。单独测试包 `com.vobich.bluestar.c110modes`，`1.0.39-c110-unified-lab`，不覆盖正式RC25、原mini、其他实验版。
+- **重要界面边界（不得夸大）**：依然采用已经出画的独立 `C110CameraActivity`。C110页任务选择直接复用任务宫格；阅读、AI对话和高清拍照目前通过Activity结果返回蓝星主界面，再调用原有阅读/录音/一次1001高清拍照→现有云端识别/TTS逻辑；**不应宣称AI对话可在保持C110视频页面前台时直接按住录音、或拍照后视频无缝维持**。该操作流程属于实验版待用户体验确认；若用户要求真正不离开相机视频界面，需要下一步UI架构调整。
+- **视频成功核心审查**：CI静态比对新CameraActivity与成功OEM mini的`private void begin(){ ... private void runWhenCurrent(`段，除`busy=false;started=true;`后唯一调用`deviceControls.onCameraConnected(wifi)`以外保持字节一致。VLCVideoLayout始终可见、LibVLC 3.6.5、原厂3012→3016→3001/1→2015/1与单次延时300ms play未改。仍需新整合版实际真机验证。
+- **首次编译修复**：Actions `44445736196` 失败仅因新增重复`onActivityResult`和`onCreate(Bundle b)`内同名局部Button变量；分别合并至原有Activity回调（保留阅读与诊断导出）及重命名变量后重新构建。最终 [Actions 44446181086](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44446181086) `completed/success`，协议单测、播放器不变量、USB补丁、Gradle Java编译、APK包身份/native libvlc/USB/TTS音效/ZIP验证、Artifact和GitHub预发布全部成功。
+- **安装包**：Release https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-unified-controls-20261119-v0114 ；APK直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-unified-controls-20261119-v0114/BlueStar_Guide_C110_Unified_0.1.14.apk ；大小56,666,421字节；SHA256 `acffd039ec77a111702520616f6d4b0f71640aa2113d3849d012062a8d1d4875`。隔离测试包的百炼API Key和原版不共享，真机测试云端朗读需单独配置。
+- **下一步真机验收**：安装独立实验版，保持C110热点与手机移动数据，检查右下模式菜单→C110实际连续画面、相机专属设置9011/9038及延时自动熄灯、C110任务宫格、一次高清拍照回到主界面后是否仅执行一次1001快门并云端朗读、切回手机/USB以及右上角软件设置。**CI成功不是C110端到端真机成功，不要覆盖之前可用版。**
+
+---
+
 
 # 2026-11-19｜C110 声音与灯光独立实验 v0.1.1：9038 指示灯 / 9036 爆闪灯（构建成功，待真机）
 
