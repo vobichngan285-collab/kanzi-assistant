@@ -46,18 +46,21 @@ final class C110WifiCamera {
         final long modeMs,shutterMs,discoverMs,downloadMs,totalMs;
         final boolean wifiStillPresent;
         final String sourceCameraPath;
+        final boolean strictOneFileDelta;
         Photo(byte[] jpeg,int width,int height,long modeMs,long shutterMs,
               long discoverMs,long downloadMs,long totalMs,boolean wifiStillPresent){
             this(jpeg,width,height,modeMs,shutterMs,discoverMs,downloadMs,
-                 totalMs,wifiStillPresent,null);
+                 totalMs,wifiStillPresent,null,false);
         }
         Photo(byte[] jpeg,int width,int height,long modeMs,long shutterMs,
-              long discoverMs,long downloadMs,long totalMs,boolean wifiStillPresent,String sourceCameraPath){
+              long discoverMs,long downloadMs,long totalMs,boolean wifiStillPresent,
+              String sourceCameraPath,boolean strictOneFileDelta){
             this.jpeg=jpeg;this.width=width;this.height=height;
             this.modeMs=modeMs;this.shutterMs=shutterMs;this.discoverMs=discoverMs;
             this.downloadMs=downloadMs;this.totalMs=totalMs;
             this.wifiStillPresent=wifiStillPresent;
             this.sourceCameraPath=sourceCameraPath;
+            this.strictOneFileDelta=strictOneFileDelta;
         }
     }
 
@@ -223,6 +226,10 @@ final class C110WifiCamera {
             added.removeAll(previous);
             if(!added.isEmpty()){
                 if(firstSeen<0)firstSeen=SystemClock.elapsedRealtime();
+                // Deletion safety only: never offer a candidate if the original
+                // baseline was empty/uncertain or multiple entries appeared.
+                // This does NOT affect normal JPEG capture or its timing.
+                boolean strictOneFileDelta=!previous.isEmpty()&&added.size()==1;
                 ArrayList<String> sorted=new ArrayList<>(added);
                 Collections.sort(sorted);
                 String candidate=sorted.get(sorted.size()-1);
@@ -234,7 +241,7 @@ final class C110WifiCamera {
                         modeMs,shutter.ms,firstSeen-shutterAt,
                         SystemClock.elapsedRealtime()-fetchStart,
                         SystemClock.elapsedRealtime()-begin,
-                        cm.getNetworkCapabilities(wifi)!=null,candidate);
+                        cm.getNetworkCapabilities(wifi)!=null,candidate,strictOneFileDelta);
                 }catch(IOException stillWriting){
                     // The HTML file may appear before the SD write has finished.
                     // Only retry read-only JPEG fetch; NEVER retry the shutter.
@@ -260,7 +267,8 @@ final class C110WifiCamera {
             this.width=width;this.height=height;
         }
         static DeletionCandidate fromPhoto(Photo photo){
-            if(photo==null||photo.sourceCameraPath==null||photo.jpeg==null||
+            if(photo==null||!photo.strictOneFileDelta||
+               photo.sourceCameraPath==null||photo.jpeg==null||
                photo.jpeg.length<256||photo.width<2||photo.height<2)return null;
             String safe=C110DeletePolicy.exactJpegPath(photo.sourceCameraPath);
             if(safe==null||!safe.equals(photo.sourceCameraPath))return null;
