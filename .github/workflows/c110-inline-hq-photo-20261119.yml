@@ -61,6 +61,8 @@ jobs:
               return source.split('    private void begin(){',1)[1].split('    private void runWhenCurrent(',1)[0]
           current=core(page)
           current=current.replace('            deviceControls.onCameraConnected(wifi);\n','')
+          current=current.replace('if(photoBusy||busy||started||!pageVisible)return;',
+                                  'if(busy||started)return;')
           current=current.replace(
               'if(event.getVoutCount()>0){\n                            frameReader.setVideoOutputReady(true);\n'
               '                            say("C110实时画面已就绪，点击画面取帧识别");\n                        }',
@@ -117,7 +119,7 @@ jobs:
           assert '((cmd==9011||cmd==9038)&&(par==0||par==1))' in controls
           assert 'android.permission.NEARBY_WIFI_DEVICES' in manifest
           assert '<activity android:name=".C110CameraActivity"' in manifest
-          assert "applicationIdSuffix '.c110livetap2'" in gradle
+          assert "applicationIdSuffix '.c110inlinehq'" in gradle
           assert "versionName '1.0.42-c110-inline-hq-photo-lab'" in gradle
           print('PASS: OEM player and phone/USB invariants; one-shot photo in-page; PixelCopy, startup Wi-Fi and old features')
           PY
