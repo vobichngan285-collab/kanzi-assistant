@@ -119,6 +119,8 @@ public final class MainActivity extends CameraActivity {
     private C110LivePreview c110Preview;
     private C110WifiBootstrap c110WifiBootstrap;
     private boolean c110PreviewWanted,c110PreviewPlaying;
+    // C110 has independent digital zoom. Never silently reuse phone/USB zoom.
+    private float c110PreviewZoom=1f;
     private final ExecutorService c110PreviewExecutor=Executors.newSingleThreadExecutor();
     private final AtomicInteger c110PreviewSeq=new AtomicInteger();
     private final C110WifiCamera c110Camera=new C110WifiCamera();
@@ -348,7 +350,8 @@ public final class MainActivity extends CameraActivity {
                 touchMulti=true;return true;
             }
             @Override public boolean onScale(ScaleGestureDetector d){
-                setCameraZoom(zoom*d.getScaleFactor());return true;
+                setCameraZoom((c110PreviewWanted?c110PreviewZoom:zoom)*
+                    d.getScaleFactor());return true;
             }
             @Override public void onScaleEnd(ScaleGestureDetector d){
                 lastPinchMs=SystemClock.elapsedRealtime();
@@ -1864,6 +1867,16 @@ public final class MainActivity extends CameraActivity {
     }
 
     private void setCameraZoom(float next){
+        if(c110PreviewWanted&&c110Preview!=null){
+            float applied=Math.round(C110ZoomGeometry.clamp(next)*10f)/10f;
+            if(Math.abs(applied-c110PreviewZoom)<.04f)return;
+            c110PreviewZoom=applied;
+            c110Preview.view().setScaleX(applied);
+            c110Preview.view().setScaleY(applied);
+            if(zoomChip!=null)zoomChip.setText(
+                String.format(Locale.CHINA,"%.1f×",c110PreviewZoom));
+            return;
+        }
         float limit=3f;
         if(usingPhoneCamera&&phoneController!=null)
             limit=Math.max(1f,Math.min(3f,phoneController.zoomLimit()));
@@ -2871,6 +2884,8 @@ public final class MainActivity extends CameraActivity {
 
     private void stopC110LivePreview(boolean clearIntent){
         if(clearIntent)c110PreviewWanted=false;
+        if(clearIntent&&zoomChip!=null)
+            zoomChip.setText(String.format(Locale.CHINA,"%.1f×",zoom));
         c110PreviewPlaying=false;
         c110PreviewSeq.incrementAndGet();
         if(c110Preview!=null)c110Preview.stop();
@@ -2901,6 +2916,8 @@ public final class MainActivity extends CameraActivity {
         }
         c110PreviewWanted=true;
         c110PreviewPlaying=false;
+        if(zoomChip!=null)zoomChip.setText(
+            String.format(Locale.CHINA,"%.1f×",c110PreviewZoom));
         final int seq=c110PreviewSeq.incrementAndGet();
         if(c110PreviewButton!=null)c110PreviewButton.setText("关闭预览");
         setResultStatus("C110正在按原厂流程启动视频…");
@@ -2931,6 +2948,8 @@ public final class MainActivity extends CameraActivity {
                     // No explicit Surface readiness gate, no manual RTSP PLAY,
                     // no custom VLC timeout. These broke previous versions.
                     c110Preview.view().bringToFront();
+                    c110Preview.view().setScaleX(c110PreviewZoom);
+                    c110Preview.view().setScaleY(c110PreviewZoom);
                     c110Preview.start(this,wifi,new C110LivePreview.Listener(){
                         @Override public void routeBound(int status){
                             if(seq!=c110PreviewSeq.get())return;
@@ -3014,6 +3033,7 @@ public final class MainActivity extends CameraActivity {
         invalidate();
         final int token=requestVersion.get();
         final int seq=c110PreviewSeq.get();
+        final float liveZoomAtTap=c110PreviewZoom;
         cloudBusy=true;
         speechRequestToken=token;
         speechCaptureAtMs=now;
@@ -3036,19 +3056,27 @@ public final class MainActivity extends CameraActivity {
                 setResultStatus("C110未取得当前视频帧，请确认预览仍在播放");
                 return;
             }
-            final int width=bitmap.getWidth(),height=bitmap.getHeight();
-            // Encode just one displayed video frame in RAM. No photo command,
-            // no SD write, no raw logs, no duplicate upload.
+            final int videoWidth=bitmap.getWidth(),videoHeight=bitmap.getHeight();
+            // PixelCopy returns ORIGINAL unscaled surface. Crop to what the
+            // user saw zoomed, before JPEG encoding and before the single cloud call.
             encodingTask=encoder.submit(()->{
                 byte[] jpeg=null;
+                int roiWidth=0,roiHeight=0;
+                Bitmap roi=null;
                 try{
+                    roi=C110ZoomFrames.cropPreviewBitmap(bitmap,liveZoomAtTap);
+                    roiWidth=roi.getWidth();roiHeight=roi.getHeight();
                     ByteArrayOutputStream data=new ByteArrayOutputStream();
-                    if(bitmap.compress(Bitmap.CompressFormat.JPEG,90,data))
+                    if(roi.compress(Bitmap.CompressFormat.JPEG,90,data))
                         jpeg=data.toByteArray();
                 }catch(RuntimeException ignored){
-                    // One failed frame must not be replaced with an old frame.
-                }finally{bitmap.recycle();}
+                    // A failed zoom crop must NOT send the entire uncropped frame.
+                }finally{
+                    if(roi!=null&&roi!=bitmap&&!roi.isRecycled())roi.recycle();
+                    bitmap.recycle();
+                }
                 final byte[] fresh=jpeg;
+                final int width=roiWidth,height=roiHeight;
                 handler.post(()->{
                     if(!uiActive||token!=requestVersion.get()||
                        seq!=c110PreviewSeq.get())return;
@@ -3063,6 +3091,10 @@ public final class MainActivity extends CameraActivity {
                         diagnostics.event("c110","pixelcopy",copyStatus,"ok");
                         diagnostics.event("c110","frame_width_px",width,"ok");
                         diagnostics.event("c110","frame_height_px",height,"ok");
+                        diagnostics.event("c110","zoom_x10",
+                            Math.round(liveZoomAtTap*10f),"ok");
+                        diagnostics.event("c110","video_width_px",videoWidth,"ok");
+                        diagnostics.event("c110","video_height_px",videoHeight,"ok");
                         diagnostics.event("c110","frame_bytes",fresh.length,"ok");
                     }
                     Frame selected=new Frame(null,width,height,
@@ -3097,6 +3129,7 @@ public final class MainActivity extends CameraActivity {
         // Close the player and explicitly re-enter photo mode for this tap,
         // then resume live preview only after complete original JPEG download.
         final boolean resumeLiveAfterPhoto=c110PreviewWanted;
+        final float highPhotoZoomAtTap=c110PreviewWanted?c110PreviewZoom:1f;
         if(resumeLiveAfterPhoto){
             stopC110LivePreview(false);
             c110Camera.resetPhotoMode();
@@ -3119,6 +3152,11 @@ public final class MainActivity extends CameraActivity {
                 // before reading the baseline, then send exactly ONE 1001.
                 C110WifiCamera.Photo photo=c110Camera.shootAfterLivePreview(this);
                 if(Thread.currentThread().isInterrupted())return;
+                // Native SD JPEG is only cropped when C110 video was digitally zoomed.
+                // At 1x C110ZoomFrames returns the untouched source byte[].
+                C110ZoomFrames.JpegResult scaled=
+                    C110ZoomFrames.cropNativeJpeg(
+                        photo.jpeg,photo.width,photo.height,highPhotoZoomAtTap);
                 android.net.Network cellular=null;
                 String cloudIssue=null;
                 try{
@@ -3138,14 +3176,18 @@ public final class MainActivity extends CameraActivity {
                         diagnostics.event("c110","discover_ms",photo.discoverMs,"ok");
                         diagnostics.event("c110","jpeg_ms",photo.downloadMs,"ok");
                         diagnostics.event("c110","photo_total_ms",photo.totalMs,"ok");
+                        diagnostics.event("c110","zoom_x10",
+                            Math.round(highPhotoZoomAtTap*10f),"ok");
+                        diagnostics.event("c110","native_width_px",photo.width,"ok");
+                        diagnostics.event("c110","native_height_px",photo.height,"ok");
                         diagnostics.event("c110","wifi_alive",photo.wifiStillPresent?1:0,
                             photo.wifiStillPresent?"ok":"lost");
                         diagnostics.event("c110","cloud_ready",issue==null?1:0,
                             issue==null?"ok":"unavailable");
                     }
                     if(issue==null){
-                        Frame remote=new Frame(null,photo.width,photo.height,
-                            SystemClock.elapsedRealtime(),photo.jpeg,cloudNetwork);
+                        Frame remote=new Frame(null,scaled.width,scaled.height,
+                            SystemClock.elapsedRealtime(),scaled.jpeg,cloudNetwork);
                         beginCapturedFrame(remote,now,token,null);
                     }else{
                         cloudBusy=false;
