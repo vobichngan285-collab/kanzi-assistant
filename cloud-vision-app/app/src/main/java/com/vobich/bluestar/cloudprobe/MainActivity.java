@@ -464,9 +464,8 @@ public final class MainActivity extends CameraActivity {
         new AlertDialog.Builder(this).setTitle("选择模式")
             .setItems(modes,(dialog,which)->{
                 if(which==1){
-                    // Retry after a startup timeout; never launch the player
-                    // against home Wi-Fi as if a C110 network already existed.
-                    if(c110WifiBootstrap!=null)c110WifiBootstrap.requestForCameraMode();
+                    // OEM hotspot picker belongs to the foreground C110
+                    // Activity; never show its dialog behind a new Activity.
                     startActivityForResult(new Intent(this,C110CameraActivity.class),
                         REQUEST_C110_PAGE);
                 }else if(which==0){
@@ -1722,6 +1721,12 @@ public final class MainActivity extends CameraActivity {
         if(requestCode==C110WifiBootstrap.PERMISSION_REQUEST){
             if(c110WifiBootstrap!=null)
                 c110WifiBootstrap.onPermissionResult(results.length>0&&
+                    results[0]==PackageManager.PERMISSION_GRANTED);
+            return;
+        }
+        if(requestCode==C110WifiBootstrap.SCAN_PERMISSION_REQUEST){
+            if(c110WifiBootstrap!=null)
+                c110WifiBootstrap.onScanPermissionResult(this,results.length>0&&
                     results[0]==PackageManager.PERMISSION_GRANTED);
             return;
         }
