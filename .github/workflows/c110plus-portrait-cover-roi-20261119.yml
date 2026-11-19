@@ -136,7 +136,7 @@ jobs:
           assert 'Math.round(height*(16f/9f))' in c110, 'Cover without stretching video'
           assert 'lp.gravity=Gravity.CENTER' in c110
           assert 'portraitCoverAtShutter' in c110
-          assert 'C110ZoomGeometry.centeredCover(' in zoom
+          assert 'static Region centeredCover(' in zoom
           assert 'centeredCover(' in zoomframes
           assert 'boolean portraitCover,float viewportAspect' in reader
           assert 'android:screenOrientation="portrait"' in usb
