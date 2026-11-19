@@ -3430,6 +3430,14 @@ public final class MainActivity extends CameraActivity {
 
     @Override protected void onResume(){
         super.onResume();
+        // C110 page and photo lab can change these shared model settings.
+        // Refresh cached homepage labels after returning, without changing
+        // camera mode, task selection or any cloud request.
+        SharedPreferences currentModels=getSharedPreferences(PREFS,MODE_PRIVATE);
+        ocrModel=OcrModelCatalog.normalize(
+            currentModels.getString(PREF_OCR_MODEL,OcrModelCatalog.DEFAULT));
+        visionModel=VisionModelCatalog.normalize(
+            currentModels.getString(PREF_VISION_MODEL,VisionModelCatalog.DEFAULT));
         uiActive=true;usbForeground=true;
         if(readingScreen!=null){
             readingAwaitingFrame.set(false);
