@@ -15,7 +15,7 @@
     </queries>
     <application
         android:allowBackup="false"
-        android:label="蓝星向导 C110缓存150清理验证"
+        android:label="蓝星向导 C110+图像实验"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/AppTheme"
@@ -34,6 +34,12 @@
         </activity>
         <!-- Isolated proven C110 mini VLC Activity with same bottom dock and camera-only settings. -->
         <activity android:name=".C110CameraActivity"
+            android:screenOrientation="portrait"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar"
+            android:exported="false"/>
+        <!-- User manually changes native image size in OEM SJCAM Zone; this page
+             only performs one real C110+ photo + one existing cloud OCR request. -->
+        <activity android:name=".C110ResolutionLabActivity"
             android:screenOrientation="portrait"
             android:theme="@android:style/Theme.Material.Light.NoActionBar"
             android:exported="false"/>
