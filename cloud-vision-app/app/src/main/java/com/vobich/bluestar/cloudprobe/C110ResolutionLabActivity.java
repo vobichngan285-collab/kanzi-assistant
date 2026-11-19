@@ -58,8 +58,8 @@ public final class C110ResolutionLabActivity extends Activity {
     private final ArrayList<Trial> trials=new ArrayList<>();
     private Spinner labelChoice;
     private EditText knownReference;
-    private TextView state,logView,lastTextView;
-    private Button shootButton;
+    private TextView state,logView,lastTextView,modelInfo;
+    private Button shootButton,modelButton;
     private Future<?> running;
     private boolean busy,closed;
     private int generation;
@@ -68,6 +68,7 @@ public final class C110ResolutionLabActivity extends Activity {
     private String latestError="";
 
     private static final class Trial {
+        String model,speed;
         int slot,width,height,jpegBytes,promptTokens,completionTokens;
         int referenceChars,recognizedChars,editDistance;
         long modeMs,shutterMs,discoverMs,downloadMs,photoMs;
@@ -92,6 +93,15 @@ public final class C110ResolutionLabActivity extends Activity {
             "先在原厂SJCAM Zone里手动选照片尺寸，返回后在下方标记档位。"
             +"本实验绝不更改相机分辨率；只真实拍一张、上传一次、对比一次。",
             15,0xFFD2E4F8));
+
+        // Use the SAME settings as the app homepage and C110 preview.
+        // This experimental screen must never force qwen-vl-ocr.
+        modelInfo=text("",17,Color.WHITE);
+        root.addView(modelInfo);
+        modelButton=button("切换朗读OCR模型（同步主页）");
+        modelButton.setOnClickListener(v->showModelSelector());
+        root.addView(modelButton);
+        refreshModelInfo();
 
         labelChoice=new Spinner(this);
         ArrayAdapter<String> choices=new ArrayAdapter<>(this,
@@ -155,9 +165,48 @@ public final class C110ResolutionLabActivity extends Activity {
         b.setOnClickListener(v->action.run());
         return b;
     }
+    private String selectedModel(){
+        return OcrModelCatalog.normalize(getSharedPreferences("kanzi_settings",MODE_PRIVATE)
+            .getString("cloud_ocr_model_v1",OcrModelCatalog.DEFAULT));
+    }
+
+    private String selectedSpeed(){
+        return OcrSpeedExperiment.normalize(getSharedPreferences("kanzi_settings",MODE_PRIVATE)
+            .getString(OcrSpeedExperiment.PREF,OcrSpeedExperiment.DEFAULT));
+    }
+
+    private void refreshModelInfo(){
+        if(modelInfo!=null)
+            modelInfo.setText("当前云端OCR："+OcrModelCatalog.label(selectedModel())+
+                "（"+selectedModel()+"）\n与主页共用；本次拍照开始时锁定模型。");
+    }
+
+    private void showModelSelector(){
+        if(busy){say("当前拍照或云端识别尚未结束");return;}
+        final String selected=selectedModel();
+        int choice=Math.max(0,OcrModelCatalog.indexOf(selected));
+        new AlertDialog.Builder(this)
+            .setTitle("文字朗读云端模型（与主页同步）")
+            .setSingleChoiceItems(OcrModelCatalog.LABELS,choice,(dialog,index)->{
+                getSharedPreferences("kanzi_settings",MODE_PRIVATE).edit()
+                    .putString("cloud_ocr_model_v1",OcrModelCatalog.IDS[index]).apply();
+                refreshModelInfo();
+                refresh();
+                say("已切换OCR："+OcrModelCatalog.label(selectedModel())+
+                    "。下一次拍照将使用该模型，不自动回退或重试。");
+                dialog.dismiss();
+            }).setNegativeButton("取消",null).show();
+    }
+
     private void say(String message){
         state.setText(message);
         state.announceForAccessibility(message);
+    }
+
+    @Override protected void onResume(){
+        super.onResume();
+        refreshModelInfo();
+        if(logView!=null)refresh();
     }
 
     private void shootOne(){
@@ -173,9 +222,13 @@ public final class C110ResolutionLabActivity extends Activity {
             knownReference.setError("标准文字最多2000字符");
             return;
         }
+        // Capture one model + OCR playback policy at tap; never change mid-shot.
+        final String chosenModel=selectedModel();
+        final String chosenSpeed=selectedSpeed();
         busy=true;shootButton.setEnabled(false);
+        if(modelButton!=null)modelButton.setEnabled(false);
         final int id=++generation;
-        say("拍照中：一次真实1001快门，然后完整下载SD JPEG…");
+        say("拍照中："+chosenModel+"；一次真实1001快门，然后完整下载SD JPEG…");
         lastOcr="";lastUploadedJpeg=null;latestError="";
         final long started=SystemClock.elapsedRealtime();
         running=worker.submit(()->{
@@ -199,15 +252,16 @@ public final class C110ResolutionLabActivity extends Activity {
                 String key=CloudKeyStore.load(this);
                 if(key==null||key.trim().isEmpty())
                     throw new IllegalStateException("未设置千问百炼API Key；已拍照但未上传");
-                // Fixed dedicated OCR model + identical prompt for every size.
+                // Inherit the homepage OCR model: no hard-coded provider or
+                // silent fallback. Keep the same OCR instruction across sizes.
                 TaskCatalog.Task ocr=TaskCatalog.defaults()[0];
                 CloudVisionClient.Result result=CloudVisionClient.recognize(
-                    submitted,key,ocr,OcrModelCatalog.DEDICATED,null,
-                    OcrSpeedExperiment.A,cellular);
+                    submitted,key,ocr,chosenModel,null,chosenSpeed,cellular);
                 if(Thread.currentThread().isInterrupted())return;
                 C110ResolutionScore.Result comparison=
                     C110ResolutionScore.compare(known,result.text);
                 Trial trial=new Trial();
+                trial.model=chosenModel;trial.speed=chosenSpeed;
                 trial.slot=slot;
                 trial.width=photo.width;trial.height=photo.height;
                 trial.jpegBytes=submitted.length;
@@ -237,7 +291,7 @@ public final class C110ResolutionLabActivity extends Activity {
                     lastOcr=response==null?"":response;
                     lastUploadedJpeg=submitted;
                     say("第"+trials.size()+"张完成："+photo.width+"×"+photo.height+
-                        "；总耗时"+trial.totalMs+"ms"+
+                        "；模型"+trial.model+"；总耗时"+trial.totalMs+"ms"+
                         (Double.isNaN(trial.accuracy)?"；未填写标准原文":
                             "；字符准确率"+percent(trial.accuracy)));
                     refresh();
@@ -256,6 +310,7 @@ public final class C110ResolutionLabActivity extends Activity {
                 ui.post(()->{
                     if(closed||id!=generation)return;
                     busy=false;running=null;shootButton.setEnabled(true);
+                    if(modelButton!=null)modelButton.setEnabled(true);
                 });
             }
         });
@@ -267,7 +322,10 @@ public final class C110ResolutionLabActivity extends Activity {
     private String report(){
         StringBuilder b=new StringBuilder();
         b.append("Blue Star C110+ 分辨率/取图/云OCR A-B数值诊断\n")
-            .append("模型=qwen-vl-ocr；每次真实1001快门+一份原始JPEG+一次云端请求；")
+            .append("当前主页OCR模型=").append(selectedModel())
+            .append("；速度模式=").append(selectedSpeed())
+            .append("；每次真实1001快门+一份原始JPEG+一次云端请求；")
+            .append("每次真实请求模型独立记录；混用模型的数据不可直接比较；")
             .append("相机照片档位只在原厂App修改\n")
             .append("准确率=100×max(0,1-字符编辑距离/标准原文长度)；")
             .append("NFKC小写并忽略空白/标点；不代表语义评价\n")
@@ -284,6 +342,8 @@ public final class C110ResolutionLabActivity extends Activity {
                 .append(" 实测=").append(t.width).append("x").append(t.height)
                 .append(" match=").append(t.correctDimensions?"yes":"NO")
                 .append(" upload_equals_camera_original=").append(t.byteIdentical?"yes":"NO")
+                .append(" model=").append(t.model)
+                .append(" speed=").append(t.speed)
                 .append("\nJPEG字节=").append(t.jpegBytes)
                 .append(" 估计Base64字节=").append(((long)t.jpegBytes+2)/3*4)
                 .append(" 视觉总像素=").append((long)t.width*t.height)
@@ -379,6 +439,7 @@ public final class C110ResolutionLabActivity extends Activity {
         if(running!=null)running.cancel(true);
         running=null;busy=false;
         if(shootButton!=null)shootButton.setEnabled(true);
+        if(modelButton!=null)modelButton.setEnabled(true);
         super.onPause();
     }
     @Override protected void onDestroy(){
