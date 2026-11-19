@@ -1,3 +1,16 @@
+# 2026-11-19｜C110+ 官方式竖屏铺满预览 + 所见即OCR v1.0.49 已CI发布（待真机）
+
+- **这次用户明确纠正并授权**：用户提供原厂 SJCAM Zone 竖屏预览截图，指出 v1.0.48 的“全屏”错误地强制横屏；明确要求手机**始终竖屏**、视频**等比例铺满屏幕**（可居中裁掉左右两侧，不拉伸）、保留顶部必要操作及底部拍照/变焦；画面所见区域必须与 OCR 提交的区域一致，用户明确“是的，现在改”。**不要再误做强制横屏，不要重写已成功的相机连接/播放器**。
+- **仓库/基线**：唯一原仓 `vobichngan285-collab/kanzi-assistant`；从已发布 v1.0.48 分支 HEAD `cf7d525d8e5d92ab93ebad08de719feed5e44f18` 派生独立 `exp/c110plus-portrait-cover-roi-20261119`；最终 HEAD `ac08a2a6811c9d0993d34437ccdc4bf15b3d82fa`；新 `com.vobich.bluestar.c110plusportrait149`，versionCode58，versionName `1.0.49-c110plus-portrait-cover-150ms`。独立 APK 不覆盖 v1.0.48、旧实验或正式 RC25。
+- **专页竖屏全屏修复**：`C110CameraActivity` 的 `全屏/退出` 按钮**不再调用 setRequestedOrientation**，页面 portrait Manifest 不变；仅调整原 **同一** `VLCVideoLayout` 的尺寸和显示 transform，16:9 原始视频等比例 `CenterCrop` 到竖屏可见区域，保留必要顶栏、独立底部“高清拍照”、缩放条、退出按钮和系统状态栏；不用重建播放实例/复发 OEM 命令。为避免 vivo 高分屏重新分配超大 Surface 或 `PixelCopy` 超 900 万像素限制，实际 VLC View 尺寸最大按原 2K 1920×1080 安排，**显示层**按宽/高比例补足竖屏 Cover；`C110FrameReader` 对过大的竖屏 PixelCopy 在请求前硬件缩样到至多约 2MP。仅渲染/取帧处理优化，未修改 150ms 缓存。
+- **视频OCR/高清照片实际 ROI 与预览同步**：新 `C110ZoomGeometry.centeredCover(w,h,zoom,viewportAspect)` 同时用于视频实时 `PixelCopy` 帧、SD 原生高清JPEG；**普通非全屏 1x**仍原图 byte[] 直接上传；**竖屏铺满 1x**已将原横画面裁成中心竖幅，实际 OCR 就裁相同中心区域；再拨动1～4x时在可见竖幅上继续中心裁剪。高清通道仍仅一次原厂 `1001` 拍照、下载**完整未修改 SD 原始JPEG**，上传云端前使用 `BitmapRegionDecoder` 按 ROI 部分解码、必要时JPEG92编码；失败不伪装已裁切并改传整图。预览与照片的实际 FOV/防抖差异须真机核对。主页内联预览、手机/UVC、四档原厂照片大小准确率实验代码不改。
+- **保证既有成功基线**：标准原厂 OEM `3012→3016→3001/par1→2015/par1`、vivo Wi-Fi、LibVLC 3.6.5 + 可见 VLCVideoLayout、两条路径 network/live **150ms**（file/sout 300ms）、`1001` 单次快门、9011 静音/9038 灯控、原云端请求/TTS/USB/手机路径保留；**C110+ 4003 删图未验证，保持隐藏且不自动清理**。150ms 是缓存不是分辨率，不宣称可增强真实光学画质。
+- **构建验证及发布**：单元/静态检查通过（portrait 9:16 cover 1x/2x、正常16:9、8M照片ROI、原OEM/150ms/安全回归）；第一批CI曾因测试脚本断言写错、Java onCreate(Bundle b) 内 layout lambda `b` 命名冲突而失败，已纠正并保留历史不冒充成功。**最终 GitHub Actions Run 44562094578** `completed/success`，所有编译、APK身份/LibVLC/USB本地so/音效、Artifact及独立Release成功；运行 HEAD 与 Release target 均为 `ac08a2a6811c9d0993d34437ccdc4bf15b3d82fa`。
+- **唯一推荐 APK 直链**：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110plus-portrait-cover-roi-150ms-20261119-v0149/BlueStar_Guide_C110Plus_Portrait_Cover_ROI_150ms_1.0.49.apk ，大小 56,715,769 字节，SHA256 `63ffa114d30c61a138e6c27dcc5d323e4dc3677f8ef01ee6b92308b52f3f2685`。Release https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110plus-portrait-cover-roi-150ms-20261119-v0149 ，Actions https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44562094578 。
+- **下一步真机检查（尚未验收）**：在 vivo X200 Pro 打开C110+专页→点“全屏”，确认**不横转、不拉伸，竖屏画面铺满且可退出、无黑屏/重连**；1x全屏只识别视觉中间竖幅，2x/4x只识别对应放大区域；全屏一次真实高清拍照，原厂JPEG完整、OCR上传区域正确；切普通模式1x应回全幅。核对 RTSP 与 SD 原照片视场角；长时间150ms不卡顿。新 applicationId 需单独填写有效 API Key；`qwen-vl-ocr` 旧免费额度已耗尽可能HTTP403，不应误判相机问题。**CI成功不代表真机成功**。
+
+---
+
 # 2026-11-19｜C110+ 预览数字缩放随OCR、横屏全屏、150ms双路径 v1.0.48 已发布（待真机）
 
 - **本轮用户明确授权**：“结合我们刚才说的几条更新原则做新版本，尤其是画面缩放，还有个全屏，还有一个就是150毫秒。这三个东西你一起做下一个版本，现在开始。”此前暂缓的缩放和全屏此轮已授权开发；原厂照片尺寸8M/10M/20M依然只在SJCAM Zone改，不给蓝星重复造照片设置；正式RC25、v0.1.20、v0.1.21-safe、v0.1.22各旧版均保留。
