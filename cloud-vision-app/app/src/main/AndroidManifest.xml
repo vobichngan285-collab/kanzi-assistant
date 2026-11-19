@@ -11,7 +11,7 @@
     </queries>
     <application
         android:allowBackup="false"
-        android:label="蓝星向导 C110竖屏实验"
+        android:label="蓝星向导 C110综合实验"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/AppTheme"
@@ -28,7 +28,7 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        <!-- C110 retains the proven OEM mini pipeline in a distinct portrait Activity. -->
+        <!-- Isolated proven C110 mini VLC Activity with same bottom dock and camera-only settings. -->
         <activity android:name=".C110CameraActivity"
             android:screenOrientation="portrait"
             android:theme="@android:style/Theme.Material.Light.NoActionBar"
