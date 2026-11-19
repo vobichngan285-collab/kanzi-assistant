@@ -157,7 +157,9 @@ final class C110FrameReader {
                 busy=false;
                 lastText=result.text==null?"":result.text;
                 report("已识别："+task.name+"，取帧到识别 "+(SystemClock.elapsedRealtime()-started)+"ms");
-                if(spokenParts.get()==0||!OcrSpeedExperiment.earlySpeak(speed))
+                // A/B have no early OCR speech; C streams lines. Visual tasks
+                // already stream parts, so do not repeat the entire response.
+                if(spokenParts.get()==0||(ocr&&!OcrSpeedExperiment.earlySpeak(speed)))
                     speak(filtered(lastText,task));
             });
         }catch(OcrResponseGate.NoReadableTextException noText){
