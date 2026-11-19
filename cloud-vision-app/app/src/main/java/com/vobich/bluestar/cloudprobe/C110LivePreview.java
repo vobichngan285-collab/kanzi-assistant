@@ -77,8 +77,8 @@ final class C110LivePreview {
             listener.routeBound(1);
             // Exactly the parameters used in the first real-device success.
             ArrayList<String> options=new ArrayList<>();
-            options.add("--network-caching=300");
-            options.add("--live-caching=300");
+            options.add("--network-caching=150");
+            options.add("--live-caching=150");
             options.add("--no-audio");
             vlc=new LibVLC(context.getApplicationContext(),options);
             final MediaPlayer current=new MediaPlayer(vlc);
@@ -107,8 +107,8 @@ final class C110LivePreview {
             }));
             media=new Media(vlc,Uri.parse(VIDEO_URL));
             media.addOption(":no-audio");
-            media.addOption(":network-caching=300");
-            media.addOption(":live-caching=300");
+            media.addOption(":network-caching=150");
+            media.addOption(":live-caching=150");
             media.addOption(":file-caching=300");
             media.addOption(":sout-mux-caching=300");
             media.addOption(":codec=mediacodec,iomx,all");
