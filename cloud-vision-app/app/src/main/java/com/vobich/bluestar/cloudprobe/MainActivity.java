@@ -1716,6 +1716,14 @@ public final class MainActivity extends CameraActivity {
 
     @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] results){
         super.onRequestPermissionsResult(requestCode,permissions,results);
+        if(requestCode==C110WifiBootstrap.PERMISSION_REQUEST){
+            if(c110WifiBootstrap!=null)
+                c110WifiBootstrap.onPermissionResult(results.length>0&&
+                    results[0]==PackageManager.PERMISSION_GRANTED);
+            return;
+        }
+        if(requestCode==REQUEST_PHONE_CAMERA&&c110WifiBootstrap!=null)
+            c110WifiBootstrap.startAtLaunch();
         if(requestCode==REQUEST_VOICE_MIC){
             voicePress.interrupt();
             if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)
@@ -3341,20 +3349,6 @@ public final class MainActivity extends CameraActivity {
                 });
             }
         });
-    }
-
-    @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,
-                                                       int[] grantResults){
-        super.onRequestPermissionsResult(requestCode,permissions,grantResults);
-        if(requestCode==C110WifiBootstrap.PERMISSION_REQUEST&&c110WifiBootstrap!=null){
-            boolean granted=grantResults.length>0&&
-                grantResults[0]==PackageManager.PERMISSION_GRANTED;
-            c110WifiBootstrap.onPermissionResult(granted);
-        }else if(requestCode==REQUEST_PHONE_CAMERA&&c110WifiBootstrap!=null){
-            // Request C110 permission only after the camera permission dialog
-            // finishes, avoiding two competing Android permission prompts.
-            c110WifiBootstrap.startAtLaunch();
-        }
     }
 
     @Override protected void onResume(){
