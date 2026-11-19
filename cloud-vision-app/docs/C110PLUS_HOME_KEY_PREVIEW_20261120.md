@@ -1,10 +1,10 @@
-# C110+ v1.0.51 首屏快捷拍照、USB/手机预览、音量键快捷快门、设置不退出预览
+# C110+ v1.0.52 首屏快捷拍照、USB/手机预览、音量键快捷快门、设置不退出预览
 
 ## 目标与授权
 用户给了第三方大字体竖屏主页参考图，要求启动时**不自动开启手机/UVC摄像头**；底部「主页 / 预览 / 设置」。主页第一项「快捷拍照」点一次直接触发C110+原厂高清照片，并按当前首页OCR/视觉任务和模型朗读，无需先开视频。底部「预览」有 USB 时选择 UVC，否则手机摄像头。音量上/下双击或长按的动作可自定义，**只触发 C110+ 高清拍照**，在首页、手机/USB预览及 C110 视频预览有效；保持普通单击音量调节功能。用户又反馈 C110+ 视频预览按设置图标会立刻跳回默认页面，要求修复。以上为独立实验版本已授权开发。
 
 ## 安全设计与实际边界
-- 从已发布 v1.0.50 分支 `exp/c110plus-model-sync-20261120` HEAD `cdd131908fbed3e22c9ee351a707272c60108dce` 分支开发 `exp/c110plus-home-quickkey-preview-settings-20261120`，新 versionCode60、versionName `1.0.51-c110plus-home-key-preview`、`com.vobich.bluestar.c110plushome151`，不覆盖旧包。
+- 从已发布 v1.0.50 分支 `exp/c110plus-model-sync-20261120` HEAD `cdd131908fbed3e22c9ee351a707272c60108dce` 分支开发 `exp/c110plus-home-quickkey-preview-settings-20261120`，新 versionCode61、versionName `1.0.52-c110plus-home-key-preview`、`com.vobich.bluestar.c110plushome152`，不覆盖旧包。
 - 新 `HomeActivity` 成为唯一 MAIN/LAUNCHER，不继承 UVC `CameraActivity`，主页/设置页只读Prefs、展示UI，不创建手机/USB相机或VLC。首页 C110 快捷拍照进新 `C110QuickPhotoActivity`（不创建本地摄像头），主动触发一次用户请求、检查既有精确C110热点/必要时系统许可，然后执行且只执行一次 `C110WifiCamera.shootAfterLivePreview` (1001) 、下载真实JPEG，交给 `C110FrameReader.recognizeOriginalJpeg` 使用首页已保存的朗读任务/模型/TTS。若尚未连接C110，须允许系统连接，不能保证无连接时瞬间拍得；仅等待Wi-Fi建立，不重复1001或云请求。
 - `HomeActivity` 底部三栏，设置包括音量键选择、OCR/视觉模型、API Key、原高级设置入口（用 `MainActivity` 的设置专用模式，不启动相机）；预览启动原 `MainActivity` CameraActivity 并基于物理USB有无自动选USB或手机；手机/USB原UVC/Camera2机制不重构。预览下方三栏+上方快拍/AI对话；返回主页结束本预览 Activity。C110专页保留原缩放、150ms VLC 和独立高清拍照UI。
 - `C110VolumeShortcut`：默认双击音量下键，其他支持双击音量上、长按上/下和关闭。双击窗360ms、长按650ms；只在当前应用的Activity**前台**截获音量键，未注入无障碍服务或申请后台监听，不承诺息屏/锁屏/其他App工作。单击通过 `AudioManager.adjustStreamVolume` 恢复音量调节；活动失焦或暂停取消待处理的手势。每个成功手势触发一次快门意图，原照片忙锁+云端请求忙锁阻止连拍；默认手机/USB预览快捷键仍拍 C110+，不误拍手机/UVC。
@@ -19,3 +19,6 @@
 5. 对比各模式取景/预览/OCR以及C110真实快门一张、此前照片尺寸OCR准确率实验。新包独立安装需要配置云API Key；HTTP403表示所选模型额度，不等于相机错误。
 
 CI通过只是编译和静态验证，非实机验证；所有实验结果必须以真机日志为准。
+
+
+**版本隔离补记**：自动CI曾先对初始v1.0.51快照构建并发布了独立历史Release；随后补充USB仅手动进入预览、避免C110快捷拍照竞争原Wi-Fi回调等修复。为保证最终交付使用包含这些修复的HEAD且不覆盖历史，最终定版为**v1.0.52，唯一标签v0152**；不能拿早期v1.0.51包当成最终实验版。
