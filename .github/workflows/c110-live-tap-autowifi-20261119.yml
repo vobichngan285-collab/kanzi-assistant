@@ -1,4 +1,4 @@
-name: Blue Star C110 One Tap Live Frame + Startup Wi-Fi v0.1.15
+name: Blue Star C110 One Tap Live Frame + Startup Wi-Fi v0.1.16
 on:
   push:
     branches: [ 'exp/c110-live-tap-autowifi-20261119' ]
@@ -100,8 +100,8 @@ jobs:
           assert '((cmd==9011||cmd==9038)&&(par==0||par==1))' in controls
           assert 'android.permission.NEARBY_WIFI_DEVICES' in manifest
           assert '<activity android:name=".C110CameraActivity"' in manifest
-          assert "applicationIdSuffix '.c110livetap'" in gradle
-          assert "versionName '1.0.40-c110-live-tap-wifi-lab'" in gradle
+          assert "applicationIdSuffix '.c110livetap2'" in gradle
+          assert "versionName '1.0.41-c110-live-tap-wifi-lab'" in gradle
           print('PASS: only two requested enhancements; OEM player invariant, pixelcopy cloud OCR, on-launch Wi-Fi and old features')
           PY
       - name: Apply the same safe pinned USB patches as RC25
@@ -134,8 +134,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_C110_LiveTap_WiFi_0.1.15.apk
-          test -s out/BlueStar_Guide_C110_LiveTap_WiFi_0.1.15.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_C110_LiveTap_WiFi_0.1.16.apk
+          test -s out/BlueStar_Guide_C110_LiveTap_WiFi_0.1.16.apk
           unzip -tq out/*.apk >/dev/null
           unzip -Z1 out/*.apk >out/entries.txt
           grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
@@ -146,14 +146,14 @@ jobs:
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           test -x "$AAPT"
           "$AAPT" dump badging out/*.apk >out/badging.txt
-          grep -Fq "package: name='com.vobich.bluestar.c110livetap'" out/badging.txt
-          grep -Fq "versionName='1.0.40-c110-live-tap-wifi-lab'" out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110livetap2'" out/badging.txt
+          grep -Fq "versionName='1.0.41-c110-live-tap-wifi-lab'" out/badging.txt
           grep -q 'application-icon-' out/badging.txt
-          (cd out && sha256sum BlueStar_Guide_C110_LiveTap_WiFi_0.1.15.apk > SHA256SUMS.txt)
+          (cd out && sha256sum BlueStar_Guide_C110_LiveTap_WiFi_0.1.16.apk > SHA256SUMS.txt)
           cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: BlueStar_Guide_C110_LiveTap_WiFi_0.1.15
+          name: BlueStar_Guide_C110_LiveTap_WiFi_0.1.16
           path: out/*
           retention-days: 14
       - name: Publish isolated prerelease only if unused tag
@@ -162,12 +162,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG=bluestar-c110-live-tap-autowifi-20261119-v0115
+          TAG=bluestar-c110-live-tap-autowifi-20261119-v0116
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Existing C110 integrated prerelease, refusing overwrite" >&2
             exit 1
           fi
-          gh release create "$TAG" "out/BlueStar_Guide_C110_LiveTap_WiFi_0.1.15.apk" \
+          gh release create "$TAG" "out/BlueStar_Guide_C110_LiveTap_WiFi_0.1.16.apk" \
             --target "$GITHUB_SHA" --prerelease \
-            --title "Blue Star Guide C110 Live Tap + Auto Wi-Fi v0.1.15" \
+            --title "Blue Star Guide C110 Live Tap + Auto Wi-Fi v0.1.16" \
             --notes "C110 page now matches Blue Star main dock/preview with one-tap fresh VLC Surface PixelCopy to existing cloud OCR task/model and local TTS; camera preview stays visible. App startup requests Android user-approved C110 WPA2 Wi-Fi once using documented SSID prefix and default password, then checks gateway/3012 standard model. Keeps OEM 3012/3016/3001/2015 and LibVLC playback core unchanged apart from video-output readiness callback. Isolated APK; prior releases and RC25 unchanged. First-time Android Nearby Wi-Fi permission and OS Wi-Fi consent may be required. Live device tests still needed."
