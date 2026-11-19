@@ -408,6 +408,16 @@ public final class MainActivity extends CameraActivity {
         slp.rightMargin=dp(6);
         title.addView(settingsButton,slp);
         settingsButton.setOnClickListener(v->openLargeSettings());
+        // Fast photo remains available without using the old four-item dock.
+        c110Button=new Button(this);
+        c110Button.setText("快拍");
+        c110Button.setTextSize(15);
+        c110Button.setAllCaps(false);
+        c110Button.setTextColor(Color.WHITE);
+        c110Button.setBackground(roundRect(0xFF245477,12));
+        c110Button.setContentDescription("立即触发一次C110+高清拍照与朗读");
+        title.addView(c110Button,new LinearLayout.LayoutParams(dp(60),dp(43)));
+        c110Button.setOnClickListener(v->captureC110OneShot());
         zoomChip=new TextView(this);
         zoomChip.setText("1.0×");
         zoomChip.setGravity(Gravity.CENTER);
@@ -443,23 +453,20 @@ public final class MainActivity extends CameraActivity {
         dock.setGravity(Gravity.CENTER);
         dock.setPadding(dp(7),dp(5),dp(7),dp(7));
         dock.setBackground(roundRect(0xED091D36,20));
-        modeButton=createControlButton("▦\n任务",0xFF2C547D);
-        startButton=createControlButton("🎙\nAI对话",0xFF176BAC);
-        c110Button=createControlButton("▤\n高清拍照",0xFF2C547D);
-        cameraEntryButton=createControlButton("◉\n模式",0xFF286FCB);
-        for(Button btt:new Button[]{modeButton,startButton,c110Button,cameraEntryButton}){
+        modeButton=createControlButton("⌂\n主页",0xFF2C547D);
+        startButton=createControlButton("◎\n预览",0xFF176BAC);
+        cameraEntryButton=createControlButton("⚙\n设置",0xFF2C547D);
+        for(Button btt:new Button[]{modeButton,startButton,cameraEntryButton}){
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(75),1f);
             lp.setMargins(dp(3),0,dp(3),0);dock.addView(btt,lp);
         }
         root.addView(dock,new FrameLayout.LayoutParams(-1,dp(89),Gravity.BOTTOM));
-        modeButton.setContentDescription("任务选择，包含阅读");
-        startButton.setContentDescription("AI对话，按住说话，松开发送");
-        cameraEntryButton.setContentDescription("模式，选择手机摄像头、C110运动相机或USB摄像头");
-        c110Button.setContentDescription("C110运动相机高清拍照，无论正在预览手机或USB摄像头，都发送一次C110真实快门");
-        modeButton.setOnClickListener(v->showTaskSelector());
-        startButton.setOnTouchListener((v,event)->handleVoiceButtonTouch(event));
-        cameraEntryButton.setOnClickListener(v->showUnifiedModeSelector());
-        c110Button.setOnClickListener(v->captureC110OneShot());
+        modeButton.setContentDescription("返回蓝星向导主页");
+        startButton.setContentDescription("预览当前摄像头，点击可切换手机、USB或C110");
+        cameraEntryButton.setContentDescription("打开原有设置，不关闭当前预览");
+        modeButton.setOnClickListener(v->finish());
+        startButton.setOnClickListener(v->showUnifiedModeSelector());
+        cameraEntryButton.setOnClickListener(v->openLargeSettings());
         return root;
     }
 
