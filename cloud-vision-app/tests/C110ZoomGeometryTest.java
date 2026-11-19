@@ -39,6 +39,30 @@ public final class C110ZoomGeometryTest {
             "C110+ 8M is 16:9");
         eq(!C110ZoomGeometry.photoLooksLikeLandscapeVideo(3000,4000),
             "reject incompatible portrait photos rather than pretend matching ROI");
-        System.out.println("PASS C110+ center ROI shared across native JPEG and RTSP, original 1x, guards");
+        // In portrait cover, 1x means the visible center slice, not the full
+        // 16:9 source. Manual zoom crops again within the same viewport.
+        C110ZoomGeometry.Region cover=C110ZoomGeometry.centeredCover(
+            1920,1080,1f,9f/16f);
+        eq(cover.width==608&&cover.height==1080&&cover.left==656&&cover.top==0,
+            "portrait 9:16 viewport crops left/right without stretching");
+        C110ZoomGeometry.Region cover2=C110ZoomGeometry.centeredCover(
+            1920,1080,2f,9f/16f);
+        eq(cover2.width==304&&cover2.height==540&&cover2.left==808&&cover2.top==270,
+            "2x zoom OCR exactly within portrait visible viewport");
+        C110ZoomGeometry.Region nativeCover=C110ZoomGeometry.centeredCover(
+            3840,2160,1f,9f/16f);
+        eq(nativeCover.width==1215&&nativeCover.height==2160&&nativeCover.left==1312,
+            "8M native SD portrait cover uses original image coordinates");
+        eq(C110ZoomGeometry.centeredCover(1920,1080,1f,16f/9f)
+            .full(1920,1080),"matching viewport ratio stays full frame");
+        C110ZoomGeometry.Region wide=C110ZoomGeometry.centeredCover(
+            1920,1080,1f,2f);
+        eq(wide.width==1920&&wide.height==960&&wide.top==60,
+            "landscape cover center-crops vertically");
+        boolean rejected=false;
+        try{C110ZoomGeometry.centeredCover(1920,1080,1f,Float.NaN);}
+        catch(IllegalArgumentException expected){rejected=true;}
+        eq(rejected,"invalid viewport aspect must reject rather than mis-map OCR");
+        System.out.println("PASS C110+ portrait cover maps live/native OCR to visible region");
     }
 }
