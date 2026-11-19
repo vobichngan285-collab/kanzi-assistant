@@ -209,7 +209,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG=bluestar-c110plus-zoom-roi-fullscreen-150ms-20261119-v0122
+          TAG=bluestar-c110plus-zoom-roi-fullscreen-150ms-20261119-v0148
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Existing tag must not be replaced" >&2
             exit 1
