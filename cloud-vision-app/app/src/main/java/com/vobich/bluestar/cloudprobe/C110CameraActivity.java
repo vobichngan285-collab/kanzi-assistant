@@ -5,6 +5,7 @@ import android.content.res.Configuration;
 import android.os.Bundle;
 import android.content.Intent;
 import android.view.View;
+import android.view.KeyEvent;
 import android.widget.ImageView;
 import android.util.TypedValue;
 import android.graphics.drawable.GradientDrawable;
@@ -83,6 +84,7 @@ public final class C110CameraActivity extends Activity {
     private FrameLayout cameraRoot;
     private LinearLayout topControls,bottomControls,zoomControls;
     private Button fullscreenButton,fullscreenPhoto;
+    private C110VolumeShortcut volumeShortcut;
     private TextView zoomValue;
     private SeekBar zoomSeek;
     private float zoom=1f;
@@ -93,6 +95,7 @@ public final class C110CameraActivity extends Activity {
         cm=(ConnectivityManager)getSystemService(Context.CONNECTIVITY_SERVICE);
         deviceControls=new C110DeviceControls(this,this::say);
         frameReader=new C110FrameReader(this,this::say);
+        volumeShortcut=new C110VolumeShortcut(this,this::captureOriginalPhoto);
         FrameLayout root=new FrameLayout(this);
         cameraRoot=root;
         root.setClipChildren(true);
@@ -160,8 +163,8 @@ public final class C110CameraActivity extends Activity {
         Button globalSettings=new Button(this);
         globalSettings.setText("☰");
         globalSettings.setTextSize(24);
-        globalSettings.setContentDescription("打开三横杠全局设置");
-        globalSettings.setOnClickListener(v->returnToMain("settings"));
+        globalSettings.setContentDescription("当前C110预览中打开设置，不退出预览");
+        globalSettings.setOnClickListener(v->showC110Settings());
         titleRow.addView(globalSettings,new LinearLayout.LayoutParams(dp(47),dp(45)));
         root.addView(titleRow,new FrameLayout.LayoutParams(-1,dp(58),Gravity.TOP));
 
@@ -919,6 +922,11 @@ public final class C110CameraActivity extends Activity {
         if(beginButton!=null)beginButton.setEnabled(true);
         if(manual)say("已停止并恢复此前网络");
     }
+    @Override public boolean dispatchKeyEvent(KeyEvent event){
+        if(volumeShortcut!=null&&volumeShortcut.dispatch(event))return true;
+        return super.dispatchKeyEvent(event);
+    }
+
     @Override protected void onResume(){
         super.onResume();
         pageVisible=true;
@@ -926,6 +934,7 @@ public final class C110CameraActivity extends Activity {
         if(!photoBusy&&!started&&!busy)main.post(this::connectAndBeginWhenReady);
     }
     @Override protected void onPause(){
+        if(volumeShortcut!=null)volumeShortcut.cancel();
         pageVisible=false;
         cancelCameraWait();
         photoGeneration++;
