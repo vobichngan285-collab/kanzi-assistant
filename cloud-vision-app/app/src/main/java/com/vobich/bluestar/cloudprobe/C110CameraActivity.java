@@ -109,7 +109,7 @@ public final class C110CameraActivity extends Activity {
 
         // Proven OEM player: the exact visible VLCVideoLayout stays attached from creation.
         video=new VLCVideoLayout(this);
-        video.addOnLayoutChangeListener((view,l,t,r,b,oldL,oldT,oldR,oldB)->{
+        video.addOnLayoutChangeListener((view,left,top,right,bottom,oldL,oldT,oldR,oldB)->{
             if(fullscreen)applyZoomPreview();
         });
         root.addView(video,new FrameLayout.LayoutParams(-1,-1));
@@ -255,7 +255,7 @@ public final class C110CameraActivity extends Activity {
         fullscreenPhoto.setVisibility(View.GONE);
         setContentView(root);
         // Reflow the SAME VLC view on portrait fullscreen; never rebuild RTSP/VLC.
-        root.addOnLayoutChangeListener((v,l,t,r,b,oldL,oldT,oldR,oldB)->{
+        root.addOnLayoutChangeListener((v,left,top,right,bottom,oldL,oldT,oldR,oldB)->{
             if(fullscreen)applyVideoViewport();
         });
         say("C110正在初始化预览；滑动放大后OCR只读对应区域；点击画面取帧，长按状态复制诊断");
