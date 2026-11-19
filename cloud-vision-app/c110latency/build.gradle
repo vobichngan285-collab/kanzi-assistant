@@ -1,0 +1,23 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.vobich.bluestar.c110latency'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'com.vobich.bluestar.c110latency'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0-latency-only'
+        ndk { abiFilters 'arm64-v8a' }
+    }
+    buildTypes {
+        debug { minifyEnabled false }
+        release { minifyEnabled false }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    packaging { jniLibs { pickFirsts += ['**/libc++_shared.so'] } }
+}
+dependencies { implementation 'org.videolan.android:libvlc-all:3.6.5' }
