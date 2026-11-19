@@ -521,8 +521,8 @@ public final class C110CameraActivity extends Activity {
             }
             say("原生VLC已绑定C110 Wi-Fi");
             ArrayList<String> options=new ArrayList<>();
-            options.add("--network-caching=300");
-            options.add("--live-caching=300");
+            options.add("--network-caching=150");
+            options.add("--live-caching=150");
             options.add("--no-audio");
             vlc=new LibVLC(getApplicationContext(),options);
             player=new MediaPlayer(vlc);
@@ -548,8 +548,8 @@ public final class C110CameraActivity extends Activity {
             }));
             media=new Media(vlc,Uri.parse(VIDEO_URL));
             media.addOption(":no-audio");
-            media.addOption(":network-caching=300");
-            media.addOption(":live-caching=300");
+            media.addOption(":network-caching=150");
+            media.addOption(":live-caching=150");
             media.addOption(":file-caching=300");
             media.addOption(":sout-mux-caching=300");
             media.addOption(":codec=mediacodec,iomx,all");
