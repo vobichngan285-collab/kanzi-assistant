@@ -11,6 +11,7 @@ import android.os.SystemClock;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URLEncoder;
 import java.net.HttpURLConnection;
 import java.net.Inet4Address;
 import java.net.URL;
@@ -44,12 +45,19 @@ final class C110WifiCamera {
         final int width,height;
         final long modeMs,shutterMs,discoverMs,downloadMs,totalMs;
         final boolean wifiStillPresent;
+        final String sourceCameraPath;
         Photo(byte[] jpeg,int width,int height,long modeMs,long shutterMs,
               long discoverMs,long downloadMs,long totalMs,boolean wifiStillPresent){
+            this(jpeg,width,height,modeMs,shutterMs,discoverMs,downloadMs,
+                 totalMs,wifiStillPresent,null);
+        }
+        Photo(byte[] jpeg,int width,int height,long modeMs,long shutterMs,
+              long discoverMs,long downloadMs,long totalMs,boolean wifiStillPresent,String sourceCameraPath){
             this.jpeg=jpeg;this.width=width;this.height=height;
             this.modeMs=modeMs;this.shutterMs=shutterMs;this.discoverMs=discoverMs;
             this.downloadMs=downloadMs;this.totalMs=totalMs;
             this.wifiStillPresent=wifiStillPresent;
+            this.sourceCameraPath=sourceCameraPath;
         }
     }
 
@@ -226,7 +234,7 @@ final class C110WifiCamera {
                         modeMs,shutter.ms,firstSeen-shutterAt,
                         SystemClock.elapsedRealtime()-fetchStart,
                         SystemClock.elapsedRealtime()-begin,
-                        cm.getNetworkCapabilities(wifi)!=null);
+                        cm.getNetworkCapabilities(wifi)!=null,candidate);
                 }catch(IOException stillWriting){
                     // The HTML file may appear before the SD write has finished.
                     // Only retry read-only JPEG fetch; NEVER retry the shutter.
@@ -235,6 +243,123 @@ final class C110WifiCamera {
             Thread.sleep(350);
         }
         throw new IOException("C110拍照已应答，但20秒内没有出现完整新JPEG");
+    }
+
+
+    /**
+     * Only a JPEG discovered strictly in the AFTER-BEFORE file list delta,
+     * fully downloaded, JPEG-validated and associated with THIS press may
+     * become a one-use candidate. No photos or filenames are persisted.
+     */
+    static final class DeletionCandidate {
+        final String cameraFile;
+        final int byteLength;
+        final int width,height;
+        private DeletionCandidate(String cameraFile,int bytes,int width,int height){
+            this.cameraFile=cameraFile;this.byteLength=bytes;
+            this.width=width;this.height=height;
+        }
+        static DeletionCandidate fromPhoto(Photo photo){
+            if(photo==null||photo.sourceCameraPath==null||photo.jpeg==null||
+               photo.jpeg.length<256||photo.width<2||photo.height<2)return null;
+            String safe=C110PhotoPolicy.path(photo.sourceCameraPath,
+                "/DCIM/",CAMERA_IP,false);
+            if(safe==null||!safe.equals(photo.sourceCameraPath))return null;
+            int n=photo.jpeg.length;
+            int tail=((photo.jpeg[n-2]&255)<<8)|(photo.jpeg[n-1]&255);
+            if(!C110PhotoPolicy.jpegHeaderTail(photo.jpeg,tail))return null;
+            return new DeletionCandidate(safe,n,photo.width,photo.height);
+        }
+    }
+
+    static final class DeleteResult {
+        final int httpCode,ackStatus;
+        final boolean fileGone;
+        final long elapsedMs;
+        DeleteResult(int code,int ack,boolean gone,long elapsed){
+            httpCode=code;ackStatus=ack;fileGone=gone;elapsedMs=elapsed;
+        }
+    }
+
+    /**
+     * Original SJCAM Zone 6.7.3.16 classes5.dex:
+     * LYCamera.deleteMediaFile -> Command.setCmd(4003); Command.setStr(
+     *   getUTF8String(cameraUrl.replace("http://192.168.1.254/","A:\\")
+     *                         .replace("/","\\")));
+     * RequestUrl prefix: http://192.168.1.254/?custom=1, command map => &cmd=4003&str=...
+     *
+     * This method is NEVER invoked automatically; call only after an
+     * explicit user confirmation of a recently downloaded unique new JPEG.
+     * Never retry 4003. Identity + advertised capability + exact file
+     * presence are checked before the only write.
+     */
+    synchronized DeleteResult deleteDownloadedOriginal(Context context,
+                                                        DeletionCandidate candidate) throws Exception {
+        if(candidate==null)throw new IOException("没有符合条件的新照片，不发送删除指令");
+        String file=C110PhotoPolicy.path(candidate.cameraFile,"/DCIM/",CAMERA_IP,false);
+        if(file==null||!file.equals(candidate.cameraFile)||
+           candidate.byteLength<256||candidate.width<2||candidate.height<2)
+            throw new IOException("文件路径或下载校验无效，禁止删除");
+        ConnectivityManager service=(ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if(service==null)throw new IOException("Android网络服务不可用");
+        Network wifi=findCameraNetwork(service);
+        Reply identity=get(wifi,"/?custom=1&cmd=3012",MAX_INDEX);
+        if(identity.http!=200||!Integer.valueOf(0).equals(
+           C110PhotoPolicy.tagInt(identity.text(),"Status"))||
+           c110DeviceKind(identity.text())!=1)
+            throw new IOException("未确认标准C110，禁止删除");
+        Reply advertised=get(wifi,"/?custom=1&cmd=3002",MAX_INDEX);
+        if(advertised.http!=200||!advertised.text().contains("<Cmd>4003</Cmd>"))
+            throw new IOException("该固件未声明4003单文件删除能力；安全跳过，没有删除");
+        int split=file.lastIndexOf('/');
+        if(split<6)throw new IOException("照片目录不符合规范");
+        String directory=file.substring(0,split+1);
+        // Probe the exact containing directory, not a recursive /DCIM/ wipe.
+        Reply before=get(wifi,directory,MAX_INDEX);
+        if(before.http!=200||!C110PhotoPolicy.jpegs(
+            before.text(),directory,CAMERA_IP).contains(file))
+            throw new IOException("原图已经不在对应相机目录，禁止删除");
+        String internal="A:\\"+file.substring(1).replace('/','\\');
+        String encoded=URLEncoder.encode(internal,StandardCharsets.UTF_8.name());
+        String endpoint="/?custom=1&cmd=4003&str="+encoded;
+        long at=SystemClock.elapsedRealtime();
+        // Exactly one OEM delete request; not a directory, format, delete-all,
+        // or SD-card reset command.
+        HttpURLConnection con=null;
+        int code,ack;
+        try {
+            con=(HttpURLConnection)wifi.openConnection(
+                new URL("http",CAMERA_IP,80,endpoint));
+            con.setRequestMethod("GET");
+            con.setInstanceFollowRedirects(false);
+            con.setConnectTimeout(2800);con.setReadTimeout(3500);
+            con.setUseCaches(false);
+            code=con.getResponseCode();
+            if(code!=200)throw new IOException("4003回复HTTP非200，未确认删除");
+            try(InputStream stream=con.getInputStream();
+                ByteArrayOutputStream out=new ByteArrayOutputStream()){
+                byte[] buffer=new byte[1024];int n;
+                while((n=stream.read(buffer))!=-1){
+                    if(out.size()+n>16384)throw new IOException("4003回执过长");
+                    out.write(buffer,0,n);
+                }
+                Integer status=C110PhotoPolicy.tagInt(
+                    out.toString(StandardCharsets.UTF_8.name()),"Status");
+                ack=status==null?-4096:status;
+            }
+        }finally{if(con!=null)con.disconnect();}
+        // The firmware may acknowledge a command without actually deleting.
+        // Verify using read-only directory requests; no second write.
+        boolean gone=false;
+        for(int attempt=0;attempt<3;attempt++){
+            if(attempt>0)Thread.sleep(300);
+            Reply after=get(wifi,directory,MAX_INDEX);
+            if(after.http==200){
+                gone=!C110PhotoPolicy.jpegs(after.text(),directory,CAMERA_IP).contains(file);
+                if(gone)break;
+            }
+        }
+        return new DeleteResult(code,ack,gone,SystemClock.elapsedRealtime()-at);
     }
 
     private static Network findCameraNetwork(ConnectivityManager cm) throws IOException {
