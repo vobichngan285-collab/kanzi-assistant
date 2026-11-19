@@ -1,3 +1,16 @@
+# 2026-11-19｜C110实时画面单击取帧朗读 + 蓝星启动主动申请相机Wi-Fi v0.1.16（构建/发布通过，待真机）
+
+- **用户本轮仅要求两点**：①点击C110模式时与普通蓝星主界面类似的整屏相机预览和底部四按钮，预览区域单击直接快速获取当前画面并调用已有云端OCR/TTS；②蓝星向导打开时若C110已开Wi-Fi，主动向Android系统申请连接而非只检查用户此前手动连接。**不重构声音/灯光/高清快门和原已成功LibVLC流程**。
+- **基础/分支**：从已发布`exp/c110-unified-modes-controls-20261119` HEAD `586df77cde42de2842a93bfffcf4a1907f2ed423` 创建隔离实验分支 `exp/c110-live-tap-autowifi-20261119`；最终 HEAD **`5f5a0078acdda41ba53db16321e893b25cfe5f0e`**。不改正式RC25、已成功的OEM mini及旧实验release。
+- **预览页面**：`C110CameraActivity`全屏原版VLCVideoLayout保持初始化就VISIBLE，顶栏蓝星logo/标题/刷新/相机设置/三横杠，顶部任务标签和底部四按钮（任务/AI对话/高清拍照/模式）；之前占大块空间的原厂调试输出缩为状态提示，长按状态可复制完整诊断。单击透明触控覆盖层只执行一次 `PixelCopy.request`，从VLC原生SurfaceView复制当前帧→内存JPEG质量90→`CloudVisionClient`沿用用户任务、文字/视觉模型、OCR C逐行/兼容模式、过滤规则、手机本地TTS；走显式蜂窝`Network.openConnection`以避免相机热点无外网。所有耗时云端任务不阻塞视频播放。**单击预览不是1001原图快门、不写照片文件、不重传旧缓存、不重复拍摄**。
+- **WIFI启动请求**：`C110WifiBootstrap.java`在`MainActivity.onResume`仅一轮请求：先检查Android已经连接的可信`192.168.1.254`网关；否则以原厂说明书标准C110 SSID前缀`C110`与默认WPA2密码`12345678`构造`WifiNetworkSpecifier`→`ConnectivityManager.requestNetwork`→Android官方系统连接确认弹窗。Android 13+请求`NEARBY_WIFI_DEVICES`、老版兼容定位；首次安装**先完成CAMERA权限，再申请Nearby Wi-Fi**，复用原`onRequestPermissionsResult`，不重写相机/麦克风权限机制。onAvailable和链路变更后再验证网关与只读3012设备身份，排除C110_PRO/C110+/PLUS；维持网络回调期间进入独立播放器，main销毁后释放，断网时反馈状态；不自动操作SD卡/固件/遥控快门。设备密码被改、热点未开、用户拒绝确认、Android不给局域网网络时无法保证连上，不得承诺无弹窗强制自动配对。
+- **成功播放器不变量**：CI逐字比较用户真机成功的OEM mini `begin→runWhenCurrent`内原厂3012→3016→3001/par1→2015/par1、LibVLC 3.6.5、VLCVideoLayout始终可见、VideoHelper自身Surface、300ms一次播放，与本版唯一差异是此前已有控制项`deviceControls.onCameraConnected`以及新增原生Vout事件中标记画面已可取帧。手机和USB相机代码核心、9011/9038指令、30秒灯光默认设置、原1001快门和阅读功能均不改。
+- **修复记录**：初次CI `44450489780` Java失败，发现主界面已存在`onRequestPermissionsResult`，新增重复定义导致编译错误；已合并到原相机/麦克风回调，并修首装权限弹窗抢占。其他几轮中间版本与最终包区分。最终 [Actions `44450958604`](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44450958604) **completed/success**；旧协议Java测试、OEM核心静态一致性、USB补丁、Gradle编译、APK签名包名/版本/native LibVLC/音效/ZIP、Artifact、GitHub预发布成功。
+- **最终APK**：独立包`com.vobich.bluestar.c110livetap2`，`1.0.41-c110-live-tap-wifi-lab`，Release https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-live-tap-autowifi-20261119-v0116 ，直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-live-tap-autowifi-20261119-v0116/BlueStar_Guide_C110_LiveTap_WiFi_0.1.16.apk ，56,682,929字节，SHA256 `f25abb23ae10fd7170a17c2cf3baa5d12303bcf86d7b5896f157934be755841e`。实验包的云端百炼Key需在本包设置内单独配置。
+- **仅待真机验证**：相机WiFi开机→蓝星首次启动Android Nearby permission/系统配对→真正收到3012确认且VLC连续出画→单击实时视频一次是否立即成功PixelCopy→蜂窝云识别→本地语音；独立高清1001快门与原灯光/静音也不要回退。不要把CI成功写成真机成功。**依旧存在此前已说明的旧布局边界：C110页“高清拍照/AI对话”返回主界面执行，不在本轮两项修复范围内。**
+
+---
+
 # 2026-11-19｜蓝星向导三种相机模式统一菜单 + C110声音/灯光设置 v0.1.14（CI成功，待真机验收）
 
 - **用户已明确验收的旧成果**：C110独立 OEM Minimal 播放器真机实时出画；`9011/par=0` 真机静音（含开机音）；用户再次确认 `9038/par=0` 实际可使机身指示灯熄灭，`9038/par=1` 回复HTTP200/Status0。已成功的高清拍照与JPEG下载保留，不能误称实时预览或LED熄灭仍未解决。
