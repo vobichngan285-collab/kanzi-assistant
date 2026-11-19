@@ -1,3 +1,17 @@
+# 2026-11-20｜修复主页快捷拍照误跳诊断/单独页面：v1.0.55 已CI发布（待真机）
+
+- **用户真机截图与明确要求**：v1.0.54 主页点「快捷拍照」不是立即拍照朗读并保留主页，而是错误地进入大面积空白的「C110+快捷拍照」独立Activity，显示「取帧已完成，但识别失败：请先在三横杠设置中填写百炼 API Key」、再拍一张与返回主页按钮。用户反复明确：**第一项点击即执行C110+单张原厂高清快门→照片下载→当前模型云OCR→本地朗读，必须停留在原主页，无任何独立拍照/诊断/实验页面**。用户愤怒反馈此设计错误。截图中的「取帧已完成」表明获取照片成功，但由于此包没有配置 API Key，云端识别不能成功；**错误跳页**和**密钥未配置**是两个不同问题。
+- **根因核实**：此前代码 `HomeActivity.quickPhoto()` 实际是 `startActivity(new Intent(this,C110QuickPhotoActivity.class))`；`MainActivity.shortcutPhoto()` 在未连接WiFi时也走该新Activity；这些是前几个版本把简单行为错误页面化，不是原相机OEM问题。旧独立包名相互隔离，API Key 无法跨实验包自动迁移。
+- **修复/范围**：基于唯一原仓 `vobichngan285-collab/kanzi-assistant` 已发布 v1.0.54 `exp/c110plus-home-bluestar-blue-20261120` HEAD `9a5e243ac1fa3b1dd5bdb52c984bba4021b09401`，新分支 `exp/c110plus-inline-quick-photo-20261120`，最终 HEAD `613c051de9810ce0b372a2afd725178f9ccec909`；versionCode64 / versionName `1.0.55-c110plus-inline-photo` / 独立安装ID `com.vobich.bluestar.c110plusinline155`（不覆盖旧版）。完全**删除** `C110QuickPhotoActivity.java`、移除对应 Manifest Activity。创建**无界面** `C110QuickShotController`，Home主页的 `quickPhoto()` **仅在本页执行** `quickShot.trigger()`，在第一项下面显示小行进度，不调用startActivity/不切页/不启动手机USB或VLC。拍照按钮与已有Home音量快捷键共用此入口；未连C110时启动已有原厂式WiFi申请并等待**同一次触发**，有网时异步执行且只执行一次 `C110WifiCamera.shootAfterLivePreview(owner)` 原厂1001、完整JPEG、`C110FrameReader.recognizeOriginalJpeg`，通过已共享任务、模型、密钥与本地TTS朗读。忙锁不允许重复发送快门或云OCR，不自动重试。
+- **预览相关**：MainActivity 手机/USB预览右上「快拍」与音量快捷键不再进入该多余Activity：已有C110网络沿用以前经验证高分辨率真实快门及录像暂停/恢复，尚未连接则复用无界面Controller申请WiFi并同次拍照；主预览保持原逻辑。C110独立视频页此前已成功150ms/竖屏/ROI维持不动。
+- **保持原视觉和安全基线**：主页蓝星深蓝背景 `#091B32`、按钮 `#2C547D`、选中 `#176BAC`、中英文无障碍名称及「主页/预览/设置」三栏不改；原OEM 3012/3016/3001/2015、C110真实1001、LibVLC两路150ms、9011/9038、C110原SD完整JPEG、云OCR选定模型/TTS、手机USB预览、任务和20M/10M/8M/3M独立准确率实验保留。不放开未经C110+真机验证的4003删除，不修改1002照片尺寸。OCR缺Key的错误文案改为「请先在主页的设置中填写百炼 API Key」。
+- **真实限制**：v1.0.55 独立包名，仍需在**本版设置**输入有效百炼Key才能云端OCR及朗读，不会偷读其他独立安装包的秘密；拍照可完成不等于OCR成功。此前用户反映**双击音量键无效**，本次修复的是不再跳页，实体按键识别算法没有验证修改，不能宣称音量键已修复。通过后台自动构建也不能替代用户 vivo X200 Pro 实测。
+- **GitHub CI/Release 已真实核验**：Run `44584835977` `completed/success`，纯Java/静态检查明确验证已删除拍照独立Activity/Manifest入口、Homepage直拍且不含startActivity、单次1001、复用原OCR/TTS、蓝星配色、USB/旧OEM指令/150ms/旧实验回归；完整 Android arm64 APK、签名身份、USB/LibVLC音效资源、上传Artifact、独立Release成功。Run HEAD和Release target都为 `613c051de9810ce0b372a2afd725178f9ccec909`；APK `56,732,185` 字节；SHA256 `27aa702130201017661fec588e9ffe37150c083e2fa783621a6bb01cba7a5254`。
+- **APK浏览器直接下载**：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110plus-inline-quickphoto-150ms-20261120-v0155/BlueStar_Guide_C110Plus_Inline_QuickPhoto_150ms_1.0.55.apk ；[Release](https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110plus-inline-quickphoto-150ms-20261120-v0155)；[Actions](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44584835977)，文档 `cloud-vision-app/docs/C110PLUS_INLINE_QUICK_PHOTO_20261120.md`。
+- **下一步真机**：本版主页设置填入有效API Key→已连接C110+条件下点主页第一项一次，**不离开蓝色主页**，应在按钮下简短显示「正在拍摄、已拍摄/识别」并真实朗读；照片/SD完整性及1001单次；无WiFi时同次系统授权后只拍一次；主页/手机USB预览按键快捷键是否真正被系统分发需另外日志证据，不能凭CI自称修好。禁止再新增快速拍照页面。
+
+---
+
 # 2026-11-20｜纠正第三方参考图造成的黑黄主页，恢复蓝星原深蓝UI：v1.0.54已CI发布（待真机）
 
 - **用户明确纠错**：第三方「豆芽看见」截图仅供「大字体、功能键纵向排列」的参考，不代表颜色规范。用户强烈要求蓝星向导主页恢复与原有预览/设置一致的**蓝星深蓝色**，不能把黄黑配色直接照搬。此前 v1.0.53 实际主页使用 `#07090D` + `#F5C543`，同时预览和设置仍使用原有的蓝色，导致两套界面割裂。
