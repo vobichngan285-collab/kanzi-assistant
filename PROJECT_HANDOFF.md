@@ -1,3 +1,14 @@
+
+# 2026-11-19｜C110 声音与灯光独立实验 v0.1.1：9038 指示灯 / 9036 爆闪灯（构建成功，待真机）
+
+- **此前成功状态不得回退**：用户明确纠正：C110 视频实时预览已经在独立 OEM Minimal v0.1.0 真机出画，不再称“实时预览未解决”。成功链为原厂 LY 3012→3016→3001/par1→2015/par1 + 一直可见 VLCVideoLayout + LibVLC 3.6.5 + 一次300ms延迟播放。蓝星内独立竖屏播放器 v0.1.13 已构建但其集成版不等于已验收。单次1001高清拍照下载完整 JPEG 已成功多轮；9011/par0 机身静音已获用户真机验收，包括关闭开机音。
+- **直接复核原厂APK新证据**：从用户上传 SJCAM Zone 6.7.3.16 完整 APK 实际提取 assets/cparams/675-C110$1.0.1.json、675-C110$1.0.4.json、675-C110$1.0.7.json，三个标准 C110 配置均包含 9038 = Indicator lights / 指示灯（Off/On），9036 = Strobe light / 爆闪灯（Off/On）。1.0.7 含 9011 = Keypad Tone / 按键声音。原厂配置存在不能等同用户当前 C110 固件已成功执行灯光控制。
+- **此次独立实现**：基于已成功的 exp/c110-tone-9011-20261119 分支 HEAD cd0636e75dced9f5172df09449986c1a618647b5，新分支 exp/c110-light-controls-20261119，HEAD 64086642719e3bd611cadc14a65a424ec73241b8。原 ToneProbeActivity 新增 9038/par0 和 par1、9036/par0 和 par1 四个独立手动开关，每次发送前确认对话框与 3012 标准 C110 身份检查，不对 C110+/PRO 盲写；HTTP whitelist 限定3012和9011/9038/9036合法参数。原9011关闭/开启声音、一次1001快门、复制诊断保留。启动只读3012，不自动更改任何设置。照片核心 C110WifiCamera.java / C110PhotoPolicy.java 除package声明外与原成功源码逐行相同（CI校验）；成功 RTSP/LibVLC 播放器、RC25等不修改。灯光回执 Status=0 不等于实际灯已关闭。
+- **CI / APK实物**：GitHub Actions https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44442129741 completed/success，静态回归、Java/Gradle、APK标识与ZIP校验、Artifact和预发布成功。独立包 com.vobich.bluestar.c110lights，版本 0.1.1-sound-lights；Release https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-c110-light-controls-20261119-v011 ；直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-light-controls-20261119-v011/C110_Sound_Lights_Test_0.1.1.apk ，28978 字节，SHA256 a8cf4792de663fb87f5259eedd3118c97fe6bbf58214664638a8a8f777e381bd。
+- **下一步一次真机验收**：连上标准 C110 Wi-Fi，打开独立实验APK，先只按“关闭状态指示灯9038/0”，肉眼看蓝/绿灯是否熄灭；再按“恢复状态指示灯9038/1”确认恢复。红色充电灯可能独立。仅在需要时测试9036爆闪灯，避免混合指令。记录Status及实际灯色变化即可。不重复成功的声音、高清拍照和视频预览验证。
+
+---
+
 # 2026-11-19｜C110 9011 机身拍照声实验：用户真机确认成功
 
 - **真实反馈**：用户使用独立实验 APK `C110_Tone9011_PhotoTest_0.1.0.apk` 连续测试后明确回复“成功了”，这是本轮相机机身拍照提示音控制的用户实机验收，优先保留此成功案例，不再重复无谓协议猜测。
