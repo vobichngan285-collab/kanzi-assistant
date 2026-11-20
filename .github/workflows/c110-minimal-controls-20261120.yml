@@ -1,0 +1,171 @@
+name: Blue Star v1.0.65 Clean C110 Viewfinder
+on:
+  push:
+    branches: [ 'exp/c110-minimal-controls-20261120' ]
+    paths:
+      - 'cloud-vision-app/app/**'
+      - 'cloud-vision-app/tests/**'
+      - 'cloud-vision-app/docs/C110_MINIMAL_CONTROLS_20261120.md'
+      - '.github/workflows/c110-minimal-controls-20261120.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  full-ui-regression-and-release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Confirm exact C110 visual change and protected camera functions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path("cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe")
+          c=(root/"C110CameraActivity.java").read_text()
+          f=(root/"C110FrameReader.java").read_text()
+          quick=(root/"C110QuickShotController.java").read_text()
+          home=(root/"HomeActivity.java").read_text()
+          main=(root/"MainActivity.java").read_text()
+          task=(root/"TaskDesktopActivity.java").read_text()
+          bridge=Path("cloud-vision-app/boyuebridge/src/main/java/com/vobich/bluestar/boyuebridge/LaunchActivity.java").read_text()
+          build=Path("cloud-vision-app/app/build.gradle").read_text()
+          manifest=Path("cloud-vision-app/app/src/main/AndroidManifest.xml").read_text()
+          assert 'titleRow.setVisibility(View.GONE);' in c
+          assert 'topControls.setVisibility(View.GONE);' in c
+          assert 'footer.setBackgroundColor(Color.TRANSPARENT);' in c
+          assert 'zoomControls.setBackgroundColor(Color.TRANSPARENT);' in c
+          assert 'footer.setBackground(roundRect(0xED091D36,20));' not in c
+          assert 'zoomControls.setBackground(roundRect(0xEA132B46,18));' not in c
+          assert 'zoomSeek=new SeekBar(this)' in c
+          assert 'zoomSeek.setMax(30)' in c and 'zoomSeek.setProgress(0)' in c
+          assert 'zoomControls.addView(zoomSeek' in c
+          assert 'zoomControls.addView(zoomValue' in c
+          assert 'zoomValue.setText("1.0×")' in c
+          assert 'setZoom(1f+progress/10f)' in c
+          assert 'photoButton=footerButton("◎  高清拍照",this::captureOriginalPhoto)' in c
+          assert 'photoButton.setEnabled(false)' in c and 'photoButton.setEnabled(true)' in c
+          assert 'photoCamera.shootAfterLivePreview(this)' in c
+          assert 'frameReader.recognizeOriginalJpeg(' in c
+          assert 'C110ZoomFrames.cropNativeJpeg' in f
+          assert 'tts.setLanguage(Locale.SIMPLIFIED_CHINESE)' in f
+          assert '--network-caching=150' in c and '--live-caching=150' in c
+          assert 'camera.shootAfterLivePreview(owner)' in quick
+          assert 'RecentPhotoSession.captured(jpeg,current.cloudNetwork,task.name)' in main
+          assert 'startActivity(new Intent(this,TaskDesktopActivity.class));' in home
+          assert 'slot.setOnLongClickListener' in task
+          assert 'com.vobich.bluestar.cloudprobe.action.QUICK_SHOT' in bridge
+          assert 'versionCode 74' in build
+          assert "versionName '1.0.65-c110-minimal-controls'" in build
+          assert "applicationIdSuffix '.c110plusquick159'" in build
+          assert manifest.count('android.intent.category.LAUNCHER')==1
+          print("PASS: unobstructed C110 viewfinder with photo, zoom, OEM, TTS, phone/USB and Boyue preserved")
+          PY
+          git diff --name-only 5dbe3a1c07406eae46f4f7bb375dc28bd1c9460f HEAD > /tmp/changed.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          allowed={
+            "cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/C110CameraActivity.java",
+            "cloud-vision-app/app/build.gradle",
+            ".github/workflows/c110-minimal-controls-20261120.yml",
+            "cloud-vision-app/docs/C110_MINIMAL_CONTROLS_20261120.md",
+          }
+          actual=set(Path("/tmp/changed.txt").read_text().splitlines())
+          assert actual<=allowed, f"Unexpected changes to protected modules: {actual-allowed}"
+          assert len(actual)>=3
+          print("PASS: only C110 display/source, version, docs and CI modified")
+          PY
+      - name: Native Java regression tests for stable task IDs and ordering
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-tests
+          javac -d /tmp/bluestar-tests "$BASE/TaskOrder.java" cloud-vision-app/tests/TaskOrderTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.TaskOrderTest
+          javac -d /tmp/bluestar-tests "$BASE/FollowupPrompt.java" cloud-vision-app/tests/FollowupPromptTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.FollowupPromptTest
+          javac -d /tmp/bluestar-tests "$BASE/C110ZoomGeometry.java" cloud-vision-app/tests/C110ZoomGeometryTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110ZoomGeometryTest
+          javac -d /tmp/bluestar-tests "$BASE/C110PhotoPolicy.java" cloud-vision-app/tests/C110PhotoPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110PhotoPolicyTest
+      - name: Apply known proven pinned UVC patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_usbmonitor.py cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 cloud-vision-app/scripts/patch_pinned_uvc.py
+          grep -q BSG_CLOUD_RAW5_GATED cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/jni/UVCCamera/UVCPreview.cpp
+          grep -q BSG_CLOUD_CLOSE_BARRIER cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
+      - name: Generate unchanged Blue Star launcher icons
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          java scripts/GenerateLauncherIcons.java
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            test -s "app/src/main/res/mipmap-$density/ic_launcher.png"
+          done
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile complete Android arm64 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :app:assembleDebug
+      - name: Verify APK version package, native libraries and sound resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_C110_Minimal_Controls_1.0.65.apk
+          APK=out/BlueStar_Guide_C110_Minimal_Controls_1.0.65.apk
+          test -s "$APK"
+          unzip -tq "$APK" >/dev/null
+          unzip -Z1 "$APK" >out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlc.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlcjni.so' out/entries.txt
+          grep -Fxq 'res/raw/c_metal_clack_ding.mp3' out/entries.txt
+          grep -Fxq 'res/raw/voice_send_whoosh.wav' out/entries.txt
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging "$APK" >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110plusquick159'" out/badging.txt
+          grep -Fq "versionName='1.0.65-c110-minimal-controls'" out/badging.txt
+          grep -Fq "launchable-activity: name='com.vobich.bluestar.cloudprobe.HomeActivity'" out/badging.txt
+          test "$(grep -c '^launchable-activity:' out/badging.txt)" -eq 1
+          (cd out && sha256sum BlueStar_Guide_C110_Minimal_Controls_1.0.65.apk >SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_Guide_C110_Minimal_Controls_1.0.65
+          path: out/*
+          retention-days: 14
+      - name: Publish only after all tests and APK checks succeed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-c110-minimal-controls-20261120-v0165
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release already exists; do not overwrite" >&2
+            exit 1
+          fi
+          gh release create "$TAG" out/BlueStar_Guide_C110_Minimal_Controls_1.0.65.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Blue Star v1.0.65 Clean C110 Viewfinder" \
+            --notes "v1.0.65 isolated C110 visual polish on user-verified v1.0.64: top camera toolbar hidden; blue panels behind zoom track and shutter removed; actual SeekBar, green thumb, 1.0-4.0x label and one OEM high-resolution shutter button remain. Camera picture is visible behind transparent control containers, matching approved mockup. C110 Wi-Fi, 1001, LibVLC 150ms, JPEG region crop, OCR/TTS, phone/USB preview, AI photo follow-up, Home task grid, unified settings and Boyue companion unaffected. CI and Android APK integrity verified. On-device validation required."
