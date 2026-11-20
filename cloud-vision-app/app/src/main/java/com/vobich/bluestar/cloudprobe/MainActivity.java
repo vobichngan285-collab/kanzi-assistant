@@ -752,6 +752,22 @@ public final class MainActivity extends CameraActivity {
     void openC110FromUnifiedSettings(){
         startActivity(new Intent(this,C110CameraActivity.class));
     }
+    void openC110PhotoLabFromUnifiedSettings(){
+        // Explicit isolated A/B experiment entry, NEVER the Home quick photo.
+        startActivity(new Intent(this,C110ResolutionLabActivity.class));
+    }
+    void openHomeFromUnifiedSettings(){
+        if(largeSettings!=null&&!largeSettings.isClosed())largeSettings.close();
+        if(!settingsOnly)finish();
+    }
+    void openPreviewFromUnifiedSettings(){
+        if(settingsOnly){
+            Intent intent=new Intent(this,MainActivity.class);
+            intent.putExtra("bluestar_launch_preview",true);
+            startActivity(intent);
+            finish();
+        }else if(largeSettings!=null&&!largeSettings.isClosed())largeSettings.close();
+    }
     @Override public void onBackPressed(){
         if(largeSettings!=null&&!largeSettings.isClosed()){largeSettings.back();return;}
         if(readingScreen!=null){closeReadingMode();return;}
