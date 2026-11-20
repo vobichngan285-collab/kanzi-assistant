@@ -1,0 +1,52 @@
+package com.vobich.bluestar.cloudprobe;
+
+import java.net.URI;
+import java.util.Locale;
+
+/** Pure Java allow-list for user-configured OpenAI-compatible HTTP endpoints. */
+final class CloudProviderPolicy {
+    static final String OCR="ocr", VISION="vision", ASR="asr";
+    static final String CHAT="chat", ASR_QWEN="asr_qwen";
+    static final String ASR_MULTIPART="asr_multipart", ASR_CHAT_AUDIO="asr_chat_audio";
+    private CloudProviderPolicy(){}
+
+    static boolean validRole(String role){
+        return OCR.equals(role)||VISION.equals(role)||ASR.equals(role);
+    }
+    static boolean accepts(String role,String protocol){
+        if(!validRole(role))return false;
+        if(ASR.equals(role))
+            return ASR_QWEN.equals(protocol)||ASR_MULTIPART.equals(protocol)||
+                ASR_CHAT_AUDIO.equals(protocol);
+        return CHAT.equals(protocol);
+    }
+    static String validatedUrl(String raw){
+        if(raw==null||raw.trim().isEmpty())throw new IllegalArgumentException("请填写完整 HTTPS API 地址");
+        String value=raw.trim();
+        if(value.length()>1024)throw new IllegalArgumentException("接口地址过长");
+        try{
+            URI uri=new URI(value);
+            if(!"https".equalsIgnoreCase(uri.getScheme())||
+                uri.getHost()==null||uri.getHost().isEmpty()||
+                uri.getRawUserInfo()!=null||uri.getRawFragment()!=null||
+                uri.getRawPath()==null||uri.getRawPath().length()<2)
+                throw new IllegalArgumentException("仅支持完整 HTTPS 接口地址，不能包含账号密码或锚点");
+            return uri.toString();
+        }catch(java.net.URISyntaxException error){
+            throw new IllegalArgumentException("接口地址格式错误");
+        }
+    }
+    static String cleanModel(String model){
+        String value=model==null?"":model.trim();
+        if(value.length()<1||value.length()>180||
+            value.indexOf('\n')>=0||value.indexOf('\r')>=0)
+            throw new IllegalArgumentException("请填写厂商提供的准确模型 ID");
+        return value;
+    }
+    static String cleanName(String name){
+        String value=name==null?"":name.trim();
+        if(value.isEmpty()||value.length()>40)
+            throw new IllegalArgumentException("配置名称需要 1 到 40 字");
+        return value;
+    }
+}
