@@ -148,7 +148,7 @@ public final class MainActivity extends CameraActivity {
     private boolean usbFirstFrameRecorded;
     private boolean phoneFirstFrameRecorded;
     private final AtomicInteger voiceSequence=new AtomicInteger();
-    private LargeSettingsScreen largeSettings;
+    private BlueStarSettingsScreen largeSettings;
     private SoundPool clickPool;
     private int metalClickSample,sendWhooshSample;
     private final java.util.Set<Integer> soundLoaded=
@@ -404,7 +404,7 @@ public final class MainActivity extends CameraActivity {
         settingsButton.setTextSize(TypedValue.COMPLEX_UNIT_SP,27);
         settingsButton.setTextColor(Color.WHITE);
         settingsButton.setBackground(roundRect(0xFF245477,12));
-        settingsButton.setContentDescription("打开三横杠菜单，软件设置");
+        settingsButton.setContentDescription("打开蓝星向导统一设置");
         LinearLayout.LayoutParams slp=new LinearLayout.LayoutParams(dp(48),dp(45));
         slp.rightMargin=dp(6);
         title.addView(settingsButton,slp);
@@ -471,7 +471,7 @@ public final class MainActivity extends CameraActivity {
         root.addView(dock,new FrameLayout.LayoutParams(-1,dp(89),Gravity.BOTTOM));
         modeButton.setContentDescription("返回蓝星向导主页");
         startButton.setContentDescription("预览当前摄像头，点击可切换手机、USB或C110");
-        cameraEntryButton.setContentDescription("打开原有设置，不关闭当前预览");
+        cameraEntryButton.setContentDescription("打开与主页相同的蓝星统一设置，不关闭当前预览");
         modeButton.setOnClickListener(v->finish());
         startButton.setOnClickListener(v->showUnifiedModeSelector());
         cameraEntryButton.setOnClickListener(v->openLargeSettings());
@@ -741,9 +741,17 @@ public final class MainActivity extends CameraActivity {
 
     private void openLargeSettings(){
         if(largeSettings!=null&&!largeSettings.isClosed())return;
-        largeSettings=new LargeSettingsScreen(this,rootFrame);
+        largeSettings=new BlueStarSettingsScreen(this,rootFrame);
     }
-    void settingsPageClosed(){largeSettings=null;}
+    void settingsPageClosed(){
+        largeSettings=null;
+        // Home -> Settings is settings-only, never reveal the camera preview
+        // if the user closes Settings. Return to the actual HomeActivity.
+        if(settingsOnly)finish();
+    }
+    void openC110FromUnifiedSettings(){
+        startActivity(new Intent(this,C110CameraActivity.class));
+    }
     @Override public void onBackPressed(){
         if(largeSettings!=null&&!largeSettings.isClosed()){largeSettings.back();return;}
         if(readingScreen!=null){closeReadingMode();return;}
@@ -757,6 +765,10 @@ public final class MainActivity extends CameraActivity {
     }
 
     private void shortcutPhoto(){
+        if(settingsOnly||(largeSettings!=null&&!largeSettings.isClosed())){
+            toastShort("快捷键已识别；设置页面不执行拍照");
+            return;
+        }
         if(!uiActive||readingScreen!=null){toastShort("请先退出阅读模式");return;}
         // Connected: preserve the existing real 1001 + livestream resume path.
         // Not yet connected: retain the SAME one-tap shutter across the
