@@ -78,6 +78,9 @@ final class CloudKeyStore {
             .remove("iv_"+id).remove("ciphertext_"+id).apply();
     }
     static void clear(Context context){
-        context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit().clear().apply();
+        // Clearing the legacy Bailian key must never erase independently
+        // encrypted keys belonging to user-created OCR/vision/ASR providers.
+        context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit()
+            .remove("iv").remove("ciphertext").apply();
     }
 }
