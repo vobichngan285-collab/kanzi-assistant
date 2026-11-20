@@ -103,8 +103,8 @@ final class C110VolumeShortcut {
             if(event.getRepeatCount()>0)return true;
             long now=event.getEventTime()>0?event.getEventTime():SystemClock.uptimeMillis();
             trace("down",key,-1L);
-            if(!longMode&&pendingVolume!=null&&lastUp>0&&
-                now>=lastUp&&now-lastUp<=DOUBLE_MS){
+            if(!longMode&&pendingVolume!=null&&
+                C110VolumeTiming.secondDownAfterFirstUp(lastUp,now,DOUBLE_MS)){
                 trace("shutter",key,now-lastUp);
                 main.removeCallbacks(pendingVolume);pendingVolume=null;
                 ignoreUp=true;down=true;activeKey=key;lastUp=0;
