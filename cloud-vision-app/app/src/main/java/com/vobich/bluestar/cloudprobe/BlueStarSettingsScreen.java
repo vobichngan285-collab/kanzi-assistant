@@ -34,6 +34,7 @@ final class BlueStarSettingsScreen {
     private final MainActivity app;
     private final FrameLayout host,overlay;
     private LinearLayout content;
+    private TextView c110LiveStatus;
     private final ArrayList<Page> history=new ArrayList<>();
     private boolean closed;
     private static final class Page {
@@ -49,6 +50,12 @@ final class BlueStarSettingsScreen {
         navigate("home","");
     }
     boolean isClosed(){return closed;}
+    void updateC110Status(String message){
+        if(closed||c110LiveStatus==null||history.isEmpty()||
+            !"c110-camera".equals(history.get(history.size()-1).name))return;
+        c110LiveStatus.setText(app.currentC110WifiSettingsStatus()+
+            (message==null||message.isEmpty()?"":"\n最近："+message));
+    }
     void openApiKey(){navigate("cloud","");navigate("key","");}
     void close(){
         if(closed)return;
@@ -82,6 +89,7 @@ final class BlueStarSettingsScreen {
     private void render(Page p){
         if(closed)return;
         overlay.removeAllViews();
+        c110LiveStatus=null;
         LinearLayout page=new LinearLayout(app);
         page.setOrientation(LinearLayout.VERTICAL);
         page.setPadding(dp(12),dp(12),dp(12),dp(12));
@@ -102,7 +110,6 @@ final class BlueStarSettingsScreen {
             case "preset":heading="编辑预设提示词";break;
             case "custom":heading="编辑自定义任务";break;
             case "camera":heading="相机";break;
-            case "volume":heading="音量键快捷拍照";break;
             case "c110-camera":heading="C110+ 运动相机";break;
             case "usb-picture":heading="USB 画质调节";break;
             case "sources":heading="选择摄像头";break;
@@ -157,7 +164,6 @@ final class BlueStarSettingsScreen {
         else if(p.name.equals("preset"))editor(p.param,false);
         else if(p.name.equals("custom"))editor(p.param,true);
         else if(p.name.equals("camera"))camera();
-        else if(p.name.equals("volume"))volumeGesture();
         else if(p.name.equals("c110-camera"))c110Camera();
         else if(p.name.equals("usb-picture"))usbPicture();
         else if(p.name.equals("sources"))sources();
@@ -238,7 +244,7 @@ final class BlueStarSettingsScreen {
     private void home(){
         // Single source of truth, visually matched to HomeActivity's Blue
         // Star blue navigation and retained complete settings capabilities.
-        row("相机","C110+快捷拍照按键、手机与USB、方向、画质、预览",()->navigate("camera",""));
+        row("相机","C110+机身提示音和灯光、手机/USB、方向、画质",()->navigate("camera",""));
         row("语音与朗读","语音引擎、朗读速度、内容过滤",()->navigate("speech",""));
         row("云端 AI","OCR与视觉模型、速度、API Key、用量",()->navigate("cloud",""));
         row("任务管理","预设提示词、任务显示与自定义",()->navigate("tasks",""));
@@ -383,58 +389,65 @@ final class BlueStarSettingsScreen {
             back();
         });
     }
-    private int volumeGestureIndex(String selected){
-        for(int i=0;i<C110VolumeShortcut.VALUES.length;i++)
-            if(C110VolumeShortcut.VALUES[i].equals(selected))return i;
-        return 0;
-    }
-    private void volumeGesture(){
-        note("仅在软件前台识别实体音量键。首页与预览均可拍C110+高清原图；"
-            +"测试此页面的手势不会发送1001快门。"
-            +"普通单击仍调节音量；双击窗口600毫秒，长按650毫秒。");
-        final String current=C110VolumeShortcut.selected(app);
-        for(int i=0;i<C110VolumeShortcut.VALUES.length;i++){
-            final String id=C110VolumeShortcut.VALUES[i];
-            row((current.equals(id)?"✓ ":"")+C110VolumeShortcut.LABELS[i],"",()->{
-                C110VolumeShortcut.select(app,id);
-                render(history.get(history.size()-1));
-            });
-        }
-        heading("实体键接收诊断");
-        note("请保持本设置页在前台，按两次已选音量键，再点刷新。"
-            +"只记录按下/抬起次数与手势间隔，不含照片、密钥或音频。");
-        note(C110VolumeShortcut.diagnostic(app));
-        action("刷新按键记录",()->render(history.get(history.size()-1)));
-        action("清空按键记录",()->{
-            C110VolumeShortcut.clearDiagnostic(app);
-            render(history.get(history.size()-1));
-        });
-        note("如果按下/抬起次数一直为0，说明当前窗口没有收到所选按键事件，"
-            +"不能只调整双击时间来解决，需要检查系统或读屏软件的按键拦截。");
-    }
+    /** This is a settings screen, not a camera video/RTSP preview page.
+     *  Existing verified C110 commands are reused by MainActivity. */
     private void c110Camera(){
-        note("C110+ 的拍照/实时预览与主页快捷键共用原厂1001拍照逻辑。"
-            +"以下设置只组织入口，不会偷偷启动相机或者修改照片分辨率。");
-        row("快捷拍照实体键设置","音量上/下双击或长按",
-            ()->navigate("volume",""));
-        row("当前文字识别模型 · "+OcrModelCatalog.label(app.ocrModelDescription()),
-            "全局共享",()->navigate("ocr-models",""));
-        row("当前视觉模型 · "+app.visionModelDescription(),"全局共享",
-            ()->navigate("models",""));
-        action("打开C110+实时预览和机身设置",()->app.openC110FromUnifiedSettings());
-        row("照片分辨率/OCR准确率实验","仅明确进入实验页才拍照，不影响快捷拍照",
-            ()->app.openC110PhotoLabFromUnifiedSettings());
-        note("机身提示音(9011)与指示灯(9038)需要连接C110后，"
-            +"由其原有相机设置界面操作；本页不直接发送硬件指令。"
-            +"分辨率由原厂SJCAM Zone选择，安全策略不开放未验证的4003删图。");
+        note("C110+机身提示音和指示灯在这里直接操作，不需要打开实时预览。"
+            +"发送机身指令前必须先连接并验证相机Wi-Fi。");
+        c110LiveStatus=text("",18,SUB,false);
+        c110LiveStatus.setPadding(dp(12),dp(4),dp(12),dp(18));
+        content.addView(c110LiveStatus,new LinearLayout.LayoutParams(-1,-2));
+        updateC110Status(app.lastC110SettingsStatus());
+        action("连接 C110 相机 Wi-Fi",()->app.connectC110WifiFromSettings());
+        heading("C110+机身按键提示音");
+        row("关闭机身提示音","原厂9011/0，只影响相机本身",()->
+            app.setC110BeepFromSettings(false));
+        row("恢复机身提示音","原厂9011/1，只影响相机本身",()->
+            app.setC110BeepFromSettings(true));
+        heading("C110+指示灯");
+        row("立即关闭指示灯","原厂9038/0",()->
+            app.setC110LightFromSettings(0));
+        row("恢复指示灯常亮","原厂9038/1",()->
+            app.setC110LightFromSettings(-1));
+        row("15秒后自动关灯","先开灯，连接保持期间延时关闭",()->
+            app.setC110LightFromSettings(15));
+        row("30秒后自动关灯","",()->app.setC110LightFromSettings(30));
+        row("60秒后自动关灯","",()->app.setC110LightFromSettings(60));
+        row("自定义关灯秒数","5～600秒",this::c110CustomLightDelay);
+        note("机身指令会核实原厂3012身份，只有返回成功回执才表示相机接受了命令。"
+            +"自动关灯倒计时依赖当前相机Wi-Fi连接与设置页生命周期；"
+            +"关闭设置或断开相机连接可能中断倒计时。");
+        heading("照片实验");
+        row("照片分辨率 / OCR准确率实验","单独手动进入，不影响正常快拍",()->
+            app.openC110PhotoLabFromUnifiedSettings());
+        note("文字识别模型、视觉模型和 API Key 统一在顶层「云端 AI」设置，"
+            +"C110+、手机及USB调用同一份配置。机身单张删图仍不开放。");
+    }
+    private void c110CustomLightDelay(){
+        EditText seconds=new EditText(app);
+        seconds.setInputType(InputType.TYPE_CLASS_NUMBER);
+        seconds.setSingleLine(true);
+        seconds.setTextColor(TEXT);
+        seconds.setTextSize(21);
+        seconds.setHint("5～600秒");
+        seconds.setHintTextColor(SUB);
+        new AlertDialog.Builder(app)
+            .setTitle("指示灯自动关闭时间")
+            .setView(seconds)
+            .setNegativeButton("取消",null)
+            .setPositiveButton("设置",(dialog,which)->{
+                try{
+                    int value=Integer.parseInt(seconds.getText().toString().trim());
+                    if(value<5||value>600)throw new NumberFormatException();
+                    app.setC110LightFromSettings(value);
+                }catch(NumberFormatException wrong){
+                    app.toastShort("请输入5～600之间的整数；没有下发机身命令");
+                }
+            }).show();
     }
 
     private void camera(){
-        row("音量键快捷拍照 · "+C110VolumeShortcut.LABELS[
-                volumeGestureIndex(C110VolumeShortcut.selected(app))],
-            "双击/长按音量上或下，所有页面共用，前台生效",
-            ()->navigate("volume",""));
-        row("C110+ 运动相机","实时预览、原厂拍照、灯光与提示音说明",
+        row("C110+ 运动相机","直接设置机身声音、灯光和相机Wi-Fi",
             ()->navigate("c110-camera",""));
         row("摄像头 · "+app.sourceDescription(),"",()->navigate("sources",""));
         row("画面旋转 · "+app.rotationDescription(),"",()->{app.adjustCamera(1);render(history.get(history.size()-1));});
