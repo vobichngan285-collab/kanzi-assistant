@@ -1,0 +1,213 @@
+name: Blue Star C110 Direct Camera Settings No Extra Icon v1.0.60
+on:
+  push:
+    branches: [ 'exp/c110-settings-direct-controls-20261120' ]
+    paths:
+      - 'cloud-vision-app/app/**'
+      - 'cloud-vision-app/boyuebridge/**'
+      - 'cloud-vision-app/settings.gradle'
+      - 'cloud-vision-app/tests/C110ResolutionScoreTest.java'
+      - 'cloud-vision-app/tests/C110ZoomGeometryTest.java'
+      - 'cloud-vision-app/tests/C110VolumeTimingTest.java'
+      - 'cloud-vision-app/docs/C110PLUS_PHOTO_OCR_UPLOAD_AB_20261119.md'
+      - 'cloud-vision-app/docs/C110_SETTINGS_DIRECT_CONTROLS_20261120.md'
+      - '.github/workflows/c110-settings-direct-controls-20261120.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  c110-settings-direct:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout same pinned UVC stack as proven Blue Star builds
+        uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: OCR deterministic accuracy tests and preserve C110+ proven integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/c110plus-ab-tests
+          javac -d /tmp/c110plus-ab-tests \
+            "$BASE/C110ResolutionScore.java" cloud-vision-app/tests/C110ResolutionScoreTest.java
+          java -cp /tmp/c110plus-ab-tests com.vobich.bluestar.cloudprobe.C110ResolutionScoreTest
+          javac -d /tmp/c110plus-ab-tests \
+            "$BASE/C110ZoomGeometry.java" cloud-vision-app/tests/C110ZoomGeometryTest.java
+          java -cp /tmp/c110plus-ab-tests com.vobich.bluestar.cloudprobe.C110ZoomGeometryTest
+          javac -d /tmp/c110plus-ab-tests \
+            "$BASE/C110PhotoPolicy.java" cloud-vision-app/tests/C110PhotoPolicyTest.java
+          java -cp /tmp/c110plus-ab-tests com.vobich.bluestar.cloudprobe.C110PhotoPolicyTest
+          javac -d /tmp/c110plus-ab-tests \
+            "$BASE/C110PhotoPolicy.java" "$BASE/C110DeletePolicy.java" \
+            cloud-vision-app/tests/C110DeletePolicyTest.java
+          java -cp /tmp/c110plus-ab-tests com.vobich.bluestar.cloudprobe.C110DeletePolicyTest
+          javac -d /tmp/c110plus-ab-tests \
+            "$BASE/C110VolumeTiming.java" cloud-vision-app/tests/C110VolumeTimingTest.java
+          java -cp /tmp/c110plus-ab-tests com.vobich.bluestar.cloudprobe.C110VolumeTimingTest
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path("cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe")
+          settings=(root/"BlueStarSettingsScreen.java").read_text()
+          controls=(root/"C110DeviceControls.java").read_text()
+          main=(root/"MainActivity.java").read_text()
+          home=(root/"HomeActivity.java").read_text()
+          preview=(root/"C110CameraActivity.java").read_text()
+          quick=(root/"C110QuickShotController.java").read_text()
+          reader=(root/"C110FrameReader.java").read_text()
+          wifi=(root/"C110WifiBootstrap.java").read_text()
+          firmware=(root/"C110WifiCamera.java").read_text()
+          manifest=Path("cloud-vision-app/app/src/main/AndroidManifest.xml").read_text()
+          build=Path("cloud-vision-app/app/build.gradle").read_text()
+          bridge=Path("cloud-vision-app/boyuebridge/src/main/java/com/vobich/bluestar/boyuebridge/LaunchActivity.java").read_text()
+          # The two user-visible icons now come from different packages:
+          # normal Blue Star MAIN and the PREVIOUSLY published Boyue trigger.
+          assert manifest.count("android.intent.category.LAUNCHER")==1
+          assert manifest.count("android.intent.action.MAIN")==1
+          assert 'android:label="蓝星向导"' in manifest
+          assert 'QuickShotEntryActivity' not in manifest
+          assert not (root/"QuickShotEntryActivity.java").exists()
+          assert "com.vobich.bluestar.c110plusquick159" in bridge
+          assert 'com.vobich.bluestar.cloudprobe.action.QUICK_SHOT' in bridge
+          assert "applicationIdSuffix '.c110plusquick159'" in build
+          assert "versionName '1.0.60-c110-direct-settings'" in build
+          assert 'ACTION_QUICK_SHOT.equals(intent.getAction())' in home
+          assert 'quickLaunchPending=false;' in home
+          assert 'quickPhoto();' in home.split('private void consumeQuickLaunch()',1)[1].split('private void quickPhoto()',1)[0]
+          assert 'new C110QuickShotController(this,this::quickStatusChanged)' in home
+          assert 'camera.shootAfterLivePreview(owner)' in quick
+          assert quick.count('camera.shootAfterLivePreview(owner)')==1
+          assert 'reader.recognizeOriginalJpeg(photo.jpeg,photo.width,photo.height)' in quick
+          # Boyue handles physical keys; Blue Star must not compete for them.
+          for label,source in [('Home',home),('Phone/USB preview',main),('C110 preview',preview)]:
+              assert 'new C110VolumeShortcut' not in source, label
+              assert 'volumeShortcut.dispatch' not in source and 'shortcut.dispatch(event)' not in source, label
+          assert 'navigate("volume"' not in settings
+          assert 'private void volumeGesture()' not in settings
+          assert 'C110VolumeShortcut.' not in settings
+          # One shared Cloud AI page; C110 subpage no separate model/Key.
+          assert 'row("云端 AI"' in settings
+          assert 'case "cloud"' in settings and 'case "ocr-models"' in settings
+          assert 'case "models"' in settings and 'case "key"' in settings
+          c110=settings.split('private void c110Camera()',1)[1].split('private void c110CustomLightDelay()',1)[0]
+          assert '当前文字识别模型' not in c110 and '当前视觉模型' not in c110
+          assert 'openC110FromUnifiedSettings' not in settings
+          assert '打开C110+实时预览和机身设置' not in settings
+          assert 'showC110ModelSelector' not in preview
+          assert '切换文字朗读OCR模型' not in preview and '切换视觉任务模型' not in preview
+          # The Settings camera subpage DIRECTLY operates real proven controls.
+          assert 'app.connectC110WifiFromSettings()' in c110
+          assert 'app.setC110BeepFromSettings(false)' in c110
+          assert 'app.setC110BeepFromSettings(true)' in c110
+          for value in [0,-1,15,30,60]:
+              assert f'app.setC110LightFromSettings({value})' in c110
+          assert 'c110CustomLightDelay()' in settings
+          assert 'void updateC110Status(String message)' in settings
+          assert 'void connectC110WifiFromSettings()' in main
+          assert 'c110WifiBootstrap.requestForCameraMode()' in main
+          assert 'void setC110BeepFromSettings(boolean enabled)' in main
+          assert 'void setC110LightFromSettings(int seconds)' in main
+          assert 'settingsC110DeviceControls.shutdown()' in main
+          assert 'C110WifiBootstrap.connected(activity)' in controls
+          assert 'verifyStandardCamera(wifi)' in controls
+          assert 'manualCommand(9011,enabled?1:0)' in controls
+          assert 'saveLightDelay(seconds)' in controls
+          assert 'setLightPolicyFromSettings' in controls and 'setSoundFromSettings' in controls
+          assert 'cmd==9011||cmd==9038' in controls
+          assert 'cmd==3012&&par==-1' in controls
+          assert 'cmd=4003' not in controls and 'cmd=1002' not in controls
+          assert 'void onCameraConnected(Network wifi)' in controls
+          assert 'main.postDelayed(pendingOff,seconds*1000L)' in controls
+          assert 'void requestForCameraMode()' in wifi
+          # No C110 preview started as a side effect of visiting Settings.
+          assert 'new Intent(this,C110CameraActivity.class)' not in main
+          assert 'new Intent(this,C110CameraActivity.class)' in home
+          # Keep previously verified C110 150ms VLC, OEM photo and grtts sync.
+          for src in (preview,(root/"C110InlinePreview.java").read_text()):
+              for flag in ['--network-caching=150','--live-caching=150',
+                           ':network-caching=150',':live-caching=150']:
+                  assert flag in src, 'missing prior 150ms VLC option'
+          assert 'cmd=1001' in firmware
+          assert 'void syncSpeechSettings()' in reader
+          assert 'new TextToSpeech(activity,ready,engine)' in reader
+          assert 'tts.setLanguage(' not in reader
+          assert 'BG=0xFF091B32' in settings and 'BG=0xFF091B32' in home
+          assert 'new BlueStarSettingsScreen(this,rootFrame)' in main
+          print("PASS: no redundant icon/volume/UI, direct C110 verified 9011/9038, original one-shot/150ms/TTS preserved")
+          PY
+      - name: Apply same safe pinned USB code patches as proven build
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_usbmonitor.py cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 cloud-vision-app/scripts/patch_pinned_uvc.py
+          grep -q BSG_CLOUD_RAW5_GATED cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/jni/UVCCamera/UVCPreview.cpp
+          grep -q BSG_CLOUD_CLOSE_BARRIER cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
+      - name: Generate original icon assets, no placeholder icons
+        run: |
+          cd cloud-vision-app
+          java scripts/GenerateLauncherIcons.java
+          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            test -s "app/src/main/res/mipmap-$d/ic_launcher.png"
+          done
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Build safe Blue Star arm64 with direct C110 hardware settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :app:assembleDebug
+      - name: Check APK signature identity, LibVLC, TTS effects, ZIP checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_C110_Direct_Settings_1.0.60.apk
+          test -s out/BlueStar_Guide_C110_Direct_Settings_1.0.60.apk
+          unzip -tq out/BlueStar_Guide_C110_Direct_Settings_1.0.60.apk >/dev/null
+          unzip -Z1 out/BlueStar_Guide_C110_Direct_Settings_1.0.60.apk >out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlc.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlcjni.so' out/entries.txt
+          grep -Fxq 'res/raw/c_metal_clack_ding.mp3' out/entries.txt
+          grep -Fxq 'res/raw/voice_send_whoosh.wav' out/entries.txt
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging out/BlueStar_Guide_C110_Direct_Settings_1.0.60.apk >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110plusquick159'" out/badging.txt
+          grep -Fq "versionName='1.0.60-c110-direct-settings'" out/badging.txt
+          # Only the ordinary launcher icon remains in the main APK.
+          grep -Fq "launchable-activity: name='com.vobich.bluestar.cloudprobe.HomeActivity'" out/badging.txt
+          test "$(grep -c '^launchable-activity:' out/badging.txt)" -eq 1
+          grep -Fq 'C110ResolutionLabActivity' out/entries.txt || true
+          (cd out && sha256sum BlueStar_Guide_C110_Direct_Settings_1.0.60.apk >SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_Guide_C110_Direct_Settings_1.0.60
+          path: out/*
+          retention-days: 14
+      - name: Publish safe isolated experimental prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-c110-direct-settings-20261120-v0160
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Existing tag must not be replaced" >&2
+            exit 1
+          fi
+          gh release create "$TAG" "out/BlueStar_Guide_C110_Direct_Settings_1.0.60.apk" \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Blue Star Unified C110 Hardware Settings and Boyue Launcher Cleanup v1.0.60" \
+            --notes "v1.0.60 on the proven v1.0.59 Boyue one-shot baseline. Only one normal 蓝星向导 launcher icon remains in the main APK. The previously downloaded separate 129KB Boyue trigger v1.0.59 stays compatible: SAME target package com.vobich.bluestar.c110plusquick159, same one-time explicit QUICK_SHOT Home action; no second trigger APK is needed. All C110+ settings now work directly in Settings > Camera > C110+: connect verified C110 Wi-Fi (not RTSP), issue OEM 9011 beep off/on and 9038 LED off/on/15s/30s/60s/custom with checked 3012 identity and visible acknowledgment. Only top-level Cloud AI contains models and API Key, no duplicated C110 or preview cloud menus. Obsolete app-owned volume key interception and UI removed because Boyue intercepts those keys. Home C110 150ms preview remains accessible only on user action; the Camera settings no longer navigates to live preview. Original single native 1001 photo, cloud OCR, grtts custom TTS, USB/phone and blue unified settings preserved. LED delayed-off needs a live connection/activity. Users may need to uninstall previous v1.0.59 main app if Android reports a different debug signing certificate; then install this build, keep the previously installed Boyue companion, and configure API Key/voice in the main app again. CI does not prove hardware changes until user checks C110 on vivo."
