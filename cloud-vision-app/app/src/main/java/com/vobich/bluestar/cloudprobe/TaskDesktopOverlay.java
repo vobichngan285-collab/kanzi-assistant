@@ -38,8 +38,10 @@ final class TaskDesktopOverlay {
         void createTask();
         void removed(TaskCatalog.Task task);
         void openReading();
+        default void edit(TaskCatalog.Task task){}
     }
     private static final long HOLD_MS=480L;
+    private static final int COLUMNS=4,PAGE_SIZE=12;
     private final Activity activity;
     private final Dialog dialog;
     private final List<TaskCatalog.Task> items=new ArrayList<>();
@@ -72,7 +74,7 @@ final class TaskDesktopOverlay {
                 if(task!=null)items.add(task);
             }
         }
-        pages=Math.max(1,(items.size()+8)/9);
+        pages=Math.max(1,(items.size()+PAGE_SIZE-1)/PAGE_SIZE);
         dialog=new Dialog(a);
         dialog.setOnDismissListener(d->{cancelPendingHold();clearHighlight();});
     }
@@ -133,7 +135,7 @@ final class TaskDesktopOverlay {
         center.addView(top);
 
         grid=new GridLayout(activity);
-        grid.setColumnCount(3);grid.setRowCount(3);grid.setUseDefaultMargins(false);
+        grid.setColumnCount(COLUMNS);grid.setRowCount(3);grid.setUseDefaultMargins(false);
         grid.setOnDragListener((view,event)->onGridDrag(event));
         center.addView(grid);
 
@@ -210,7 +212,7 @@ final class TaskDesktopOverlay {
         if(highlighted==index)return;
         clearHighlight();
         if(index<0||index>=items.size())return;
-        int cell=index-page*9;
+        int cell=index-page*PAGE_SIZE;
         if(cell<0||cell>=grid.getChildCount())return;
         View target=grid.getChildAt(cell);
         if(target==null)return;
@@ -225,7 +227,7 @@ final class TaskDesktopOverlay {
             View slot=grid.getChildAt(i);
             if(x>=slot.getLeft()&&x<slot.getRight()&&
                y>=slot.getTop()&&y<slot.getBottom()){
-                return Math.min(page*9+i,items.size()-1);
+                return Math.min(page*PAGE_SIZE+i,items.size()-1);
             }
         }
         return -1;
@@ -330,8 +332,8 @@ final class TaskDesktopOverlay {
                 if(nextPage<0||nextPage>=pages)return true;
                 render(nextPage);
                 // Releasing on the arrow itself moves into that adjacent page.
-                arrowTarget=direction>0?Math.min(items.size()-1,page*9):
-                    Math.min(items.size()-1,page*9+8);
+                arrowTarget=direction>0?Math.min(items.size()-1,page*PAGE_SIZE):
+                    Math.min(items.size()-1,page*PAGE_SIZE+PAGE_SIZE-1);
                 return true;
             case DragEvent.ACTION_DRAG_EXITED:
                 arrowTarget=-1;
@@ -404,27 +406,39 @@ final class TaskDesktopOverlay {
         cancelPendingHold();
         clearHighlight();
         page=newPage;grid.removeAllViews();
-        int begin=page*9;
+        int begin=page*PAGE_SIZE;
         int screenWidth=activity.getResources().getDisplayMetrics().widthPixels;
-        int cell=Math.min(dp(118),Math.max(dp(94),(screenWidth-dp(36))/3));
-        for(int j=0;j<9;j++){
+        int cell=Math.min(dp(92),Math.max(dp(72),(screenWidth-dp(28))/COLUMNS));
+        for(int j=0;j<PAGE_SIZE;j++){
             int idx=begin+j;
             LinearLayout slot=new LinearLayout(activity);
             slot.setOrientation(LinearLayout.VERTICAL);
             slot.setGravity(Gravity.CENTER);
             GridLayout.LayoutParams layout=new GridLayout.LayoutParams(
-                GridLayout.spec(j/3),GridLayout.spec(j%3));
-            layout.width=cell;layout.height=dp(122);
+                GridLayout.spec(j/COLUMNS),GridLayout.spec(j%COLUMNS));
+            layout.width=cell;layout.height=dp(103);
             grid.addView(slot,layout);
             if(idx>=items.size())continue;
             final TaskCatalog.Task task=items.get(idx);
             boolean creation=task==null;
             boolean active=!creation&&task.id.equals(selected);
-            TextView icon=label(creation?"＋":task.icon,34,Color.WHITE);
+            TextView icon=label(creation?"＋":task.icon,27,Color.WHITE);
             icon.setBackground(bg(taskColor(task),active?0xFFF8D46A:0));
-            slot.addView(icon,new LinearLayout.LayoutParams(dp(69),dp(69)));
-            TextView name=label(creation?"自定义任务":task.name,14,Color.WHITE);
-            name.setMaxLines(2);name.setPadding(dp(2),dp(7),dp(2),0);
+            FrameLayout iconFrame=new FrameLayout(activity);
+            FrameLayout.LayoutParams iconParams=new FrameLayout.LayoutParams(dp(55),dp(55),Gravity.CENTER);
+            iconFrame.addView(icon,iconParams);
+            if(!creation){
+                TextView edit=label("✎",14,Color.WHITE);
+                edit.setBackground(bg(0xFF24486B,0));
+                edit.setContentDescription("编辑"+task.name);
+                edit.setClickable(true);edit.setFocusable(true);
+                FrameLayout.LayoutParams editParams=new FrameLayout.LayoutParams(dp(23),dp(23),Gravity.TOP|Gravity.RIGHT);
+                iconFrame.addView(edit,editParams);
+                edit.setOnClickListener(v->{dialog.dismiss();listener.edit(task);});
+            }
+            slot.addView(iconFrame,new LinearLayout.LayoutParams(dp(69),dp(58)));
+            TextView name=label(creation?"添加任务":task.name,12,Color.WHITE);
+            name.setMaxLines(2);name.setPadding(dp(1),dp(3),dp(1),0);
             slot.addView(name);
             slot.setContentDescription((creation?"新建自定义任务":task.name)+
                 (active?"，当前任务":"")+"；短按选择，长按拖动排序或删除");
