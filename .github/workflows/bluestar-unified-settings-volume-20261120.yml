@@ -1,0 +1,339 @@
+name: Blue Star Unified Settings + C110 Volume Diagnostics 150ms v1.0.56
+on:
+  push:
+    branches: [ 'exp/unified-settings-volume-diag-20261120' ]
+    paths:
+      - 'cloud-vision-app/app/**'
+      - 'cloud-vision-app/tests/C110ResolutionScoreTest.java'
+      - 'cloud-vision-app/tests/C110ZoomGeometryTest.java'
+      - 'cloud-vision-app/tests/C110VolumeTimingTest.java'
+      - 'cloud-vision-app/docs/C110PLUS_PHOTO_OCR_UPLOAD_AB_20261119.md'
+      - 'cloud-vision-app/docs/UNIFIED_SETTINGS_VOLUME_DIAG_20261120.md'
+      - '.github/workflows/bluestar-unified-settings-volume-20261120.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  unified-settings-volume:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout same pinned UVC stack as proven Blue Star builds
+        uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: OCR deterministic accuracy tests and preserve C110+ proven integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/c110plus-ab-tests
+          javac -d /tmp/c110plus-ab-tests \
+            "$BASE/C110ResolutionScore.java" cloud-vision-app/tests/C110ResolutionScoreTest.java
+          java -cp /tmp/c110plus-ab-tests com.vobich.bluestar.cloudprobe.C110ResolutionScoreTest
+          javac -d /tmp/c110plus-ab-tests \
+            "$BASE/C110ZoomGeometry.java" cloud-vision-app/tests/C110ZoomGeometryTest.java
+          java -cp /tmp/c110plus-ab-tests com.vobich.bluestar.cloudprobe.C110ZoomGeometryTest
+          javac -d /tmp/c110plus-ab-tests \
+            "$BASE/C110PhotoPolicy.java" cloud-vision-app/tests/C110PhotoPolicyTest.java
+          java -cp /tmp/c110plus-ab-tests com.vobich.bluestar.cloudprobe.C110PhotoPolicyTest
+          javac -d /tmp/c110plus-ab-tests \
+            "$BASE/C110PhotoPolicy.java" "$BASE/C110DeletePolicy.java" \
+            cloud-vision-app/tests/C110DeletePolicyTest.java
+          java -cp /tmp/c110plus-ab-tests com.vobich.bluestar.cloudprobe.C110DeletePolicyTest
+          javac -d /tmp/c110plus-ab-tests \
+            "$BASE/C110VolumeTiming.java" cloud-vision-app/tests/C110VolumeTimingTest.java
+          java -cp /tmp/c110plus-ab-tests com.vobich.bluestar.cloudprobe.C110VolumeTimingTest
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path("cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe")
+          lab=(root/"C110ResolutionLabActivity.java").read_text()
+          home=(root/"HomeActivity.java").read_text()
+          quick=(root/"C110QuickShotController.java").read_text()
+          volume=(root/"C110VolumeShortcut.java").read_text()
+          unified=(root/"BlueStarSettingsScreen.java").read_text()
+          timing=(root/"C110VolumeTiming.java").read_text()
+          score=(root/"C110ResolutionScore.java").read_text()
+          zoom=(root/"C110ZoomGeometry.java").read_text()
+          zoomframes=(root/"C110ZoomFrames.java").read_text()
+          reader=(root/"C110FrameReader.java").read_text()
+          inline=(root/"C110LivePreview.java").read_text()
+          c110=(root/"C110CameraActivity.java").read_text()
+          main=(root/"MainActivity.java").read_text()
+          oem=(root/"C110WifiCamera.java").read_text()
+          cloud=(root/"CloudVisionClient.java").read_text()
+          usb=Path("cloud-vision-app/app/src/main/AndroidManifest.xml").read_text()
+          build=Path("cloud-vision-app/app/build.gradle").read_text()
+          doc=Path("cloud-vision-app/docs/C110PLUS_PHOTO_OCR_UPLOAD_AB_20261119.md").read_text()
+          assert 'C110ResolutionLabActivity' in usb and 'android:exported="false"' in usb
+          assert 'android:name=".HomeActivity"' in usb
+          assert 'android:name=".C110QuickPhotoActivity"' not in usb
+          assert not (root/"C110QuickPhotoActivity.java").exists(), 'Remove redundant diagnostic/quick-photo Activity'
+          assert 'class C110QuickShotController' in quick and 'C110FrameReader' in quick
+          assert 'new C110QuickShotController(this,this::quickStatusChanged)' in home
+          assert 'private void quickPhoto()' in home
+          home_quick=home.split('private void quickPhoto()',1)[1].split('private void quickStatusChanged',1)[0]
+          assert 'quickShot.trigger();' in home_quick and 'startActivity(' not in home_quick
+          assert 'quickStatusView.setText(quickStatus)' in home
+          assert 'new C110QuickShotController(this,this::setResultStatus)' in main
+          assert 'else startActivity(new Intent(this,C110QuickPhotoActivity.class))' not in main
+          assert 'photo.jpeg,photo.width,photo.height' in quick
+          assert quick.count('camera.shootAfterLivePreview(owner)')==1, 'Exactly one OEM 1001 per quick shutter'
+          assert 'if(shutterPending||reader.isBusy())' in quick
+          assert 'C110WifiBootstrap.requestFromCameraPage(owner,false)' in quick
+          assert 'CloudKeyStore' not in quick, 'Cloud credentials resolved by the existing reader, not a test path'
+          assert usb.count('android.intent.action.MAIN')==1 and usb.count('android.intent.category.LAUNCHER')==1
+          assert 'class HomeActivity extends Activity' in home, 'Home must not instantiate UVC camera'
+          assert 'new C110QuickPhotoActivity' not in home, 'No test page instantiation'
+          assert 'new Intent(this,C110QuickPhotoActivity.class)' not in home
+          assert 'BG=0xFF091B32' in home and 'ACCENT=0xFFB9DCF8' in home
+          assert 'NAV_ACTIVE=0xFF176BAC' in home and 'NAV_NORMAL=0xFF2C547D' in home
+          assert 'GOLD=' not in home and '0xFFF5C543' not in home and '0xFF07090D' not in home
+          assert '0xFFC3D7EF' in home and '0xFF265077' in home
+          assert 'new Intent(this,MainActivity.class)' in home
+          assert 'bluestar_launch_preview' in home and 'bluestar_launch_settings' in home
+          assert '⌂' in home and '预览' in home and '设置' in home
+          # Single visible settings source, with every legacy tool carried forward.
+          assert not (root/"LargeSettingsScreen.java").exists()
+          assert 'class BlueStarSettingsScreen' in unified
+          assert 'BlueStarSettingsScreen largeSettings' in main
+          assert 'new BlueStarSettingsScreen(this,rootFrame)' in main
+          assert 'private void openSettings()' in home and 'this::openSettings' in home
+          assert 'bluestar_launch_settings' in home
+          for removed in ['settingsTab','更多设置','private void chooseShortcut()',
+                          'private void chooseOcrModel()','private void editApiKey()']:
+              assert removed not in home, "Home duplicate remains: "+removed
+          assert 'LargeSettingsScreen' not in main
+          for page in ['camera','speech','engines','tasks','feedback','cloud',
+                       'models','ocr-models','ocr-speed','usb-picture','sources',
+                       'usage','key','result','diagnostics']:
+              assert f'case "{page}"' in unified, "Legacy settings page missing: "+page
+          for feature in ['row("相机"','private void volumeGesture()',
+                          'C110VolumeShortcut.diagnostic(app)','C110VolumeShortcut.select(app,id)',
+                          'private void c110Camera()','app.openC110FromUnifiedSettings()',
+                          'app.openC110PhotoLabFromUnifiedSettings()', 'USB 画质调节',
+                          '选择语音引擎','过滤英文','过滤数字','过滤符号',
+                          'API Key','模型用量统计','USB插拔自动切换',
+                          '恢复USB画质默认设置','运行诊断','任务管理']:
+              assert feature in unified, "Missing migrated control: "+feature
+          assert 'openHomeFromUnifiedSettings' in main
+          assert 'openPreviewFromUnifiedSettings' in main
+          assert 'if(settingsOnly)finish();' in main
+          assert '已保存摄像头选择，进入预览后生效' in main
+          assert '!settingsOnly&&enable&&!usingPhoneCamera' in main
+          assert 'BG=0xFF091B32' in home and 'BG=0xFF091B32' in unified
+          assert 'NAV_ACTIVE=0xFF176BAC' in home and '0xFF176BAC' in unified
+          assert 'C110VolumeShortcut.VALUES' in unified and 'C110VolumeShortcut.select' in unified
+          assert 'dispatchKeyEvent(KeyEvent event)' in home and 'dispatchKeyEvent(KeyEvent event)' in main
+          assert 'dispatchKeyEvent(KeyEvent event)' in c110
+          assert 'private void shortcutPhoto()' in main
+          assert 'if(C110WifiBootstrap.connected(this)!=null)' in main and 'quickShot.trigger();' in main
+          assert 'settingsOnly' in main and '!settingsOnly&&isUsbVideoDevice(device)' in main
+          assert 'launch.getBooleanExtra("bluestar_launch_preview",false)' in main
+          assert 'globalSettings.setOnClickListener(v->showC110Settings())' in c110
+          assert 'isolatedWifiBootstrap.requestForCameraMode();' in c110
+          assert 'isolatedWifiBootstrap.startAtLaunch();' not in c110
+          assert 'returnToMain("settings")' not in c110
+          assert 'new C110FrameReader(owner,this::emit)' in quick
+          assert 'final C110WifiCamera.Photo photo=camera.shootAfterLivePreview(owner)' in quick
+          assert 'reader.recognizeOriginalJpeg(photo.jpeg,photo.width,photo.height)' in quick
+          assert 'bootstrap.requestForCameraMode()' in quick and 'C110WifiBootstrap.connected(owner)' in quick
+          assert 'static final String KEY="c110_quick_photo_volume_gesture"' in volume
+          assert 'down_double' in volume and 'up_double' in volume and 'down_hold' in volume and 'up_hold' in volume and '"off"' in volume
+          assert 'DOUBLE_MS=600L,HOLD_MS=650L' in volume
+          assert 'C110VolumeTiming.secondDownAfterFirstUp(lastUp,now,DOUBLE_MS)' in volume
+          assert 'trace("down",key,-1L)' in volume and 'trace("up",key,-1L)' in volume
+          assert 'c110_volume_diag_' in volume and 'static String diagnostic(Context c)' in volume
+          assert 'static boolean secondDownAfterFirstUp(' in timing
+          assert 'settingsOnly||(largeSettings!=null&&!largeSettings.isClosed())' in main
+          assert 'AudioManager.ADJUST_RAISE' in volume and 'AudioManager.ADJUST_LOWER' in volume
+          assert 'onPause()' in home and 'onPause()' in quick
+          assert 'v0148' not in build and 'v0149' not in build
+          assert 'new Intent(this,C110ResolutionLabActivity.class)' in c110
+          assert '照片尺寸·取图·上传·OCR准确率综合实验' in c110
+          # CRITICAL for user-corrected real hardware model: no unsafe 4003 UI path.
+          assert 'else if(which==1)confirmSingleFileDelete()' not in c110
+          assert '安全提示：单张删图暂不开放' in c110
+          assert 'photoCamera.deleteDownloadedOriginal(this,candidate)' in c110, 'Old code history must not be deleted/replaced'
+          # OEM proven Wi-Fi, photo and RTSP retained, not redesigned.
+          for flag in ['--network-caching=150','--live-caching=150',
+                       ':network-caching=150',':live-caching=150',
+                       ':file-caching=300',':sout-mux-caching=300']:
+              assert flag in c110, flag
+          assert 'new VLCVideoLayout(this)' in c110
+          assert 'player.attachViews(video,null,false,false)' in c110
+          assert c110.count('active.play();')==1
+          assert 'main.postDelayed(delayedPlay,300)' in c110
+          assert 'photoCamera.shootAfterLivePreview(this)' in c110
+          assert 'frameReader.recognizeOriginalJpeg(' in c110
+          assert 'new C110WifiBootstrap(this,this::setResultStatus)' in main
+          assert 'c110Button.setOnClickListener(v->shortcutPhoto())' in main
+          assert oem.count('get(wifi,"/?custom=1&cmd=1001"')==1
+          assert 'photoModeReady=false;' in oem
+          assert 'Set<String> previous=list(wifi);' in oem
+          assert 'get(wifi,"/?custom=1&cmd=3001&par=0"' in oem
+          assert 'Network verified=C110WifiBootstrap.preferredNetwork(cm)' in oem
+          assert '.setSsid(ssid).setWpa2Passphrase(password)' in (root/'C110WifiBootstrap.java').read_text()
+          # Experiment only selects an OEM-chosen label, never changes photo size.
+          assert 'LABELS={' in lab and all(x in lab for x in
+               ['20M · 5888×3312','10M · 4320×2432','8M · 3840×2160','3M · 2560×1440'])
+          assert 'photo.width==WIDTHS[slot]' in lab and 'photo.height==HEIGHTS[slot]' in lab
+          assert 'camera.shootAfterLivePreview(this)' in lab
+          assert lab.count('camera.shootAfterLivePreview(this)')==1
+          assert 'final byte[] submitted=photo.jpeg;' in lab
+          assert 'final boolean identical=submitted==photo.jpeg;' in lab
+          assert lab.count('CloudVisionClient.recognize(')==1, 'Exactly one cloud OCR request per tap'
+          assert 'OcrModelCatalog.DEDICATED' not in lab, 'C110+ lab must not force exhausted qwen-vl-ocr'
+          assert 'TaskCatalog.defaults()[0]' in lab, 'Keep stable OCR instruction for A/B'
+          assert 'getString("cloud_ocr_model_v1",OcrModelCatalog.DEFAULT)' in lab
+          assert 'OcrModelCatalog.normalize(' in lab and 'final String chosenModel=selectedModel();' in lab
+          assert 'final String chosenSpeed=selectedSpeed();' in lab
+          assert 'submitted,key,ocr,chosenModel,null,chosenSpeed,cellular' in lab
+          assert 'trial.model=chosenModel;trial.speed=chosenSpeed;' in lab
+          assert 'append(" model=").append(t.model)' in lab
+          assert 'append(" speed=").append(t.speed)' in lab
+          assert 'getSharedPreferences("kanzi_settings",MODE_PRIVATE)' in lab
+          assert '切换朗读OCR模型（同步主页）' in lab
+          assert 'getSharedPreferences("kanzi_settings",MODE_PRIVATE)' in c110
+          assert 'showC110ModelSelector(true)' in c110 and 'showC110ModelSelector(false)' in c110
+          assert 'putString(key,ids[which]).apply()' in c110
+          assert 'currentModels.getString(PREF_OCR_MODEL' in main
+          assert 'currentModels.getString(PREF_VISION_MODEL' in main
+          assert 'prefs.getString("cloud_ocr_model_v1",OcrModelCatalog.DEFAULT)' in reader
+          assert 'prefs.getString("cloud_vision_model",VisionModelCatalog.DEFAULT)' in reader
+          assert 'C110WifiCamera.requireCellular(this)' in lab
+          assert 'C110ResolutionScore.compare(known,result.text)' in lab
+          assert 'prompt_tokens=' in lab and 'completion_tokens=' in lab
+          assert 'jpeg_download_ms=' in lab and 'end_to_end_ms=' in lab
+          assert 'request_write_ms=' in lab and 'cloud_ms=' in lab
+          assert '上传' in lab and 'actual' not in lab.lower(), 'Do not claim server internal processing resolution'
+          assert 'unknown' in lab and 'matches_label' in lab
+          assert 'lastUploadedJpeg=submitted;' in lab
+          assert 'ClipboardManager' in lab and 'copyReport()' in lab
+          assert 'onPause()' in lab and 'running.cancel(true)' in lab
+          assert 'cmd=1002' not in lab and 'cmd=4003' not in lab
+          assert 'deleteDownloadedOriginal' not in lab and 'Bitmap.CompressFormat' not in lab
+          assert 'Base64.encodeToString(jpeg,Base64.NO_WRAP)' in cloud, 'Cloud must use the original JPEG bytes directly'
+          assert 'max_pixels' not in cloud and 'vl_high_resolution_images' not in cloud
+          assert 'cloud_ocr_model_v1' in main and 'cloud_vision_model' in main
+          assert 'PREF_IMAGE_POLICY' in main
+          assert '没有' in doc or '不' in doc
+          # New zoom/ROI works in BOTH C110 entry paths, but nowhere else.
+          assert 'C110ZoomGeometry.centered(' in zoomframes
+          assert 'if(region.full(sourceWidth,sourceHeight))' in zoomframes
+          assert 'return new JpegResult(source,sourceWidth,sourceHeight)' in zoomframes
+          assert 'BitmapRegionDecoder.newInstance' in zoomframes
+          assert 'Bitmap.CompressFormat.JPEG,92' in zoomframes
+          assert 'C110ZoomFrames.cropPreviewBitmap(fresh,zoomAtTap,' in reader
+          assert 'C110ZoomFrames.cropNativeJpeg(jpeg,width,height,zoomAtTap,' in reader
+          assert 'frameReader.tap(video,zoom,fullscreen,' in c110
+          assert 'frameReader.recognizeOriginalJpeg(' in c110 and 'zoomAtShutter' in c110
+          assert 'private void setZoom(float wanted)' in c110
+          assert 'zoomSeek.setMax(30)' in c110 and 'new SeekBar.OnSeekBarChangeListener()' in c110
+          assert 'fullscreenButton=zoomSmallButton("全屏"' in c110
+          assert 'setRequestedOrientation(' not in c110, 'Never rotate phone to landscape'
+          assert 'SCREEN_ORIENTATION_LANDSCAPE' not in c110
+          assert 'root.setClipChildren(true)' in c110
+          assert 'applyVideoViewport()' in c110
+          assert 'Math.round(height*(16f/9f))' in c110, 'Cover without stretching video'
+          assert 'lp.gravity=Gravity.CENTER' in c110
+          assert 'portraitCoverAtShutter' in c110
+          assert 'static Region centeredCover(' in zoom
+          assert 'centeredCover(' in zoomframes
+          assert 'boolean portraitCover,float viewportAspect' in reader
+          assert 'android:screenOrientation="portrait"' in usb
+          assert 'onConfigurationChanged(Configuration newConfig)' in c110
+          orientation=c110.split('onConfigurationChanged(Configuration newConfig)',1)[1].split('onWindowFocusChanged',1)[0]
+          assert 'begin()' not in orientation and 'openPlayer(' not in orientation, 'Portrait cover must NOT restart player'
+          assert 'configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize"' in usb
+          assert 'private float c110PreviewZoom=1f' in main
+          assert 'c110Preview.view().setScaleX(c110PreviewZoom)' in main
+          assert 'C110ZoomFrames.cropPreviewBitmap(bitmap,liveZoomAtTap)' in main
+          assert 'C110ZoomFrames.cropNativeJpeg(' in main
+          assert 'photo.jpeg,photo.width,photo.height,highPhotoZoomAtTap' in main
+          assert 'c110PreviewZoom:zoom' in main
+          assert 'final byte[] submitted=photo.jpeg;' in lab, 'Keep OEM 20M/10M/8M size-lab unmodified'
+          assert "applicationIdSuffix '.c110plussettings156'" in build
+          assert "versionName '1.0.56-unified-settings-volume'" in build
+          for label,src in [('C110 camera page',c110),('C110 inline preview',inline)]:
+              for flag in ['--network-caching=150','--live-caching=150',
+                           ':network-caching=150',':live-caching=150']:
+                  assert src.count(flag)==1, label+': stale/duplicate 150ms '+flag
+              assert ':file-caching=300' in src and ':sout-mux-caching=300' in src
+              assert src.count('active.play();')==1 if label=='C110 camera page' else src.count('current.play();')==1
+          assert 'cmd=1002' not in c110 and 'cmd=1002' not in zoomframes
+          assert 'cmd=4003' not in zoomframes and 'deleteDownloadedOriginal' not in zoomframes
+          print('PASS: homepage OCR model synced into C110 lab/preview, per-tap model frozen, portrait ROI/150ms/OEM shutter retained; no 1002/4003')
+          PY
+      - name: Apply same safe pinned USB code patches as proven build
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_usbmonitor.py cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 cloud-vision-app/scripts/patch_pinned_uvc.py
+          grep -q BSG_CLOUD_RAW5_GATED cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/jni/UVCCamera/UVCPreview.cpp
+          grep -q BSG_CLOUD_CLOSE_BARRIER cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
+      - name: Generate original icon assets, no placeholder icons
+        run: |
+          cd cloud-vision-app
+          java scripts/GenerateLauncherIcons.java
+          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            test -s "app/src/main/res/mipmap-$d/ic_launcher.png"
+          done
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Build complete Blue Star arm64 app with independent C110+ lab
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :app:assembleDebug
+      - name: Check APK signature identity, LibVLC, TTS effects, ZIP checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_Unified_Settings_Volume_150ms_1.0.56.apk
+          test -s out/BlueStar_Guide_Unified_Settings_Volume_150ms_1.0.56.apk
+          unzip -tq out/*.apk >/dev/null
+          unzip -Z1 out/*.apk >out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlc.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlcjni.so' out/entries.txt
+          grep -Fxq 'res/raw/c_metal_clack_ding.mp3' out/entries.txt
+          grep -Fxq 'res/raw/voice_send_whoosh.wav' out/entries.txt
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging out/*.apk >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110plussettings156'" out/badging.txt
+          grep -Fq "versionName='1.0.56-unified-settings-volume'" out/badging.txt
+          grep -Fq 'C110ResolutionLabActivity' out/entries.txt || true
+          (cd out && sha256sum BlueStar_Guide_Unified_Settings_Volume_150ms_1.0.56.apk >SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_Guide_Unified_Settings_Volume_150ms_1.0.56
+          path: out/*
+          retention-days: 14
+      - name: Publish safe isolated experimental prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-unified-settings-volume-150ms-20261120-v0156
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Existing tag must not be replaced" >&2
+            exit 1
+          fi
+          gh release create "$TAG" "out/BlueStar_Guide_Unified_Settings_Volume_150ms_1.0.56.apk" \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Blue Star Unified Settings and Hardware Volume Diagnostics 150ms v1.0.56" \
+            --notes "v1.0.56 single Blue Star settings for both Home and phone/USB Preview. Complete legacy voice/TTS, task, camera/USB, sound, cloud OCR/vision/API key, model usage, last result and diagnostic controls are all migrated into BlueStarSettingsScreen; removed LargeSettingsScreen and Home duplicate settings/More Settings. New Camera category groups C110+, camera source, USB controls, physical volume shortcut selection and diagnostics. 600ms double-press and eventTime guard, pure Java regression tests, live raw DOWN/UP counters for vivo verification. Settings mode never fires 1001 even during shortcut test; Home camera source setting is deferred until manually entering Preview. Original direct one-tap C110+ photo does not navigate or launch diagnostic pages; proven OEM 1001, dual 150ms VLC, shared model/key/TTS and navy theme unchanged. Separate experimental app ID requires its own API key. CI success is not confirmation of vivo physical-button delivery; test Settings > Camera > Volume shortcut."
