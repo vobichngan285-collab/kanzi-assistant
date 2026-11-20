@@ -6,7 +6,7 @@ import java.util.Locale;
 /** Pure Java allow-list for user-configured OpenAI-compatible HTTP endpoints. */
 final class CloudProviderPolicy {
     static final String OCR="ocr", VISION="vision", ASR="asr";
-    static final String CHAT="chat", ASR_QWEN="asr_qwen";
+    static final String CHAT="chat", LAYOUT="layout_parsing", ASR_QWEN="asr_qwen";
     static final String ASR_MULTIPART="asr_multipart", ASR_CHAT_AUDIO="asr_chat_audio";
     private CloudProviderPolicy(){}
 
@@ -18,7 +18,25 @@ final class CloudProviderPolicy {
         if(ASR.equals(role))
             return ASR_QWEN.equals(protocol)||ASR_MULTIPART.equals(protocol)||
                 ASR_CHAT_AUDIO.equals(protocol);
-        return CHAT.equals(protocol);
+        return CHAT.equals(protocol)||(OCR.equals(role)&&LAYOUT.equals(protocol));
+    }
+    /** The original experimental build persisted stream=false on every new
+     * custom Chat profile, including models already known to support SSE.
+     * Migrate ONLY these verified families once, and preserve later opt-outs. */
+    static boolean recommendedFastStream(String model,String protocol){
+        if(!CHAT.equals(protocol)||model==null)return false;
+        String name=model.trim().toLowerCase(java.util.Locale.ROOT);
+        return name.equals("glm-4.6v-flash")||
+               name.equals("qwen3.7-flash")||
+               name.equals("qwen3.8-flash")||
+               name.equals("qwen3.8-max");
+    }
+    /** A real OCR probe must return the intended glyph, not just HTTP 200. */
+    static boolean probeRecognizedA(String reply){
+        if(reply==null)return false;
+        String text=reply.trim().replace("Ａ","A").replace("ａ","a")
+            .replaceAll("[\\s\\p{Punct}。！：，、]+","");
+        return "A".equalsIgnoreCase(text)||"字母A".equalsIgnoreCase(text);
     }
     static String validatedUrl(String raw){
         if(raw==null||raw.trim().isEmpty())throw new IllegalArgumentException("请填写完整 HTTPS API 地址");
