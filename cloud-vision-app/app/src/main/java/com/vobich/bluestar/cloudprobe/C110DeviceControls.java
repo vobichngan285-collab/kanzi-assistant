@@ -168,10 +168,41 @@ final class C110DeviceControls {
         });
     }
 
+    /**
+     * Unified Settings may issue proven 9011/9038 commands without ever
+     * creating a VLC player or entering the preview Activity. A verified
+     * C110-specific Network is mandatory for EVERY write; never use the
+     * phone's ordinary Wi-Fi/default internet route.
+     */
+    private boolean attachVerifiedSettingsWifi(){
+        if(closed)return false;
+        Network verified=C110WifiBootstrap.connected(activity);
+        if(verified==null){
+            report("未连接已验证的C110 Wi-Fi；请先点击「连接C110相机Wi-Fi」");
+            return false;
+        }
+        cameraWifi=verified;
+        return true;
+    }
+    void setSoundFromSettings(boolean enabled){
+        if(!attachVerifiedSettingsWifi())return;
+        manualCommand(9011,enabled?1:0);
+    }
+    void setLightPolicyFromSettings(int seconds){
+        if(seconds < -1 || seconds > 600 || (seconds>0&&seconds<5)){
+            report("灯光延时仅允许5至600秒、立即关闭或始终显示");
+            return;
+        }
+        if(!attachVerifiedSettingsWifi())return;
+        // Reuse the existing proven 9038 command + identity check + timer.
+        // Only a user tap on a specific policy sends a C110 write.
+        saveLightDelay(seconds);
+    }
+
     private void manualCommand(int cmd,int par){
         Network wifi=cameraWifi;
         if(closed||wifi==null){
-            report("请先成功连接C110实时预览");return;
+            report("请先连接C110相机Wi-Fi；不需要进入实时预览");return;
         }
         final int ticket=sequence;
         worker.execute(()->{
