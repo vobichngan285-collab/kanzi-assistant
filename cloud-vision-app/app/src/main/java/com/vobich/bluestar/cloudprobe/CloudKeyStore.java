@@ -44,6 +44,39 @@ final class CloudKeyStore {
         return new String(cipher.doFinal(Base64.decode(encrypted,Base64.NO_WRAP)),
             java.nio.charset.StandardCharsets.UTF_8);
     }
+    /** Multiple provider secrets share the proven Android Keystore AES-GCM key,
+     * but each profile has an independent random IV and ciphertext pair.
+     * The legacy single Bailian Key remains at its original unchanged keys. */
+    static void saveNamed(Context context,String id,String secret)throws Exception{
+        if(!id.matches("[a-zA-Z0-9_-]{1,64}"))
+            throw new IllegalArgumentException("无效云端配置 ID");
+        if(secret==null||secret.trim().isEmpty())
+            throw new IllegalArgumentException("API Key 不能为空");
+        Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.ENCRYPT_MODE,key());
+        byte[] encrypted=cipher.doFinal(secret.trim().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit()
+            .putString("iv_"+id,Base64.encodeToString(cipher.getIV(),Base64.NO_WRAP))
+            .putString("ciphertext_"+id,Base64.encodeToString(encrypted,Base64.NO_WRAP)).apply();
+    }
+    static String loadNamed(Context context,String id)throws Exception{
+        if(!id.matches("[a-zA-Z0-9_-]{1,64}"))
+            throw new IllegalArgumentException("无效云端配置 ID");
+        SharedPreferences prefs=context.getSharedPreferences(PREFS,Context.MODE_PRIVATE);
+        String iv=prefs.getString("iv_"+id,"");
+        String content=prefs.getString("ciphertext_"+id,"");
+        if(iv.isEmpty()||content.isEmpty())return "";
+        Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.DECRYPT_MODE,key(),new GCMParameterSpec(
+            128,Base64.decode(iv,Base64.NO_WRAP)));
+        return new String(cipher.doFinal(Base64.decode(content,Base64.NO_WRAP)),
+            java.nio.charset.StandardCharsets.UTF_8);
+    }
+    static void clearNamed(Context context,String id){
+        if(id==null||!id.matches("[a-zA-Z0-9_-]{1,64}"))return;
+        context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit()
+            .remove("iv_"+id).remove("ciphertext_"+id).apply();
+    }
     static void clear(Context context){
         context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit().clear().apply();
     }
