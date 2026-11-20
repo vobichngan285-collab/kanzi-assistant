@@ -57,6 +57,10 @@ final class BlueStarSettingsScreen {
             app.currentC110WifiSettingsStatus():message);
     }
     void openApiKey(){navigate("cloud","");navigate("key","");}
+    void openCloudRole(String role){
+        if(!CloudProviderPolicy.validRole(role))return;
+        navigate("cloud","");navigate("providers","");navigate("provider-role",role);
+    }
     void close(){
         if(closed)return;
         closed=true;
@@ -115,6 +119,9 @@ final class BlueStarSettingsScreen {
             case "sources":heading="选择摄像头";break;
             case "feedback":heading="提示音与振动";break;
             case "cloud":heading="云端 AI";break;
+            case "providers":heading="自定义云端服务";break;
+            case "provider-role":heading="独立服务选择";break;
+            case "provider-edit":heading="编辑云端接口";break;
             case "models":heading="视觉模型选择";break;
             case "ocr-models":heading="文字识别模型选择";break;
             case "ocr-speed":heading="文字朗读方式";break;
@@ -169,6 +176,9 @@ final class BlueStarSettingsScreen {
         else if(p.name.equals("sources"))sources();
         else if(p.name.equals("feedback"))feedback();
         else if(p.name.equals("cloud"))cloud();
+        else if(p.name.equals("providers"))providers();
+        else if(p.name.equals("provider-role"))providerRole(p.param);
+        else if(p.name.equals("provider-edit"))providerEdit(p.param);
         else if(p.name.equals("models"))models();
         else if(p.name.equals("ocr-models"))ocrModels();
         else if(p.name.equals("ocr-speed"))ocrSpeed();
@@ -538,6 +548,8 @@ final class BlueStarSettingsScreen {
         note(app.lastMicDiagnostic());
     }
     private void cloud(){
+        row("自定义服务商 · OCR / 视觉 / 语音","独立填写 HTTPS URL、API Key、模型 ID",
+            ()->navigate("providers",""));
         row("视觉模型","",()->navigate("models",""));
         row("联网智能追问 · "+(app.isWebSearchEnabled()?"开启":"关闭"),
             "",()->{app.setWebSearchEnabled(!app.isWebSearchEnabled());
@@ -552,6 +564,151 @@ final class BlueStarSettingsScreen {
         });
         row("API Key","",()->navigate("key",""));
     }
+    private static String roleTitle(String role){
+        if(CloudProviderStore.OCR.equals(role))return "文字识别 OCR";
+        if(CloudProviderStore.ASR.equals(role))return "语音转文字 ASR";
+        return "视觉分析与AI追问";
+    }
+    private static String protocolTitle(String type){
+        if(CloudProviderStore.ASR_MULTIPART.equals(type))return "通用音频转写 /audio/transcriptions";
+        if(CloudProviderStore.ASR_QWEN.equals(type))return "百炼兼容 Chat 音频输入";
+        if(CloudProviderStore.ASR_CHAT_AUDIO.equals(type))return "OpenAI Chat 音频输入";
+        return "OpenAI 兼容 Chat Completions（图文）";
+    }
+    private void providers(){
+        note("三个功能可以选择三家不同云服务。原百炼保留为每项的默认方案。");
+        for(String role:new String[]{
+            CloudProviderStore.OCR,CloudProviderStore.VISION,CloudProviderStore.ASR}){
+            row(roleTitle(role)+" · "+CloudProviderStore.activeName(app,role),"",
+                ()->navigate("provider-role",role));
+        }
+        note("仅支持与所选协议兼容的 HTTPS API。图文模型需支持 image_url Base64；语音接口还需选择对应音频协议。");
+    }
+    private void providerRole(String role){
+        if(!CloudProviderPolicy.validRole(role)){note("无效云端任务类别");return;}
+        heading(roleTitle(role));
+        String selected=CloudProviderStore.selectedId(app,role);
+        row((selected.isEmpty()?"✓ ":"")+"原有百炼（不改变之前的 API Key 与模型）","",()->{
+            CloudProviderStore.select(app,role,"");
+            app.toastShort("已切回原有百炼 "+roleTitle(role));
+            render(history.get(history.size()-1));
+        });
+        int total=0;
+        for(CloudProviderStore.Profile profile:CloudProviderStore.list(app)){
+            if(!CloudProviderPolicy.accepts(role,profile.protocol))continue;
+            total++;
+            row((profile.id.equals(selected)?"✓ ":"")+profile.name+" · "+profile.model,
+                "",()->{
+                    CloudProviderStore.select(app,role,profile.id);
+                    app.toastShort("已启用："+profile.name);
+                    render(history.get(history.size()-1));
+                });
+            row("编辑配置 · "+profile.name,"",()->navigate(
+                "provider-edit",role+"|"+profile.id));
+        }
+        if(total==0)note("还没有可用于此任务的自定义配置");
+        action("＋ 新建 "+roleTitle(role)+" 接口",()->
+            navigate("provider-edit",role+"|"));
+        if(CloudProviderStore.ASR.equals(role)){
+            note("选好 ASR 服务后，返回主页按住 AI 说一句话，就是实时语音测试；不使用无声测试录音冒充成功。");
+        }else{
+            action("▶ 测试当前 "+roleTitle(role)+" 接口（少量付费）",()->
+                app.testCloudProvider(role,CloudProviderStore.selectedId(app,role)));
+            note("测试使用本机生成的一张带字母 A 的小图片，不发送你的照片。");
+        }
+    }
+    private EditText providerInput(String title,String value,String hint,int inputType){
+        heading(title);
+        EditText input=new EditText(app);
+        input.setSingleLine(true);
+        input.setTextSize(TypedValue.COMPLEX_UNIT_SP,18);
+        input.setTextColor(TEXT);input.setHintTextColor(SUB);
+        input.setInputType(inputType);
+        input.setHint(hint);
+        if(value!=null&&!value.isEmpty())input.setText(value);
+        content.addView(input,new LinearLayout.LayoutParams(-1,dp(60)));
+        return input;
+    }
+    private void providerEdit(String spec){
+        int split=spec==null?-1:spec.indexOf('|');
+        if(split<0){note("缺少配置类别");return;}
+        String role=spec.substring(0,split),id=spec.substring(split+1);
+        if(!CloudProviderPolicy.validRole(role)){note("无效配置类别");return;}
+        CloudProviderStore.Profile old=id.isEmpty()?null:CloudProviderStore.find(app,id);
+        if(!id.isEmpty()&&old==null){note("配置不存在，请返回重新选择");return;}
+        heading(roleTitle(role));
+        EditText name=providerInput("配置名称",old==null?"":old.name,
+            "例如 火山OCR / 千问视觉 / 自选语音",
+            InputType.TYPE_CLASS_TEXT);
+        EditText url=providerInput("完整 HTTPS API 地址",old==null?"":old.url,
+            CloudProviderStore.ASR.equals(role)?
+                "https://服务商域名/v1/audio/transcriptions":
+                "https://服务商域名/v1/chat/completions",
+            InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_URI);
+        EditText model=providerInput("模型 ID",old==null?"":old.model,
+            "填厂商控制台给出的完整模型 ID",InputType.TYPE_CLASS_TEXT);
+        EditText key=providerInput("API Key（本机加密）","",
+            old==null?"粘贴服务商提供的 API Key":"留空＝保留原来的 API Key",
+            InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        final String[] protocol=new String[]{
+            old!=null?old.protocol:(CloudProviderStore.ASR.equals(role)?
+                CloudProviderStore.ASR_MULTIPART:CloudProviderStore.CHAT)};
+        if(CloudProviderStore.ASR.equals(role)){
+            heading("语音协议（需要和厂商接口格式一致）");
+            TextView current=text("协议："+protocolTitle(protocol[0])+"  ›",18,TEXT,true);
+            current.setPadding(dp(10),dp(14),dp(10),dp(14));
+            current.setBackground(bg(PANEL,12));
+            current.setClickable(true);current.setFocusable(true);
+            content.addView(current,new LinearLayout.LayoutParams(-1,-2));
+            current.setOnClickListener(v->{
+                final String[] protocols={CloudProviderStore.ASR_MULTIPART,
+                    CloudProviderStore.ASR_QWEN,CloudProviderStore.ASR_CHAT_AUDIO};
+                final String[] labels=new String[protocols.length];
+                for(int i=0;i<protocols.length;i++)labels[i]=protocolTitle(protocols[i]);
+                new AlertDialog.Builder(app).setTitle("选择语音 API 格式")
+                    .setItems(labels,(dialog,index)->{
+                        protocol[0]=protocols[index];
+                        current.setText("协议："+protocolTitle(protocol[0])+"  ›");
+                    }).setNegativeButton("取消",null).show();
+            });
+        }else note("协议：OpenAI 兼容 Chat Completions（图文，支持 Base64 图片）。");
+        Switch streaming=new Switch(app);
+        if(!CloudProviderStore.ASR.equals(role)){
+            streaming.setText("开启流式返回（SSE）");
+            streaming.setTextColor(TEXT);
+            streaming.setTextSize(TypedValue.COMPLEX_UNIT_SP,18);
+            streaming.setChecked(old!=null&&old.stream);
+            content.addView(streaming);
+            note("首次接入建议关闭流式；确认厂商支持 SSE 再开启。");
+        }
+        action("保存并用于 "+roleTitle(role),()->{
+            try{
+                CloudProviderStore.Profile profile=new CloudProviderStore.Profile(
+                    id,name.getText().toString(),url.getText().toString(),
+                    model.getText().toString(),protocol[0],streaming.isChecked());
+                CloudProviderStore.Profile saved=CloudProviderStore.save(
+                    app,profile,key.getText().toString());
+                CloudProviderStore.select(app,role,saved.id);
+                key.setText("");
+                app.toastShort("已加密保存并启用："+saved.name);
+                back();
+            }catch(Exception error){
+                app.toastShort("保存失败："+error.getMessage());
+            }
+        });
+        if(!id.isEmpty()){
+            action("删除这套配置（其他任务若使用它会切回百炼）",()->
+                new AlertDialog.Builder(app).setTitle("删除自定义云端配置？")
+                    .setMessage("只删除这套配置和它的加密密钥，不清除原有百炼配置。")
+                    .setNegativeButton("取消",null)
+                    .setPositiveButton("删除",(dialog,which)->{
+                        CloudProviderStore.delete(app,id);
+                        app.toastShort("配置已删除");back();
+                    }).show());
+        }
+        note("API Key 不在页面回显，也不进入诊断日志。仅在你选择的 HTTPS 地址发送认证信息。");
+    }
+
     private void models(){
         for(int i=0;i<VisionModelCatalog.IDS.length;i++){
             final String id=VisionModelCatalog.IDS[i];
