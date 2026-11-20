@@ -83,7 +83,11 @@ jobs:
           assert manifest.count('android.intent.category.LAUNCHER')==1
           print("PASS: Main preview truly clean + 3-button dock/voice and genuine C110 photo ding for independent/quickshot/normal-preview flows")
           PY
-          git diff --name-only c30c033b9f7ec97a351f479a499c6d31 HEAD > /tmp/changed.txt
+          # Fetch the stable published v1.0.65 BRANCH ref explicitly.
+          # Some action checkouts do not retain this baseline object's SHA.
+          git fetch --no-tags origin \
+            +refs/heads/exp/c110-minimal-controls-20261120:refs/remotes/origin/exp/c110-minimal-controls-20261120
+          git diff --name-only refs/remotes/origin/exp/c110-minimal-controls-20261120 HEAD > /tmp/changed.txt
           python3 - <<'PY'
           from pathlib import Path
           allowed={
