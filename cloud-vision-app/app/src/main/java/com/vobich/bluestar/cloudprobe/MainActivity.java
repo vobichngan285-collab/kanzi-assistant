@@ -322,9 +322,10 @@ public final class MainActivity extends CameraActivity {
             return insets;
         });
         root.requestApplyInsets();
-        root.setBackgroundColor(Color.BLACK);
+        root.setBackgroundColor(settingsOnly?0xFF091B32:Color.BLACK);
         previewContainer=new FrameLayout(this);
         previewContainer.setBackgroundColor(Color.BLACK);
+        if(settingsOnly)previewContainer.setVisibility(View.GONE);
         previewContainer.setClipChildren(true);
         root.addView(previewContainer,new FrameLayout.LayoutParams(-1,-1));
         phoneTexture=new TextureView(this);
