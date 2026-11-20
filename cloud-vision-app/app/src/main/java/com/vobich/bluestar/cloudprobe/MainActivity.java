@@ -3261,6 +3261,7 @@ public final class MainActivity extends CameraActivity {
                 // Store only the original byte[] being submitted, in volatile memory.
                 // Diagnostic export remains numeric and never exports the photo.
                 lastSubmittedJpeg=jpeg;
+                RecentPhotoSession.captured(jpeg,current.cloudNetwork,task.name);
                 if(!targetToFind.isEmpty()){
                     long cloudAt=SystemClock.elapsedRealtime();
                     TargetVisionClient.Result inspection=TargetVisionClient.inspect(
@@ -3275,6 +3276,7 @@ public final class MainActivity extends CameraActivity {
                         lastSessionJpeg=jpeg;
                         lastSessionCloudNetwork=current.cloudNetwork;
                         lastSessionText=inspection.message;
+                        RecentPhotoSession.analyzed(jpeg,inspection.message);
                         lastSessionTask="寻找"+targetToFind;
                         lastCloudResult=inspection.message;
                         if(inspection.confirmed()&&targetToFind.equals(findingTarget)){
@@ -3307,6 +3309,7 @@ public final class MainActivity extends CameraActivity {
                     lastSessionJpeg=jpeg;
                     lastSessionCloudNetwork=current.cloudNetwork;
                     lastSessionText=result.text;
+                    RecentPhotoSession.analyzed(jpeg,result.text);
                     lastSessionTask=task.name;
                     lastCloudResult=result.text;
                     if(diagnostics!=null){
