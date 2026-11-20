@@ -19,6 +19,7 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.util.TypedValue;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.GridLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -28,7 +29,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Frameless 3x3 task launcher. Tap selects, swipe flips pages, and holding a
+ * Frameless compact 4-column task launcher. Tap selects, swipe flips pages, and holding a
  * tile starts native Android drag-and-drop. Grid drop reorders; explicit red
  * target drop prompts before deleting custom tasks or hiding presets.
  */
