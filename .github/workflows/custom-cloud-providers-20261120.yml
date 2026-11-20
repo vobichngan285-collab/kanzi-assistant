@@ -40,6 +40,7 @@ jobs:
           t=(root/"TargetVisionClient.java").read_text()
           store=(root/"CloudProviderStore.java").read_text()
           key=(root/"CloudKeyStore.java").read_text()
+          ledger=(root/"ModelUsageLedger.java").read_text()
           ui=(root/"BlueStarSettingsScreen.java").read_text()
           home=(root/"HomeVoiceAssistant.java").read_text()
           reader=(root/"C110FrameReader.java").read_text()
@@ -59,6 +60,11 @@ jobs:
           assert all(thing in key for thing in [
             'static void saveNamed(', 'static String loadNamed(', 'static void clearNamed(',
             'AES/GCM/NoPadding', 'bluestar_cloud_probe_api_v1'])
+          assert '.remove("iv").remove("ciphertext").apply();' in key
+          assert '.edit().clear().apply();' not in key
+          assert 'for(Mutable m:rows.values())' in ledger
+          assert 'lines.add(new Line(m.model,m.input,m.output' in ledger
+          assert 'java.util.Arrays.asList(SHOW)' in ledger
           assert 'CloudProviderStore.Config cfg' in c
           assert 'boolean custom=cfg!=null&&cfg.custom;' in c
           assert 'CloudProviderPolicy.validatedUrl(cfg.url)' in c
@@ -114,6 +120,7 @@ jobs:
             root+"CloudKeyStore.java",root+"CloudVisionClient.java",
             root+"CloudAsrClient.java",root+"TargetVisionClient.java",
             root+"MainActivity.java",root+"C110FrameReader.java",
+            root+"ModelUsageLedger.java",
             root+"HomeVoiceAssistant.java",root+"BlueStarSettingsScreen.java",
             "cloud-vision-app/tests/CloudProviderPolicyTest.java",
             "cloud-vision-app/app/build.gradle",
@@ -122,7 +129,7 @@ jobs:
           }
           actual=set(Path("/tmp/cloud-changed.txt").read_text().splitlines())
           assert actual==expected, f"Unexpected={actual-expected}; Missing={expected-actual}"
-          print("PASS exactly 14 expected cloud-only sources/docs/workflow, no camera/RTSP/TTS/home changes")
+          print("PASS exactly 15 expected cloud-only sources/docs/workflow, no camera/RTSP/TTS/home changes")
           PY
       - name: Run provider policy, task, AI prompt and C110 photo/zoom Java regressions
         shell: bash
@@ -199,12 +206,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG=bluestar-custom-cloud-providers-20261120-v0167-lab
+          TAG=bluestar-custom-cloud-providers-20261120-v0167-final
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Refusing to overwrite existing release" >&2
             exit 1
           fi
           gh release create "$TAG" out/BlueStar_Guide_Custom_Cloud_Providers_1.0.67.apk \
             --target "$GITHUB_SHA" --prerelease \
-            --title "Blue Star v1.0.67 Custom Cloud Providers Lab" \
-            --notes "Experimental v1.0.67 based on verified v1.0.66. Adds self-configurable independent OCR, Vision (including find-target/AI follow-ups), and voice ASR HTTPS compatible providers with full URLs, model IDs, encrypted per-profile API Keys, optional SSE on vision/OCR, 20 saved profiles and selection per task, default Bailian fully preserved. Voice supports Qwen audio Chat, OpenAI Chat audio, and standard audio/transcriptions multipart. In-app tiny image tests for OCR and vision, voice ASR tested by real press-and-hold. Only cloud service files/UI routing/metadata changed. Native C110 1001/9011/9038, RTSP, phone/USB/Camera2, grtts local TTS, UI navigation and Boyue shortcut remain untouched. All CI static, Java regression, Android Gradle compile and APK checks passed; external provider/device verification must be performed by user."
+            --title "Blue Star v1.0.67 Custom Cloud Providers Lab - Final" \
+            --notes "Experimental v1.0.67 based on verified v1.0.66. Adds self-configurable independent OCR, Vision (including find-target/AI follow-ups), and voice ASR HTTPS compatible providers with full URLs, model IDs, encrypted per-profile API Keys, optional SSE on vision/OCR, 20 saved profiles and selection per task, default Bailian fully preserved. Voice supports Qwen audio Chat, OpenAI Chat audio, and standard audio/transcriptions multipart. In-app tiny image tests for OCR and vision, voice ASR tested by real press-and-hold. Only cloud service files/UI routing/metadata changed. Native C110 1001/9011/9038, RTSP, phone/USB/Camera2, grtts local TTS, UI navigation and Boyue shortcut remain untouched. All CI static, Java regression, Android Gradle compile and APK checks passed; external provider/device verification must be performed by user. Final audit fixes: legacy Bailian clear-key no longer destroys custom encrypted keys; C110 find-target preflight uses visual credentials; custom provider model/call/token usage is included in the usage view."
