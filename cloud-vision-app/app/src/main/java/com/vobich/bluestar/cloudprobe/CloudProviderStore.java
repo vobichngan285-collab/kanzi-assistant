@@ -16,7 +16,7 @@ import java.util.UUID;
 final class CloudProviderStore {
     static final String OCR=CloudProviderPolicy.OCR, VISION=CloudProviderPolicy.VISION;
     static final String ASR=CloudProviderPolicy.ASR;
-    static final String CHAT=CloudProviderPolicy.CHAT;
+    static final String CHAT=CloudProviderPolicy.CHAT, LAYOUT=CloudProviderPolicy.LAYOUT;
     static final String ASR_QWEN=CloudProviderPolicy.ASR_QWEN;
     static final String ASR_MULTIPART=CloudProviderPolicy.ASR_MULTIPART;
     static final String ASR_CHAT_AUDIO=CloudProviderPolicy.ASR_CHAT_AUDIO;
@@ -26,6 +26,7 @@ final class CloudProviderStore {
     private static final String LIST="cloud_custom_profiles_v1";
     private static final String SELECT="cloud_custom_selected_v1_";
     private static final int MAX_PROFILES=20;
+    private static final String SSE_MIGRATED="cloud_custom_chat_fast_stream_v2";
     private CloudProviderStore(){}
 
     static final class Profile {
@@ -48,7 +49,36 @@ final class CloudProviderStore {
     private static SharedPreferences pref(Context ctx){
         return ctx.getSharedPreferences(PREF,Context.MODE_PRIVATE);
     }
+    /** One-time, opt-out-preserving upgrade from v1.0.67's forced non-streaming
+     * defaults. Only known SSE-capable models are migrated; new and other
+     * providers keep the user's explicitly saved setting. */
+    private static synchronized void upgradeKnownFastStreaming(Context ctx){
+        SharedPreferences p=pref(ctx);
+        if(p.getBoolean(SSE_MIGRATED,false))return;
+        String stored=p.getString(LIST,"[]");
+        try{
+            JSONArray data=new JSONArray(stored);
+            boolean changed=false;
+            for(int i=0;i<data.length();i++){
+                JSONObject item=data.optJSONObject(i);
+                if(item==null)continue;
+                String protocol=item.optString("protocol","");
+                String model=item.optString("model","");
+                if(!item.optBoolean("stream",false)&&
+                   CloudProviderPolicy.recommendedFastStream(model,protocol)){
+                    item.put("stream",true);
+                    changed=true;
+                }
+            }
+            SharedPreferences.Editor edit=p.edit().putBoolean(SSE_MIGRATED,true);
+            if(changed)edit.putString(LIST,data.toString());
+            edit.apply();
+        }catch(Exception ignored){
+            // Leave malformed storage untouched and keep retry possible.
+        }
+    }
     static List<Profile> list(Context ctx){
+        upgradeKnownFastStreaming(ctx);
         ArrayList<Profile> items=new ArrayList<>();
         String json=pref(ctx).getString(LIST,"[]");
         try{
@@ -59,7 +89,7 @@ final class CloudProviderStore {
                 String id=p.optString("id","");
                 String protocol=p.optString("protocol","");
                 if(!id.matches("[a-zA-Z0-9_-]{1,64}")||
-                   !(CHAT.equals(protocol)||ASR_QWEN.equals(protocol)||
+                   !(CHAT.equals(protocol)||LAYOUT.equals(protocol)||ASR_QWEN.equals(protocol)||
                      ASR_MULTIPART.equals(protocol)||ASR_CHAT_AUDIO.equals(protocol)))
                     continue;
                 items.add(new Profile(id,p.optString("name",""),
@@ -85,6 +115,15 @@ final class CloudProviderStore {
         if(id==null||id.isEmpty())return "原有百炼（默认）";
         Profile p=find(ctx,id);
         return p==null?"配置已丢失，请重新选择":p.name;
+    }
+    /** Single source of truth for the visible and actually selected model. */
+    static String activeModelDescription(Context ctx,String role,String legacyModel){
+        String id=selectedId(ctx,role);
+        if(id==null||id.isEmpty())
+            return "阿里云百炼 · "+(ASR.equals(role)?"qwen3-asr-flash":legacyModel);
+        Profile chosen=find(ctx,id);
+        return chosen==null?"原配置已丢失（请重新选择）":
+            chosen.name+" · "+chosen.model;
     }
     static Config resolve(Context ctx,String role,String oldModel)throws Exception{
         return resolveFor(ctx,role,selectedId(ctx,role),oldModel);
@@ -127,12 +166,16 @@ final class CloudProviderStore {
     }
     static Profile save(Context ctx,Profile raw,String newKey)throws Exception{
         String protocol=raw.protocol;
-        if(!(CHAT.equals(protocol)||ASR_QWEN.equals(protocol)||
+        if(!(CHAT.equals(protocol)||LAYOUT.equals(protocol)||ASR_QWEN.equals(protocol)||
             ASR_MULTIPART.equals(protocol)||ASR_CHAT_AUDIO.equals(protocol)))
             throw new IllegalArgumentException("不支持的兼容协议");
         String name=CloudProviderPolicy.cleanName(raw.name);
         String url=CloudProviderPolicy.validatedUrl(raw.url);
         String model=CloudProviderPolicy.cleanModel(raw.model);
+        if(LAYOUT.equals(protocol)&&!raw.id.isEmpty()){
+            // Existing OCR profile can be switched from Chat to Layout;
+            // vision assignments, if any, will be rejected below.
+        }
         ArrayList<Profile> all=new ArrayList<>(list(ctx));
         boolean fresh=raw.id==null||raw.id.isEmpty();
         String id=fresh?UUID.randomUUID().toString():raw.id;
