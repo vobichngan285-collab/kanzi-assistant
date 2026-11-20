@@ -127,6 +127,13 @@ final class CloudVisionClient {
         if(key==null||key.trim().isEmpty())
             throw new IllegalArgumentException("请先在设置中配置API Key");
         boolean isOcr=TaskCatalog.OCR.equals(task.engine);
+        // Dedicated OCR protocol: no Chat messages, stream flag or choices[].
+        // The same camera JPEG and cellular Network go straight to layout_parser.
+        if(cfg!=null&&cfg.custom&&CloudProviderStore.LAYOUT.equals(cfg.protocol)){
+            if(!isOcr||textOnly)
+                throw new IllegalArgumentException("Layout Parsing 只能用于图片文字识别");
+            return LayoutParsingClient.recognize(jpeg,cfg,cloudNetwork);
+        }
         boolean isBook=isOcr&&ReadingRules.TASK_ID.equals(task.id);
         boolean connectionTest="model-probe".equals(task.id);
         // Default Bailian behavior is intentionally byte-for-byte unchanged.
