@@ -1,7 +1,6 @@
 package com.vobich.bluestar.cloudprobe;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
@@ -10,14 +9,11 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
-import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
-import android.text.InputType;
-import java.util.List;
 
 /** Small launcher: never constructs a phone/USB controller or an RTSP player. */
 public final class HomeActivity extends Activity {
@@ -181,67 +177,10 @@ public final class HomeActivity extends Activity {
         startActivity(intent);
     }
     private void chooseTask(){
-        TaskDesktopOverlay.show(this,TaskCatalog.all(this),TaskCatalog.selectedId(this),
-            new TaskDesktopOverlay.Listener(){
-                @Override public void selected(TaskCatalog.Task task){
-                    TaskCatalog.select(HomeActivity.this,task.id);
-                    Toast.makeText(HomeActivity.this,"当前任务："+task.name,Toast.LENGTH_SHORT).show();
-                }
-                @Override public void createTask(){editTask(null);}
-                @Override public void edit(TaskCatalog.Task task){editTask(task);}
-                @Override public void removed(TaskCatalog.Task task){
-                    Toast.makeText(HomeActivity.this,(task.custom?"已删除：":"已隐藏：")+
-                        task.name,Toast.LENGTH_SHORT).show();
-                }
-                @Override public void openReading(){HomeActivity.this.openReading();}
-            });
-    }
-    /** Editable desktop: presets keep their stable names/IDs, custom tasks can rename. */
-    private void editTask(TaskCatalog.Task original){
-        final boolean existing=original!=null;
-        final boolean preset=existing&&!original.custom;
-        EditText name=new EditText(this);
-        name.setHint("任务名称");name.setSingleLine(true);name.setTextColor(WHITE);
-        name.setText(existing?original.name:"");
-        if(preset)name.setEnabled(false);
-        EditText prompt=new EditText(this);
-        prompt.setHint("AI任务要求");prompt.setTextColor(WHITE);
-        prompt.setMinLines(3);
-        prompt.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);
-        prompt.setText(existing?original.instruction:"");
-        String[] selectedIcon={existing?original.icon:"✦"};
-        Button icon=new Button(this);
-        icon.setAllCaps(false);icon.setText("图标："+selectedIcon[0]);
-        icon.setVisibility(preset?View.GONE:View.VISIBLE);
-        icon.setOnClickListener(v->{
-            String[] icons=TaskCatalog.iconPalette();
-            new AlertDialog.Builder(this).setTitle("选择任务图标").setItems(icons,(d,index)->{
-                selectedIcon[0]=icons[index];icon.setText("图标："+selectedIcon[0]);
-            }).show();
-        });
-        LinearLayout form=new LinearLayout(this);
-        form.setOrientation(LinearLayout.VERTICAL);
-        form.setPadding(dp(19),dp(8),dp(19),dp(8));
-        form.addView(name);form.addView(prompt);form.addView(icon);
-        AlertDialog dialog=new AlertDialog.Builder(this)
-            .setTitle(!existing?"添加任务":(preset?"修改预设任务":"修改自定义任务"))
-            .setView(form).setNegativeButton("取消",null)
-            .setPositiveButton("保存",null).create();
-        dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-            .setOnClickListener(w->{
-                try{
-                    if(preset)TaskCatalog.updatePreset(this,original.id,prompt.getText().toString());
-                    else {
-                        TaskCatalog.Task saved=TaskCatalog.upsert(this,
-                            existing?original.id:null,name.getText().toString(),
-                            prompt.getText().toString(),selectedIcon[0]);
-                        TaskCatalog.select(this,saved.id);
-                    }
-                    dialog.dismiss();
-                    Toast.makeText(this,"任务已保存",Toast.LENGTH_SHORT).show();
-                }catch(IllegalArgumentException ex){prompt.setError(ex.getMessage());}
-            }));
-        dialog.show();
+        // Open a REAL opaque screen instead of stacking a dimmed task dialog
+        // on top of the Home menu. No unnecessary reading/settings shortcut.
+        prepareOtherScreenSpeech();
+        startActivity(new Intent(this,TaskDesktopActivity.class));
     }
     @Override protected void onResume(){
         super.onResume();
