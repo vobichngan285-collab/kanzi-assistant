@@ -208,6 +208,11 @@ public final class HomeActivity extends Activity {
             if(root!=null&&hasWindowFocus())root.post(this::consumeQuickLaunch);
         }
     }
+    @Override public void onWindowFocusChanged(boolean hasFocus){
+        super.onWindowFocusChanged(hasFocus);
+        if(hasFocus&&quickLaunchPending&&root!=null)
+            root.post(this::consumeQuickLaunch);
+    }
     @Override protected void onPause(){
         if(quickShot!=null)quickShot.onPause();
         if(shortcut!=null)shortcut.cancel();
