@@ -10,11 +10,13 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.text.InputType;
 import java.util.List;
 
 /** Small launcher: never constructs a phone/USB controller or an RTSP player. */
@@ -30,6 +32,7 @@ public final class HomeActivity extends Activity {
     private static final int NAV_BG=0xED091D36,NAV_NORMAL=0xFF2C547D,NAV_ACTIVE=0xFF176BAC;
     private FrameLayout root;
     private C110QuickShotController quickShot;
+    private HomeVoiceAssistant homeVoice;
     private TextView quickStatusView;
     private String quickStatus="";
 
@@ -37,6 +40,7 @@ public final class HomeActivity extends Activity {
         super.onCreate(state);
         quickLaunchPending=isQuickShotIntent(getIntent());
         quickShot=new C110QuickShotController(this,this::quickStatusChanged);
+        homeVoice=new HomeVoiceAssistant(this,this::quickStatusChanged,this::prepareOtherScreenSpeech);
         root=new FrameLayout(this);
         root.setBackgroundColor(BG);
         root.setOnApplyWindowInsetsListener((view,insets)->{
@@ -82,24 +86,18 @@ public final class HomeActivity extends Activity {
                 startActivity(new Intent(this,C110CameraActivity.class));
             });
             option(content,"▤","朗读任务","选择当前 OCR 或 AI 任务",this::chooseTask);
-            option(content,"✦","AI 视觉分析","切换到预览后执行视觉任务",()->{
-                selectVisionTask();
-                openPreview();
-            });
-            option(content,"▦","阅读模式","进入原来的书页阅读页面",()->{
-                prepareOtherScreenSpeech();
-                Intent intent=new Intent(this,MainActivity.class);
-                intent.putExtra("bluestar_launch_preview",true);
-                intent.putExtra("bluestar_launch_reading",true);
-                startActivity(intent);
-            });
+            option(content,"▦","阅读模式","进入原来的书页阅读页面",this::openReading);
+            option(content,"⚙","设置","相机、云端AI、语音与任务管理",this::openSettings);
         LinearLayout dock=new LinearLayout(this);
         dock.setGravity(Gravity.CENTER);
         dock.setBackground(bg(NAV_BG,23));
         Button h=nav("⌂\n主页",true,()->render());
         Button p=nav("◎\n预览",false,this::openPreview);
-        Button settings=nav("⚙\n设置",false,this::openSettings);
-        for(Button button:new Button[]{h,p,settings})
+        Button talk=nav("🎙\n按住AI",false,()->
+            Toast.makeText(this,"请按住AI说话，松开发送",Toast.LENGTH_SHORT).show());
+        talk.setContentDescription("按住AI对话，松开发送，针对最近一次手机或C110拍摄的照片回答问题");
+        talk.setOnTouchListener((v,event)->homeVoice.handleTouch(v,event));
+        for(Button button:new Button[]{h,p,talk})
             dock.addView(button,new LinearLayout.LayoutParams(0,dp(66),1f));
         FrameLayout.LayoutParams params=new FrameLayout.LayoutParams(-1,dp(70),Gravity.BOTTOM);
         params.setMargins(dp(12),0,dp(12),dp(6));
@@ -175,29 +173,80 @@ public final class HomeActivity extends Activity {
         intent.putExtra("bluestar_launch_settings",true);
         startActivity(intent);
     }
-    private void chooseTask(){
-        List<TaskCatalog.Task> tasks=TaskCatalog.all(this);
-        String[] labels=new String[tasks.size()];
-        for(int i=0;i<tasks.size();i++)labels[i]=tasks.get(i).name;
-        final String current=TaskCatalog.selectedId(this);
-        int selected=0;
-        for(int i=0;i<tasks.size();i++)if(tasks.get(i).id.equals(current))selected=i;
-        new AlertDialog.Builder(this).setTitle("朗读任务")
-            .setSingleChoiceItems(labels,selected,(d,i)->{
-                TaskCatalog.select(this,tasks.get(i).id);
-                d.dismiss();
-                Toast.makeText(this,"任务："+tasks.get(i).name,Toast.LENGTH_SHORT).show();
-            }).setNegativeButton("取消",null).show();
+    private void openReading(){
+        prepareOtherScreenSpeech();
+        Intent intent=new Intent(this,MainActivity.class);
+        intent.putExtra("bluestar_launch_preview",true);
+        intent.putExtra("bluestar_launch_reading",true);
+        startActivity(intent);
     }
-    private void selectVisionTask(){
-        for(TaskCatalog.Task t:TaskCatalog.all(this))
-            if(TaskCatalog.VISION.equals(t.engine)){
-                TaskCatalog.select(this,t.id);break;
-            }
+    private void chooseTask(){
+        TaskDesktopOverlay.show(this,TaskCatalog.all(this),TaskCatalog.selectedId(this),
+            new TaskDesktopOverlay.Listener(){
+                @Override public void selected(TaskCatalog.Task task){
+                    TaskCatalog.select(HomeActivity.this,task.id);
+                    Toast.makeText(HomeActivity.this,"当前任务："+task.name,Toast.LENGTH_SHORT).show();
+                }
+                @Override public void createTask(){editTask(null);}
+                @Override public void edit(TaskCatalog.Task task){editTask(task);}
+                @Override public void removed(TaskCatalog.Task task){
+                    Toast.makeText(HomeActivity.this,(task.custom?"已删除：":"已隐藏：")+
+                        task.name,Toast.LENGTH_SHORT).show();
+                }
+                @Override public void openReading(){HomeActivity.this.openReading();}
+            });
+    }
+    /** Editable desktop: presets keep their stable names/IDs, custom tasks can rename. */
+    private void editTask(TaskCatalog.Task original){
+        final boolean existing=original!=null;
+        final boolean preset=existing&&!original.custom;
+        EditText name=new EditText(this);
+        name.setHint("任务名称");name.setSingleLine(true);name.setTextColor(WHITE);
+        name.setText(existing?original.name:"");
+        if(preset)name.setEnabled(false);
+        EditText prompt=new EditText(this);
+        prompt.setHint("AI任务要求");prompt.setTextColor(WHITE);
+        prompt.setMinLines(3);
+        prompt.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        prompt.setText(existing?original.instruction:"");
+        String[] selectedIcon={existing?original.icon:"✦"};
+        Button icon=new Button(this);
+        icon.setAllCaps(false);icon.setText("图标："+selectedIcon[0]);
+        icon.setVisibility(preset?View.GONE:View.VISIBLE);
+        icon.setOnClickListener(v->{
+            String[] icons=TaskCatalog.iconPalette();
+            new AlertDialog.Builder(this).setTitle("选择任务图标").setItems(icons,(d,index)->{
+                selectedIcon[0]=icons[index];icon.setText("图标："+selectedIcon[0]);
+            }).show();
+        });
+        LinearLayout form=new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(19),dp(8),dp(19),dp(8));
+        form.addView(name);form.addView(prompt);form.addView(icon);
+        AlertDialog dialog=new AlertDialog.Builder(this)
+            .setTitle(!existing?"添加任务":(preset?"修改预设任务":"修改自定义任务"))
+            .setView(form).setNegativeButton("取消",null)
+            .setPositiveButton("保存",null).create();
+        dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            .setOnClickListener(w->{
+                try{
+                    if(preset)TaskCatalog.updatePreset(this,original.id,prompt.getText().toString());
+                    else {
+                        TaskCatalog.Task saved=TaskCatalog.upsert(this,
+                            existing?original.id:null,name.getText().toString(),
+                            prompt.getText().toString(),selectedIcon[0]);
+                        TaskCatalog.select(this,saved.id);
+                    }
+                    dialog.dismiss();
+                    Toast.makeText(this,"任务已保存",Toast.LENGTH_SHORT).show();
+                }catch(IllegalArgumentException ex){prompt.setError(ex.getMessage());}
+            }));
+        dialog.show();
     }
     @Override protected void onResume(){
         super.onResume();
         if(quickShot!=null)quickShot.onResume();
+        if(homeVoice!=null)homeVoice.onResume();
         if(root!=null){
             render();
             // Wait until Home is resumed and the real user-requested camera
@@ -219,10 +268,12 @@ public final class HomeActivity extends Activity {
             root.post(this::consumeQuickLaunch);
     }
     @Override protected void onPause(){
+        if(homeVoice!=null)homeVoice.onPause();
         if(quickShot!=null)quickShot.onPause();
         super.onPause();
     }
     @Override protected void onDestroy(){
+        if(homeVoice!=null){homeVoice.shutdown();homeVoice=null;}
         if(quickShot!=null){quickShot.shutdown();quickShot=null;}
         super.onDestroy();
     }
@@ -230,5 +281,7 @@ public final class HomeActivity extends Activity {
                                       String[] permissions,int[] results){
         super.onRequestPermissionsResult(requestCode,permissions,results);
         if(quickShot!=null)quickShot.onPermissionResult(requestCode,results);
+        if(requestCode==HomeVoiceAssistant.MICROPHONE_PERMISSION)
+            Toast.makeText(this,"请再次按住AI按钮说话",Toast.LENGTH_SHORT).show();
     }
 }
