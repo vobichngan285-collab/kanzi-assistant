@@ -1,0 +1,210 @@
+name: Blue Star v1.0.67 Custom Cloud Providers Lab
+on:
+  push:
+    branches: [ 'exp/custom-cloud-providers-20261120' ]
+    paths:
+      - 'cloud-vision-app/app/**'
+      - 'cloud-vision-app/tests/**'
+      - 'cloud-vision-app/docs/CUSTOM_CLOUD_PROVIDER_LAB_20261120.md'
+      - '.github/workflows/custom-cloud-providers-20261120.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  validated-apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify independent cloud routing and exact protected diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path("cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe")
+          m=(root/"MainActivity.java").read_text()
+          c=(root/"CloudVisionClient.java").read_text()
+          a=(root/"CloudAsrClient.java").read_text()
+          t=(root/"TargetVisionClient.java").read_text()
+          store=(root/"CloudProviderStore.java").read_text()
+          key=(root/"CloudKeyStore.java").read_text()
+          ui=(root/"BlueStarSettingsScreen.java").read_text()
+          home=(root/"HomeVoiceAssistant.java").read_text()
+          reader=(root/"C110FrameReader.java").read_text()
+          camera=(root/"C110CameraActivity.java").read_text()
+          quick=(root/"C110QuickShotController.java").read_text()
+          build=Path("cloud-vision-app/app/build.gradle").read_text()
+          manifest=Path("cloud-vision-app/app/src/main/AndroidManifest.xml").read_text()
+          bridge=Path("cloud-vision-app/boyuebridge/src/main/java/com/vobich/bluestar/boyuebridge/LaunchActivity.java").read_text()
+          assert all(thing in store for thing in [
+            'static Config resolve(Context ctx,String role,String oldModel)',
+            'CloudKeyStore.load(ctx)', 'CloudKeyStore.loadNamed(ctx,chosen.id)',
+            'CloudKeyStore.saveNamed(ctx,id,key)', 'CloudKeyStore.clearNamed(ctx,id)',
+            'static void select(Context ctx,String role,String id)',
+            'static Profile save(Context ctx,Profile raw,String newKey)',
+            'static void delete(Context ctx,String id)',
+            '"cloud_custom_profiles_v1"', 'return new Config("原有百炼",BAILIAN_URL,model,key,'])
+          assert all(thing in key for thing in [
+            'static void saveNamed(', 'static String loadNamed(', 'static void clearNamed(',
+            'AES/GCM/NoPadding', 'bluestar_cloud_probe_api_v1'])
+          assert 'CloudProviderStore.Config cfg' in c
+          assert 'boolean custom=cfg!=null&&cfg.custom;' in c
+          assert 'CloudProviderPolicy.validatedUrl(cfg.url)' in c
+          assert '!custom&&SearchRoutePolicy.allow' in c
+          assert 'connection.setInstanceFollowRedirects(false)' in c
+          assert 'ASR_MULTIPART' in a and 'ASR_QWEN' in a and 'ASR_CHAT_AUDIO' in a
+          assert 'setInstanceFollowRedirects(false)' in a
+          assert 'CloudProviderStore.Config chosen' in t
+          assert 'if(!custom)body.put("response_format"' in t
+          assert all(thing in ui for thing in [
+            'openCloudRole(String role)', 'providerRole(String role)',
+            'providerEdit(String spec)', 'CloudProviderStore.save(', 'CloudProviderStore.select(',
+            'CloudProviderStore.delete(app,id)', 'TYPE_TEXT_VARIATION_PASSWORD',
+            'app.testCloudProvider(role,CloudProviderStore.selectedId(app,role))'])
+          assert 'CloudProviderStore.Config service=CloudProviderStore.resolve(activity,' in reader
+          assert 'CloudVisionClient.recognize(jpeg,service,task,' in reader
+          assert 'CloudProviderStore.ASR,"qwen3-asr-flash"' in home
+          assert 'CloudAsrClient.recognize(wav,asrService,network)' in home
+          assert 'CloudVisionClient.recognizeText(prompt.toString(),visualService,' in home
+          assert 'CloudAsrClient.recognize(wav,asrService,null)' in m
+          assert 'CloudVisionClient.recognize(jpeg,service,task,' in m
+          assert 'CloudVisionClient.recognize(jpeg,service,ask,speaker,search,' in m
+          assert 'CloudVisionClient.recognizeText(prompt,service,speaker,search,' in m
+          assert 'jpeg,targetToFind,service,current.cloudNetwork' in m
+          assert 'this,CloudProviderStore.OCR,model' in m
+          assert 'CloudProviderStore.hasKey(this,photoRole)' in m
+          assert 'CloudProviderStore.hasKey(this,role)' in m
+          assert 'CloudProviderStore.Config choice=CloudProviderStore.resolveFor(' in m
+          assert 'title.setVisibility(View.GONE);' in m
+          assert 'currentTaskChip.setVisibility(View.GONE);' in m
+          assert 'cameraEntryButton=createControlButton("🎙' in m
+          assert 'captureDing.photoSucceeded();' in camera
+          assert 'captureDing.photoSucceeded();' in quick
+          assert 'photoCamera.shootAfterLivePreview(this)' in camera
+          assert '--network-caching=150' in camera and '--live-caching=150' in camera
+          assert 'zoomControls.setBackgroundColor(Color.TRANSPARENT)' in camera
+          assert 'tts.setLanguage(Locale.SIMPLIFIED_CHINESE)' in reader
+          assert 'com.vobich.bluestar.cloudprobe.action.QUICK_SHOT' in bridge
+          assert 'versionCode 76' in build
+          assert "versionName '1.0.67-cloud-provider-lab'" in build
+          assert "applicationIdSuffix '.c110plusquick159'" in build
+          assert manifest.count('android.intent.category.LAUNCHER')==1
+          print("PASS cloud role routing, encrypted API keys, settings and unchanged native camera/TTS/Boyue baseline")
+          PY
+          # Fetch the separately published v1.0.66 baseline for strict diff.
+          git fetch --no-tags origin +refs/heads/exp/phone-preview-clean-c110-ding-20261120:refs/remotes/origin/exp/phone-preview-clean-c110-ding-20261120
+          git diff --name-only refs/remotes/origin/exp/phone-preview-clean-c110-ding-20261120 HEAD > /tmp/cloud-changed.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          root="cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/"
+          expected={
+            root+"CloudProviderPolicy.java",root+"CloudProviderStore.java",
+            root+"CloudKeyStore.java",root+"CloudVisionClient.java",
+            root+"CloudAsrClient.java",root+"TargetVisionClient.java",
+            root+"MainActivity.java",root+"C110FrameReader.java",
+            root+"HomeVoiceAssistant.java",root+"BlueStarSettingsScreen.java",
+            "cloud-vision-app/tests/CloudProviderPolicyTest.java",
+            "cloud-vision-app/app/build.gradle",
+            "cloud-vision-app/docs/CUSTOM_CLOUD_PROVIDER_LAB_20261120.md",
+            ".github/workflows/custom-cloud-providers-20261120.yml",
+          }
+          actual=set(Path("/tmp/cloud-changed.txt").read_text().splitlines())
+          assert actual==expected, f"Unexpected={actual-expected}; Missing={expected-actual}"
+          print("PASS exactly 14 expected cloud-only sources/docs/workflow, no camera/RTSP/TTS/home changes")
+          PY
+      - name: Run provider policy, task, AI prompt and C110 photo/zoom Java regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-tests
+          javac -d /tmp/bluestar-tests "$BASE/CloudProviderPolicy.java" cloud-vision-app/tests/CloudProviderPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudProviderPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/TaskOrder.java" cloud-vision-app/tests/TaskOrderTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.TaskOrderTest
+          javac -d /tmp/bluestar-tests "$BASE/FollowupPrompt.java" cloud-vision-app/tests/FollowupPromptTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.FollowupPromptTest
+          javac -d /tmp/bluestar-tests "$BASE/C110ZoomGeometry.java" cloud-vision-app/tests/C110ZoomGeometryTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110ZoomGeometryTest
+          javac -d /tmp/bluestar-tests "$BASE/C110PhotoPolicy.java" cloud-vision-app/tests/C110PhotoPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110PhotoPolicyTest
+      - name: Apply already-proven pinned UVC patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_usbmonitor.py cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 cloud-vision-app/scripts/patch_pinned_uvc.py
+          grep -q BSG_CLOUD_RAW5_GATED cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/jni/UVCCamera/UVCPreview.cpp
+          grep -q BSG_CLOUD_CLOSE_BARRIER cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
+      - name: Generate unchanged Blue Star launcher assets
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          java scripts/GenerateLauncherIcons.java
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            test -s "app/src/main/res/mipmap-$density/ic_launcher.png"
+          done
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile full Android arm64 app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :app:assembleDebug
+      - name: Verify APK actual package, launcher, native libraries, sound and SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_Custom_Cloud_Providers_1.0.67.apk
+          APK=out/BlueStar_Guide_Custom_Cloud_Providers_1.0.67.apk
+          test -s "$APK"
+          unzip -tq "$APK" >/dev/null
+          unzip -Z1 "$APK" >out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlc.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlcjni.so' out/entries.txt
+          grep -Fxq 'res/raw/c_metal_clack_ding.mp3' out/entries.txt
+          grep -Fxq 'res/raw/voice_send_whoosh.wav' out/entries.txt
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging "$APK" >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110plusquick159'" out/badging.txt
+          grep -Fq "versionName='1.0.67-cloud-provider-lab'" out/badging.txt
+          grep -Fq "launchable-activity: name='com.vobich.bluestar.cloudprobe.HomeActivity'" out/badging.txt
+          test "$(grep -c '^launchable-activity:' out/badging.txt)" -eq 1
+          (cd out && sha256sum BlueStar_Guide_Custom_Cloud_Providers_1.0.67.apk >SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_Guide_Custom_Cloud_Providers_1.0.67
+          path: out/*
+          retention-days: 14
+      - name: Publish ONLY if every test and package verification passed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-custom-cloud-providers-20261120-v0167-lab
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing release" >&2
+            exit 1
+          fi
+          gh release create "$TAG" out/BlueStar_Guide_Custom_Cloud_Providers_1.0.67.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Blue Star v1.0.67 Custom Cloud Providers Lab" \
+            --notes "Experimental v1.0.67 based on verified v1.0.66. Adds self-configurable independent OCR, Vision (including find-target/AI follow-ups), and voice ASR HTTPS compatible providers with full URLs, model IDs, encrypted per-profile API Keys, optional SSE on vision/OCR, 20 saved profiles and selection per task, default Bailian fully preserved. Voice supports Qwen audio Chat, OpenAI Chat audio, and standard audio/transcriptions multipart. In-app tiny image tests for OCR and vision, voice ASR tested by real press-and-hold. Only cloud service files/UI routing/metadata changed. Native C110 1001/9011/9038, RTSP, phone/USB/Camera2, grtts local TTS, UI navigation and Boyue shortcut remain untouched. All CI static, Java regression, Android Gradle compile and APK checks passed; external provider/device verification must be performed by user."
