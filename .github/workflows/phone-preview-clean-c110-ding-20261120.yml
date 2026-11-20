@@ -1,0 +1,183 @@
+name: Blue Star v1.0.66 Preview UI and C110 Ding
+on:
+  push:
+    branches: [ 'exp/phone-preview-clean-c110-ding-20261120' ]
+    paths:
+      - 'cloud-vision-app/app/**'
+      - 'cloud-vision-app/tests/**'
+      - 'cloud-vision-app/docs/PREVIEW_UI_C110_DING_20261120.md'
+      - '.github/workflows/phone-preview-clean-c110-ding-20261120.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  validated-apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Check ordinary preview, two C110 beep routes and protected scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path("cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe")
+          m=(root/"MainActivity.java").read_text()
+          c=(root/"C110CameraActivity.java").read_text()
+          q=(root/"C110QuickShotController.java").read_text()
+          d=(root/"CaptureDingFeedback.java").read_text()
+          f=(root/"C110FrameReader.java").read_text()
+          h=(root/"HomeActivity.java").read_text()
+          build=Path("cloud-vision-app/app/build.gradle").read_text()
+          manifest=Path("cloud-vision-app/app/src/main/AndroidManifest.xml").read_text()
+          bridge=Path("cloud-vision-app/boyuebridge/src/main/java/com/vobich/bluestar/boyuebridge/LaunchActivity.java").read_text()
+          assert "title.setVisibility(View.GONE);" in m, "ordinary preview still draws toolbar"
+          assert "currentTaskChip.setVisibility(View.GONE);" in m, "task label still obscures preview"
+          assert 'modeButton=createControlButton("⌂' in m and 'startButton=createControlButton("◎' in m
+          assert 'cameraEntryButton=createControlButton("🎙' in m and '按住AI' in m
+          assert 'cameraEntryButton=createControlButton("⚙' not in m
+          assert 'cameraEntryButton.setOnClickListener(v->openLargeSettings())' not in m
+          assert 'cameraEntryButton.setOnTouchListener((v,event)->handleVoiceButtonTouch(event))' in m
+          assert 'private boolean handleVoiceButtonTouch(MotionEvent event)' in m
+          assert 'voiceRecorder.begin(this,new VoiceRecorder.Listener()' in m
+          assert 'CloudAsrClient.recognize(wav,key)' in m
+          assert 'handler.postDelayed(hideStatus,4500L);' in m
+          assert 'private void openLargeSettings()' in m
+          assert 'signalCapture();' in m and 'beginCapturedFrame(remote,now,token,null);' in m
+          assert 'signalCapture();\n                        setResultStatus("C110高清原图已拍摄' in m
+          assert 'captureDing=new CaptureDingFeedback(this);' in c
+          assert 'captureDing=new CaptureDingFeedback(owner);' in q
+          assert c.count('captureDing.photoSucceeded();')==1
+          assert q.count('captureDing.photoSucceeded();')==1
+          assert 'if(photo!=null&&captureDing!=null)captureDing.photoSucceeded();' in c
+          assert 'captureDing.shutdown();' in c and 'captureDing.shutdown();' in q
+          assert 'R.raw.c_metal_clack_ding' in d
+          assert '"shutter_feedback_sound"' in d
+          assert 'setOnLoadCompleteListener' in d
+          assert 'AudioAttributes.USAGE_ASSISTANCE_SONIFICATION' in d
+          assert 'void shutdown()' in d and 'void photoSucceeded()' in d
+          assert 'zoomControls.setBackgroundColor(Color.TRANSPARENT);' in c
+          assert 'titleRow.setVisibility(View.GONE);' in c
+          assert 'photoCamera.shootAfterLivePreview(this)' in c
+          assert 'camera.shootAfterLivePreview(owner)' in q
+          assert 'C110ZoomFrames.cropNativeJpeg' in f
+          assert 'tts.setLanguage(Locale.SIMPLIFIED_CHINESE)' in f
+          assert '--network-caching=150' in c and '--live-caching=150' in c
+          assert 'startActivity(new Intent(this,TaskDesktopActivity.class));' in h
+          assert "versionCode 75" in build
+          assert "versionName '1.0.66-clean-preview-c110-ding'" in build
+          assert "applicationIdSuffix '.c110plusquick159'" in build
+          assert 'com.vobich.bluestar.cloudprobe.action.QUICK_SHOT' in bridge
+          assert manifest.count('android.intent.category.LAUNCHER')==1
+          print("PASS: Main preview truly clean + 3-button dock/voice and genuine C110 photo ding for independent/quickshot/normal-preview flows")
+          PY
+          git diff --name-only c30c033b9f7ec97a351f479a499c6d31 HEAD > /tmp/changed.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          allowed={
+            "cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/MainActivity.java",
+            "cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/C110CameraActivity.java",
+            "cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/C110QuickShotController.java",
+            "cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/CaptureDingFeedback.java",
+            "cloud-vision-app/app/build.gradle",
+            "cloud-vision-app/docs/PREVIEW_UI_C110_DING_20261120.md",
+            ".github/workflows/phone-preview-clean-c110-ding-20261120.yml",
+          }
+          actual=set(Path("/tmp/changed.txt").read_text().splitlines())
+          assert actual==allowed, f"Changed-file scope mismatch: missing={allowed-actual}, unexpected={actual-allowed}"
+          print("PASS: no unapproved changes to camera protocol, TTS, cloud, or Boyue files")
+          PY
+      - name: Run stable task, AI prompt and C110 photo/zoom Java regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-tests
+          javac -d /tmp/bluestar-tests "$BASE/TaskOrder.java" cloud-vision-app/tests/TaskOrderTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.TaskOrderTest
+          javac -d /tmp/bluestar-tests "$BASE/FollowupPrompt.java" cloud-vision-app/tests/FollowupPromptTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.FollowupPromptTest
+          javac -d /tmp/bluestar-tests "$BASE/C110ZoomGeometry.java" cloud-vision-app/tests/C110ZoomGeometryTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110ZoomGeometryTest
+          javac -d /tmp/bluestar-tests "$BASE/C110PhotoPolicy.java" cloud-vision-app/tests/C110PhotoPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110PhotoPolicyTest
+      - name: Apply already-proven pinned UVC patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_usbmonitor.py cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 cloud-vision-app/scripts/patch_pinned_uvc.py
+          grep -q BSG_CLOUD_RAW5_GATED cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/jni/UVCCamera/UVCPreview.cpp
+          grep -q BSG_CLOUD_CLOSE_BARRIER cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
+      - name: Generate unchanged Blue Star launcher assets
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          java scripts/GenerateLauncherIcons.java
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            test -s "app/src/main/res/mipmap-$density/ic_launcher.png"
+          done
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile full Android arm64 app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :app:assembleDebug
+      - name: Verify APK actual package, launcher, native libraries, sound and SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_Preview_AI_C110_Ding_1.0.66.apk
+          APK=out/BlueStar_Guide_Preview_AI_C110_Ding_1.0.66.apk
+          test -s "$APK"
+          unzip -tq "$APK" >/dev/null
+          unzip -Z1 "$APK" >out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlc.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlcjni.so' out/entries.txt
+          grep -Fxq 'res/raw/c_metal_clack_ding.mp3' out/entries.txt
+          grep -Fxq 'res/raw/voice_send_whoosh.wav' out/entries.txt
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging "$APK" >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110plusquick159'" out/badging.txt
+          grep -Fq "versionName='1.0.66-clean-preview-c110-ding'" out/badging.txt
+          grep -Fq "launchable-activity: name='com.vobich.bluestar.cloudprobe.HomeActivity'" out/badging.txt
+          test "$(grep -c '^launchable-activity:' out/badging.txt)" -eq 1
+          (cd out && sha256sum BlueStar_Guide_Preview_AI_C110_Ding_1.0.66.apk >SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_Guide_Preview_AI_C110_Ding_1.0.66
+          path: out/*
+          retention-days: 14
+      - name: Publish ONLY if every test and package verification passed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-preview-ai-c110-ding-20261120-v0166
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing release" >&2
+            exit 1
+          fi
+          gh release create "$TAG" out/BlueStar_Guide_Preview_AI_C110_Ding_1.0.66.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Blue Star v1.0.66 Clean Preview and C110 Ding" \
+            --notes "User-confirmed MainActivity ordinary preview: no top toolbar or permanent task badge, bottom dock Home, Preview and press-and-hold AI using original voice code. C110 native completed still shots now make one phone-side metal ding in independent C110 preview and Home quickshot, respecting existing sound switch, not camera hardware sound. MainActivity C110 photo success with no cloud also gives the same feedback; online flow already used it. OEM Wi-Fi, native photo 1001, cloud OCR, 150ms VLC, USB/phone, TTS, AI and Boyue companion unchanged. Static checks, Java regressions, full APK compile and asset verification passed; user device validation of sound and gestures still necessary."
