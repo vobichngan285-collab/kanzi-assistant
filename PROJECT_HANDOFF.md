@@ -1,3 +1,14 @@
+# 2026-11-21｜v1.0.69 已构建发布：智谱 4.6V/FlashX 复用千问3.7原图文SSE/OCR/TTS流程
+
+- 用户授权：新视觉模型接入后反馈连续拍照不响应，要求原样复用先前已成功的千问3.7拍照→可编辑OCR提示词→Chat图文SSE→完成行朗读→本地TTS流程；不得新建独立相机、OCR或语音逻辑。
+- 分支及基线：已发布v1.0.68 commit ec5ea4ae7039d48c9a188d9d135671b9c005b76d → 隔离分支 exp/glm-qwen-chat-parity-20261121；最终 HEAD 5206ad1c2688c215e0dcfedf55785f4b0de01907。版本Code78，Name 1.0.69-glm-qwen-parity，包名 com.vobich.bluestar.c110plusquick159 保留。
+- 精确改动6文件：CloudProviderPolicy.java、CloudVisionClient.java、tests/CloudProviderPolicyTest.java、app/build.gradle版本、专用CI .github/workflows/glm-qwen-chat-parity-20261121.yml 和说明 docs/GLM_QWEN_CHAT_PARITY_20261121.md。除智谱官方 Chat endpoint 上的 glm-4.6v/glm-4.6v-flashx/glm-4.6v-flash 增加唯一厂商参数 thinking.type=disabled 外，沿用原千问 JPEG、用户OCR提示词、Chat messages/image_url、SSE、OcrLineChunks、MainActivity本地TTS；模型必须选 Chat Completions，而非旧 GLM-OCR Layout。
+- 特别保护：没有修改千问原路由、Camera2/USB、C110 OEM/LibVLC、TTS/广荣/音效、设置UI、KeyStore、原有MainActivity单线程encoder、1.5秒误触限制和cloudBusy排他锁。重要限制：这次原样复用千问流程，并不等于修复了旧忙碌锁对缓慢网络的等待；实际连续拍照和低延迟仍待真机核对，不能宣称已解决。
+- GitHub Actions 44782366386 completed/success：严格六文件差异、vendor-specific thinking不污染其他服务商、GLM-OCR保留、Java回归、固定UVC patch、完整arm64编译、ZIP/包名/单Launcher/LibVLC/UVC/音效资源及Release全成功。Run SHA、Release target、HEAD一致（5206ad1c2688c215e0dcfedf55785f4b0de01907）。无真实智谱Key和真机，尚未验收供应商API成功/速度/识别准确率/扬声器。
+- APK：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-glm-qwen-chat-parity-20261121-v0169/BlueStar_Guide_GLM_Qwen_Parity_1.0.69.apk （GitHub资产56,748,545 bytes），CI：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44782366386
+- 真机后续：在vivo X200 Pro，OCR任务'朗读文字'、SSE启用、模式C，对比Qwen3.7与 glm-4.6v、glm-4.6v-flashx 同图、连续拍摄5~10次。若仍发生拍照点击不响应，先检查既存cloudBusy/单线程网络占用，未经新授权不扩改其他已验收功能。
+
+---
 # 2026-11-20｜v1.0.68 已成功发布：单一生效OCR模型＋GLM专用Layout Parsing＋快SSE
 
 - **用户真机验证与授权**：在v1.0.67先选智谱免费`glm-4.6v-flash`后，旧「文字识别模型」页面又勾选百炼`qwen-vl-ocr`／`Qwen3.7-Flash`，但实际仍走智谱；免费版首次朗读很慢。用户确认明确切回「原有百炼」后3.7立刻恢复原速度，因此要求只修复两处模型选择不同步、慢的自定义默认非流式，并且优先新增GLM-OCR `layout_parsing`专用协议（地址/Key/模型可自己填）。允许修改发布，禁止碰已好的手机/USB/C110、原厂协议、音效、本地TTS、保益和主界面。
