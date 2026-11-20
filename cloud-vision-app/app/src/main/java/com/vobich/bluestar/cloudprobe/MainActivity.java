@@ -179,7 +179,6 @@ public final class MainActivity extends CameraActivity {
     private volatile int readingCaptureToken;
     private int readingSpeechToken;
     private String readingExportBookId="";
-    private AlertDialog settingsDialog;
     private InternalCameraController phoneController;
     private boolean usingPhoneCamera, phoneFrontFacing, phonePreviewReceived;
     private int phoneStartSequence, phoneRawWidth=1280, phoneRawHeight=720;
@@ -714,31 +713,6 @@ public final class MainActivity extends CameraActivity {
         handler.postDelayed(hideStatus,4500L);
     }
 
-    private void addSimpleSettingsRow(LinearLayout panel,String label,String detail,Runnable clicked) {
-        LinearLayout row=new LinearLayout(this);
-        row.setOrientation(LinearLayout.VERTICAL);
-        row.setPadding(dp(15),dp(14),dp(15),dp(14));
-        TextView title=new TextView(this);
-        title.setText(label+"   ›");title.setTextColor(Color.WHITE);
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP,19);
-        title.setTypeface(null,android.graphics.Typeface.BOLD);
-        row.addView(title);
-        TextView description=new TextView(this);
-        description.setText(detail);description.setTextColor(0xFFD2D3D7);
-        description.setTextSize(TypedValue.COMPLEX_UNIT_SP,15);
-        description.setPadding(0,dp(4),0,0);
-        row.addView(description);
-        android.graphics.drawable.GradientDrawable background=new android.graphics.drawable.GradientDrawable();
-        background.setColor(0xFF202124);background.setCornerRadius(dp(11));
-        row.setBackground(background);
-        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.bottomMargin=dp(10);panel.addView(row,lp);
-        row.setContentDescription(label+"："+detail+"；双击选择");
-        row.setClickable(true);row.setFocusable(true);
-        row.setOnClickListener(v->clicked.run());
-    }
-
     private void openLargeSettings(){
         if(largeSettings!=null&&!largeSettings.isClosed())return;
         largeSettings=new BlueStarSettingsScreen(this,rootFrame);
@@ -1212,149 +1186,6 @@ public final class MainActivity extends CameraActivity {
         getSharedPreferences(PREFS,MODE_PRIVATE).edit().putString(PREF_IMAGE_POLICY,imagePolicy).apply();
     }
 
-    private void showSettingsDialog(){
-        LinearLayout panel=new LinearLayout(this);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(18),dp(20),dp(18),dp(12));
-        panel.setBackgroundColor(0xFF0B1B30);
-        TextView heading=new TextView(this);
-        heading.setText("蓝星向导 · 设置");
-        heading.setTextSize(TypedValue.COMPLEX_UNIT_SP,25);
-        heading.setTextColor(Color.WHITE);
-        heading.setTypeface(null,android.graphics.Typeface.BOLD);
-        heading.setGravity(Gravity.CENTER);
-        panel.addView(heading);
-        addSimpleSettingsRow(panel,"语音与语速","本地TTS引擎、0.5–3倍语速、试听",
-            ()->showSpeechSettings());
-        addSimpleSettingsRow(panel,"任务管理","编辑五个预设提示词、新增与修改自定义任务",
-            ()->{if(settingsDialog!=null)settingsDialog.dismiss();showTaskManagement();});
-        addSimpleSettingsRow(panel,"摄像头设置","镜头来源、独立方向记忆、镜像、缩放",
-            ()->showCameraOptions());
-        addSimpleSettingsRow(panel,"提示音与振动","拍照叮叮提示和短振动，均可单独关闭",
-            ()->showFeedbackSettings());
-        addSimpleSettingsRow(panel,"云端AI","模型、分辨率、API Key及用完即停提醒",
-            ()->showCloudOptions());
-        addSimpleSettingsRow(panel,"上次识别结果","查看全文或再次朗读",
-            ()->showLastResultDialog());
-        TextView footer=new TextView(this);
-        footer.setText("识别需要联网并可能消耗百炼Token；公开发布需服务端密钥与限额保护。");
-        footer.setTextColor(0xFFD0E1F3);
-        footer.setPadding(0,dp(9),0,0);panel.addView(footer);
-        ScrollView scroll=new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.addView(panel);
-        AlertDialog dialog=new AlertDialog.Builder(this)
-            .setView(scroll).setPositiveButton("完成",null).create();
-        dialog.show();settingsDialog=dialog;
-        if(dialog.getWindow()!=null)
-            dialog.getWindow().setLayout(getResources().getDisplayMetrics().widthPixels-dp(20),
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        dialog.setOnDismissListener(d->{if(settingsDialog==dialog)settingsDialog=null;});
-    }
-
-    private void showSpeechSettings(){
-        LinearLayout form=new LinearLayout(this);
-        form.setOrientation(LinearLayout.VERTICAL);
-        form.setPadding(dp(20),dp(12),dp(20),dp(12));
-        Switch follow=new Switch(this);
-        follow.setText("跟随语音引擎默认语速");
-        follow.setTextColor(Color.WHITE);
-        follow.setChecked(followSystemSpeechRate);
-        form.addView(follow);
-        TextView speed=new TextView(this);
-        speed.setTextColor(Color.WHITE);speed.setTextSize(17);
-        speed.setText("本地语速："+String.format(Locale.CHINA,"%.2f",speechRate)+"×");
-        form.addView(speed);
-        SeekBar seek=new SeekBar(this);seek.setMax(50);
-        seek.setProgress(Math.round((speechRate-.5f)*20f));
-        seek.setEnabled(!followSystemSpeechRate);
-        form.addView(seek);
-        follow.setOnCheckedChangeListener((view,isChecked)->{
-            followSystemSpeechRate=isChecked;
-            seek.setEnabled(!isChecked);
-            persistSpeechRate();
-        });
-        seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
-            @Override public void onProgressChanged(SeekBar bar,int value,boolean fromUser){
-                if(!fromUser)return;
-                speechRate=.5f+value*.05f;
-                speed.setText("本地语速："+String.format(Locale.CHINA,"%.2f",speechRate)+"×");
-                persistSpeechRate();
-            }
-            @Override public void onStartTrackingTouch(SeekBar b){}
-            @Override public void onStopTrackingTouch(SeekBar b){}
-        });
-        new AlertDialog.Builder(this).setTitle("本地语音")
-            .setView(form)
-            .setNeutralButton("选择语音引擎",(d,w)->showInstalledTtsSelector())
-            .setNegativeButton("关闭",null)
-            .setPositiveButton("试听",(d,w)->speak("蓝星向导，当前语速试听。")).show();
-    }
-    private void persistSpeechRate(){
-        getSharedPreferences(PREFS,MODE_PRIVATE).edit()
-            .putFloat(PREF_SPEECH_RATE,speechRate)
-            .putBoolean(PREF_SPEECH_DEFAULT,followSystemSpeechRate).apply();
-        if(tts!=null&&ttsReady)
-            tts.setSpeechRate(followSystemSpeechRate?1f:speechRate);
-    }
-
-    private void showFeedbackSettings(){
-        String[] titles={"拍照叮叮提示音","拍照短振动"};
-        boolean[] choices={feedbackSound,feedbackVibration};
-        new AlertDialog.Builder(this).setTitle("提示与振动")
-            .setMultiChoiceItems(titles,choices,(d,which,checked)->{
-                if(which==0)feedbackSound=checked;else feedbackVibration=checked;
-                getSharedPreferences(PREFS,MODE_PRIVATE).edit()
-                    .putBoolean(PREF_SOUND,feedbackSound)
-                    .putBoolean(PREF_HAPTIC,feedbackVibration).apply();
-            }).setPositiveButton("完成",null).show();
-    }
-
-    private void showCameraOptions(){
-        String[] names={"切换摄像头","旋转画面（当前："+previewRotation+"°）",
-            "水平镜像（"+(previewMirror?"开":"关")+"）",
-            "垂直翻转（"+(previewVerticalFlip?"开":"关")+"）",
-            "USB左右校正（"+(usbPreviewCorrectMirror?"开":"关")+"）",
-            "缩放恢复1×"};
-        new AlertDialog.Builder(this).setTitle("摄像头设置 · 各镜头分别记忆")
-            .setItems(names,(d,i)->{
-                if(i==0){showCameraSourceSelector();return;}
-                if(i==1)previewRotation=(previewRotation+90)%360;
-                else if(i==2)previewMirror=!previewMirror;
-                else if(i==3)previewVerticalFlip=!previewVerticalFlip;
-                else if(i==4)usbPreviewCorrectMirror=!usbPreviewCorrectMirror;
-                else if(i==5)setCameraZoom(1f);
-                saveCameraProfile();
-                applyPreviewTransform();applyPhonePreviewTransform();
-                setResultStatus("摄像头画面设置已保存");
-                showCameraOptions();
-            }).setNegativeButton("完成",null).show();
-    }
-
-    private void showCloudOptions(){
-        String[] menu={"选择视觉AI模型（当前："+visionModel+"）",
-            "选择照片分辨率","配置或清除 API Key","用完即停说明"};
-        new AlertDialog.Builder(this).setTitle("云端 AI")
-            .setItems(menu,(d,i)->{
-                if(i==0)showVisionModelSelector();
-                else if(i==1)showImagePolicySelector();
-                else if(i==2)showCloudKeyDialog();
-                else new AlertDialog.Builder(this).setTitle("费用保护")
-                    .setMessage("务必在阿里云百炼对各模型确认免费额度并开启「用完即停」。所有照片仅在你主动点击时上传。")
-                    .setPositiveButton("知道了",null).show();
-            }).setNegativeButton("关闭",null).show();
-    }
-
-    private void showLastResultDialog(){
-        if(lastCloudResult==null||lastCloudResult.isEmpty()){
-            Toast.makeText(this,"尚无识别结果",Toast.LENGTH_SHORT).show();return;
-        }
-        new AlertDialog.Builder(this).setTitle("上次识别结果")
-            .setMessage(lastCloudResult)
-            .setPositiveButton("朗读",(d,w)->speak(lastCloudResult))
-            .setNegativeButton("关闭",null).show();
-    }
-
     /** Identical selection labels and saved preferences as 2.0. */
     private void showCameraSourceSelector() {
         final String[] choices={"USB 外接摄像头","手机后置摄像头","手机前置摄像头"};
@@ -1366,7 +1197,6 @@ public final class MainActivity extends CameraActivity {
                 boolean front=which==2;
                 selectManualPhoneOverride(phone);
                 if(phone==usingPhoneCamera&&(!phone||front==phoneFrontFacing))return;
-                if(settingsDialog!=null)settingsDialog.dismiss();
                 saveCameraProfile();
                 if(phone){
                     phoneFrontFacing=front;
@@ -1395,8 +1225,7 @@ public final class MainActivity extends CameraActivity {
                     getSharedPreferences(PREFS,MODE_PRIVATE).edit()
                         .putString(PREF_TTS_ENGINE,ttsEngine).apply();
                     initializeSpeech();
-                    if(settingsDialog!=null)settingsDialog.dismiss();
-                }).setNegativeButton("取消",null).show();
+                    }).setNegativeButton("取消",null).show();
     }
 
     @Override protected IAspectRatio getCameraView() {
@@ -1533,7 +1362,6 @@ public final class MainActivity extends CameraActivity {
                 imagePolicy=values[i];getSharedPreferences(PREFS,MODE_PRIVATE)
                     .edit().putString(PREF_IMAGE_POLICY,imagePolicy).apply();
                 d.dismiss();
-                if(settingsDialog!=null)settingsDialog.dismiss();
                 Toast.makeText(this,"已选："+names[i],Toast.LENGTH_SHORT).show();
             }).setNegativeButton("取消",null).show();
     }
@@ -1546,7 +1374,6 @@ public final class MainActivity extends CameraActivity {
             .setSingleChoiceItems(VisionModelCatalog.LABELS,selected,(d,i)->{
                 selectVisionModel(VisionModelCatalog.IDS[i]);
                 d.dismiss();
-                if(settingsDialog!=null)settingsDialog.dismiss();
                 toastShort("视觉模型："+visionModel);
             }).setNegativeButton("取消",null).show();
     }
