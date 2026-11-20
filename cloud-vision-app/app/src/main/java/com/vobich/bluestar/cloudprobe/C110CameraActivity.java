@@ -156,7 +156,11 @@ public final class C110CameraActivity extends Activity {
         cameraSettings.setContentDescription("C110机身声音与灯光设置");
         cameraSettings.setOnClickListener(v->showC110Settings());
         titleRow.addView(cameraSettings,new LinearLayout.LayoutParams(dp(45),dp(43)));
+        // User-approved unobstructed viewfinder: keep these existing controls
+        // initialized for OEM connection/photo state, but never draw a top bar.
+        // Android system Back remains available; camera settings are on Home.
         root.addView(titleRow,new FrameLayout.LayoutParams(-1,dp(58),Gravity.TOP));
+        titleRow.setVisibility(View.GONE);
 
         taskChip=new TextView(this);
         taskChip.setTextColor(0xFFECF6FF);
@@ -190,7 +194,8 @@ public final class C110CameraActivity extends Activity {
         bottomControls=footer;
         footer.setGravity(Gravity.CENTER);
         footer.setPadding(dp(7),dp(5),dp(7),dp(7));
-        footer.setBackground(roundRect(0xED091D36,20));
+        // No opaque bottom plate. Preserve the actual OEM 1001 shutter button.
+        footer.setBackgroundColor(Color.TRANSPARENT);
         photoButton=footerButton("◎  高清拍照",this::captureOriginalPhoto);
         photoButton.setContentDescription("单次C110高清拍照，云端只处理当前变焦区域");
         footer.addView(photoButton,new LinearLayout.LayoutParams(dp(200),dp(63)));
@@ -200,7 +205,8 @@ public final class C110CameraActivity extends Activity {
         zoomControls=new LinearLayout(this);
         zoomControls.setGravity(Gravity.CENTER_VERTICAL);
         zoomControls.setPadding(dp(5),dp(2),dp(5),dp(2));
-        zoomControls.setBackground(roundRect(0xEA132B46,18));
+        // Keep the thumb, track and 1.0x label directly on the camera preview.
+        zoomControls.setBackgroundColor(Color.TRANSPARENT);
         zoomValue=new TextView(this);
         zoomValue.setGravity(Gravity.CENTER);
         zoomValue.setTextColor(Color.WHITE);
@@ -338,7 +344,7 @@ public final class C110CameraActivity extends Activity {
         if(fullscreen==requested)return;
         // Portrait screen only. SJCAM-style cover, no rotation or VLC restart.
         fullscreen=requested;
-        topControls.setVisibility(View.VISIBLE);
+        topControls.setVisibility(View.GONE);
         bottomControls.setVisibility(View.VISIBLE);
         taskChip.setVisibility(View.GONE);
         output.setVisibility(View.GONE);
