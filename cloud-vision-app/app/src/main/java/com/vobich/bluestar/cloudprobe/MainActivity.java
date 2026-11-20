@@ -3031,9 +3031,13 @@ public final class MainActivity extends CameraActivity {
             toastShort("请开启移动数据，以便C110视频帧进行云端识别");return;
         }
         try{
-            String role=TaskCatalog.OCR.equals(
-                oneShotTask==null?(currentTask==null?"":currentTask.engine):oneShotTask.engine)?
-                CloudProviderStore.OCR:CloudProviderStore.VISION;
+            // Ongoing "find target" overrides an OCR desktop preset;
+            // the preflight Key check must match the later VISION request.
+            String role=!findingTarget.isEmpty()&&oneShotTask==null?
+                CloudProviderStore.VISION:
+                (TaskCatalog.OCR.equals(oneShotTask==null?
+                    (currentTask==null?"":currentTask.engine):oneShotTask.engine)?
+                    CloudProviderStore.OCR:CloudProviderStore.VISION);
             if(!CloudProviderStore.hasKey(this,role)){
                 openLargeSettings();
                 if(largeSettings!=null)largeSettings.openCloudRole(role);
@@ -3175,7 +3179,7 @@ public final class MainActivity extends CameraActivity {
                 String cloudIssue=null;
                 try{
                     cellular=C110WifiCamera.requireCellular(this);
-                    String photoRole=currentTask!=null&&
+                    String photoRole=findingTarget.isEmpty()&&currentTask!=null&&
                         TaskCatalog.OCR.equals(currentTask.engine)?
                         CloudProviderStore.OCR:CloudProviderStore.VISION;
                     if(!CloudProviderStore.hasKey(this,photoRole))
