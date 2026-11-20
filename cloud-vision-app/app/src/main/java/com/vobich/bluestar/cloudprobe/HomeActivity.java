@@ -7,7 +7,6 @@ import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.view.Gravity;
-import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -30,7 +29,6 @@ public final class HomeActivity extends Activity {
     private static final int BG=0xFF091B32,ACCENT=0xFFB9DCF8,WHITE=0xFFF3F8FF;
     private static final int NAV_BG=0xED091D36,NAV_NORMAL=0xFF2C547D,NAV_ACTIVE=0xFF176BAC;
     private FrameLayout root;
-    private C110VolumeShortcut shortcut;
     private C110QuickShotController quickShot;
     private TextView quickStatusView;
     private String quickStatus="";
@@ -38,7 +36,6 @@ public final class HomeActivity extends Activity {
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
         quickLaunchPending=isQuickShotIntent(getIntent());
-        shortcut=new C110VolumeShortcut(this,this::quickPhoto);
         quickShot=new C110QuickShotController(this,this::quickStatusChanged);
         root=new FrameLayout(this);
         root.setBackgroundColor(BG);
@@ -215,7 +212,6 @@ public final class HomeActivity extends Activity {
     }
     @Override protected void onPause(){
         if(quickShot!=null)quickShot.onPause();
-        if(shortcut!=null)shortcut.cancel();
         super.onPause();
     }
     @Override protected void onDestroy(){
@@ -226,9 +222,5 @@ public final class HomeActivity extends Activity {
                                       String[] permissions,int[] results){
         super.onRequestPermissionsResult(requestCode,permissions,results);
         if(quickShot!=null)quickShot.onPermissionResult(requestCode,results);
-    }
-    @Override public boolean dispatchKeyEvent(KeyEvent event){
-        if(shortcut!=null&&shortcut.dispatch(event))return true;
-        return super.dispatchKeyEvent(event);
     }
 }
