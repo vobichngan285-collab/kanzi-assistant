@@ -17,6 +17,18 @@ public final class CloudProviderPolicyTest {
         ok(CloudProviderPolicy.recommendedFastStream("qwen3.7-flash","chat"));
         ok(!CloudProviderPolicy.recommendedFastStream("glm-ocr","layout_parsing"));
         ok(!CloudProviderPolicy.recommendedFastStream("unknown-other","chat"));
+        String glmUrl="https://open.bigmodel.cn/api/paas/v4/chat/completions";
+        ok(CloudProviderPolicy.zhipuFastVisualOcr(glmUrl,"glm-4.6v"));
+        ok(CloudProviderPolicy.zhipuFastVisualOcr(glmUrl,"glm-4.6v-flashx"));
+        ok(CloudProviderPolicy.zhipuFastVisualOcr(glmUrl,"glm-4.6v-flash"));
+        ok(!CloudProviderPolicy.zhipuFastVisualOcr(glmUrl,"glm-ocr"));
+        ok(!CloudProviderPolicy.zhipuFastVisualOcr(glmUrl,"glm-5.3-flash"));
+        ok(!CloudProviderPolicy.zhipuFastVisualOcr(
+            "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions","glm-4.6v"));
+        ok(!CloudProviderPolicy.zhipuFastVisualOcr(
+            "https://open.bigmodel.cn/api/paas/v4/layout_parsing","glm-4.6v"));
+        ok(!CloudProviderPolicy.zhipuFastVisualOcr(
+            "https://open.bigmodel.cn.evil.example/chat/completions","glm-4.6v"));
         ok(CloudProviderPolicy.probeRecognizedA("A"));
         ok(CloudProviderPolicy.probeRecognizedA("字母 A"));
         ok(CloudProviderPolicy.probeRecognizedA("Ａ"));
