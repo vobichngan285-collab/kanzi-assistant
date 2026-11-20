@@ -931,6 +931,8 @@ public final class C110CameraActivity extends Activity {
 
     @Override protected void onResume(){
         super.onResume();
+        // Same preference synchronization as Home quick shot; no player restart.
+        if(frameReader!=null)frameReader.syncSpeechSettings();
         pageVisible=true;
         if(fullscreen)applyFullscreenFlags();
         if(!photoBusy&&!started&&!busy)main.post(this::connectAndBeginWhenReady);
