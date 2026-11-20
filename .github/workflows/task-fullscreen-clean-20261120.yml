@@ -67,6 +67,7 @@ jobs:
           assert 'TaskCatalog.updatePreset(this,original.id,' in page
           assert 'view.startDragAndDrop(data,' in page
           assert 'if(held)' in page and 'showTaskActions(task)' in page
+          assert 'slot.setOnLongClickListener' in page
           assert 'pageIndicator.setText((page+1)+" / "+pages)' in page
           assert 'pager.setVisibility(pages>1?View.VISIBLE:View.GONE)' in page
           assert 'new Dialog(' not in page
@@ -181,7 +182,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG=bluestar-task-fullscreen-clean-20261120-v0164
+          TAG=bluestar-task-fullscreen-clean-20261120-v0164-final
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release already exists; do not overwrite" >&2
             exit 1
