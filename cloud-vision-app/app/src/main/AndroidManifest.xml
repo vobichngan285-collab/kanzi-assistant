@@ -15,7 +15,7 @@
     </queries>
     <application
         android:allowBackup="false"
-        android:label="蓝星向导 快捷拍照实验"
+        android:label="蓝星向导"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/AppTheme"
