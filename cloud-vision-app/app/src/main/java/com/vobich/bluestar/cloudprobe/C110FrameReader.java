@@ -328,8 +328,6 @@ final class C110FrameReader {
         try{
             // The camera AP is local-only; all cloud traffic must explicitly use cellular.
             Network cellular=C110WifiCamera.requireCellular(activity);
-            String key=CloudKeyStore.load(activity);
-            if(key.isEmpty())throw new IllegalStateException("请先在主页的设置中填写百炼 API Key");
             TaskCatalog.Task selected=null;
             String idTask=TaskCatalog.selectedId(activity);
             for(TaskCatalog.Task task:TaskCatalog.all(activity))
@@ -344,9 +342,11 @@ final class C110FrameReader {
             String speed=ocr?OcrSpeedExperiment.normalize(
                 prefs.getString(OcrSpeedExperiment.PREF,OcrSpeedExperiment.DEFAULT)):
                 OcrSpeedExperiment.A;
+            CloudProviderStore.Config service=CloudProviderStore.resolve(activity,
+                ocr?CloudProviderStore.OCR:CloudProviderStore.VISION,model);
             RecentPhotoSession.captured(jpeg,cellular,task.name);
             AtomicInteger spokenParts=new AtomicInteger();
-            CloudVisionClient.Result result=CloudVisionClient.recognize(jpeg,key,task,model,
+            CloudVisionClient.Result result=CloudVisionClient.recognize(jpeg,service,task,
                 part->main.post(()->{
                     if(closed||id!=request.get())return;
                     String piece=filtered(part,task);
