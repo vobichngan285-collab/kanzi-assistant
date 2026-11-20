@@ -576,6 +576,7 @@ public final class MainActivity extends CameraActivity {
                     setResultStatus("已选择："+task.name);
                 }
                 @Override public void createTask(){editTask(null);}
+                @Override public void edit(TaskCatalog.Task task){editTask(task);}
                 @Override public void openReading(){openReadingMode();}
                 @Override public void removed(TaskCatalog.Task task){
                     if(currentTask!=null&&task.id.equals(currentTask.id)){
