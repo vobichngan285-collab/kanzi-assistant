@@ -6,8 +6,8 @@ android {
         applicationId 'com.vobich.bluestar'
         minSdk 26
         targetSdk 35
-        versionCode 72
-        versionName '1.0.63-home-task-voice-zoom'
+        versionCode 73
+        versionName '1.0.64-task-fullscreen-clean'
         ndk { abiFilters 'arm64-v8a' }
     }
     buildTypes {
