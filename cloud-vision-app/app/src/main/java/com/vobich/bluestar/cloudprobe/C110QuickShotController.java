@@ -39,6 +39,9 @@ final class C110QuickShotController {
     }
     void onResume(){
         active=true;
+        // Home returned from shared Settings: update grtts/other selected
+        // engine before the next capture, with no new camera or preview.
+        reader.syncSpeechSettings();
         if(shutterPending&&waiting!=null)main.post(waiting);
     }
     void onPause(){
@@ -49,6 +52,7 @@ final class C110QuickShotController {
     }
     void trigger(){
         if(destroyed||!active)return;
+        reader.syncSpeechSettings(); // also covers changes made while Home remains alive
         if(shutterPending||reader.isBusy()){
             emit("上一张正在拍摄或识别，请勿重复触发");
             return;
