@@ -154,7 +154,7 @@ public final class C110CameraActivity extends Activity {
         Button cameraSettings=new Button(this);
         cameraSettings.setText("相机");
         cameraSettings.setAllCaps(false);
-        cameraSettings.setContentDescription("C110机身设置与单张原图清理实验");
+        cameraSettings.setContentDescription("C110机身提示音与指示灯");
         cameraSettings.setOnClickListener(v->showC110Settings());
         titleRow.addView(cameraSettings,new LinearLayout.LayoutParams(dp(70),dp(45)));
         Button globalSettings=new Button(this);
@@ -451,26 +451,9 @@ public final class C110CameraActivity extends Activity {
     }
 
     private void showC110Settings(){
-        new android.app.AlertDialog.Builder(this)
-            .setTitle("C110+ 相机 / OCR实验")
-            .setItems(new String[]{
-                "照片尺寸·取图·上传·OCR准确率综合实验",
-                "机身设置：声音和指示灯",
-                "安全提示：单张删图暂不开放（需复核C110+）"
-            },(dialog,which)->{
-                if(which==0){
-                    if(photoBusy||frameReader.isBusy()){
-                        say("当前拍照或识别仍在进行，请完成后进入实验");return;
-                    }
-                    // Lifecycle stop releases video BEFORE entering isolated experiment.
-                    // No new C110 shutter, parameter change or Wi-Fi logic here.
-                    startActivity(new Intent(this,C110ResolutionLabActivity.class));
-                }else if(which==1)deviceControls.showSettings();
-                else new android.app.AlertDialog.Builder(this)
-                    .setTitle("C110+原图安全")
-                    .setMessage("原厂4003单文件删除尚未在你的C110+型号上真机复核。本实验包不开放删除，内存卡照片请在原厂App中自行管理。")
-                    .setPositiveButton("知道了",null).show();
-            }).setNegativeButton("关闭",null).show();
+        // No A/B experiments, deletion prompts or nested menus.
+        // Preserve the existing proven C110 hardware controls.
+        deviceControls.showSettings();
     }
 
     private void confirmSingleFileDelete(){
