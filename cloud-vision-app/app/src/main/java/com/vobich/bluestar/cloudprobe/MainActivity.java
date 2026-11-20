@@ -785,6 +785,13 @@ public final class MainActivity extends CameraActivity {
         getSharedPreferences(PREFS,MODE_PRIVATE).edit().putString(PREF_TTS_ENGINE,ttsEngine).apply();
         initializeSpeech();
     }
+    boolean isFollowingSystemSpeechRate(){return followSystemSpeechRate;}
+    void setFollowSystemSpeechRate(boolean enabled){
+        followSystemSpeechRate=enabled;
+        getSharedPreferences(PREFS,MODE_PRIVATE).edit()
+            .putBoolean(PREF_SPEECH_DEFAULT,enabled).apply();
+        if(tts!=null&&ttsReady)tts.setSpeechRate(enabled?1f:speechRate);
+    }
     void applySpeechSpeed(float value){
         speechRate=Math.min(3f,Math.max(.5f,value));
         followSystemSpeechRate=false;
