@@ -454,9 +454,6 @@ final class BlueStarSettingsScreen {
     }
     private void usbPicture(){
         heading("外置摄像头硬件画质");
-        note("只调节设备支持的 UVC 项目，直接作用于采集画面，"
-            +"不是屏幕滤镜。强光下发白可能是自动曝光过高，"
-            +"仅调整饱和度无法恢复已过曝的文字。");
         if(!app.isUsbSelected()){
             note("当前为手机摄像头。请先在摄像头设置中选择 USB，再进入此页。");
             return;
@@ -549,9 +546,6 @@ final class BlueStarSettingsScreen {
             "",()->navigate("ocr-models",""));
         row("文字朗读方式 · "+(OcrSpeedExperiment.C.equals(app.ocrSpeedDescription())?
                 "快速逐行":"兼容全文"),"",()->navigate("ocr-speed",""));
-        note("允许三个视觉模型在语音聊天和照片追问中按需搜索网络，" +
-            "不会强制搜索；朗读文字、普通拍照识别及寻找目标不联网。" +
-            "可能增加等待时间和使用费用。");
         row("模型用量统计","查看当前模型、今日真实Token及各模型列表",()->navigate("usage",""));
         row("图片分辨率 · "+app.imagePolicyDescription(),"",()->{
             app.cycleImagePolicy();render(history.get(history.size()-1));
@@ -578,17 +572,14 @@ final class BlueStarSettingsScreen {
     }
 
     private void ocrSpeed(){
-        note("默认快速逐行：识别到完整一行就开始朗读。");
         for(String id:new String[]{OcrSpeedExperiment.C,OcrSpeedExperiment.A}){
             final boolean selected=id.equals(app.ocrSpeedDescription());
             row((selected?"✓ ":"")+OcrSpeedExperiment.LABELS[OcrSpeedExperiment.index(id)],"",
                 ()->{app.selectOcrSpeedMode(id);render(history.get(history.size()-1));});
         }
-        note("兼容全文：等待识别全部结束才朗读。两种方式每次都仅发送一张照片、调用一次OCR模型；无换行时快速逐行也会等到末尾。");
     }
 
     private void ocrModels(){
-        note("点击「朗读文字」后自动拍照、识别、朗读，无需另发指令。");
         for(int i=0;i<OcrModelCatalog.IDS.length;i++){
             final String id=OcrModelCatalog.IDS[i];
             final boolean selected=id.equals(app.ocrModelDescription());
@@ -597,8 +588,6 @@ final class BlueStarSettingsScreen {
                 render(history.get(history.size()-1));
             });
         }
-        note("内置提示词："+OcrModelCatalog.PROMPT+
-            "\n不会自动切换模型或重复上传。Max 的实际费用以云端计费为准。");
     }
 
     /** Uses exactly the existing opaque BG/PANEL/TEXT/SUB settings palette. */
@@ -678,10 +667,6 @@ final class BlueStarSettingsScreen {
     }
     private void diagnostics(){
         action("查看上次发给 AI 的照片（仅本机）",()->app.previewLastUploadedJpeg());
-        note("仅在点击后显示本次运行内存中的真实 JPEG；不保存文件、不添加照片到日志、不额外上传。");
-        note("USB健康状态包含前后台切换、原始帧FPS和TextureView预览新缓冲FPS；"
-            +"显示最近10秒有效采样平均和最低值；手机模式不沿用旧USB快照。"
-            +"这不是物理屏幕真正显示的FPS。慢速/停流优先看两条是否同步下降。");
         action("复制诊断摘要",()->app.copyRuntimeDiagnostics());
         action("导出匿名诊断日志",()->app.exportRuntimeDiagnostics());
         action("刷新诊断记录",()->render(history.get(history.size()-1)));
