@@ -53,8 +53,8 @@ final class BlueStarSettingsScreen {
     void updateC110Status(String message){
         if(closed||c110LiveStatus==null||history.isEmpty()||
             !"c110-camera".equals(history.get(history.size()-1).name))return;
-        c110LiveStatus.setText(app.currentC110WifiSettingsStatus()+
-            (message==null||message.isEmpty()?"":"\n最近："+message));
+        c110LiveStatus.setText(message==null||message.isEmpty()?
+            app.currentC110WifiSettingsStatus():message);
     }
     void openApiKey(){navigate("cloud","");navigate("key","");}
     void close(){
@@ -392,36 +392,23 @@ final class BlueStarSettingsScreen {
     /** This is a settings screen, not a camera video/RTSP preview page.
      *  Existing verified C110 commands are reused by MainActivity. */
     private void c110Camera(){
-        note("C110+机身提示音和指示灯在这里直接操作，不需要打开实时预览。"
-            +"发送机身指令前必须先连接并验证相机Wi-Fi。");
-        c110LiveStatus=text("",18,SUB,false);
-        c110LiveStatus.setPadding(dp(12),dp(4),dp(12),dp(18));
+        // Only actual controls and a short live connection/result status.
+        // Shared cloud models stay in the top-level Cloud AI settings.
+        c110LiveStatus=text("",17,SUB,false);
+        c110LiveStatus.setPadding(dp(12),dp(2),dp(12),dp(12));
         content.addView(c110LiveStatus,new LinearLayout.LayoutParams(-1,-2));
         updateC110Status(app.lastC110SettingsStatus());
-        action("连接 C110 相机 Wi-Fi",()->app.connectC110WifiFromSettings());
-        heading("C110+机身按键提示音");
-        row("关闭机身提示音","原厂9011/0，只影响相机本身",()->
-            app.setC110BeepFromSettings(false));
-        row("恢复机身提示音","原厂9011/1，只影响相机本身",()->
-            app.setC110BeepFromSettings(true));
-        heading("C110+指示灯");
-        row("立即关闭指示灯","原厂9038/0",()->
-            app.setC110LightFromSettings(0));
-        row("恢复指示灯常亮","原厂9038/1",()->
-            app.setC110LightFromSettings(-1));
-        row("15秒后自动关灯","先开灯，连接保持期间延时关闭",()->
-            app.setC110LightFromSettings(15));
-        row("30秒后自动关灯","",()->app.setC110LightFromSettings(30));
-        row("60秒后自动关灯","",()->app.setC110LightFromSettings(60));
-        row("自定义关灯秒数","5～600秒",this::c110CustomLightDelay);
-        note("机身指令会核实原厂3012身份，只有返回成功回执才表示相机接受了命令。"
-            +"自动关灯倒计时依赖当前相机Wi-Fi连接与设置页生命周期；"
-            +"关闭设置或断开相机连接可能中断倒计时。");
-        heading("照片实验");
-        row("照片分辨率 / OCR准确率实验","单独手动进入，不影响正常快拍",()->
-            app.openC110PhotoLabFromUnifiedSettings());
-        note("文字识别模型、视觉模型和 API Key 统一在顶层「云端 AI」设置，"
-            +"C110+、手机及USB调用同一份配置。机身单张删图仍不开放。");
+        action("连接相机 Wi-Fi",()->app.connectC110WifiFromSettings());
+        heading("机身提示音");
+        row("关闭提示音","",()->app.setC110BeepFromSettings(false));
+        row("恢复提示音","",()->app.setC110BeepFromSettings(true));
+        heading("指示灯");
+        row("关闭指示灯","",()->app.setC110LightFromSettings(0));
+        row("开启指示灯","",()->app.setC110LightFromSettings(-1));
+        row("15秒后关灯","",()->app.setC110LightFromSettings(15));
+        row("30秒后关灯","",()->app.setC110LightFromSettings(30));
+        row("60秒后关灯","",()->app.setC110LightFromSettings(60));
+        row("自定义关灯时间","",this::c110CustomLightDelay);
     }
     private void c110CustomLightDelay(){
         EditText seconds=new EditText(app);
