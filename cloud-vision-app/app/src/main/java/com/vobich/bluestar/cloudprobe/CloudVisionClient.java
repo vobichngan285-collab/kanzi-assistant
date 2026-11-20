@@ -189,6 +189,12 @@ final class CloudVisionClient {
         // Flash/Max stays non-thinking for speed; dedicated OCR is unchanged.
         if(!custom&&(VisionModelCatalog.isBudgetFlash(model)||fastMax))
             body.put("enable_thinking",false);
+        // Reuse the proven Qwen OCR flow entirely: JPEG+user prompt, SSE,
+        // complete OCR lines and the existing TTS callback. GLM-4.6V on the
+        // official Zhipu Chat endpoint differs ONLY in its thinking switch.
+        // Non-thinking avoids making photo OCR wait for visual reasoning.
+        if(custom&&CloudProviderPolicy.zhipuFastVisualOcr(cfg.url,model))
+            body.put("thinking",new JSONObject().put("type","disabled"));
         // Official Bailian Chat Completions: enable_search on the SAME request.
         // Only explicit follow-ups qualify. This never forces a paid search,
         // never creates an extra HTTP request, and never searches OCR photos.
