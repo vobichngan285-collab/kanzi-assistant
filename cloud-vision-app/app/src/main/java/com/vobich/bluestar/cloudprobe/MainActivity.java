@@ -37,7 +37,6 @@ import android.speech.tts.UtteranceProgressListener;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
-import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
@@ -115,7 +114,6 @@ public final class MainActivity extends CameraActivity {
     private static final long USB_MAX_FRAME_AGE_MS=800L; // UVC raw frames are capped near 5Hz
 
     private boolean settingsOnly;
-    private C110VolumeShortcut volumeShortcut;
     private FrameLayout previewContainer,rootFrame;
     private TextView currentTaskChip,zoomChip,resultChip;
     private Button c110Button,c110PreviewButton;
@@ -782,14 +780,9 @@ public final class MainActivity extends CameraActivity {
         super.onBackPressed();
     }
 
-    @Override public boolean dispatchKeyEvent(KeyEvent event){
-        if(volumeShortcut!=null&&volumeShortcut.dispatch(event))return true;
-        return super.dispatchKeyEvent(event);
-    }
-
     private void shortcutPhoto(){
         if(settingsOnly||(largeSettings!=null&&!largeSettings.isClosed())){
-            toastShort("快捷键已识别；设置页面不执行拍照");
+            toastShort("设置页面不执行拍照");
             return;
         }
         if(!uiActive||readingScreen!=null){toastShort("请先退出阅读模式");return;}
@@ -1288,7 +1281,6 @@ public final class MainActivity extends CameraActivity {
         Intent launch=getIntent();
         settingsOnly=launch!=null&&launch.getBooleanExtra("bluestar_launch_settings",false);
         super.onCreate(state);
-        volumeShortcut=new C110VolumeShortcut(this,this::shortcutPhoto);
         diagnostics=new RuntimeDiagnostics(this);
         c110WifiBootstrap=new C110WifiBootstrap(this,this::setC110SettingsStatus);
         settingsC110DeviceControls=new C110DeviceControls(this,this::setC110SettingsStatus);
@@ -3434,7 +3426,6 @@ public final class MainActivity extends CameraActivity {
     }
     @Override protected void onPause(){
         if(quickShot!=null)quickShot.onPause();
-        if(volumeShortcut!=null)volumeShortcut.cancel();
         stopC110LivePreview(true);
         if(!usingPhoneCamera&&diagnostics!=null){
             diagnostics.event("usb","pause",0,"ok");
