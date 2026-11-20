@@ -10,6 +10,19 @@ public final class CloudProviderPolicyTest {
     }
     public static void main(String[] args){
         ok(CloudProviderPolicy.accepts("ocr","chat"));
+        ok(CloudProviderPolicy.accepts("ocr","layout_parsing"));
+        ok(!CloudProviderPolicy.accepts("vision","layout_parsing"));
+        ok(!CloudProviderPolicy.accepts("asr","layout_parsing"));
+        ok(CloudProviderPolicy.recommendedFastStream("glm-4.6v-flash","chat"));
+        ok(CloudProviderPolicy.recommendedFastStream("qwen3.7-flash","chat"));
+        ok(!CloudProviderPolicy.recommendedFastStream("glm-ocr","layout_parsing"));
+        ok(!CloudProviderPolicy.recommendedFastStream("unknown-other","chat"));
+        ok(CloudProviderPolicy.probeRecognizedA("A"));
+        ok(CloudProviderPolicy.probeRecognizedA("字母 A"));
+        ok(CloudProviderPolicy.probeRecognizedA("Ａ"));
+        ok(!CloudProviderPolicy.probeRecognizedA("无法识别字母A"));
+        ok(!CloudProviderPolicy.probeRecognizedA("不支持"));
+
         ok(CloudProviderPolicy.accepts("vision","chat"));
         ok(!CloudProviderPolicy.accepts("ocr","asr_multipart"));
         ok(!CloudProviderPolicy.accepts("vision","asr_qwen"));
