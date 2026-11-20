@@ -728,6 +728,11 @@ public final class MainActivity extends CameraActivity {
         if(largeSettings!=null&&!largeSettings.isClosed())return;
         largeSettings=new BlueStarSettingsScreen(this,rootFrame);
     }
+    void openCloudServiceSettings(String role){
+        openLargeSettings();
+        if(largeSettings!=null&&!largeSettings.isClosed())
+            largeSettings.openCloudRole(role);
+    }
     void settingsPageClosed(){
         largeSettings=null;
         // Home -> Settings is settings-only, never reveal the camera preview
@@ -1170,6 +1175,52 @@ public final class MainActivity extends CameraActivity {
     }
     void clearModelUsage(){
         if(modelUsage!=null)modelUsage.clearAsync();
+    }
+
+    /** Explicit, paid micro-image test of an independently saved OCR or Vision
+     * profile. Does NOT activate it; failing tests leave every selection intact. */
+    void testCloudProvider(String role,String profileId){
+        if(CloudProviderStore.ASR.equals(role)){
+            toastShort("语音识别请在主页按住AI说一句话进行真实测试");return;
+        }
+        if(!uiActive||cloudBusy||voiceListening||voiceRecorder.isBusy()){
+            toastShort("请先结束当前拍照或录音任务");return;
+        }
+        if(!modelTestBusy.compareAndSet(false,true)){
+            toastShort("已有模型测试正在进行");return;
+        }
+        modelTestExecutor.execute(()->{
+            Bitmap bitmap=null;
+            try{
+                String builtin=CloudProviderStore.OCR.equals(role)?ocrModel:visionModel;
+                CloudProviderStore.Config choice=CloudProviderStore.resolveFor(
+                    this,role,profileId,builtin);
+                bitmap=Bitmap.createBitmap(64,64,Bitmap.Config.RGB_565);
+                Canvas canvas=new Canvas(bitmap);
+                canvas.drawColor(0xFFFFFFFF);
+                Paint paint=new Paint();
+                paint.setColor(0xFF101010);paint.setTextSize(28);paint.setAntiAlias(true);
+                canvas.drawText("A",22,43,paint);
+                ByteArrayOutputStream bytes=new ByteArrayOutputStream();
+                bitmap.compress(Bitmap.CompressFormat.JPEG,75,bytes);
+                TaskCatalog.Task probe=new TaskCatalog.Task("model-probe","接口测试",
+                    "这张测试图上是哪个英文字母？只返回字母本身。",
+                    CloudProviderStore.OCR.equals(role)?TaskCatalog.OCR:TaskCatalog.VISION,
+                    false,"✦");
+                CloudVisionClient.Result result=CloudVisionClient.recognize(
+                    bytes.toByteArray(),choice,probe,null,OcrSpeedExperiment.A,null);
+                if(modelUsage!=null)modelUsage.recordAsync(result.model,result.serverModel,
+                    result.promptTokens,result.completionTokens,true);
+                handler.post(()->{if(uiActive)toastShort(
+                    "连接成功："+choice.name+" · "+result.model);});
+            }catch(Exception e){
+                final String error=e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();
+                handler.post(()->{if(uiActive)toastShort("接口测试失败："+error);});
+            }finally{
+                if(bitmap!=null)bitmap.recycle();
+                modelTestBusy.set(false);
+            }
+        });
     }
 
     /** One explicit tiny synthetic image request; never silently retry using Plus. */
@@ -2277,18 +2328,18 @@ public final class MainActivity extends CameraActivity {
                     final int photoToken=requestVersion.get();
                     encodingTask=encoder.submit(()->{
                         try{
-                            String key=CloudKeyStore.load(MainActivity.this);
-                            if(key.isEmpty())throw new Exception("请先在设置中配置百炼 API Key");
+                            CloudProviderStore.Config asrService=CloudProviderStore.resolve(
+                                MainActivity.this,CloudProviderStore.ASR,"qwen3-asr-flash");
                             handler.post(()->{
                                 if(uiActive&&sequence==voiceSequence.get()&&
                                     photoToken==requestVersion.get())
                                     playVoiceSendSound();
                             });
                             long asrAt=SystemClock.elapsedRealtime();
-                            String transcript=CloudAsrClient.recognize(wav,key);
+                            String transcript=CloudAsrClient.recognize(wav,asrService,null);
                             // ASR currently exposes no reliable Token usage: record call only.
                             if(modelUsage!=null)modelUsage.recordAsync(
-                                "qwen3-asr-flash","",-1,-1,true);
+                                asrService.model,"",-1,-1,true);
                             if(diagnostics!=null)diagnostics.event("asr","response_ms",
                                 SystemClock.elapsedRealtime()-asrAt,"ok");
                             handler.post(()->{
@@ -2430,8 +2481,8 @@ public final class MainActivity extends CameraActivity {
         final java.util.concurrent.atomic.AtomicInteger pieces=new java.util.concurrent.atomic.AtomicInteger();
         encodingTask=encoder.submit(()->{
             try{
-                String key=CloudKeyStore.load(this);
-                if(key.isEmpty())throw new Exception("请先在设置中配置API Key");
+                CloudProviderStore.Config service=CloudProviderStore.resolve(
+                    this,CloudProviderStore.VISION,selectedModel);
                 CloudVisionClient.PartListener speaker=part->handler.post(()->{
                         if(token!=requestVersion.get()||!uiActive||tts==null||!ttsReady)return;
                         String spoken=filterForSpeech(part,null);
@@ -2441,11 +2492,11 @@ public final class MainActivity extends CameraActivity {
                             TextToSpeech.QUEUE_ADD,null,"follow-"+token+"-"+partIndex);
                     });
                 CloudVisionClient.Result result=recheckImage?
-                    CloudVisionClient.recognize(jpeg,key,ask,selectedModel,speaker,search,
+                    CloudVisionClient.recognize(jpeg,service,ask,speaker,search,
                         followupCloudNetwork):
-                    CloudVisionClient.recognizeText(prompt,key,selectedModel,speaker,search,
+                    CloudVisionClient.recognizeText(prompt,service,speaker,search,
                         followupCloudNetwork);
-                if(modelUsage!=null)modelUsage.recordAsync(selectedModel,result.serverModel,
+                if(modelUsage!=null)modelUsage.recordAsync(service.model,result.serverModel,
                     result.promptTokens,result.completionTokens,true);
                 handler.post(()->{
                     if(!uiActive||token!=requestVersion.get())return;
@@ -2705,10 +2756,10 @@ public final class MainActivity extends CameraActivity {
                 FrameCompressor.EncodedJpeg photo=FrameCompressor.encodeAdjusted(
                     frame.pixels,frame.width,frame.height,1080,rotation,mirror,flip,photoZoom);
                 if(token!=requestVersion.get())return;
-                String key=CloudKeyStore.load(this);
-                if(key.isEmpty())throw new Exception("API Key 已清除，请重新配置");
+                CloudProviderStore.Config service=CloudProviderStore.resolve(
+                    this,CloudProviderStore.OCR,model);
                 CloudVisionClient.Result result=CloudVisionClient.recognize(
-                    photo.jpeg,key,bookTask,model,
+                    photo.jpeg,service,bookTask,
                     part->handler.post(()->{
                         if(readingScreen==null||token!=requestVersion.get()||
                             !bookId.equals(readingScreen.bookId()))return;
@@ -2980,13 +3031,16 @@ public final class MainActivity extends CameraActivity {
             toastShort("请开启移动数据，以便C110视频帧进行云端识别");return;
         }
         try{
-            if(CloudKeyStore.load(this).isEmpty()){
+            String role=TaskCatalog.OCR.equals(
+                oneShotTask==null?(currentTask==null?"":currentTask.engine):oneShotTask.engine)?
+                CloudProviderStore.OCR:CloudProviderStore.VISION;
+            if(!CloudProviderStore.hasKey(this,role)){
                 openLargeSettings();
-                if(largeSettings!=null)largeSettings.openApiKey();
+                if(largeSettings!=null)largeSettings.openCloudRole(role);
                 return;
             }
         }catch(Exception keyError){
-            toastShort("读取百炼 API Key 失败，请检查设置");
+            toastShort("读取当前云端服务商 API Key 失败，请检查设置");
             return;
         }
         lastTapMs=now;
@@ -3121,8 +3175,11 @@ public final class MainActivity extends CameraActivity {
                 String cloudIssue=null;
                 try{
                     cellular=C110WifiCamera.requireCellular(this);
-                    if(CloudKeyStore.load(this).isEmpty())
-                        cloudIssue="未配置百炼 API Key，高清照片已拍摄但未云端识别";
+                    String photoRole=currentTask!=null&&
+                        TaskCatalog.OCR.equals(currentTask.engine)?
+                        CloudProviderStore.OCR:CloudProviderStore.VISION;
+                    if(!CloudProviderStore.hasKey(this,photoRole))
+                        cloudIssue="未配置当前云端服务商 API Key，高清照片已拍摄但未识别";
                 }catch(Exception noCloud){
                     cloudIssue="手机移动数据不可用或密钥无法读取，高清照片已拍摄但未云端识别";
                 }
@@ -3262,14 +3319,20 @@ public final class MainActivity extends CameraActivity {
                     diagnostics.event("jpeg","mirror_x",photoMirror?1:0,"ok");
                     diagnostics.event("jpeg","flip_y",photoFlip?1:0,"ok");
                 }
-                String key=CloudKeyStore.load(this);
-                if(key.isEmpty()){
+                final String role=!targetToFind.isEmpty()?
+                    CloudProviderStore.VISION:
+                    (TaskCatalog.OCR.equals(task.engine)?
+                        CloudProviderStore.OCR:CloudProviderStore.VISION);
+                final CloudProviderStore.Config service;
+                try{service=CloudProviderStore.resolve(this,role,model);}
+                catch(IllegalArgumentException missing){
                     handler.post(()->{
                         if(token!=requestVersion.get()||!uiActive)return;
                         cloudBusy=false;
                         if(diagnostics!=null)diagnostics.event("cloud","key",0,"missing");
                         openLargeSettings();
-                        if(largeSettings!=null)largeSettings.openApiKey();
+                        if(largeSettings!=null)largeSettings.openCloudRole(role);
+                        toastShort(missing.getMessage());
                     });
                     return;
                 }
@@ -3280,8 +3343,8 @@ public final class MainActivity extends CameraActivity {
                 if(!targetToFind.isEmpty()){
                     long cloudAt=SystemClock.elapsedRealtime();
                     TargetVisionClient.Result inspection=TargetVisionClient.inspect(
-                        jpeg,targetToFind,key,model,current.cloudNetwork);
-                    if(modelUsage!=null)modelUsage.recordAsync(model,inspection.serverModel,
+                        jpeg,targetToFind,service,current.cloudNetwork);
+                    if(modelUsage!=null)modelUsage.recordAsync(service.model,inspection.serverModel,
                         inspection.promptTokens,inspection.completionTokens,true);
                     if(diagnostics!=null)diagnostics.event("cloud","target_ms",
                         SystemClock.elapsedRealtime()-cloudAt,"ok");
@@ -3305,7 +3368,7 @@ public final class MainActivity extends CameraActivity {
                 }
                 java.util.concurrent.atomic.AtomicInteger delivered=
                     new java.util.concurrent.atomic.AtomicInteger();
-                CloudVisionClient.Result result=CloudVisionClient.recognize(jpeg,key,task,model,
+                CloudVisionClient.Result result=CloudVisionClient.recognize(jpeg,service,task,
                     part->handler.post(()->{
                         if(token!=requestVersion.get()||!uiActive||tts==null||!ttsReady)return;
                         String spoken=filterForSpeech(part,task);
