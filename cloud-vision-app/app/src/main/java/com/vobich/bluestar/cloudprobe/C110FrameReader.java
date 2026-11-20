@@ -52,7 +52,27 @@ final class C110FrameReader {
     C110FrameReader(Activity activity,Consumer<String> updates){
         this.activity=activity;
         this.updates=updates;
-        syncSpeechSettings();
+        // The main Blue Star Home remains alive behind MainActivity Settings.
+        // Do not start a SECOND TTS engine merely by opening Home: the
+        // selected third-party engine (grtts) is initialized on an actual
+        // user-requested OCR/video speech operation instead.
+    }
+
+    /** Release the Home speaker before navigating to a different Activity
+     *  (Settings, phone/USB or C110 preview) that owns its own TTS instance.
+     *  No camera/Wi-Fi/cloud state is changed by this method. */
+    void releaseSpeechForOtherScreen(){
+        if(closed)return;
+        ++ttsGeneration; // ignore late OnInit from the former engine
+        ttsReady=false;
+        ttsInitFailed=false;
+        activeTtsEngine=null;
+        clearPendingSpeech();
+        if(tts!=null){
+            try{tts.stop();}catch(RuntimeException ignored){}
+            try{tts.shutdown();}catch(RuntimeException ignored){}
+            tts=null;
+        }
     }
 
     /**
@@ -95,12 +115,23 @@ final class C110FrameReader {
                 if(tts!=null){tts.shutdown();tts=null;}
                 return;
             }
+            // Restore the v1.0.50–v1.0.57 proven C110 setup. v1.0.58
+            // removed this Chinese-language setup without a device A/B test.
+            // A custom engine package stays selected; only request zh-CN.
+            try{
+                int localeResult=tts.setLanguage(Locale.SIMPLIFIED_CHINESE);
+                if(localeResult==TextToSpeech.LANG_NOT_SUPPORTED||
+                   localeResult==TextToSpeech.LANG_MISSING_DATA)
+                    report("当前语音引擎不支持简体中文，请在语音设置检查音色");
+            }catch(RuntimeException error){
+                report("语音语言设置失败："+error.getClass().getSimpleName());
+            }
             try{tts.setSpeechRate(activeTtsRate);}
             catch(RuntimeException error){
                 report("所选引擎无法设置语速："+error.getClass().getSimpleName());
             }
-            // Some third-party voices may not expose a configurable rate;
-            // never drop the recognized content just because rate set failed.
+            // The third-party voice may not expose speed control.
+            // Always flush this request's OCR speech when the engine is ready.
             flushPendingSpeech();
         });
         try{
