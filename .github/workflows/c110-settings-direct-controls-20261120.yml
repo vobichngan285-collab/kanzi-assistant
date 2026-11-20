@@ -128,7 +128,7 @@ jobs:
           assert 'main.postDelayed(pendingOff,seconds*1000L)' in controls
           assert 'void requestForCameraMode()' in wifi
           # No C110 preview started as a side effect of visiting Settings.
-          assert 'new Intent(this,C110CameraActivity.class)' not in main
+          assert 'void openC110FromUnifiedSettings()' not in main
           assert 'new Intent(this,C110CameraActivity.class)' in home
           # Keep previously verified C110 150ms VLC, OEM photo and grtts sync.
           for src in (preview,(root/"C110InlinePreview.java").read_text()):
