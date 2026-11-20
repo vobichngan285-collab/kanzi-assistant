@@ -1,3 +1,15 @@
+# 2026-11-20｜v1.0.62 已构建发布：修复设置→预览误回主页，清理C110实验/冗余说明，保留广荣正常TTS
+
+- **用户真机结果与授权**：用户确认 v1.0.61 广荣微软 TTS**已恢复正常**，但从设置底栏点击「预览」会跳回主页，且 C110 运动相机设置里实验入口/说明文字臃肿，要求去实验、清理说明。已按用户要求在原仓独立分支修改，不改已真机成功的语音、保益快拍和OEM。
+- **根因定位与修复**：MainActivity `launchMode=singleTop`。主页→设置时进入`settingsOnly=true`的MainActivity；旧`openPreviewFromUnifiedSettings`调用`startActivity(MainActivity)+finish()`，会使当前栈顶MainActivity复用随后被关闭，从而露出其下方HomeActivity。新方法**在当前MainActivity内**设置`settingsOnly=false`、清除原Intent的`bluestar_launch_settings`、显示`previewContainer`与黑背景、关闭设置叠层，再调用`resumeForegroundPreview()`。普通onResume和设置→预览调用同一个手机/USB Camera2/UVC启动/权限流程，不再自启动本Activity/finish。主预览→设置仍保留。此项编译通过，需用户真机确认正确显示相机实时画面。
+- **精简C110设置**：`BlueStarSettingsScreen`中「相机→C110+」只留连接相机Wi-Fi、机身提示音关/开、指示灯关/开/15/30/60秒自动关闭和自定义时间，底部简短实时连接/命令状态；删除「照片分辨率/OCR准确率实验」入口、冗长说明段。 `C110CameraActivity`预览顶部「相机」/菜单不再弹出中间的实验/删图提示菜单，直接进入原有 `C110DeviceControls.showSettings`；删除原设备控制菜单里「说明」占位项。移除旧`MainActivity.openC110PhotoLabFromUnifiedSettings`方法，Manifest注销`C110ResolutionLabActivity`（实验源代码仍在仓库历史以供追溯）。统一设置的USB画质、云模型、OCR速度、诊断等页静态长文清除，但不删可操作设置、实际状态、必要错误、Max收费确认或日志导出。
+- **原仓与版本**：原仓`vobichngan285-collab/kanzi-assistant`；基线v1.0.61分支`exp/c110-tts-regression-20261120` HEAD `e8c5430a5846c58958eec4ef0ae567e8219b2d51`；隔离分支`exp/preview-navigation-clean-camera-20261120` HEAD **`3d1654ee2c2d75f3c98ad5d17cf872cf05d60df7`**。app versionCode71/name`1.0.62-preview-clean-camera`，调试包继续维持`com.vobich.bluestar.c110plusquick159`，用户现有保益独立小触发器`com.vobich.bluestar.boyuebridge`仍然能指定相同Home `ACTION_QUICK_SHOT`；主App只有一枚图标，不需重新下载/绑定小触发器。
+- **未修改且必须保持**：v1.0.61真机已恢复的TTS相关`C110FrameReader`/快拍流程、原厂1001只拍一张高清JPEG、共用云OCR/API Key、原3012/3016/3001/2015和150ms LibVLC/竖屏ROI、9011/9038机身控制、USB/手机核心预览摄像头处理、保益快捷入口及蓝星配色。实际差异已与v1.0.61提交比对，未触碰TTS源码/云/OEM原始协议。
+- **构建与发布已核验**：新workflow `.github/workflows/preview-navigation-clean-c110-20261120.yml` GitHub Actions run **`44703319132` `completed/success`**，成功包含针对singleTop修复/保益兼容/唯一Launcher/机身指令白名单/保留TTS的静态检查及Java单测、Android arm64完整Gradle编译、原UVC/LibVLC资源APK验证、Release发布。Release `bluestar-preview-clean-c110-20261120-v0162` target与run HEAD均为`3d1654ee2c2d75f3c98ad5d17cf872cf05d60df7`。单个主包`BlueStar_Guide_C110_Preview_Clean_1.0.62.apk`，**56,715,745 bytes**，SHA256 `b5d54dee522f888352560d77808c9b198b6cfe2b3236f8800dcbbca4a535ed6f`。下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-preview-clean-c110-20261120-v0162/BlueStar_Guide_C110_Preview_Clean_1.0.62.apk ；run https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44703319132 。专项说明 `cloud-vision-app/docs/PREVIEW_NAV_CLEAN_C110_20261120.md`。**CI成功不等于vivo真机完成预览和声音验收**。
+- **下一步测试最少**：用户安装v1.0.62主APK（不要卸载保益小触发器）；打开蓝星→设置→预览，检查是否直接进入摄像头画面而非返回主页；查看相机→C110设置是否干净；试听广荣或真实拍照 OCR朗读确保v1.0.61正常语音保留。未经用户指令不再加实验页、长说明或额外桌面图标。
+
+---
+
 # 2026-11-20｜v1.0.62：设置→预览不再跳主页、C110设置移除实验与冗长说明；CI/Release成功，待vivo真机
 
 - **用户真机确认上一版**：v1.0.61广荣微软TTS已经恢复正常；当前要求解决从设置底部「预览」直接返回主页的bug，以及移除「相机→C110+运动相机」的实验入口和冗余说明文字。保益独立小启动器继续正常使用，不新增图标。
