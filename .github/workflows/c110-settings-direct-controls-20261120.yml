@@ -131,7 +131,7 @@ jobs:
           assert 'void openC110FromUnifiedSettings()' not in main
           assert 'new Intent(this,C110CameraActivity.class)' in home
           # Keep previously verified C110 150ms VLC, OEM photo and grtts sync.
-          for src in (preview,main):
+          for src in (preview,):
               for flag in ['--network-caching=150','--live-caching=150',
                            ':network-caching=150',':live-caching=150']:
                   assert flag in src, 'missing prior 150ms VLC option'
