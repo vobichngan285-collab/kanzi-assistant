@@ -121,6 +121,8 @@ public final class MainActivity extends CameraActivity {
     private Button c110Button,c110PreviewButton;
     private C110LivePreview c110Preview;
     private C110WifiBootstrap c110WifiBootstrap;
+    private C110DeviceControls settingsC110DeviceControls;
+    private String settingsC110Status="";
     private C110QuickShotController quickShot;
     private boolean c110PreviewWanted,c110PreviewPlaying;
     // C110 has independent digital zoom. Never silently reuse phone/USB zoom.
@@ -724,8 +726,38 @@ public final class MainActivity extends CameraActivity {
         // if the user closes Settings. Return to the actual HomeActivity.
         if(settingsOnly)finish();
     }
-    void openC110FromUnifiedSettings(){
-        startActivity(new Intent(this,C110CameraActivity.class));
+    /** C110 hardware settings are operated directly in unified Settings.
+     *  Never start C110CameraActivity/VLC merely to change LED or beep. */
+    String currentC110WifiSettingsStatus(){
+        return C110WifiBootstrap.connected(this)!=null?
+            "C110 Wi-Fi已验证连接，可以直接控制机身":
+            "尚未连接C110 Wi-Fi；请先点击连接";
+    }
+    String lastC110SettingsStatus(){return settingsC110Status;}
+    private void setC110SettingsStatus(String value){
+        if(android.os.Looper.myLooper()!=android.os.Looper.getMainLooper()){
+            handler.post(()->setC110SettingsStatus(value));return;
+        }
+        settingsC110Status=value==null?"":value;
+        setResultStatus(settingsC110Status);
+        if(largeSettings!=null&&!largeSettings.isClosed())
+            largeSettings.updateC110Status(settingsC110Status);
+    }
+    void connectC110WifiFromSettings(){
+        if(C110WifiBootstrap.connected(this)!=null){
+            setC110SettingsStatus("C110 Wi-Fi已验证连接，可直接设置机身");
+            return;
+        }
+        setC110SettingsStatus("正在申请连接C110相机Wi-Fi；按系统提示确认");
+        if(c110WifiBootstrap!=null)c110WifiBootstrap.requestForCameraMode();
+    }
+    void setC110BeepFromSettings(boolean enabled){
+        if(settingsC110DeviceControls!=null)
+            settingsC110DeviceControls.setSoundFromSettings(enabled);
+    }
+    void setC110LightFromSettings(int seconds){
+        if(settingsC110DeviceControls!=null)
+            settingsC110DeviceControls.setLightPolicyFromSettings(seconds);
     }
     void openC110PhotoLabFromUnifiedSettings(){
         // Explicit isolated A/B experiment entry, NEVER the Home quick photo.
@@ -1258,7 +1290,8 @@ public final class MainActivity extends CameraActivity {
         super.onCreate(state);
         volumeShortcut=new C110VolumeShortcut(this,this::shortcutPhoto);
         diagnostics=new RuntimeDiagnostics(this);
-        c110WifiBootstrap=new C110WifiBootstrap(this,this::setResultStatus);
+        c110WifiBootstrap=new C110WifiBootstrap(this,this::setC110SettingsStatus);
+        settingsC110DeviceControls=new C110DeviceControls(this,this::setC110SettingsStatus);
         modelUsage=new ModelUsageLedger(this);
         SharedPreferences prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
         // Home-first experiment: USB attachment must not launch preview unasked.
@@ -3442,6 +3475,9 @@ public final class MainActivity extends CameraActivity {
     }
     @Override protected void onDestroy(){
         if(quickShot!=null){quickShot.shutdown();quickShot=null;}
+        if(settingsC110DeviceControls!=null){
+            settingsC110DeviceControls.shutdown();settingsC110DeviceControls=null;
+        }
         if(c110WifiBootstrap!=null){c110WifiBootstrap.shutdown();c110WifiBootstrap=null;}
         stopC110LivePreview(true);
         c110PreviewExecutor.shutdownNow();
