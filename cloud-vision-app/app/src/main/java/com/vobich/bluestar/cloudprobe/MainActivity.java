@@ -757,20 +757,24 @@ public final class MainActivity extends CameraActivity {
         if(settingsC110DeviceControls!=null)
             settingsC110DeviceControls.setLightPolicyFromSettings(seconds);
     }
-    void openC110PhotoLabFromUnifiedSettings(){
-        // Explicit isolated A/B experiment entry, NEVER the Home quick photo.
-        startActivity(new Intent(this,C110ResolutionLabActivity.class));
-    }
     void openHomeFromUnifiedSettings(){
         if(largeSettings!=null&&!largeSettings.isClosed())largeSettings.close();
         if(!settingsOnly)finish();
     }
     void openPreviewFromUnifiedSettings(){
         if(settingsOnly){
-            Intent intent=new Intent(this,MainActivity.class);
-            intent.putExtra("bluestar_launch_preview",true);
-            startActivity(intent);
-            finish();
+            // Settings-only is already the task's top MainActivity. Because
+            // MainActivity is singleTop, startActivity(MainActivity)+finish()
+            // reuses and then destroys THIS activity, sending users Home.
+            // Activate its existing camera view in-place instead.
+            settingsOnly=false;
+            Intent launch=getIntent();
+            if(launch!=null)launch.removeExtra("bluestar_launch_settings");
+            if(rootFrame!=null)rootFrame.setBackgroundColor(Color.BLACK);
+            if(previewContainer!=null)previewContainer.setVisibility(View.VISIBLE);
+            if(largeSettings!=null&&!largeSettings.isClosed())largeSettings.close();
+            usbForeground=true;
+            handler.post(this::resumeForegroundPreview);
         }else if(largeSettings!=null&&!largeSettings.isClosed())largeSettings.close();
     }
     @Override public void onBackPressed(){
@@ -3399,6 +3403,13 @@ public final class MainActivity extends CameraActivity {
             suspendReadingCamera();
             return;
         }
+        resumeForegroundPreview();
+    }
+    /** Common camera-resume path for normal Home->Preview and Settings->Preview.
+     *  Never creates a second MainActivity or changes the original C110/TTS path. */
+    private void resumeForegroundPreview(){
+        if(settingsOnly||!uiActive||isFinishing())return;
+        usbForeground=true;
         // Handles permission/connect having arrived before onResume on cold USB launch.
         if(!usingPhoneCamera)usbReopenWanted=true;
         usbResumeAtMs=SystemClock.elapsedRealtime();
