@@ -88,22 +88,57 @@ final class CloudVisionClient {
             OcrSpeedExperiment.A,network);
     }
 
+    /** User-configured role routing. No caller reimplements the cloud protocol. */
+    static Result recognize(byte[] jpeg,CloudProviderStore.Config cfg,TaskCatalog.Task task,
+                            PartListener listener,String ocrSpeedMode,Network network)
+                            throws Exception {
+        return recognizeInternal(jpeg,cfg.key,task,cfg.model,listener,false,false,
+            OcrSpeedExperiment.normalize(ocrSpeedMode),network,cfg);
+    }
+    static Result recognize(byte[] jpeg,CloudProviderStore.Config cfg,TaskCatalog.Task task,
+                            PartListener listener,boolean allowSearch,Network network)
+                            throws Exception {
+        return recognizeInternal(jpeg,cfg.key,task,cfg.model,listener,false,allowSearch,
+            OcrSpeedExperiment.A,network,cfg);
+    }
+    static Result recognizeText(String textPrompt,CloudProviderStore.Config cfg,
+                                PartListener listener,boolean allowSearch,Network network)
+                                throws Exception {
+        if(textPrompt==null||textPrompt.trim().isEmpty())
+            throw new IllegalArgumentException("文字智能分析缺少上下文");
+        TaskCatalog.Task task=new TaskCatalog.Task(
+            "text-followup","文字智能分析",textPrompt,TaskCatalog.VISION,true,"✦");
+        return recognizeInternal(null,cfg.key,task,cfg.model,listener,true,allowSearch,
+            OcrSpeedExperiment.A,network,cfg);
+    }
+
     private static Result recognizeInternal(byte[] jpeg,String key,TaskCatalog.Task task,
                                String visionModel,PartListener listener,
                                boolean textOnly,boolean allowSearch,String ocrSpeedMode,
                                Network cloudNetwork) throws Exception {
+        return recognizeInternal(jpeg,key,task,visionModel,listener,textOnly,
+            allowSearch,ocrSpeedMode,cloudNetwork,null);
+    }
+
+    private static Result recognizeInternal(byte[] jpeg,String key,TaskCatalog.Task task,
+                               String visionModel,PartListener listener,
+                               boolean textOnly,boolean allowSearch,String ocrSpeedMode,
+                               Network cloudNetwork,CloudProviderStore.Config cfg) throws Exception {
         if(key==null||key.trim().isEmpty())
             throw new IllegalArgumentException("请先在设置中配置API Key");
         boolean isOcr=TaskCatalog.OCR.equals(task.engine);
         boolean isBook=isOcr&&ReadingRules.TASK_ID.equals(task.id);
         boolean connectionTest="model-probe".equals(task.id);
-        boolean streaming=(!isOcr&&!connectionTest)||
-            (isOcr&&OcrSpeedExperiment.streaming(ocrSpeedMode));
+        // Default Bailian behavior is intentionally byte-for-byte unchanged.
+        // Other vendors start non-streaming unless the user explicitly enables SSE.
+        boolean custom=cfg!=null&&cfg.custom;
+        boolean streaming=custom?(cfg.stream&&!connectionTest):
+            ((!isOcr&&!connectionTest)||(isOcr&&OcrSpeedExperiment.streaming(ocrSpeedMode)));
         // Text recognition permits dedicated OCR plus the three visual models.
         // Other visual tasks retain their separate three-choice selector.
-        if(isOcr&&OcrModelCatalog.indexOf(visionModel)<0)
+        if(!custom&&isOcr&&OcrModelCatalog.indexOf(visionModel)<0)
             throw new IllegalArgumentException("所选文字识别模型不支持，请重新选择");
-        if(!isOcr&&VisionModelCatalog.indexOf(visionModel)<0)
+        if(!custom&&!isOcr&&VisionModelCatalog.indexOf(visionModel)<0)
             throw new IllegalArgumentException("所选视觉模型不支持，请重新选择");
         String model=visionModel;
         boolean customPreset=!task.custom&&!task.instruction.equals(
@@ -145,19 +180,21 @@ final class CloudVisionClient {
             .put("max_tokens",maxOutput).put("messages",new JSONArray().put(
                 new JSONObject().put("role","user").put("content",content)));
         // Flash/Max stays non-thinking for speed; dedicated OCR is unchanged.
-        if(VisionModelCatalog.isBudgetFlash(model)||fastMax)
+        if(!custom&&(VisionModelCatalog.isBudgetFlash(model)||fastMax))
             body.put("enable_thinking",false);
         // Official Bailian Chat Completions: enable_search on the SAME request.
         // Only explicit follow-ups qualify. This never forces a paid search,
         // never creates an extra HTTP request, and never searches OCR photos.
-        boolean web=SearchRoutePolicy.allow(task.id,task.engine,model,allowSearch);
+        boolean web=!custom&&SearchRoutePolicy.allow(task.id,task.engine,model,allowSearch);
         if(web)body.put("enable_search",true);
-        if(streaming)body.put("stream_options",new JSONObject().put("include_usage",true));
+        if(streaming&&!custom)
+            body.put("stream_options",new JSONObject().put("include_usage",true));
 
-        URL endpoint=new URL(ENDPOINT);
+        URL endpoint=new URL(custom?CloudProviderPolicy.validatedUrl(cfg.url):ENDPOINT);
         HttpURLConnection connection=(HttpURLConnection)(cloudNetwork==null?
             endpoint.openConnection():cloudNetwork.openConnection(endpoint));
         connection.setRequestMethod("POST");
+        connection.setInstanceFollowRedirects(false);
         connection.setConnectTimeout(12000);
         connection.setReadTimeout(web?90000:45000);
         connection.setDoOutput(true);
