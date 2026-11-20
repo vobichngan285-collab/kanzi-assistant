@@ -1,0 +1,687 @@
+package com.vobich.bluestar.cloudprobe;
+
+import android.content.Context;
+import androidx.appcompat.app.AlertDialog;
+import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.text.InputType;
+import android.util.TypedValue;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.SeekBar;
+import android.widget.Switch;
+import android.widget.TextView;
+import android.speech.tts.TextToSpeech;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+
+/** Canonical single Blue Star settings page shared by Home and live preview.
+ *  All legacy voice/camera/USB/cloud/tasks/diagnostic controls are kept here;
+ *  HomeActivity no longer implements a second partial settings UI.
+ */
+final class BlueStarSettingsScreen {
+    private static final int BG=0xFF091B32, PANEL=0xFF183553, TEXT=0xFFF3F8FF, SUB=0xFFC3D7EF;
+    private final MainActivity app;
+    private final FrameLayout host,overlay;
+    private LinearLayout content;
+    private final ArrayList<Page> history=new ArrayList<>();
+    private boolean closed;
+    private static final class Page {
+        final String name,param;
+        Page(String n,String p){name=n;param=p;}
+    }
+    BlueStarSettingsScreen(MainActivity activity,FrameLayout root){
+        app=activity;host=root;
+        overlay=new FrameLayout(app);
+        overlay.setBackgroundColor(BG);
+        overlay.setClickable(true);overlay.setFocusable(true);
+        host.addView(overlay,new FrameLayout.LayoutParams(-1,-1));
+        navigate("home","");
+    }
+    boolean isClosed(){return closed;}
+    void openApiKey(){navigate("cloud","");navigate("key","");}
+    void close(){
+        if(closed)return;
+        closed=true;
+        host.removeView(overlay);
+        app.settingsPageClosed();
+    }
+    void back(){
+        if(history.size()<=1){close();return;}
+        history.remove(history.size()-1);
+        Page p=history.get(history.size()-1);
+        render(p);
+    }
+    private void navigate(String name,String param){
+        history.add(new Page(name,param));
+        render(history.get(history.size()-1));
+    }
+    private int dp(int x){return Math.round(x*app.getResources().getDisplayMetrics().density);}
+    private GradientDrawable bg(int color,int radius){
+        GradientDrawable d=new GradientDrawable();
+        d.setColor(color);d.setCornerRadius(dp(radius));return d;
+    }
+    private TextView text(String value,int sp,int color,boolean bold){
+        TextView t=new TextView(app);
+        t.setText(value);t.setTextColor(color);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP,sp);
+        if(bold)t.setTypeface(null,Typeface.BOLD);
+        t.setGravity(Gravity.CENTER_VERTICAL);
+        return t;
+    }
+    private void render(Page p){
+        if(closed)return;
+        overlay.removeAllViews();
+        LinearLayout page=new LinearLayout(app);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setPadding(dp(12),dp(12),dp(12),dp(12));
+        overlay.addView(page,new FrameLayout.LayoutParams(-1,-1));
+
+        LinearLayout bar=new LinearLayout(app);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        Button back=button("‹",0xFF265077);
+        back.setTextSize(30);
+        bar.addView(back,new LinearLayout.LayoutParams(dp(58),dp(62)));
+        back.setContentDescription("返回上一级");
+        back.setOnClickListener(v->back());
+        String heading;
+        switch(p.name){
+            case "speech":heading="语音与朗读";break;
+            case "engines":heading="选择语音引擎";break;
+            case "tasks":heading="任务管理";break;
+            case "preset":heading="编辑预设提示词";break;
+            case "custom":heading="编辑自定义任务";break;
+            case "camera":heading="相机";break;
+            case "volume":heading="音量键快捷拍照";break;
+            case "c110-camera":heading="C110+ 运动相机";break;
+            case "usb-picture":heading="USB 画质调节";break;
+            case "sources":heading="选择摄像头";break;
+            case "feedback":heading="提示音与振动";break;
+            case "cloud":heading="云端 AI";break;
+            case "models":heading="视觉模型选择";break;
+            case "ocr-models":heading="文字识别模型选择";break;
+            case "ocr-speed":heading="文字朗读方式";break;
+            case "usage":heading="模型用量统计";break;
+            case "usage-clear":heading="清空用量记录";break;
+            case "key":heading="API Key";break;
+            case "result":heading="上次识别结果";break;
+            case "diagnostics":heading="运行诊断";break;
+            default:heading="蓝星向导 · 设置";
+        }
+        TextView title=text(heading,25,TEXT,true);
+        title.setPadding(dp(9),0,0,0);
+        bar.addView(title,new LinearLayout.LayoutParams(0,dp(64),1f));
+        page.addView(bar);
+        ScrollView scroll=new ScrollView(app);
+        scroll.setFillViewport(true);
+        page.addView(scroll,new LinearLayout.LayoutParams(-1,0,1f));
+        content=new LinearLayout(app);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(4),dp(12),dp(4),dp(25));
+        scroll.addView(content,new ScrollView.LayoutParams(-1,-2));
+        if(p.name.equals("home"))home();
+        else if(p.name.equals("speech"))speech();
+        else if(p.name.equals("engines"))engines();
+        else if(p.name.equals("tasks"))tasks();
+        else if(p.name.equals("preset"))editor(p.param,false);
+        else if(p.name.equals("custom"))editor(p.param,true);
+        else if(p.name.equals("camera"))camera();
+        else if(p.name.equals("volume"))volumeGesture();
+        else if(p.name.equals("c110-camera"))c110Camera();
+        else if(p.name.equals("usb-picture"))usbPicture();
+        else if(p.name.equals("sources"))sources();
+        else if(p.name.equals("feedback"))feedback();
+        else if(p.name.equals("cloud"))cloud();
+        else if(p.name.equals("models"))models();
+        else if(p.name.equals("ocr-models"))ocrModels();
+        else if(p.name.equals("ocr-speed"))ocrSpeed();
+        else if(p.name.equals("usage"))usage();
+        else if(p.name.equals("usage-clear"))usageClear();
+        else if(p.name.equals("key"))apiKey();
+        else if(p.name.equals("result"))result();
+        else if(p.name.equals("diagnostics"))diagnostics();
+    }
+    private Button button(String value,int color){
+        Button b=new Button(app);
+        b.setAllCaps(false);
+        b.setText(value);b.setTextColor(Color.WHITE);
+        b.setTextSize(TypedValue.COMPLEX_UNIT_SP,20);
+        b.setGravity(Gravity.CENTER);
+        b.setBackground(bg(color,15));
+        b.setMinHeight(0);b.setMinimumHeight(0);
+        b.setPadding(dp(8),0,dp(8),0);
+        return b;
+    }
+    private void row(String label,String description,Runnable clicked){
+        LinearLayout block=new LinearLayout(app);
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.setPadding(dp(18),dp(11),dp(18),dp(11));
+        block.setBackground(bg(PANEL,15));
+        // Single-line setting title. Descriptions are intentionally not rendered.
+        TextView title=text(label+"  ›",22,TEXT,true);
+        block.addView(title);
+        block.setMinimumHeight(dp(66));
+        block.setClickable(true);block.setFocusable(true);
+        block.setOnClickListener(v->clicked.run());
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+        lp.bottomMargin=dp(12);
+        content.addView(block,lp);
+    }
+    private void heading(String value){
+        TextView h=text(value,21,TEXT,true);
+        h.setPadding(dp(8),dp(13),dp(8),dp(10));
+        content.addView(h);
+    }
+    private void note(String value){
+        TextView note=text(value,17,SUB,false);
+        note.setPadding(dp(12),dp(4),dp(12),dp(17));
+        content.addView(note);
+    }
+    private void action(String label,Runnable task){
+        Button button=button(label,0xFF246AA6);
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(66));
+        lp.bottomMargin=dp(14);
+        content.addView(button,lp);button.setOnClickListener(v->task.run());
+    }
+    private void toggle(String label,String desc,String key,boolean defaultValue){
+        SharedPreferences prefs=app.getSharedPreferences("kanzi_settings",Context.MODE_PRIVATE);
+        LinearLayout line=new LinearLayout(app);
+        line.setGravity(Gravity.CENTER_VERTICAL);
+        line.setBackground(bg(PANEL,14));
+        line.setPadding(dp(16),dp(14),dp(16),dp(14));
+        LinearLayout labels=new LinearLayout(app);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        TextView title=text(label,21,TEXT,true);labels.addView(title);
+        // Keep toggles concise; the switch state is already visible.
+        line.addView(labels,new LinearLayout.LayoutParams(0,-2,1f));
+        Switch control=new Switch(app);
+        control.setChecked(prefs.getBoolean(key,defaultValue));
+        line.addView(control);
+        control.setOnCheckedChangeListener((v,isChecked)->
+            prefs.edit().putBoolean(key,isChecked).apply());
+        line.setOnClickListener(v->control.setChecked(!control.isChecked()));
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+        lp.bottomMargin=dp(10);
+        content.addView(line,lp);
+    }
+    private void home(){
+        // Single source of truth, visually matched to HomeActivity's Blue
+        // Star blue navigation and retained complete settings capabilities.
+        row("相机","C110+快捷拍照按键、手机与USB、方向、画质、预览",()->navigate("camera",""));
+        row("语音与朗读","语音引擎、朗读速度、内容过滤",()->navigate("speech",""));
+        row("云端 AI","OCR与视觉模型、速度、API Key、用量",()->navigate("cloud",""));
+        row("任务管理","预设提示词、任务显示与自定义",()->navigate("tasks",""));
+        row("提示音与振动","拍照音效、语音发送音和振动",()->navigate("feedback",""));
+        row("上次识别结果","文字内容和再次朗读",()->navigate("result",""));
+        row("运行诊断","匿名耗时、错误和日志导出",()->navigate("diagnostics",""));
+    }
+    private void speech(){
+        SharedPreferences prefs=app.getSharedPreferences("kanzi_settings",Context.MODE_PRIVATE);
+        row("选择语音引擎","",()->navigate("engines",""));
+        heading("朗读速度");
+        float rate=prefs.getFloat("local_tts_rate",1f);
+        TextView value=text(String.format(Locale.CHINA,"%.2f×",rate),23,TEXT,true);
+        value.setGravity(Gravity.CENTER);
+        content.addView(value);
+        SeekBar slider=new SeekBar(app);
+        slider.setMax(50);
+        slider.setProgress(Math.round((rate-.5f)*20f));
+        content.addView(slider,new LinearLayout.LayoutParams(-1,dp(67)));
+        slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            @Override public void onProgressChanged(SeekBar bar,int progress,boolean user){
+                if(!user)return;
+                float speed=.5f+.05f*progress;
+                value.setText(String.format(Locale.CHINA,"%.2f×",speed));
+                app.applySpeechSpeed(speed);
+            }
+            @Override public void onStartTrackingTouch(SeekBar v){}
+            @Override public void onStopTrackingTouch(SeekBar v){}
+        });
+        heading("朗读内容过滤");
+        toggle("过滤英文","朗读时跳过英文单词和字母","speech_skip_latin",false);
+        toggle("过滤数字","朗读时跳过阿拉伯数字","speech_skip_digits",false);
+        toggle("过滤符号","跳过特殊符号，保留停顿","speech_skip_symbols",false);
+        toggle("对所有任务生效","默认只过滤「朗读文字」任务","speech_filter_all_tasks",false);
+        action("▶ 试听当前语音",()->app.previewSpeech());
+    }
+    private void engines(){
+        List<TextToSpeech.EngineInfo> engines=app.availableTtsEngines();
+        row(("手机系统默认语音引擎".equals(app.currentSpeechEngineDescription())?"✓ ":"")
+            +"跟随系统默认","",()->{
+            app.changeSpeechEngine("");back();
+        });
+        for(TextToSpeech.EngineInfo engine:engines){
+            String id=engine.name,label=engine.label==null?id:engine.label;
+            row((id.equals(app.currentSpeechEngineDescription())?"✓ ":"")+label,"",()->{
+                app.changeSpeechEngine(id);back();
+            });
+        }
+        if(engines.isEmpty())note("没有发现其他语音引擎，可检查手机系统的语音合成设置。");
+    }
+    private void tasks(){
+        for(TaskCatalog.Task task:TaskCatalog.all(app)){
+            String label=(TaskCatalog.isPresetHidden(app,task.id)?"已隐藏 · ":"")+
+                (task.custom?"★ ":"")+" "+task.name;
+            row(label,task.custom?"自定义任务 · 可编辑名称、图标、提示词":
+                "系统预设 · 可修改AI提示词、恢复默认",
+                ()->navigate(task.custom?"custom":"preset",task.id));
+        }
+        action("＋ 新建自定义任务",()->navigate("custom",""));
+    }
+    private TaskCatalog.Task findTask(String id){
+        for(TaskCatalog.Task t:TaskCatalog.all(app))if(t.id.equals(id))return t;
+        return null;
+    }
+    private void editor(String id,boolean custom){
+        TaskCatalog.Task task=findTask(id);
+        if(!id.isEmpty()&&task==null){note("此任务已不存在");return;}
+        if(!custom&&task==null){note("未找到预设任务");return;}
+        TextView nameTitle=text("任务名称",20,TEXT,true);
+        content.addView(nameTitle);
+        EditText name=new EditText(app);
+        name.setTextColor(TEXT);name.setTextSize(20);
+        name.setText(task==null?"":task.name);
+        name.setEnabled(custom);
+        if(!custom)name.setBackgroundTintList(ColorStateList.valueOf(0xFF3B5977));
+        content.addView(name,new LinearLayout.LayoutParams(-1,dp(65)));
+        TextView promptTitle=text("AI 提示词",21,TEXT,true);
+        promptTitle.setPadding(0,dp(17),0,dp(7));
+        content.addView(promptTitle);
+        EditText prompt=new EditText(app);
+        prompt.setTextColor(TEXT);prompt.setHintTextColor(0xFF9AB9D5);
+        prompt.setTextSize(TypedValue.COMPLEX_UNIT_SP,21);
+        prompt.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        prompt.setGravity(Gravity.TOP);
+        prompt.setMinLines(6);prompt.setMaxLines(12);
+        prompt.setHint("输入你希望AI按照什么规则识别图片");
+        prompt.setText(task==null?"":task.instruction);
+        prompt.setBackground(bg(PANEL,12));
+        prompt.setPadding(dp(14),dp(14),dp(14),dp(14));
+        content.addView(prompt,new LinearLayout.LayoutParams(-1,-2));
+        final String[] icon={task==null?"✦":task.icon};
+        if(custom){
+            heading("任务图标");
+            String[] palette=TaskCatalog.iconPalette();
+            Button iconButton=button("点击切换图标："+icon[0],PANEL);
+            iconButton.setContentDescription("选择任务图标，当前"+icon[0]);
+            LinearLayout.LayoutParams iconLp=new LinearLayout.LayoutParams(-1,dp(68));
+            iconLp.bottomMargin=dp(13);content.addView(iconButton,iconLp);
+            iconButton.setOnClickListener(v->{
+                int current=0;for(int k=0;k<palette.length;k++)if(palette[k].equals(icon[0]))current=k;
+                icon[0]=palette[(current+1)%palette.length];
+                iconButton.setText("点击切换图标："+icon[0]);
+                iconButton.setContentDescription("选择任务图标，当前"+icon[0]);
+            });
+        }
+        action("保存修改",()->{
+            try{
+                if(custom){
+                    TaskCatalog.Task saved=TaskCatalog.upsert(app,
+                        task==null?null:task.id,name.getText().toString(),
+                        prompt.getText().toString(),icon[0]);
+                    app.refreshSelectedTask(saved.id);
+                }else{
+                    TaskCatalog.updatePreset(app,task.id,prompt.getText().toString());
+                    app.refreshSelectedTask(TaskCatalog.selectedId(app));
+                }
+                app.toastShort("任务已保存");
+                back();
+            }catch(IllegalArgumentException e){prompt.setError(e.getMessage());}
+        });
+        if(!custom&&TaskCatalog.isPresetHidden(app,task.id))
+            action("恢复显示到任务宫格",()->{
+                TaskCatalog.restoreHiddenPreset(app,task.id);
+                app.toastShort("已恢复："+task.name);
+                back();
+            });
+        if(!custom)action("恢复系统默认提示词",()->{
+            TaskCatalog.restorePreset(app,task.id);
+            app.refreshSelectedTask(TaskCatalog.selectedId(app));
+            app.toastShort("已恢复系统默认提示词");
+            back();
+        });
+        else if(task!=null)action("删除自定义任务",()->{
+            TaskCatalog.remove(app,task.id);
+            app.refreshSelectedTask(TaskCatalog.selectedId(app));
+            app.toastShort("已删除自定义任务");
+            back();
+        });
+    }
+    private int volumeGestureIndex(String selected){
+        for(int i=0;i<C110VolumeShortcut.VALUES.length;i++)
+            if(C110VolumeShortcut.VALUES[i].equals(selected))return i;
+        return 0;
+    }
+    private void volumeGesture(){
+        note("仅在软件前台识别实体音量键。首页与预览均可拍C110+高清原图；"
+            +"测试此页面的手势不会发送1001快门。"
+            +"普通单击仍调节音量；双击窗口600毫秒，长按650毫秒。");
+        final String current=C110VolumeShortcut.selected(app);
+        for(int i=0;i<C110VolumeShortcut.VALUES.length;i++){
+            final String id=C110VolumeShortcut.VALUES[i];
+            row((current.equals(id)?"✓ ":"")+C110VolumeShortcut.LABELS[i],"",()->{
+                C110VolumeShortcut.select(app,id);
+                render(history.get(history.size()-1));
+            });
+        }
+        heading("实体键接收诊断");
+        note("请保持本设置页在前台，按两次已选音量键，再点刷新。"
+            +"只记录按下/抬起次数与手势间隔，不含照片、密钥或音频。");
+        note(C110VolumeShortcut.diagnostic(app));
+        action("刷新按键记录",()->render(history.get(history.size()-1)));
+        action("清空按键记录",()->{
+            C110VolumeShortcut.clearDiagnostic(app);
+            render(history.get(history.size()-1));
+        });
+        note("如果按下/抬起次数一直为0，说明当前窗口没有收到所选按键事件，"
+            +"不能只调整双击时间来解决，需要检查系统或读屏软件的按键拦截。");
+    }
+    private void c110Camera(){
+        note("C110+ 的拍照/实时预览与主页快捷键共用原厂1001拍照逻辑。"
+            +"以下设置只组织入口，不会偷偷启动相机或者修改照片分辨率。");
+        row("快捷拍照实体键设置","音量上/下双击或长按",
+            ()->navigate("volume",""));
+        row("当前文字识别模型 · "+OcrModelCatalog.label(app.ocrModelDescription()),
+            "全局共享",()->navigate("ocr-models",""));
+        row("当前视觉模型 · "+app.visionModelDescription(),"全局共享",
+            ()->navigate("models",""));
+        action("打开C110+实时预览和机身设置",()->app.openC110FromUnifiedSettings());
+        note("机身提示音(9011)与指示灯(9038)需要连接C110后，"
+            +"由其原有相机设置界面操作；本页不直接发送硬件指令。"
+            +"分辨率由原厂SJCAM Zone选择，安全策略不开放未验证的4003删图。");
+    }
+
+    private void camera(){
+        row("音量键快捷拍照 · "+C110VolumeShortcut.LABELS[
+                volumeGestureIndex(C110VolumeShortcut.selected(app))],
+            "双击/长按音量上或下，所有页面共用，前台生效",
+            ()->navigate("volume",""));
+        row("C110+ 运动相机","实时预览、原厂拍照、灯光与提示音说明",
+            ()->navigate("c110-camera",""));
+        row("摄像头 · "+app.sourceDescription(),"",()->navigate("sources",""));
+        row("画面旋转 · "+app.rotationDescription(),"",()->{app.adjustCamera(1);render(history.get(history.size()-1));});
+        row("水平镜像 · "+app.mirrorDescription(),"",()->{app.adjustCamera(2);render(history.get(history.size()-1));});
+        row("垂直翻转 · "+app.flipDescription(),"",()->{app.adjustCamera(3);render(history.get(history.size()-1));});
+        row("USB 左右校正 · "+app.usbCorrectionDescription(),"",()->{app.adjustCamera(4);render(history.get(history.size()-1));});
+        row("缩放恢复1×","双指捏合和张开缩放画面",()->{app.adjustCamera(5);render(history.get(history.size()-1));});
+        row("USB 画质调节","硬件亮度、对比度、饱和度和增益",()->navigate("usb-picture",""));
+        row("USB插拔自动切换 · "+(app.isUsbAutoSwitch()?"开启":"关闭"),
+            "插上切外置；拔掉切手机后置；手动选择优先",
+            ()->{app.setUsbAutoSwitch(!app.isUsbAutoSwitch());
+                 render(history.get(history.size()-1));});
+        row("插入USB时自动启动 · "+(app.isUsbAutoLaunch()?"开启":"关闭"),
+            "Android弹出设备应用选择；首次需授权，锁屏不保证启动",
+            ()->{app.setUsbAutoLaunch(!app.isUsbAutoLaunch());
+                 render(history.get(history.size()-1));});
+    }
+    private void usbPicture(){
+        heading("外置摄像头硬件画质");
+        note("只调节设备支持的 UVC 项目，直接作用于采集画面，"
+            +"不是屏幕滤镜。强光下发白可能是自动曝光过高，"
+            +"仅调整饱和度无法恢复已过曝的文字。");
+        if(!app.isUsbSelected()){
+            note("当前为手机摄像头。请先在摄像头设置中选择 USB，再进入此页。");
+            return;
+        }
+        TextView status=text("正在读取USB设备实际支持的控制项…",17,SUB,false);
+        content.addView(status,new LinearLayout.LayoutParams(-1,-2));
+        SeekBar[] sliders=new SeekBar[UsbPictureLevels.COUNT];
+        TextView[] labels=new TextView[UsbPictureLevels.COUNT];
+        for(int k=0;k<UsbPictureLevels.COUNT;k++){
+            final int kind=k;
+            labels[k]=text(UsbPictureLevels.LABELS[k]+" · 检查中",20,TEXT,true);
+            labels[k].setPadding(dp(10),dp(16),dp(10),0);
+            content.addView(labels[k],new LinearLayout.LayoutParams(-1,-2));
+            SeekBar slider=new SeekBar(app);
+            slider.setMax(100);
+            slider.setProgress(50);
+            slider.setEnabled(false);
+            content.addView(slider,new LinearLayout.LayoutParams(-1,dp(58)));
+            sliders[k]=slider;
+            slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+                @Override public void onProgressChanged(SeekBar bar,int progress,boolean fromUser){
+                    if(fromUser)labels[kind].setText(UsbPictureLevels.LABELS[kind]+
+                        " · "+progress+"%（松手应用）");
+                }
+                @Override public void onStartTrackingTouch(SeekBar bar){}
+                @Override public void onStopTrackingTouch(SeekBar bar){
+                    final int value=bar.getProgress();
+                    bar.setEnabled(false);
+                    status.setText("正在发送 UVC 硬件调节请求…");
+                    app.setUsbPictureControl(kind,value,(supported,values,message)->{
+                        if(closed||history.isEmpty()||
+                           !"usb-picture".equals(history.get(history.size()-1).name))return;
+                        status.setText(message);
+                        bar.setEnabled(true);
+                    });
+                }
+            });
+        }
+        action("重新读取设备控制项",()->render(history.get(history.size()-1)));
+        action("恢复USB画质默认设置",()->new AlertDialog.Builder(app)
+            .setTitle("恢复USB摄像头硬件画质")
+            .setMessage("只恢复该USB设备的亮度、对比度、饱和度和增益，"
+                +"不会改变已修复的旋转、左右校正、缩放或云端模型。")
+            .setNegativeButton("取消",null)
+            .setPositiveButton("恢复默认",(dialog,which)->{
+                status.setText("正在恢复硬件默认值…");
+                app.resetUsbPictureControls((supported,values,message)->{
+                    if(closed||history.isEmpty()||
+                       !"usb-picture".equals(history.get(history.size()-1).name))return;
+                    app.toastShort(message);
+                    render(history.get(history.size()-1));
+                });
+            }).show());
+        app.queryUsbPictureControls((supported,values,message)->{
+            if(closed||history.isEmpty()||
+               !"usb-picture".equals(history.get(history.size()-1).name))return;
+            status.setText(message);
+            for(int k=0;k<UsbPictureLevels.COUNT;k++){
+                boolean valid=supported!=null&&supported.length>k&&supported[k]&&
+                    values!=null&&values.length>k&&values[k]>=0;
+                sliders[k].setEnabled(valid);
+                if(valid){
+                    sliders[k].setProgress(UsbPictureLevels.clamp(values[k]));
+                    labels[k].setText(UsbPictureLevels.LABELS[k]+" · "+
+                        values[k]+"%");
+                }else labels[k].setText(UsbPictureLevels.LABELS[k]+" · 设备不支持");
+            }
+        });
+    }
+    private void sources(){
+        row("USB 外接摄像头","保留原生UVC直接预览",()->{app.setCameraSourceFromSettings(0);back();});
+        row("手机后置摄像头","原生 Camera2",()->{app.setCameraSourceFromSettings(1);back();});
+        row("手机前置摄像头","原生 Camera2",()->{app.setCameraSourceFromSettings(2);back();});
+    }
+    private void feedback(){
+        toggle("提示音","拍照金属咔嗒声、语音松手嗖声","shutter_feedback_sound",true);
+        toggle("触觉反馈","拍照短振、按住录音重振、找到目标双振","shutter_feedback_vibration",true);
+        action("▶ 试听拍照咔嗒声",()->app.previewCaptureFeedback());
+        action("▶ 试听语音发送嗖声",()->app.previewVoiceSendFeedback());
+        action("▶ 体验按住说话振动",()->app.previewVoiceStartHaptic());
+        heading("最近一次录音诊断");
+        note(app.lastMicDiagnostic());
+    }
+    private void cloud(){
+        row("视觉模型","",()->navigate("models",""));
+        row("联网智能追问 · "+(app.isWebSearchEnabled()?"开启":"关闭"),
+            "",()->{app.setWebSearchEnabled(!app.isWebSearchEnabled());
+                 render(history.get(history.size()-1));});
+        row("文字识别模型 · "+OcrModelCatalog.label(app.ocrModelDescription()),
+            "",()->navigate("ocr-models",""));
+        row("文字朗读方式 · "+(OcrSpeedExperiment.C.equals(app.ocrSpeedDescription())?
+                "快速逐行":"兼容全文"),"",()->navigate("ocr-speed",""));
+        note("允许三个视觉模型在语音聊天和照片追问中按需搜索网络，" +
+            "不会强制搜索；朗读文字、普通拍照识别及寻找目标不联网。" +
+            "可能增加等待时间和使用费用。");
+        row("模型用量统计","查看当前模型、今日真实Token及各模型列表",()->navigate("usage",""));
+        row("图片分辨率 · "+app.imagePolicyDescription(),"",()->{
+            app.cycleImagePolicy();render(history.get(history.size()-1));
+        });
+        row("API Key","",()->navigate("key",""));
+    }
+    private void models(){
+        for(int i=0;i<VisionModelCatalog.IDS.length;i++){
+            final String id=VisionModelCatalog.IDS[i];
+            final boolean selected=id.equals(app.visionModelDescription());
+            row((selected?"✓ ":"")+VisionModelCatalog.LABELS[i],"",
+                ()->{app.selectVisionModel(id);render(history.get(history.size()-1));});
+        }
+        // Only show important cost warning when someone actually tests Max.
+        action("▶ 测试当前模型",()->{
+            if(VisionModelCatalog.isEmergencyMax(app.visionModelDescription())){
+                new AlertDialog.Builder(app).setTitle("测试高精度 Max")
+                    .setMessage("测试将发送一张小图，可能产生费用。")
+                    .setNegativeButton("取消",null)
+                    .setPositiveButton("确认测试",(dialog,which)->app.testSelectedVisionModel())
+                    .show();
+            }else app.testSelectedVisionModel();
+        });
+    }
+
+    private void ocrSpeed(){
+        note("默认快速逐行：识别到完整一行就开始朗读。");
+        for(String id:new String[]{OcrSpeedExperiment.C,OcrSpeedExperiment.A}){
+            final boolean selected=id.equals(app.ocrSpeedDescription());
+            row((selected?"✓ ":"")+OcrSpeedExperiment.LABELS[OcrSpeedExperiment.index(id)],"",
+                ()->{app.selectOcrSpeedMode(id);render(history.get(history.size()-1));});
+        }
+        note("兼容全文：等待识别全部结束才朗读。两种方式每次都仅发送一张照片、调用一次OCR模型；无换行时快速逐行也会等到末尾。");
+    }
+
+    private void ocrModels(){
+        note("点击「朗读文字」后自动拍照、识别、朗读，无需另发指令。");
+        for(int i=0;i<OcrModelCatalog.IDS.length;i++){
+            final String id=OcrModelCatalog.IDS[i];
+            final boolean selected=id.equals(app.ocrModelDescription());
+            row((selected?"✓ ":"")+OcrModelCatalog.LABELS[i],"",()->{
+                app.selectOcrModel(id);
+                render(history.get(history.size()-1));
+            });
+        }
+        note("内置提示词："+OcrModelCatalog.PROMPT+
+            "\n不会自动切换模型或重复上传。Max 的实际费用以云端计费为准。");
+    }
+
+    /** Uses exactly the existing opaque BG/PANEL/TEXT/SUB settings palette. */
+    private void usageLine(ModelUsageLedger.Line line){
+        LinearLayout block=new LinearLayout(app);
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.setPadding(dp(16),dp(13),dp(16),dp(13));
+        block.setBackground(bg(PANEL,15));
+        block.addView(text(line.model,20,TEXT,true));
+        String details;
+        if(line.calls==0)details="今日尚未调用";
+        else details="调用 "+line.calls+" 次（失败 "+line.failed+" 次）"
+            +"\n已报告输入 "+line.input+" Token、输出 "+line.output+" Token"
+            +"\n已报告合计 "+(line.input+line.output)+" Token"
+            +(line.unknown>0?"；用量未知 "+line.unknown+" 次":"");
+        TextView d=text(details,16,SUB,false);
+        d.setPadding(0,dp(7),0,0);
+        block.addView(d);
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+        lp.bottomMargin=dp(10);
+        content.addView(block,lp);
+    }
+
+    private void usage(){
+        ModelUsageLedger.Snapshot snapshot=app.todayModelUsage();
+        if(snapshot==null){note("模型统计暂未初始化");return;}
+        heading("当前选择的视觉模型");
+        note(app.visionModelDescription());
+        heading("当前文字识别模型");
+        note(app.ocrModelDescription());
+        heading("今日统计 · "+snapshot.day);
+        note("已报告 Token 合计："+(snapshot.input+snapshot.output)
+            +"\n输入："+snapshot.input+"  输出："+snapshot.output
+            +"\n视觉调用："+snapshot.calls+" 次，失败："+snapshot.failed
+            +" 次，用量未返回："+snapshot.unknown+" 次");
+        heading("最近一次实际调用");
+        if(snapshot.lastRequested.isEmpty())note("本机还没有记录模型调用");
+        else note("请求模型："+snapshot.lastRequested
+            +"\n服务端模型："+(snapshot.lastReported.isEmpty()?
+                "未返回（不能据此确认实际模型）":snapshot.lastReported)
+            +"\n调用结果："+("success".equals(snapshot.lastOutcome)?"成功":"失败"));
+        heading("各模型今日用量");
+        for(ModelUsageLedger.Line line:snapshot.lines)usageLine(line);
+        action("刷新统计",()->render(history.get(history.size()-1)));
+        row("清空本机模型统计","仅删除本机记录，不影响百炼账户计费",()->navigate("usage-clear",""));
+    }
+    private void usageClear(){
+        heading("请确认是否清空统计记录");
+        note("只清空本机统计，不影响百炼账单。");
+        action("确认清空本机统计",()->{
+            app.clearModelUsage();
+            app.toastShort("已请求清空本机模型用量数据");
+            back();
+        });
+        action("取消，保留统计",this::back);
+    }
+
+    private void apiKey(){
+        EditText key=new EditText(app);
+        key.setTextSize(TypedValue.COMPLEX_UNIT_SP,20);
+        key.setTextColor(Color.WHITE);
+        key.setHint("粘贴自己的百炼 API Key");
+        key.setHintTextColor(SUB);
+        key.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        content.addView(key,new LinearLayout.LayoutParams(-1,dp(72)));
+        action("加密保存 API Key",()->{
+            try{
+                CloudKeyStore.save(app,key.getText().toString());
+                key.setText("");
+                app.toastShort("密钥已保存");back();
+            }catch(Exception error){app.toastShort("密钥保存失败："+error.getClass().getSimpleName());}
+        });
+        action("清除已保存密钥",()->{
+            CloudKeyStore.clear(app);
+            app.toastShort("密钥已清除");back();
+        });
+    }
+    private void diagnostics(){
+        action("查看上次发给 AI 的照片（仅本机）",()->app.previewLastUploadedJpeg());
+        note("仅在点击后显示本次运行内存中的真实 JPEG；不保存文件、不添加照片到日志、不额外上传。");
+        note("USB健康状态包含前后台切换、原始帧FPS和TextureView预览新缓冲FPS；"
+            +"显示最近10秒有效采样平均和最低值；手机模式不沿用旧USB快照。"
+            +"这不是物理屏幕真正显示的FPS。慢速/停流优先看两条是否同步下降。");
+        action("复制诊断摘要",()->app.copyRuntimeDiagnostics());
+        action("导出匿名诊断日志",()->app.exportRuntimeDiagnostics());
+        action("刷新诊断记录",()->render(history.get(history.size()-1)));
+        action("清空全部诊断记录",()->new AlertDialog.Builder(app)
+            .setTitle("清空运行诊断")
+            .setMessage("确定清除本机保存的全部匿名性能事件？此操作不能撤销。")
+            .setNegativeButton("取消",null)
+            .setPositiveButton("确定清空",(dialog,which)->{
+                app.clearRuntimeDiagnostics();
+                render(history.get(history.size()-1));
+            }).show());
+        heading("最近的诊断记录");
+        TextView report=text(app.runtimeDiagnosticSummary(),16,TEXT,false);
+        report.setTextIsSelectable(true);
+        report.setPadding(dp(12),dp(12),dp(12),dp(12));
+        report.setBackground(bg(PANEL,12));
+        content.addView(report,new LinearLayout.LayoutParams(-1,-2));
+    }
+    private void result(){
+        String result=app.lastRecognizedText();
+        if(result==null||result.isEmpty())note("尚无识别结果");
+        else{
+            TextView large=text(result,21,TEXT,false);
+            large.setTextIsSelectable(true);
+            large.setPadding(dp(13),dp(15),dp(13),dp(15));
+            large.setBackground(bg(PANEL,12));
+            content.addView(large);
+            action("▶ 再次朗读",()->app.previewLastRecognizedText());
+        }
+    }
+}
