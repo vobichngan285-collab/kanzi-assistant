@@ -87,10 +87,12 @@ final class CloudAsrClient {
         if(CloudProviderPolicy.ASR_QWEN.equals(protocol)){
             options.put("data","data:audio/wav;base64,"+
                 Base64.encodeToString(wav,Base64.NO_WRAP));
-        }else{
+        }else if(CloudProviderPolicy.ASR_CHAT_AUDIO.equals(protocol)){
             // OpenAI-compatible Chat audio content: raw base64 + explicit WAV.
             options.put("data",Base64.encodeToString(wav,Base64.NO_WRAP));
             options.put("format","wav");
+        }else{
+            throw new IllegalArgumentException("不支持的语音输入格式");
         }
         JSONObject input=new JSONObject().put("type","input_audio").put("input_audio",options);
         JSONObject message=new JSONObject().put("role","user")
