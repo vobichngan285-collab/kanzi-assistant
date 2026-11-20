@@ -24,6 +24,7 @@ final class C110QuickShotController {
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final C110WifiCamera camera=new C110WifiCamera();
     private final C110FrameReader reader;
+    private final CaptureDingFeedback captureDing;
     private C110WifiBootstrap bootstrap;
     private Runnable waiting;
     private boolean active,destroyed,shutterPending;
@@ -33,6 +34,7 @@ final class C110QuickShotController {
     C110QuickShotController(Activity activity,Consumer<String> updates){
         owner=activity;status=updates;
         reader=new C110FrameReader(owner,this::emit);
+        captureDing=new CaptureDingFeedback(owner);
     }
     private void emit(String message){
         main.post(()->{if(!destroyed)status.accept(message);});
@@ -103,6 +105,8 @@ final class C110QuickShotController {
                 main.post(()->{
                     if(destroyed||token!=generation)return;
                     shutterPending=false;
+                    // Independent of the C110's muted body shutter and OCR/TTS.
+                    captureDing.photoSucceeded();
                     emit("已拍照 "+photo.width+"×"+photo.height+"，正在识别朗读…");
                     // Same cloud model/key/task as Home settings; no test
                     // prompts and no re-encoding at native 1x.
@@ -134,6 +138,7 @@ final class C110QuickShotController {
         destroyed=true;++generation;shutterPending=false;
         if(waiting!=null){main.removeCallbacks(waiting);waiting=null;}
         if(bootstrap!=null){bootstrap.shutdown();bootstrap=null;}
+        captureDing.shutdown();
         reader.shutdown();
         worker.shutdownNow();
     }
