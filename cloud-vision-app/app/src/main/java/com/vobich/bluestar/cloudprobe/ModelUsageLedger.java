@@ -132,6 +132,17 @@ final class ModelUsageLedger {
                 unknown+=m.unknown;failed+=m.failed;
             }
         }
+        // Preserve the six legacy lines above and append actual custom model
+        // IDs. Previously only SHOW entries were counted/displayed, which made
+        // user-selected Volcano/other model usage silently disappear.
+        java.util.Set<String> known=new java.util.HashSet<>(
+            java.util.Arrays.asList(SHOW));
+        for(Mutable m:rows.values()){
+            if(!day.equals(m.day)||known.contains(m.model))continue;
+            lines.add(new Line(m.model,m.input,m.output,m.calls,m.reported,m.unknown,m.failed));
+            in+=m.input;out+=m.output;calls+=m.calls;
+            unknown+=m.unknown;failed+=m.failed;
+        }
         return new Snapshot(day,lastRequested,lastReported,lastOutcome,
             lines,in,out,calls,unknown,failed);
     }
@@ -149,7 +160,9 @@ final class ModelUsageLedger {
         return new SimpleDateFormat("yyyy-MM-dd",Locale.US).format(new java.util.Date());
     }
     private static String safe(String s){
-        if(s==null||!s.matches("[a-zA-Z0-9._-]{1,50}"))return "";
+        // Endpoint IDs and namespaced custom models may include '/' ':' '+'
+        // and exceed 50 characters. Never record any header or API key here.
+        if(s==null||!s.matches("[a-zA-Z0-9._:/+-]{1,180}"))return "";
         return s;
     }
     private static boolean validDay(String s){
