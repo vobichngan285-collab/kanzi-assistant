@@ -7,3 +7,6 @@ project(':libnative').projectDir = file('third_party/AndroidUSBCamera/libnative'
 
 // One-purpose OEM C110 video module; current :app is unchanged.
 include ':c110mini'
+// Tiny separately selectable launcher for screen readers that enumerate packages,
+// not individual LAUNCHER activities. Reuses :app via a foreground intent.
+include ':boyuebridge'
