@@ -128,41 +128,34 @@ public final class C110CameraActivity extends Activity {
         titleRow.setGravity(Gravity.CENTER_VERTICAL);
         titleRow.setPadding(dp(12),dp(5),dp(12),dp(5));
         titleRow.setBackgroundColor(0xE5091D36);
-        ImageView brand=new ImageView(this);
-        brand.setImageResource(R.drawable.bluestar_globe);
-        titleRow.addView(brand,new LinearLayout.LayoutParams(dp(40),dp(40)));
+        Button back=new Button(this);
+        back.setText("‹");back.setTextSize(26);back.setAllCaps(false);
+        back.setContentDescription("返回蓝星向导主页");
+        back.setOnClickListener(v->finish());
+        titleRow.addView(back,new LinearLayout.LayoutParams(dp(43),dp(43)));
         TextView title=new TextView(this);
-        title.setText("蓝星向导");
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP,19);
-        title.setTypeface(null,android.graphics.Typeface.BOLD);
-        title.setPadding(dp(6),0,0,0);
-        titleRow.addView(title,new LinearLayout.LayoutParams(0,dp(50),1f));
+        title.setText("C110+ 预览");title.setTextColor(Color.WHITE);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP,17);
+        titleRow.addView(title,new LinearLayout.LayoutParams(0,dp(48),1f));
         beginButton=new Button(this);
-        beginButton.setText("↻");
-        beginButton.setTextSize(24);
+        beginButton.setText("↻");beginButton.setTextSize(22);
         beginButton.setContentDescription("重新连接C110实时预览");
         beginButton.setOnClickListener(v->{
             if(photoBusy){say("高清拍照中，请勿切换视频模式");return;}
-            stop(true);
-            cancelCameraWait();
-            // Explicit refresh can request a fresh Android Wi-Fi picker.
-            requestC110Network(true);
+            stop(true);cancelCameraWait();requestC110Network(true);
             connectAndBeginWhenReady();
         });
-        titleRow.addView(beginButton,new LinearLayout.LayoutParams(dp(45),dp(45)));
+        titleRow.addView(beginButton,new LinearLayout.LayoutParams(dp(43),dp(43)));
+        fullscreenButton=new Button(this);
+        fullscreenButton.setText("⛶");fullscreenButton.setTextSize(20);
+        fullscreenButton.setContentDescription("切换竖屏铺满取景");
+        fullscreenButton.setOnClickListener(v->setFullscreen(!fullscreen));
+        titleRow.addView(fullscreenButton,new LinearLayout.LayoutParams(dp(43),dp(43)));
         Button cameraSettings=new Button(this);
-        cameraSettings.setText("相机");
-        cameraSettings.setAllCaps(false);
-        cameraSettings.setContentDescription("C110机身提示音与指示灯");
+        cameraSettings.setText("⚙");cameraSettings.setTextSize(21);
+        cameraSettings.setContentDescription("C110机身声音与灯光设置");
         cameraSettings.setOnClickListener(v->showC110Settings());
-        titleRow.addView(cameraSettings,new LinearLayout.LayoutParams(dp(70),dp(45)));
-        Button globalSettings=new Button(this);
-        globalSettings.setText("☰");
-        globalSettings.setTextSize(24);
-        globalSettings.setContentDescription("当前C110预览中打开设置，不退出预览");
-        globalSettings.setOnClickListener(v->showC110Settings());
-        titleRow.addView(globalSettings,new LinearLayout.LayoutParams(dp(47),dp(45)));
+        titleRow.addView(cameraSettings,new LinearLayout.LayoutParams(dp(45),dp(43)));
         root.addView(titleRow,new FrameLayout.LayoutParams(-1,dp(58),Gravity.TOP));
 
         taskChip=new TextView(this);
@@ -175,6 +168,7 @@ public final class C110CameraActivity extends Activity {
             Gravity.TOP|Gravity.LEFT);
         chip.leftMargin=dp(12);chip.topMargin=dp(64);
         root.addView(taskChip,chip);
+        taskChip.setVisibility(View.GONE);
 
         output=new TextView(this);
         output.setGravity(Gravity.CENTER);
@@ -183,45 +177,36 @@ public final class C110CameraActivity extends Activity {
         output.setMaxLines(2);
         output.setPadding(dp(10),dp(6),dp(10),dp(6));
         output.setBackground(roundRect(0xDB163758,13));
-        output.setText("连接C110后，点击画面快速取帧");
+        output.setText("正在连接C110…");
         output.setContentDescription("C110预览状态；长按复制完整诊断");
         output.setOnLongClickListener(v->{copyDiagnostic();return true;});
         FrameLayout.LayoutParams status=new FrameLayout.LayoutParams(-1,-2,
             Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);
         status.leftMargin=dp(12);status.rightMargin=dp(12);status.bottomMargin=dp(99);
         root.addView(output,status);
+        output.setVisibility(View.GONE);
 
         LinearLayout footer=new LinearLayout(this);
         bottomControls=footer;
         footer.setGravity(Gravity.CENTER);
         footer.setPadding(dp(7),dp(5),dp(7),dp(7));
         footer.setBackground(roundRect(0xED091D36,20));
-        Button tasks=footerButton("▦\n任务",this::showCameraTasks);
-        Button talk=footerButton("🎙\nAI对话",()->returnToMain("ai"));
-        photoButton=footerButton("▤\n高清拍照",this::captureOriginalPhoto);
-        photoButton.setContentDescription("C110真实高清快门，留在相机页面拍照并识别朗读");
-        Button modes=footerButton("◉\n模式",this::showCameraModes);
-        for(Button item:new Button[]{tasks,talk,photoButton,modes}){
-            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(75),1f);
-            lp.setMargins(dp(3),0,dp(3),0);
-            footer.addView(item,lp);
-        }
-        root.addView(footer,new FrameLayout.LayoutParams(-1,dp(89),Gravity.BOTTOM));
+        photoButton=footerButton("◎  高清拍照",this::captureOriginalPhoto);
+        photoButton.setContentDescription("单次C110高清拍照，云端只处理当前变焦区域");
+        footer.addView(photoButton,new LinearLayout.LayoutParams(dp(200),dp(63)));
+        root.addView(footer,new FrameLayout.LayoutParams(-1,dp(77),Gravity.BOTTOM));
 
         // Compact manual slider. At 1x, all cloud paths remain unchanged.
         zoomControls=new LinearLayout(this);
         zoomControls.setGravity(Gravity.CENTER_VERTICAL);
         zoomControls.setPadding(dp(5),dp(2),dp(5),dp(2));
         zoomControls.setBackground(roundRect(0xEA132B46,18));
-        Button minus=zoomSmallButton("−",()->setZoom(zoom-.25f));
-        Button plus=zoomSmallButton("+",()->setZoom(zoom+.25f));
         zoomValue=new TextView(this);
         zoomValue.setGravity(Gravity.CENTER);
         zoomValue.setTextColor(Color.WHITE);
         zoomValue.setTextSize(15);
         zoomValue.setText("1.0×");
         zoomValue.setContentDescription("当前OCR取景放大倍率1倍");
-        zoomControls.addView(minus,new LinearLayout.LayoutParams(dp(43),dp(47)));
         zoomSeek=new SeekBar(this);
         zoomSeek.setMax(30);
         zoomSeek.setProgress(0);
@@ -234,15 +219,10 @@ public final class C110CameraActivity extends Activity {
             @Override public void onStopTrackingTouch(SeekBar bar){}
         });
         zoomControls.addView(zoomSeek,new LinearLayout.LayoutParams(0,dp(48),1f));
-        zoomControls.addView(plus,new LinearLayout.LayoutParams(dp(43),dp(47)));
         zoomControls.addView(zoomValue,new LinearLayout.LayoutParams(dp(56),dp(47)));
-        fullscreenButton=zoomSmallButton("全屏",()->setFullscreen(!fullscreen));
-        fullscreenButton.setTextSize(13);
-        fullscreenButton.setContentDescription("切换竖屏铺满预览，等比例居中裁切，不旋转手机");
-        zoomControls.addView(fullscreenButton,new LinearLayout.LayoutParams(dp(64),dp(47)));
         FrameLayout.LayoutParams zoomParams=new FrameLayout.LayoutParams(-1,dp(53),Gravity.BOTTOM);
         zoomParams.leftMargin=dp(8);zoomParams.rightMargin=dp(8);
-        zoomParams.bottomMargin=dp(94);
+        zoomParams.bottomMargin=dp(78);
         root.addView(zoomControls,zoomParams);
 
         fullscreenPhoto=zoomSmallButton("高清拍照",this::captureOriginalPhoto);
@@ -359,15 +339,15 @@ public final class C110CameraActivity extends Activity {
         // Portrait screen only. SJCAM-style cover, no rotation or VLC restart.
         fullscreen=requested;
         topControls.setVisibility(View.VISIBLE);
-        bottomControls.setVisibility(fullscreen?View.GONE:View.VISIBLE);
-        taskChip.setVisibility(fullscreen?View.GONE:View.VISIBLE);
-        output.setVisibility(fullscreen?View.GONE:View.VISIBLE);
-        fullscreenPhoto.setVisibility(fullscreen?View.VISIBLE:View.GONE);
-        fullscreenButton.setText(fullscreen?"退出":"全屏");
+        bottomControls.setVisibility(View.VISIBLE);
+        taskChip.setVisibility(View.GONE);
+        output.setVisibility(View.GONE);
+        fullscreenPhoto.setVisibility(View.GONE);
+        fullscreenButton.setText(fullscreen?"◫":"⛶");
         fullscreenButton.setContentDescription(fullscreen?
             "退出竖屏铺满取景，恢复完整画面":"竖屏铺满取景，等比例裁切左右");
         FrameLayout.LayoutParams lp=(FrameLayout.LayoutParams)zoomControls.getLayoutParams();
-        lp.bottomMargin=dp(fullscreen?64:94);
+        lp.bottomMargin=dp(78);
         zoomControls.setLayoutParams(lp);
         applyFullscreenFlags();
         applyVideoViewport();
@@ -845,13 +825,19 @@ public final class C110CameraActivity extends Activity {
     private void runWhenCurrent(int id,Runnable action){
         main.post(()->{if(id==generation)action.run();});
     }
+    private final Runnable hideStatus=()->{if(output!=null)output.setVisibility(View.GONE);};
     private void say(String text){
         if(Looper.myLooper()!=Looper.getMainLooper()){
             main.post(()->say(text));return;
         }
         log.append(text).append('\n');
         if(log.length()>4500)log.delete(0,log.length()-3000);
-        if(output!=null)output.setText(text);
+        if(output!=null){
+            output.setText(text);
+            output.setVisibility(View.VISIBLE);
+            main.removeCallbacks(hideStatus);
+            main.postDelayed(hideStatus,2300L);
+        }
     }
     private void stop(boolean manual){
         generation++;
@@ -901,6 +887,7 @@ public final class C110CameraActivity extends Activity {
         if(isolatedWifiBootstrap!=null){
             isolatedWifiBootstrap.shutdown();isolatedWifiBootstrap=null;
         }
+        main.removeCallbacks(hideStatus);
         frameReader.shutdown();deviceControls.shutdown();io.shutdownNow();
         super.onDestroy();
     }
