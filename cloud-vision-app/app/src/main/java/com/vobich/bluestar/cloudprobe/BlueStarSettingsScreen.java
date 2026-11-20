@@ -249,6 +249,11 @@ final class BlueStarSettingsScreen {
     private void speech(){
         SharedPreferences prefs=app.getSharedPreferences("kanzi_settings",Context.MODE_PRIVATE);
         row("选择语音引擎","",()->navigate("engines",""));
+        row("跟随语音引擎默认语速 · "+(app.isFollowingSystemSpeechRate()?"开启":"关闭"),
+            "保留旧版语速跟随功能",()->{
+                app.setFollowSystemSpeechRate(!app.isFollowingSystemSpeechRate());
+                render(history.get(history.size()-1));
+            });
         heading("朗读速度");
         float rate=prefs.getFloat("local_tts_rate",1f);
         TextView value=text(String.format(Locale.CHINA,"%.2f×",rate),23,TEXT,true);
