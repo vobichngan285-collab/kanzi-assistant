@@ -30,6 +30,21 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Optional second launcher icon. Ordinary Blue Star MAIN opens
+             Home normally; this alias sends exactly one quick-shot request.
+             Accessibility pickers may list one or both launcher activities. -->
+        <activity android:name=".QuickShotEntryActivity"
+            android:label="蓝星一键拍照"
+            android:icon="@mipmap/ic_launcher"
+            android:screenOrientation="portrait"
+            android:exported="true"
+            android:noHistory="true"
+            android:excludeFromRecents="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
         <activity android:name="com.vobich.bluestar.cloudprobe.MainActivity"
             android:screenOrientation="portrait"
             android:launchMode="singleTop"
