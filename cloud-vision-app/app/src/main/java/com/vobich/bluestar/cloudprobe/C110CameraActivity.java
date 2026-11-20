@@ -443,6 +443,7 @@ public final class C110CameraActivity extends Activity {
                     say("当前任务："+task.name);
                 }
                 @Override public void createTask(){returnToMain("tasks");}
+                @Override public void edit(TaskCatalog.Task task){returnToMain("tasks");}
                 @Override public void openReading(){returnToMain("reading");}
                 @Override public void removed(TaskCatalog.Task task){
                     say("任务列表已更新："+task.name);
