@@ -122,14 +122,14 @@ final class HomeVoiceAssistant {
     }
     private void requestAI(int ticket,byte[] wav){
         try{
-            String key=CloudKeyStore.load(activity);
-            if(key.isEmpty())throw new Exception("请先在设置中填写百炼API Key");
+            CloudProviderStore.Config asrService=CloudProviderStore.resolve(
+                activity,CloudProviderStore.ASR,"qwen3-asr-flash");
             RecentPhotoSession.Snapshot shot=RecentPhotoSession.latest();
             Network network=shot==null?null:shot.cloudNetwork;
             // A C110 hotspot is local-only. Do not send ASR/vision via camera Wi-Fi.
             if(network==null&&C110WifiBootstrap.connected(activity)!=null)
                 network=C110WifiCamera.requireCellular(activity);
-            String question=CloudAsrClient.recognize(wav,key,network);
+            String question=CloudAsrClient.recognize(wav,asrService,network);
             if(question.isEmpty())throw new Exception("没有识别到问题");
             main.post(()->{if(active&&ticket==generation)announce("已听到问题，正在回答…");});
             if(shot!=null&&shot.jpeg!=conversationImage){
@@ -152,14 +152,16 @@ final class HomeVoiceAssistant {
             SharedPreferences prefs=activity.getSharedPreferences("kanzi_settings",Context.MODE_PRIVATE);
             String model=VisionModelCatalog.normalize(prefs.getString(
                 "cloud_vision_model",VisionModelCatalog.DEFAULT));
+            CloudProviderStore.Config visualService=CloudProviderStore.resolve(
+                activity,CloudProviderStore.VISION,model);
             CloudVisionClient.Result answer;
             if(shot!=null){
                 TaskCatalog.Task followup=new TaskCatalog.Task("home-photo-followup",
                     "上一张照片",prompt.toString(),TaskCatalog.VISION,true,"✦");
                 answer=CloudVisionClient.recognize(
-                    shot.jpeg,key,followup,model,null,false,network);
+                    shot.jpeg,visualService,followup,null,false,network);
             }else{
-                answer=CloudVisionClient.recognizeText(prompt.toString(),key,model,
+                answer=CloudVisionClient.recognizeText(prompt.toString(),visualService,
                     null,false,network);
             }
             final String response=answer.text==null?"":answer.text.trim();
