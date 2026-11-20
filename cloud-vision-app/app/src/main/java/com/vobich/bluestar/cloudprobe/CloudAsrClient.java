@@ -1,6 +1,7 @@
 package com.vobich.bluestar.cloudprobe;
 
 import android.util.Base64;
+import android.net.Network;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.BufferedReader;
@@ -19,6 +20,9 @@ final class CloudAsrClient {
     static final String ENDPOINT="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
     private CloudAsrClient(){}
     static String recognize(byte[] wav,String key) throws Exception{
+        return recognize(wav,key,null);
+    }
+    static String recognize(byte[] wav,String key,Network cloudNetwork) throws Exception{
         if(wav==null||wav.length<44)throw new Exception("录音为空");
         if(wav.length>1024*1024)throw new Exception("录音过长");
         if(key==null||key.trim().isEmpty())throw new Exception("请在云端AI设置中配置百炼API Key");
@@ -31,7 +35,8 @@ final class CloudAsrClient {
             .put("model","qwen3-asr-flash")
             .put("messages",messages).put("stream",false)
             .put("asr_options",new JSONObject().put("enable_itn",true));
-        HttpURLConnection connection=(HttpURLConnection)new URL(ENDPOINT).openConnection();
+        HttpURLConnection connection=(HttpURLConnection)(cloudNetwork==null?
+            new URL(ENDPOINT).openConnection():cloudNetwork.openConnection(new URL(ENDPOINT)));
         connection.setConnectTimeout(10000);
         connection.setReadTimeout(28000);
         connection.setRequestMethod("POST");
