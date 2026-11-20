@@ -6,7 +6,7 @@
 原仓 `vobichngan285-collab/kanzi-assistant`，从唯一已发布v1.0.66分支 `exp/phone-preview-clean-c110-ding-20261120` HEAD `a79d5c5684dcacd24f92cfcb79f846065eba9d8d` 开发新隔离实验分支 `exp/custom-cloud-providers-20261120`。版本 `versionCode 76` / `versionName 1.0.67-cloud-provider-lab`，debug app ID `com.vobich.bluestar.c110plusquick159`，旧Release及独立保益启动器不变。
 
 ## 用户操作
-主页 → 设置 → 云端 AI → **自定义服务商 · OCR / 视觉 / 语音** → 选择三种独立任务之一 → 「＋新建」 → 填名称、**完整 HTTPS API URL**、模型ID、API Key → 保存并启用。可保存20套自定义配置，每套密钥单独 AES-256-GCM/AndroidKeystore 加密，列表中不回显Key；编辑时 Key 留空保留现有密钥；可分别选择同一套可兼容的视觉配置供OCR/视觉使用。OCR和视觉有「小图测试」（实际发带字母A的64x64 JPEG，会有少量Token成本）；ASR不能用无声文件测试，直接按住主页或普通预览底部AI说话松开测试。单个配置可编辑、删除；删除时占用该配置的任务回到原百炼。原有百炼 Key 仍从旧 `CloudKeyStore` 读取，没有迁移、覆盖、清空；任一任务没有自定义选择时使用原百炼模型及原传输行为。
+主页 → 设置 → 云端 AI → **自定义服务商 · OCR / 视觉 / 语音** → 选择三种独立任务之一 → 「＋新建」 → 填名称、**完整 HTTPS API URL**、模型ID、API Key → 保存并启用。可保存20套自定义配置，每套密钥单独 AES-GCM/AndroidKeystore 加密，列表中不回显Key；编辑时 Key 留空保留现有密钥；可分别选择同一套可兼容的视觉配置供OCR/视觉使用。OCR和视觉有「小图测试」（实际发带字母A的64x64 JPEG，会有少量Token成本）；ASR不能用无声文件测试，直接按住主页或普通预览底部AI说话松开测试。单个配置可编辑、删除；删除时占用该配置的任务回到原百炼。原有百炼 Key 仍从旧 `CloudKeyStore` 读取，没有迁移、覆盖、清空；任一任务没有自定义选择时使用原百炼模型及原传输行为。
 
 支持的自填协议：
 - **图文OCR/视觉**：OpenAI-compatible `POST /chat/completions`，支持 `messages[0].content` 的文本和 `image_url` Base64；默认非流式，可勾选SSE；服务商实际支持图片/格式/权限需自行确认。兼容字段`max_tokens`；关闭百炼专属`enable_thinking`/`enable_search`及`stream_options`以避免新厂商拒收。新厂商不承诺自动联网搜索。
@@ -21,9 +21,14 @@
 5. `HomeVoiceAssistant.requestAI`：主页按住AI独立ASR配置，后续文本问答/照片识别选视觉配置，仍不从C110 AP向公网发请求。
 6. `C110FrameReader.recognizeJpeg`：C110独立实时预览取帧与1001真实JPEG均按当前任务选OCR/视觉配置，保持原声音引擎/朗读队列。
 7. 原有百炼`CloudVisionClient`、`CloudAsrClient`公开方法保留；新接口多态参数`CloudProviderStore.Config`新增，默认请求地址、原有模型白名单、输出限制、提示词与流式行为保留。
-8. `ModelUsageLedger`动态模型ID可记录，未知厂商不估算token。图文小图测试单独完成后才显示成功，ASR真实讲话测试不伪报成功。
+8. `ModelUsageLedger`保留旧百炼历史6行的展示，同时追加其他厂商真实返回的模型ID和计费token/调用次数；未知用量不估算为0。图文小图测试单独完成后才显示成功，ASR真实讲话测试不伪报成功。
 9. `BlueStarSettingsScreen`仅增加云端 AI 下的独立服务配置页面，原百炼API Key入口、视觉/文字模型、用量、其他设置原样。
 10. **不触碰** `C110WifiCamera/C110WifiBootstrap/C110LivePreview/C110DeviceControls/C110CameraActivity/CaptureDingFeedback` OEM和UI、`Camera2`/USB采集、RTSP 150ms、1001快门、9011静音、9038灯光、TTS引擎、保益小APK、主包ID、主页和底栏；需要CI changed-file白名单验证。
+
+## 复核发现并修正
+- 原有百炼「清除密钥」此前是清空整个密钥偏好文件；新增自定义密钥后会误删所有厂商密钥。已调整为仅清除老百炼自身 `iv/ciphertext`，保留每套自定义配置的独立加密密钥。
+- C110 视频和高清原图在处于「寻找目标」任务时必须预检 **视觉** Key，而不是普通OCR桌面预设Key，已对齐真正请求路径。
+- 既有模型用量表只显示6个预设模型，自定义厂商即使调用成功也看不到记录。已添加自定义模型的用量明细，保留旧预设顺序与历史数据；扩展合法模型ID字符长度，但不记录密钥、图片、原文。
 
 ## 限制与真机验证
 兼容OpenAI格式的厂商可通过自填接入；不支持“世界所有专用云API”的零修改承诺，尤其火山不同ASR产品、千问专用识别、非Base64视觉接口可能需转换格式。API URL是完整接口不是只填域名，例如火山图文 `https://ark.cn-beijing.volces.com/api/v3/chat/completions`，模型 ID 从自己的控制台复制。ASR multipart服务应填其 `.../audio/transcriptions` 地址。
