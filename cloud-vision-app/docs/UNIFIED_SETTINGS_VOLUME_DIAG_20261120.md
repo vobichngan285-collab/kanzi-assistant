@@ -1,10 +1,10 @@
-# v1.0.56 蓝星向导统一设置 + 相机分类 + 音量键双击原始事件诊断
+# v1.0.57 蓝星向导统一设置 + 相机分类 + 音量键双击原始事件诊断
 
 ## 用户问题 / 分析结论（2026-11-20）
 用户在v1.0.55真机确认：双击音量键仍无法快捷拍照；主页点「设置」是 `HomeActivity.settingsTab` 手写的简易设置，手机/USB「预览」点设置却是 `MainActivity -> LargeSettingsScreen`，造成**两套菜单/功能与外观不一致**，还保留「更多设置」嵌套旧版；明确要求先核对再修改，完整把老的设置功能迁移到新统一蓝星设置，并设「相机」分类。**不能再次借用第三方黄黑界面；不能破坏已成功的 C110+/150ms/OCR/快捷拍照。**
 
 ## 修正设计与代码
-- 基线：原仓 `vobichngan285-collab/kanzi-assistant` 的独立 v1.0.55 `exp/c110plus-inline-quick-photo-20261120` HEAD `613c051de9810ce0b372a2afd725178f9ccec909`；本版新分支 `exp/unified-settings-volume-diag-20261120`、独立 debug appId `com.vobich.bluestar.c110plussettings156`，versionCode65，不覆盖任何旧包。
+- 基线：原仓 `vobichngan285-collab/kanzi-assistant` 的独立 v1.0.55 `exp/c110plus-inline-quick-photo-20261120` HEAD `613c051de9810ce0b372a2afd725178f9ccec909`；本版新分支 `exp/unified-settings-volume-diag-20261120`、独立 debug appId `com.vobich.bluestar.c110plussettings157`，versionCode66，不覆盖任何旧包。
 - **完全移除两套设置UI**：删除 `LargeSettingsScreen.java` 后创建唯一 `BlueStarSettingsScreen.java`（将其旧**全部功能实现原样迁入**；继承已验证的代码，不自己重新发明模型/tts/USB/计费）；`HomeActivity` 删除 `settingsTab` 和四个简化设置重复实现、删除「更多设置」，底部设置唯一入口进入 `MainActivity` **settings-only**，再打开同一个 `BlueStarSettingsScreen`；手机/USB预览设置图标也直接打开该同一个 `BlueStarSettingsScreen` 覆层，保持预览 Activity，不去默认界面。页面统一深蓝 `#091B32`、蓝色控件与三栏「主页/预览/设置」，主页和预览入口完整菜单一致。
 - **旧设置清点并完整保留**：语音引擎选择、朗读速度/英文数字符号过滤及试听；任务提示词编辑/隐藏/恢复、创建和删除；手机前后摄像头/USB切换、旋转/镜像/垂直翻转、USB校正与缩放复位；USB 设备硬件亮度/对比度/饱和度/增益及恢复、自动切换和自动启动；金属拍照提示音/语音发送声/振动；云端 OCR/视觉模型、OCR流式方式、联网追问、API Key、图像策略、模型用量/清除；上次OCR结果/再次朗读/本机诊断与导出。新增最顶部 **「相机」分类** 把快捷键、C110+型号、手机/USB、方向/画质等放一起。C110+ 子页可明确点击进入实时预览/机身控制或分辨率准确率实验；**二者为不同显式操作**，主页快捷拍照绝不进入实验。
 - **保护设置页不启动摄像头**：从Home进设置只读取/修改设置，MainActivity `settingsOnly` 早退预览生命周期，选手机/USB来源仅写入共享Prefs，**下次显式点击「预览」才开启真实 Camera2/UVC**，USB自动切换不会在设置-only意外执行。设置关闭后返回 Home，不露出旧CameraActivity底图。
@@ -18,3 +18,7 @@
 3. 在设置的快捷键测试页按两次音量下，刷新查看「按下、抬起、双击触发」计数；如按下数为零是系统不分发，不要假称双击有效。若事件正常但没有触发，再分析间隔；调整窗口600ms可以缓解慢双击，但不能绕过Android的系统拦截。离开设置，在主页/预览做一次1001真实快拍，不能连拍/跳诊断页。
 4. 保留C110原厂高清拍照、云端模型、TTS及原UI，不重复构建旧实验；第一次装新独立包需要本版重新设置API Key（Android应用沙箱机制）。
 5. **CI成功仅代表源码测试和APK编译发布，不代表 vivo X200 Pro 物理双击键或全部硬件已实测。**
+
+
+## 最终版本核对
+本实验分支此前CI自动触发过中间快照构建。完整删去旧设置弹窗、补迁旧「跟随系统默认语速」、解决从主页设置相机来源导致摄像头意外启动的保护均纳入**最终 v1.0.57**。不要把此前中间 v1.0.56 的成功构建当作最终APK。完整验收还需要 vivo 实体双击音量键事件记录。

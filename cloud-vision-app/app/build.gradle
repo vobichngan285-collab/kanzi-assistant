@@ -6,12 +6,12 @@ android {
         applicationId 'com.vobich.bluestar'
         minSdk 26
         targetSdk 35
-        versionCode 65
-        versionName '1.0.56-unified-settings-volume'
+        versionCode 66
+        versionName '1.0.57-unified-settings-volume'
         ndk { abiFilters 'arm64-v8a' }
     }
     buildTypes {
-        debug { minifyEnabled false; applicationIdSuffix '.c110plussettings156' }
+        debug { minifyEnabled false; applicationIdSuffix '.c110plussettings157' }
         release { minifyEnabled false }
     }
     compileOptions {

@@ -1,4 +1,4 @@
-name: Blue Star Unified Settings + C110 Volume Diagnostics 150ms v1.0.56
+name: Blue Star Unified Settings + C110 Volume Diagnostics 150ms v1.0.57
 on:
   push:
     branches: [ 'exp/unified-settings-volume-diag-20261120' ]
@@ -111,6 +111,11 @@ jobs:
                           'private void chooseOcrModel()','private void editApiKey()']:
               assert removed not in home, "Home duplicate remains: "+removed
           assert 'LargeSettingsScreen' not in main
+          assert 'showSettingsDialog()' not in main and 'addSimpleSettingsRow(' not in main
+          assert 'private void showSettingsDialog()' not in main
+          assert 'void setFollowSystemSpeechRate(boolean enabled)' in main
+          assert 'app.setFollowSystemSpeechRate(' in unified
+          assert '跟随语音引擎默认语速' in unified
           for page in ['camera','speech','engines','tasks','feedback','cloud',
                        'models','ocr-models','ocr-speed','usb-picture','sources',
                        'usage','key','result','diagnostics']:
@@ -260,8 +265,8 @@ jobs:
           assert 'photo.jpeg,photo.width,photo.height,highPhotoZoomAtTap' in main
           assert 'c110PreviewZoom:zoom' in main
           assert 'final byte[] submitted=photo.jpeg;' in lab, 'Keep OEM 20M/10M/8M size-lab unmodified'
-          assert "applicationIdSuffix '.c110plussettings156'" in build
-          assert "versionName '1.0.56-unified-settings-volume'" in build
+          assert "applicationIdSuffix '.c110plussettings157'" in build
+          assert "versionName '1.0.57-unified-settings-volume'" in build
           for label,src in [('C110 camera page',c110),('C110 inline preview',inline)]:
               for flag in ['--network-caching=150','--live-caching=150',
                            ':network-caching=150',':live-caching=150']:
@@ -301,8 +306,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_Unified_Settings_Volume_150ms_1.0.56.apk
-          test -s out/BlueStar_Guide_Unified_Settings_Volume_150ms_1.0.56.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_Unified_Settings_Volume_150ms_1.0.57.apk
+          test -s out/BlueStar_Guide_Unified_Settings_Volume_150ms_1.0.57.apk
           unzip -tq out/*.apk >/dev/null
           unzip -Z1 out/*.apk >out/entries.txt
           grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
@@ -312,14 +317,14 @@ jobs:
           grep -Fxq 'res/raw/voice_send_whoosh.wav' out/entries.txt
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           "$AAPT" dump badging out/*.apk >out/badging.txt
-          grep -Fq "package: name='com.vobich.bluestar.c110plussettings156'" out/badging.txt
-          grep -Fq "versionName='1.0.56-unified-settings-volume'" out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110plussettings157'" out/badging.txt
+          grep -Fq "versionName='1.0.57-unified-settings-volume'" out/badging.txt
           grep -Fq 'C110ResolutionLabActivity' out/entries.txt || true
-          (cd out && sha256sum BlueStar_Guide_Unified_Settings_Volume_150ms_1.0.56.apk >SHA256SUMS.txt)
+          (cd out && sha256sum BlueStar_Guide_Unified_Settings_Volume_150ms_1.0.57.apk >SHA256SUMS.txt)
           cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: BlueStar_Guide_Unified_Settings_Volume_150ms_1.0.56
+          name: BlueStar_Guide_Unified_Settings_Volume_150ms_1.0.57
           path: out/*
           retention-days: 14
       - name: Publish safe isolated experimental prerelease
@@ -328,12 +333,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG=bluestar-unified-settings-volume-150ms-20261120-v0156
+          TAG=bluestar-unified-settings-volume-150ms-20261120-v0157
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Existing tag must not be replaced" >&2
             exit 1
           fi
-          gh release create "$TAG" "out/BlueStar_Guide_Unified_Settings_Volume_150ms_1.0.56.apk" \
+          gh release create "$TAG" "out/BlueStar_Guide_Unified_Settings_Volume_150ms_1.0.57.apk" \
             --target "$GITHUB_SHA" --prerelease \
-            --title "Blue Star Unified Settings and Hardware Volume Diagnostics 150ms v1.0.56" \
-            --notes "v1.0.56 single Blue Star settings for both Home and phone/USB Preview. Complete legacy voice/TTS, task, camera/USB, sound, cloud OCR/vision/API key, model usage, last result and diagnostic controls are all migrated into BlueStarSettingsScreen; removed LargeSettingsScreen and Home duplicate settings/More Settings. New Camera category groups C110+, camera source, USB controls, physical volume shortcut selection and diagnostics. 600ms double-press and eventTime guard, pure Java regression tests, live raw DOWN/UP counters for vivo verification. Settings mode never fires 1001 even during shortcut test; Home camera source setting is deferred until manually entering Preview. Original direct one-tap C110+ photo does not navigate or launch diagnostic pages; proven OEM 1001, dual 150ms VLC, shared model/key/TTS and navy theme unchanged. Separate experimental app ID requires its own API key. CI success is not confirmation of vivo physical-button delivery; test Settings > Camera > Volume shortcut."
+            --title "Blue Star Unified Settings and Hardware Volume Diagnostics 150ms v1.0.57" \
+            --notes "v1.0.57 final isolated Blue Star unified settings experiment. Both Home and phone/USB Preview enter exactly the same BlueStarSettingsScreen and blue three-tab navigation. No duplicate Home settings, no More Settings, removed old LargeSettingsScreen source and obsolete legacy Settings dialog. All original speech engine/rate/filter (including system default speed), task editing, Camera2/USB rotation/mirror/picture hardware, C110 entry and photo A/B lab, click/haptic, cloud models/OCR speed/API key/image policy/usage and diagnostics are preserved in categorized Settings. Camera includes C110 volume key gesture options plus raw onKeyDown/up counters and 600ms double-press timestamp tests. Testing the key in Settings does NOT take a photo. Setting camera source from Home defers hardware start until Preview. Proven direct Home C110 1001 still/photo/OCR voice, 150ms VLC and original navy UI untouched. A hardware volume key may still be intercepted by Android/vivo/accessibility services: use Settings > Camera > Volume diagnostic to distinguish no key events from recognition failure; never claim CI is vivo verification. Independent APK, configure an API key in this edition."
