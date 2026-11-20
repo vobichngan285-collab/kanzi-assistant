@@ -1150,6 +1150,9 @@ public final class MainActivity extends CameraActivity {
     }
     boolean selectOcrModel(String id){
         if(OcrModelCatalog.indexOf(id)<0)return false;
+        // The old model picker must also switch the ACTIVE cloud route,
+        // otherwise the old checkmark lies while custom GLM continues to run.
+        CloudProviderStore.select(this,CloudProviderStore.OCR,"");
         ocrModel=id;
         getSharedPreferences(PREFS,MODE_PRIVATE).edit()
             .putString(PREF_OCR_MODEL,id).apply();
@@ -1163,6 +1166,7 @@ public final class MainActivity extends CameraActivity {
     }
     boolean selectVisionModel(String id){
         if(VisionModelCatalog.indexOf(id)<0)return false;
+        CloudProviderStore.select(this,CloudProviderStore.VISION,"");
         visionModel=id;
         getSharedPreferences(PREFS,MODE_PRIVATE).edit()
             .putString(PREF_VISION_MODEL,id).apply();
@@ -1195,12 +1199,14 @@ public final class MainActivity extends CameraActivity {
                 String builtin=CloudProviderStore.OCR.equals(role)?ocrModel:visionModel;
                 CloudProviderStore.Config choice=CloudProviderStore.resolveFor(
                     this,role,profileId,builtin);
-                bitmap=Bitmap.createBitmap(64,64,Bitmap.Config.RGB_565);
+                // 64x64 is too tiny to reliably validate a real OCR service.
+                // The clearer 512x512 glyph makes correctness meaningful.
+                bitmap=Bitmap.createBitmap(512,512,Bitmap.Config.RGB_565);
                 Canvas canvas=new Canvas(bitmap);
                 canvas.drawColor(0xFFFFFFFF);
                 Paint paint=new Paint();
-                paint.setColor(0xFF101010);paint.setTextSize(28);paint.setAntiAlias(true);
-                canvas.drawText("A",22,43,paint);
+                paint.setColor(0xFF101010);paint.setTextSize(320);paint.setAntiAlias(true);
+                canvas.drawText("A",140,393,paint);
                 ByteArrayOutputStream bytes=new ByteArrayOutputStream();
                 bitmap.compress(Bitmap.CompressFormat.JPEG,75,bytes);
                 TaskCatalog.Task probe=new TaskCatalog.Task("model-probe","接口测试",
@@ -1209,6 +1215,10 @@ public final class MainActivity extends CameraActivity {
                     false,"✦");
                 CloudVisionClient.Result result=CloudVisionClient.recognize(
                     bytes.toByteArray(),choice,probe,null,OcrSpeedExperiment.A,null);
+                // HTTP 200 or a generic description does NOT mean OCR worked.
+                // Only a correct reading of the known glyph is a pass.
+                if(!CloudProviderPolicy.probeRecognizedA(result.text))
+                    throw new Exception("已收到接口响应，但没有正确识别出测试字母A");
                 if(modelUsage!=null)modelUsage.recordAsync(result.model,result.serverModel,
                     result.promptTokens,result.completionTokens,true);
                 handler.post(()->{if(uiActive)toastShort(
