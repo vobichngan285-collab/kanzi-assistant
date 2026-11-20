@@ -90,8 +90,9 @@ jobs:
           assert manifest.count('android.intent.category.LAUNCHER')==1
           print("PASS: single real OCR route, dynamic SSE and complete GLM layout transport, original camera/TTS intact")
           PY
-          git fetch --no-tags origin +refs/heads/exp/cloud-single-model-layout-stream-20261120:refs/remotes/origin/exp/cloud-single-model-layout-stream-20261120
-          git diff --name-only refs/remotes/origin/exp/cloud-single-model-layout-stream-20261120 HEAD >/tmp/changed.txt
+          # Always compare to the published v1.0.67 baseline, not the HEAD.
+          git fetch --no-tags origin +refs/heads/exp/custom-cloud-providers-20261120:refs/remotes/origin/exp/custom-cloud-providers-20261120
+          git diff --name-only refs/remotes/origin/exp/custom-cloud-providers-20261120 HEAD >/tmp/changed.txt
           python3 - <<'PY'
           from pathlib import Path
           root="cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/"
