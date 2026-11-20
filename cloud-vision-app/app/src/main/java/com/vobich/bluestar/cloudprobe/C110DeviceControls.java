@@ -66,8 +66,7 @@ final class C110DeviceControls {
                 "机身提示音：恢复",
                 "指示灯："+describe()+"（修改）",
                 "指示灯：立即关闭",
-                "指示灯：恢复显示",
-                "说明：连接后开始计时，断开则取消"
+                "指示灯：恢复显示"
             },(dialog,i)->{
                 switch(i){
                     case 0: manualCommand(9011,0);break;
