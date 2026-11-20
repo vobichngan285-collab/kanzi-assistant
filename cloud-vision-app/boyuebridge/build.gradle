@@ -1,0 +1,24 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.vobich.bluestar.boyuebridge'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'com.vobich.bluestar.boyuebridge'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '1.0.59'
+    }
+    buildTypes {
+        debug { minifyEnabled false }
+        release { minifyEnabled false }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+// This module contains only a launcher Activity. It deliberately does not
+// depend on :app, LibVLC, UVC, TTS, a photo permission, or cloud credentials.
