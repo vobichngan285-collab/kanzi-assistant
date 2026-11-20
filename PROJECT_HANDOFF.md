@@ -1,3 +1,18 @@
+# 2026-11-20｜v1.0.68 已成功发布：单一生效OCR模型＋GLM专用Layout Parsing＋快SSE
+
+- **用户真机验证与授权**：在v1.0.67先选智谱免费`glm-4.6v-flash`后，旧「文字识别模型」页面又勾选百炼`qwen-vl-ocr`／`Qwen3.7-Flash`，但实际仍走智谱；免费版首次朗读很慢。用户确认明确切回「原有百炼」后3.7立刻恢复原速度，因此要求只修复两处模型选择不同步、慢的自定义默认非流式，并且优先新增GLM-OCR `layout_parsing`专用协议（地址/Key/模型可自己填）。允许修改发布，禁止碰已好的手机/USB/C110、原厂协议、音效、本地TTS、保益和主界面。
+- **原仓与版本**：唯一`vobichngan285-collab/kanzi-assistant`，从v1.0.67实验包正式发布HEAD `0b81746b9933b95c90c08136c27a89f5d41f0382` 建独立分支 **`exp/cloud-single-model-layout-stream-20261120`**，最终 HEAD **`ec5ea4ae7039d48c9a188d9d135671b9c005b76d`**。版本 `versionCode 77`、`versionName '1.0.68-cloud-routing-layout-fast'`，debug主应用ID仍`com.vobich.bluestar.c110plusquick159`；旧release和独立保益小启动器不变。
+- **本次代码精确10文件diff**：`BlueStarSettingsScreen.java`、`CloudProviderPolicy.java`、`CloudProviderStore.java`、`CloudVisionClient.java`、`MainActivity.java`、新增`LayoutParsingClient.java`、`tests/CloudProviderPolicyTest.java`、`app/build.gradle`、说明`docs/CLOUD_SINGLE_MODEL_LAYOUT_FAST_20261120.md`、专用CI `.github/workflows/cloud-single-model-layout-fast-20261120.yml`；没有改`C110WifiCamera`、`C110CameraActivity`、`C110FrameReader`、`C110DeviceControls`、`CaptureDingFeedback`、Camera2/UVC/LibVLC/native、原TTS和保益通道、Home/Task/预览布局、`CloudKeyStore`或既有模型API地址。
+- **单一生效模型UI**：主页→设置→云端AI直接显示当前真正使用的 OCR/视觉/ASR **服务商+模型**；点击OCR同页选择旧百炼所有模型（含Qwen3.7）和自定义厂商，同角色只显示唯一✓。切回旧百炼模型时，`selectOcrModel`同时`CloudProviderStore.select(...,OCR,"")`，旧OCR模型名与实际API同步；视觉选择同理。旧隐藏的独立模型目录不再作为云端主菜单入口，避免两个勾选互相矛盾。用量页当前模型标题显示真正服务商+模型，最近一次实际调用与token保留。
+- **流式速度修复**：`CloudProviderStore`对v1.0.67保存的`glm-4.6v-flash`和已知Qwen Chat模型 **一次性迁移 stream=false → true**，新增 Chat配置默认流式SSE，之后允许手动关闭并保留选择；不擅自打开未知模型的旧配置。不动原百炼`CloudVisionClient`的C快速逐行/流式逻辑。自定义Chat SSE通过既有`OcrLineChunks`和`SpeechChunker`有首行立即朗读；**无法保证服务端实际响应时间**，专用Layout本身同步返回。
+- **GLM-OCR适配器**：自定义OCR的协议增加 `Chat Completions` / `Layout Parsing`；仅OCR可以选后者，其他角色拒绝。HTTP POST用户指定完整HTTPS地址（智谱官方 `https://open.bigmodel.cn/api/paas/v4/layout_parsing`），JSON `{"model":"glm-ocr","file":"data:image/jpeg;base64,..."}`，不使用Chat`messages`/`stream`；解析 `md_results`，若文字为空严格判失败，取服务端`usage`，复用旧OCR过滤/广荣语音。支持已有C110绑定的蜂窝网络请求；JPEG大小≤10MB。原有智谱配置可以编辑切Layout，保留密钥。
+- **测试判定修复**：人工制造更清晰的512×512大字母A图，API真返回的文字必须识别出A才提示成功，避免只要HTTP200就被误报；单测覆盖OCR-only Layout/拒绝vision和ASR、旧免费glm和Qwen SSE升级策略、取消SSE、真实字母A校验（非A不能过）。
+- **逐项CI构建**：第一次`44770737571`静态功能检查已PASS，但GitHub工作流错误地用当前HEAD对比自身，diff检查失败，没进入编译、没发布；已改为正确从published v1.0.67分支比较。最终 GitHub Actions **`44770878509` completed/success**：10文件严格范围、单一模型选择/fastSSE/Layout实际JSON字段和响应解析、旧百炼保护检查全部PASS；`CloudProviderPolicyTest`＋原`TaskOrderTest`／`FollowupPromptTest`／`C110ZoomGeometryTest`／`C110PhotoPolicyTest`、原固定UVC补丁和图标、完整arm64 Gradle APK编译、ZIP/libvlc/UVC/叮和嗖音效/唯一Launcher/包名/版本/SHA256、上传Artifact与独立新的Release全部PASS。**发布tag目标、CI代码SHA、分支HEAD三者一致**，旧版本没有覆盖。
+- **APK**：Release `bluestar-cloud-layout-fast-20261120-v0168-lab`；直接下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-cloud-layout-fast-20261120-v0168-lab/BlueStar_Guide_Cloud_Layout_Fast_1.0.68.apk ；56,748,549 bytes；SHA256 `08514a8231a0f95e631160038bef169f29018c7ea4d87244227450d9bd6ef3c6`；CI https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44770878509 。
+- **待用户真机验收**：①OCR列表选智谱免费再点百炼3.7，**仅百炼3.7唯一✓**并实际拍照速度恢复；②重新选智谱4.6v-flash，自动SSE流式＋OCR设快速逐行，同图测首句朗读时间；③编辑旧glm-ocr选Layout协议，API地址须指向 /layout_parsing，模型`glm-ocr`，测试字母A以及真实照片；④检查手机/USB/C110快拍／云识别/TTS/金属叮/AI追问依旧正常。**没有第三方密钥和真机，不得将CI成功等同于智谱真实调用成功或性能达标。**
+
+---
+
 # 2026-11-20｜v1.0.67 最终实验包已成功发布：用户自定义 OCR / 视觉 / ASR 三类云端服务商
 
 - **授权与原则**：用户要求以后自己填写服务商 **完整 HTTPS API URL、API Key、模型ID**，不再为接入火山、百炼、其他兼容大模型每次修改App；OCR、视觉分析（包括拍照理解、AI追问、寻找目标）、ASR语音转文字能分别选不同厂商，支持多套配置、无缝回到旧百炼；只做这项云端开放改造，保留相机/OEM/声音/本地TTS/保益，不动其他已验证功能。用户要求逐项检查并发布实验APK。
