@@ -1,3 +1,14 @@
+# 2026-11-20｜v1.0.65 已编译发布：C110预览去顶栏、取消变焦和拍照底板（用户最终批准的图片）
+
+- **用户授权与范围**：用户确认最后的黑色取景背景效果图并说「对开始」，明确 C110 页面顶部整排蓝色工具栏去掉；变焦滑动条背后的大块蓝色底板去掉（不是把取景画面变透明），保留 SeekBar 绿滑块/轨道、`1.0×` 倍率和下方「◎ 高清拍照」按钮；高清拍照按钮后面的蓝色整条底板也按最终确认图透明化。只修改 **C110CameraActivity界面层**，不动主页、任务宫格、普通手机/USB预览、C110原厂通信/取图、云OCR/AI、微软广荣语音/保益独立启动器。
+- **原仓和基线**：`vobichngan285-collab/kanzi-assistant`；v1.0.64 Release基线分支`exp/task-fullscreen-clean-20261120` HEAD `5dbe3a1c07406eae46f4f7bb375dc28bd1c9460f`；新隔离分支 `exp/c110-minimal-controls-20261120` 最终 HEAD **`c30c033b9f7ec97a351f479a499c6d4ba4c06d31`**；版本`versionCode 74`/`versionName '1.0.65-c110-minimal-controls'`，debug主包 **`com.vobich.bluestar.c110plusquick159`** 原样，保益伴随小APK不需重新安装。
+- **代码 diff 仅4个文件**：`C110CameraActivity.java` 12行变更（新增`titleRow.setVisibility(View.GONE)`，包括`setFullscreen`路径`topControls.setVisibility(View.GONE)`；`footer.setBackgroundColor(Color.TRANSPARENT)` 与 `zoomControls.setBackgroundColor(Color.TRANSPARENT)`，保留原控件对象避免开始/拍照流程引用空值）；`app/build.gradle`版本；独立CI工作流`.github/workflows/c110-minimal-controls-20261120.yml`；说明`cloud-vision-app/docs/C110_MINIMAL_CONTROLS_20261120.md`。没有改`C110FrameReader`或`C110WifiCamera`、拍照1001/变焦裁剪/150ms VLC、BLE/Wi-Fi、TTS/手机UVC/按钮回调。
+- **构建、Release核验**：GitHub Actions **`44733432876` completed/success**；静态严格范围、顶栏隐藏与底板透明、保留变焦滑条/倍率/单次高清快门、关键C110功能与保益接口检查通过；`TaskOrderTest`/`FollowupPromptTest`/`C110ZoomGeometryTest`/`C110PhotoPolicyTest`、pinned USB补丁、图标生成、完整 Android arm64 Gradle编译、APK ZIP、libvlc/UVC/TTS音效资源、单Launcher、版本包名均通过；上传Artifact和新tag Release成功。分支末端 HEAD/成功run head/Release target **完全一致**。未覆盖旧release。
+- **最终APK直链**：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-minimal-controls-20261120-v0165/BlueStar_Guide_C110_Minimal_Controls_1.0.65.apk ；**56,732,165 bytes**；SHA256 **`a352a2a1f3b87fb8565a8b2b54e6386853b768738d29f8a9273a99bbfbd71cd2`**；CI https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44733432876 。
+- **真机验收尚未完成**：在vivo X200 Pro按主页竖排`C110+ 实时预览`进入，确认顶部工具栏不显示，视频画面可见且下方只有细滑动条、倍率、蓝色高清拍照按钮，没有它们背后的蓝底；手指滑动倍率与原图 ROI云识别对应，按钮一次执行1001并语音正常，安卓系统返回手势回主页。C110设置仍通过主页设置进入；移除顶栏后不提供页面内“重连/全屏/设置”按钮，这是用户确认的极简视觉取舍。手机/USB普通预览属于另一页面，本次不改。**CI成功不等于真机音频/摄像头验收**。
+
+---
+
 # 2026-11-20｜v1.0.64 用户已确认效果图：朗读任务改为真正独立的纯深蓝全屏；CI/Release成功，待真机
 
 - **用户真机截图暴露问题**：v1.0.63主页「朗读任务」打开的是 TaskDesktopOverlay 半透明Dialog，主页原竖排文字直接透出来与任务图标重叠；顶部还莫名出现「▤ 阅读」、右侧大 X，图标上常驻小铅笔，页面凌乱。用户要求点进去直接换成完全干净的深蓝背景、不出现任何主页元素，顶部仅「返回」与「朗读任务」，每排4个小图标，平时不显示铅笔，长按才编辑/删除/拖动。已使用 ImageGen 生成并由用户明确确认效果图，随后授权执行。
