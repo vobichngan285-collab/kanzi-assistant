@@ -34,10 +34,19 @@ final class TargetVisionClient {
 
     static Result inspect(byte[] jpeg,String target,String key,String visualModel,
                           Network cloudNetwork) throws Exception {
+        return inspectInternal(jpeg,target,key,visualModel,cloudNetwork,null);
+    }
+    static Result inspect(byte[] jpeg,String target,CloudProviderStore.Config chosen,
+                          Network cloudNetwork)throws Exception{
+        return inspectInternal(jpeg,target,chosen.key,chosen.model,cloudNetwork,chosen);
+    }
+    private static Result inspectInternal(byte[] jpeg,String target,String key,String visualModel,
+                          Network cloudNetwork,CloudProviderStore.Config config)throws Exception{
         if(jpeg==null||jpeg.length<200)throw new Exception("没有有效的照片");
         if(target==null||target.trim().isEmpty())throw new Exception("没有寻找目标");
         if(key==null||key.trim().isEmpty())throw new Exception("请先设置百炼 API Key");
-        if(VisionModelCatalog.indexOf(visualModel)<0)
+        boolean custom=config!=null&&config.custom;
+        if(!custom&&VisionModelCatalog.indexOf(visualModel)<0)
             throw new IllegalArgumentException("视觉模型未获支持，无法寻找目标");
         String model=visualModel;
         // Use natural image-relative words only, never distances, street directions or GPS.
@@ -53,20 +62,25 @@ final class TargetVisionClient {
                 Base64.encodeToString(jpeg,Base64.NO_WRAP)));
         JSONObject body=new JSONObject().put("model",model).put("stream",false)
             .put("max_tokens",260)
-            .put("response_format",new JSONObject().put("type","json_object"))
             .put("messages",new JSONArray().put(new JSONObject().put("role","user")
                 .put("content",new JSONArray()
                     .put(new JSONObject().put("type","text").put("text",instruction))
                     .put(image))));
+        // Other vendors may reject forced JSON format. The prompt and
+        // conservative result parsing still guard against unsupported guesses.
+        if(!custom)body.put("response_format",
+            new JSONObject().put("type","json_object"));
         // This path requests JSON Object output. Bailian rejects thinking=true
         // together with JSON mode, so even manual Max uses direct JSON here.
-        if(VisionModelCatalog.isBudgetFlash(model) ||
-           VisionModelCatalog.isEmergencyMax(model))
+        if(!custom&&(VisionModelCatalog.isBudgetFlash(model) ||
+           VisionModelCatalog.isEmergencyMax(model)))
             body.put("enable_thinking",false);
-        URL endpoint=new URL("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions");
+        URL endpoint=new URL(custom?CloudProviderPolicy.validatedUrl(config.url):
+            "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions");
         HttpURLConnection c=(HttpURLConnection)(cloudNetwork==null?
             endpoint.openConnection():cloudNetwork.openConnection(endpoint));
         c.setRequestMethod("POST");
+        c.setInstanceFollowRedirects(false);
         c.setConnectTimeout(12000);c.setReadTimeout(45000);
         c.setDoOutput(true);
         c.setRequestProperty("Authorization","Bearer "+key.trim());
