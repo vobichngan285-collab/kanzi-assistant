@@ -2768,7 +2768,7 @@ public final class MainActivity extends CameraActivity {
                         if(ReadingRules.coordinateLine(part))return;
                         if(readingNarration!=null)readingNarration.addLine(part);
                         readingScreen.appendLine(part);
-                    }),OcrSpeedExperiment.C);
+                    }),OcrSpeedExperiment.C,null);
                 if(modelUsage!=null){
                     modelUsage.recordAsync(result.model,result.serverModel,
                         result.promptTokens,result.completionTokens,true);
