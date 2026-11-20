@@ -195,7 +195,7 @@ final class HomeVoiceAssistant {
     }
     private void playSendSound(){
         SharedPreferences prefs=activity.getSharedPreferences("kanzi_settings",Context.MODE_PRIVATE);
-        if(!prefs.getBoolean("sound_enabled",true))return;
+        if(!prefs.getBoolean("shutter_feedback_sound",true))return;
         try{
             MediaPlayer player=MediaPlayer.create(activity,R.raw.voice_send_whoosh);
             if(player!=null){
