@@ -93,6 +93,13 @@ final class C110VolumeShortcut {
     boolean dispatch(KeyEvent event){
         int key=event.getKeyCode();
         if(key!=KeyEvent.KEYCODE_VOLUME_UP&&key!=KeyEvent.KEYCODE_VOLUME_DOWN)return false;
+        // Observe BOTH volume keys (even if unassigned/off) to distinguish
+        // Android/vivo swallowing hardware events from our timing mismatch.
+        // Only the configured key will be consumed below.
+        if(event.getAction()==KeyEvent.ACTION_DOWN&&event.getRepeatCount()==0)
+            trace("down",key,-1L);
+        else if(event.getAction()==KeyEvent.ACTION_UP)
+            trace("up",key,-1L);
         String mode=selected(activity);
         if("off".equals(mode))return false;
         int configured=mode.startsWith("up_")?KeyEvent.KEYCODE_VOLUME_UP:
@@ -102,7 +109,6 @@ final class C110VolumeShortcut {
         if(event.getAction()==KeyEvent.ACTION_DOWN){
             if(event.getRepeatCount()>0)return true;
             long now=event.getEventTime()>0?event.getEventTime():SystemClock.uptimeMillis();
-            trace("down",key,-1L);
             if(!longMode&&pendingVolume!=null&&
                 C110VolumeTiming.secondDownAfterFirstUp(lastUp,now,DOUBLE_MS)){
                 trace("shutter",key,now-lastUp);
@@ -123,7 +129,6 @@ final class C110VolumeShortcut {
             return true;
         }
         if(event.getAction()==KeyEvent.ACTION_UP){
-            trace("up",key,-1L);
             if(activeKey!=key)return true;
             down=false;activeKey=-1;
             if(longMode){
