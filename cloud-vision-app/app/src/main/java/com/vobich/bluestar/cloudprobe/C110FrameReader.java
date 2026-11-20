@@ -36,7 +36,7 @@ final class C110FrameReader {
     private final Consumer<String> updates;
     private final AtomicInteger request=new AtomicInteger();
     private TextToSpeech tts;
-    private boolean ttsReady,closed,busy;
+    private boolean ttsReady,ttsInitFailed,closed,busy;
     private String activeTtsEngine;
     private float activeTtsRate=1f;
     private int ttsGeneration;
@@ -79,7 +79,7 @@ final class C110FrameReader {
         activeTtsEngine=engine;
         activeTtsRate=rate;
         final int generation=++ttsGeneration;
-        ttsReady=false;
+        ttsReady=false;ttsInitFailed=false;
         if(tts!=null){
             tts.stop();tts.shutdown();tts=null;
         }
@@ -89,22 +89,26 @@ final class C110FrameReader {
             if(closed||generation!=ttsGeneration)return;
             ttsReady=status==TextToSpeech.SUCCESS&&tts!=null;
             if(!ttsReady){
+                ttsInitFailed=true;
+                clearPendingSpeech();
                 report("所选语音引擎初始化失败，请在语音设置里试听");
                 if(tts!=null){tts.shutdown();tts=null;}
                 return;
             }
-            try{
-                tts.setSpeechRate(activeTtsRate);
-                flushPendingSpeech();
-            }catch(RuntimeException error){
-                report("所选语音引擎准备失败："+error.getClass().getSimpleName());
+            try{tts.setSpeechRate(activeTtsRate);}
+            catch(RuntimeException error){
+                report("所选引擎无法设置语速："+error.getClass().getSimpleName());
             }
+            // Some third-party voices may not expose a configurable rate;
+            // never drop the recognized content just because rate set failed.
+            flushPendingSpeech();
         });
         try{
             tts=engine.isEmpty()?new TextToSpeech(activity,ready):
                 new TextToSpeech(activity,ready,engine);
         }catch(RuntimeException error){
-            tts=null;ttsReady=false;
+            tts=null;ttsReady=false;ttsInitFailed=true;
+            clearPendingSpeech();
             report("无法启动所选语音引擎："+error.getClass().getSimpleName());
         }
     }
@@ -123,6 +127,10 @@ final class C110FrameReader {
     }
     private void enqueueSpeech(String content,int queueMode,String utterance){
         if(content==null||content.isEmpty()||closed)return;
+        if(ttsInitFailed){
+            report("已识别文字，但所选语音引擎初始化失败，未能朗读");
+            return;
+        }
         if(tts==null||!ttsReady){
             int id=request.get();
             if(pendingSpeechRequest!=id){clearPendingSpeech();pendingSpeechRequest=id;}
