@@ -434,6 +434,9 @@ public final class MainActivity extends CameraActivity {
         zoomChip.setPadding(dp(12),dp(9),dp(12),dp(9));
         title.addView(zoomChip);
         root.addView(title,new FrameLayout.LayoutParams(-1,dp(58),Gravity.TOP));
+        // User-approved camera-only preview: keep existing internal controls
+        // initialized for legacy callbacks, but draw NO top toolbar.
+        title.setVisibility(View.GONE);
 
         currentTaskChip=new TextView(this);
         currentTaskChip.setTextColor(0xFFECF6FF);
@@ -443,6 +446,8 @@ public final class MainActivity extends CameraActivity {
         FrameLayout.LayoutParams chip=new FrameLayout.LayoutParams(-2,dp(37),Gravity.TOP|Gravity.LEFT);
         chip.topMargin=dp(64);chip.leftMargin=dp(12);
         root.addView(currentTaskChip,chip);
+        // Task selection belongs on Home's separate task desktop, not on live video.
+        currentTaskChip.setVisibility(View.GONE);
 
         resultChip=new TextView(this);
         resultChip.setGravity(Gravity.CENTER);
@@ -463,7 +468,7 @@ public final class MainActivity extends CameraActivity {
         dock.setBackground(roundRect(0xED091D36,20));
         modeButton=createControlButton("⌂\n主页",0xFF2C547D);
         startButton=createControlButton("◎\n预览",0xFF176BAC);
-        cameraEntryButton=createControlButton("⚙\n设置",0xFF2C547D);
+        cameraEntryButton=createControlButton("🎙\n按住AI",0xFF2C547D);
         for(Button btt:new Button[]{modeButton,startButton,cameraEntryButton}){
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(75),1f);
             lp.setMargins(dp(3),0,dp(3),0);dock.addView(btt,lp);
@@ -471,10 +476,14 @@ public final class MainActivity extends CameraActivity {
         root.addView(dock,new FrameLayout.LayoutParams(-1,dp(89),Gravity.BOTTOM));
         modeButton.setContentDescription("返回蓝星向导主页");
         startButton.setContentDescription("预览当前摄像头，点击可切换手机、USB或C110");
-        cameraEntryButton.setContentDescription("打开与主页相同的蓝星统一设置，不关闭当前预览");
+        cameraEntryButton.setContentDescription("按住AI说话，松开发送，追问上一张手机或C110照片");
         modeButton.setOnClickListener(v->finish());
         startButton.setOnClickListener(v->showUnifiedModeSelector());
-        cameraEntryButton.setOnClickListener(v->openLargeSettings());
+        // Same proven MainActivity VoicePressState/VoiceRecorder/ASR/TTS flow
+        // previously attached to the TOP microphone. This only moves its touch
+        // target to the bottom-right button; no second recorder or AI API.
+        cameraEntryButton.setOnTouchListener((v,event)->handleVoiceButtonTouch(event));
+        cameraEntryButton.setOnClickListener(v->toastShort("请按住AI说话，松开发送"));
         return root;
     }
 
@@ -1602,7 +1611,7 @@ public final class MainActivity extends CameraActivity {
         }
         String message=phone?(phoneFrontFacing?"已切换手机前置摄像头":"已切换手机后置摄像头"):
             "已切换USB外接摄像头";
-        if(settingsButton!=null)settingsButton.announceForAccessibility(message);
+        if(rootFrame!=null)rootFrame.announceForAccessibility(message);
     }
 
     private void attachPhonePreviewAfterUsbInit() {
@@ -3142,6 +3151,11 @@ public final class MainActivity extends CameraActivity {
                         beginCapturedFrame(remote,now,token,null);
                     }else{
                         cloudBusy=false;
+                        // The OEM still photo succeeded even though cloud was
+                        // unavailable: user still deserves exactly one local ding.
+                        // The online branch already calls signalCapture inside
+                        // beginCapturedFrame(), so do NOT duplicate it there.
+                        signalCapture();
                         setResultStatus("C110高清原图已拍摄 "+photo.width+"×"+photo.height);
                         toastShort(issue);
                     }
