@@ -988,7 +988,7 @@ public final class MainActivity extends CameraActivity {
     void setUsbAutoSwitch(boolean enable){
         getSharedPreferences(PREFS,MODE_PRIVATE).edit()
             .putBoolean(PREF_USB_AUTO_SWITCH,enable).apply();
-        if(enable&&!usingPhoneCamera&&!hasConnectedUsbVideoDevice())
+        if(!settingsOnly&&enable&&!usingPhoneCamera&&!hasConnectedUsbVideoDevice())
             switchCameraSource(true);
     }
     void setUsbAutoLaunch(boolean enable){
@@ -1091,6 +1091,17 @@ public final class MainActivity extends CameraActivity {
     void setCameraSourceFromSettings(int index){
         if(index<0||index>2)return;
         boolean phone=index!=0,front=index==2;
+        if(settingsOnly){
+            // Unified settings opened from Home does NOT start Camera2/UVC.
+            // Store preferred source now; initialize actual camera only when
+            // user explicitly selects the Preview tab.
+            usingPhoneCamera=phone;phoneFrontFacing=front;
+            getSharedPreferences(PREFS,MODE_PRIVATE).edit()
+                .putBoolean(PREF_PHONE_CAMERA,phone)
+                .putBoolean(PREF_FRONT_CAMERA,front).apply();
+            toastShort("已保存摄像头选择，进入预览后生效");
+            return;
+        }
         selectManualPhoneOverride(phone);
         if(phone==usingPhoneCamera&&(!phone||front==phoneFrontFacing))return;
         saveCameraProfile();
