@@ -214,6 +214,13 @@ public final class TaskDesktopActivity extends Activity {
                 (selected?"，当前任务":"")+
                 "；点击选择，长按打开编辑删除选项，长按拖动可调整位置");
             slot.setFocusable(true);slot.setClickable(true);
+            // Expose a real Android accessibility long-click action to screen readers.
+            // Touch users still get the held-then-drag gesture below.
+            slot.setOnLongClickListener(v->{
+                if(creation)editTask(null);
+                else showTaskActions(task);
+                return true;
+            });
             slot.setOnClickListener(v->{
                 if(dragging)return;
                 if(creation)editTask(null);
