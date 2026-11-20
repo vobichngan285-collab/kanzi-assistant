@@ -1,0 +1,26 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <queries>
+        <package android:name="com.vobich.bluestar.c110plusquick159"/>
+    </queries>
+    <application
+        android:allowBackup="false"
+        android:label="蓝星一键拍照"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:supportsRtl="true">
+        <!-- Screen reader opens this tiny app as a normal user-requested
+             launcher. Its only action is to open the real Blue Star Home
+             in one-shot mode, then immediately finish. -->
+        <activity android:name=".LaunchActivity"
+            android:screenOrientation="portrait"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
