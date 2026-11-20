@@ -6,13 +6,11 @@ import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
-import android.text.InputType;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
-import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -27,7 +25,6 @@ public final class HomeActivity extends Activity {
     private static final int BG=0xFF091B32,ACCENT=0xFFB9DCF8,WHITE=0xFFF3F8FF;
     private static final int NAV_BG=0xED091D36,NAV_NORMAL=0xFF2C547D,NAV_ACTIVE=0xFF176BAC;
     private FrameLayout root;
-    private boolean settingsTab;
     private C110VolumeShortcut shortcut;
     private C110QuickShotController quickShot;
     private TextView quickStatusView;
@@ -68,25 +65,10 @@ public final class HomeActivity extends Activity {
         FrameLayout.LayoutParams s=new FrameLayout.LayoutParams(-1,-1);
         s.bottomMargin=dp(76);
         root.addView(scroll,s);
-        TextView heading=text(settingsTab?"设置":"蓝星向导",27,WHITE);
+        TextView heading=text("蓝星向导",27,WHITE);
         heading.setGravity(Gravity.CENTER);
         heading.setTypeface(null,android.graphics.Typeface.BOLD);
         content.addView(heading,new LinearLayout.LayoutParams(-1,dp(74)));
-        if(settingsTab){
-            option(content,"🎛","快捷拍照按键",
-                C110VolumeShortcut.LABELS[index(C110VolumeShortcut.selected(this))],
-                this::chooseShortcut);
-            option(content,"▤","文字朗读 OCR 模型",
-                OcrModelCatalog.label(ocrModel()),this::chooseOcrModel);
-            option(content,"✦","视觉任务模型",
-                visionModel(),this::chooseVisionModel);
-            option(content,"🔑","云端 API Key","配置或清除本机密钥",this::editApiKey);
-            option(content,"⚙","更多设置","原有语音、任务、相机及诊断设置",()->{
-                Intent intent=new Intent(this,MainActivity.class);
-                intent.putExtra("bluestar_launch_settings",true);
-                startActivity(intent);
-            });
-        }else{
             option(content,"▣","快捷拍照","C110+ 原厂高清快门 → OCR → 朗读",this::quickPhoto);
             quickStatusView=text(quickStatus,15,0xFFC3D7EF);
             quickStatusView.setPadding(dp(12),dp(5),dp(12),dp(8));
@@ -105,13 +87,12 @@ public final class HomeActivity extends Activity {
                 intent.putExtra("bluestar_launch_reading",true);
                 startActivity(intent);
             });
-        }
         LinearLayout dock=new LinearLayout(this);
         dock.setGravity(Gravity.CENTER);
         dock.setBackground(bg(NAV_BG,23));
-        Button h=nav("⌂\n主页",!settingsTab,()->{settingsTab=false;render();});
+        Button h=nav("⌂\n主页",true,()->render());
         Button p=nav("◎\n预览",false,this::openPreview);
-        Button settings=nav("⚙\n设置",settingsTab,()->{settingsTab=true;render();});
+        Button settings=nav("⚙\n设置",false,this::openSettings);
         for(Button button:new Button[]{h,p,settings})
             dock.addView(button,new LinearLayout.LayoutParams(0,dp(66),1f));
         FrameLayout.LayoutParams params=new FrameLayout.LayoutParams(-1,dp(70),Gravity.BOTTOM);
@@ -166,59 +147,12 @@ public final class HomeActivity extends Activity {
         intent.putExtra("bluestar_launch_preview",true);
         startActivity(intent);
     }
-    private int index(String value){
-        for(int i=0;i<C110VolumeShortcut.VALUES.length;i++)
-            if(C110VolumeShortcut.VALUES[i].equals(value))return i;
-        return 0;
-    }
-    private void chooseShortcut(){
-        String current=C110VolumeShortcut.selected(this);
-        new AlertDialog.Builder(this).setTitle("仅控制 C110+ 高清拍照")
-            .setSingleChoiceItems(C110VolumeShortcut.LABELS,index(current),(d,i)->{
-                shortcut.cancel();
-                C110VolumeShortcut.select(this,C110VolumeShortcut.VALUES[i]);
-                d.dismiss();render();
-            }).setNegativeButton("取消",null).show();
-    }
-    private String ocrModel(){
-        return OcrModelCatalog.normalize(getSharedPreferences("kanzi_settings",MODE_PRIVATE)
-            .getString("cloud_ocr_model_v1",OcrModelCatalog.DEFAULT));
-    }
-    private String visionModel(){
-        return VisionModelCatalog.normalize(getSharedPreferences("kanzi_settings",MODE_PRIVATE)
-            .getString("cloud_vision_model",VisionModelCatalog.DEFAULT));
-    }
-    private void chooseOcrModel(){
-        new AlertDialog.Builder(this).setTitle("主页和 C110+ 共用 OCR 模型")
-            .setSingleChoiceItems(OcrModelCatalog.LABELS,
-                Math.max(0,OcrModelCatalog.indexOf(ocrModel())),(d,i)->{
-                    getSharedPreferences("kanzi_settings",MODE_PRIVATE).edit()
-                        .putString("cloud_ocr_model_v1",OcrModelCatalog.IDS[i]).apply();
-                    d.dismiss();render();
-                }).setNegativeButton("取消",null).show();
-    }
-    private void chooseVisionModel(){
-        new AlertDialog.Builder(this).setTitle("视觉分析模型")
-            .setSingleChoiceItems(VisionModelCatalog.LABELS,
-                Math.max(0,VisionModelCatalog.indexOf(visionModel())),(d,i)->{
-                    getSharedPreferences("kanzi_settings",MODE_PRIVATE).edit()
-                        .putString("cloud_vision_model",VisionModelCatalog.IDS[i]).apply();
-                    d.dismiss();render();
-                }).setNegativeButton("取消",null).show();
-    }
-    private void editApiKey(){
-        EditText edit=new EditText(this);
-        edit.setSingleLine(true);edit.setHint("粘贴百炼 API Key");
-        edit.setInputType(InputType.TYPE_CLASS_TEXT|
-            InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        new AlertDialog.Builder(this).setTitle("云端密钥（只存手机）")
-            .setView(edit).setPositiveButton("保存",(d,w)->{
-                try{CloudKeyStore.save(this,edit.getText().toString());
-                    Toast.makeText(this,"密钥已保存",Toast.LENGTH_SHORT).show();}
-                catch(Exception ex){Toast.makeText(this,"保存失败："+ex.getMessage(),
-                    Toast.LENGTH_LONG).show();}
-            }).setNeutralButton("清除",(d,w)->CloudKeyStore.clear(this))
-            .setNegativeButton("取消",null).show();
+    private void openSettings(){
+        // Both Home and Preview enter the exact SAME full BlueStarSettingsScreen.
+        // No extra Home-only shortcuts/model/key page, no nested legacy menu.
+        Intent intent=new Intent(this,MainActivity.class);
+        intent.putExtra("bluestar_launch_settings",true);
+        startActivity(intent);
     }
     private void chooseTask(){
         List<TaskCatalog.Task> tasks=TaskCatalog.all(this);
@@ -262,9 +196,5 @@ public final class HomeActivity extends Activity {
     @Override public boolean dispatchKeyEvent(KeyEvent event){
         if(shortcut!=null&&shortcut.dispatch(event))return true;
         return super.dispatchKeyEvent(event);
-    }
-    @Override public void onBackPressed(){
-        if(settingsTab){settingsTab=false;render();return;}
-        super.onBackPressed();
     }
 }
