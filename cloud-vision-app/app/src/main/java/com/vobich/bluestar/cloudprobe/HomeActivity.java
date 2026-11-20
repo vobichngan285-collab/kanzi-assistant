@@ -20,6 +20,11 @@ import java.util.List;
 
 /** Small launcher: never constructs a phone/USB controller or an RTSP player. */
 public final class HomeActivity extends Activity {
+    // Only the dedicated launcher entry requests an automatic one-shot.
+    // Ordinary ACTION_MAIN launching Blue Star never fires the shutter.
+    static final String ACTION_QUICK_SHOT=
+        "com.vobich.bluestar.cloudprobe.action.QUICK_SHOT";
+    private boolean quickLaunchPending;
     // Use the original Blue Star palette already present in LargeSettingsScreen
     // and MainActivity, not the yellow/black reference application's colors.
     private static final int BG=0xFF091B32,ACCENT=0xFFB9DCF8,WHITE=0xFFF3F8FF;
@@ -32,6 +37,7 @@ public final class HomeActivity extends Activity {
 
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
+        quickLaunchPending=isQuickShotIntent(getIntent());
         shortcut=new C110VolumeShortcut(this,this::quickPhoto);
         quickShot=new C110QuickShotController(this,this::quickStatusChanged);
         root=new FrameLayout(this);
@@ -130,6 +136,16 @@ public final class HomeActivity extends Activity {
         View line=new View(this);line.setBackgroundColor(0xFF265077);
         parent.addView(line,new LinearLayout.LayoutParams(-1,dp(1)));
     }
+    private static boolean isQuickShotIntent(Intent intent){
+        return intent!=null&&ACTION_QUICK_SHOT.equals(intent.getAction());
+    }
+    private void consumeQuickLaunch(){
+        if(!quickLaunchPending||quickShot==null||isFinishing())return;
+        quickLaunchPending=false; // consume before any async Wi-Fi dialog/onResume
+        Intent launched=getIntent();
+        if(isQuickShotIntent(launched))launched.setAction(Intent.ACTION_MAIN);
+        quickPhoto();
+    }
     private void quickPhoto(){
         // No Activity, dialog, camera preview, or experiment screen: the
         // native photo + existing OCR/TTS starts on THIS homepage.
@@ -177,7 +193,20 @@ public final class HomeActivity extends Activity {
     @Override protected void onResume(){
         super.onResume();
         if(quickShot!=null)quickShot.onResume();
-        if(root!=null)render();
+        if(root!=null){
+            render();
+            // Wait until Home is resumed and the real user-requested camera
+            // session can start; exactly once per explicit quick-launch intent.
+            if(quickLaunchPending)root.post(this::consumeQuickLaunch);
+        }
+    }
+    @Override protected void onNewIntent(Intent intent){
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if(isQuickShotIntent(intent)){
+            quickLaunchPending=true;
+            if(root!=null&&hasWindowFocus())root.post(this::consumeQuickLaunch);
+        }
     }
     @Override protected void onPause(){
         if(quickShot!=null)quickShot.onPause();
