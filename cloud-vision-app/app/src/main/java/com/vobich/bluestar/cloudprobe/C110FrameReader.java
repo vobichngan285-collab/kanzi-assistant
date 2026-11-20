@@ -67,7 +67,7 @@ final class C110FrameReader {
         String configured=p.getString("app_tts_engine_package","");
         final String engine=configured==null?"":configured;
         final float rate=p.getBoolean("local_tts_follow_default",true)?1f:
-            Math.max(.5f,Math.min(3f,p.getFloat("local_tts_rate",1f))));
+            Math.max(.5f,Math.min(3f,p.getFloat("local_tts_rate",1f)));
         if(activeTtsEngine!=null&&activeTtsEngine.equals(engine)&&tts!=null){
             if(Float.compare(activeTtsRate,rate)!=0){
                 activeTtsRate=rate;
