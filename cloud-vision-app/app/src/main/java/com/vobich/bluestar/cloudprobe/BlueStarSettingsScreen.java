@@ -129,6 +129,27 @@ final class BlueStarSettingsScreen {
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(4),dp(12),dp(4),dp(25));
         scroll.addView(content,new ScrollView.LayoutParams(-1,-2));
+        // The same three blue navigation actions as Home/Preview, not the
+        // former settings-only window with no way back to app navigation.
+        LinearLayout dock=new LinearLayout(app);
+        dock.setGravity(Gravity.CENTER);
+        dock.setBackground(bg(0xED091D36,22));
+        for(String label:new String[]{"⌂\n主页","◎\n预览","⚙\n设置"}){
+            final int index=dock.getChildCount();
+            Button tab=button(label,index==2?0xFF176BAC:0xFF2C547D);
+            tab.setTextSize(16);
+            tab.setContentDescription(index==0?"返回主页":
+                index==1?"返回或打开摄像头预览":"当前蓝星统一设置");
+            tab.setOnClickListener(v->{
+                if(index==0)app.openHomeFromUnifiedSettings();
+                else if(index==1)app.openPreviewFromUnifiedSettings();
+                else if(!"home".equals(p.name)){history.clear();navigate("home","");}
+            });
+            dock.addView(tab,new LinearLayout.LayoutParams(0,dp(66),1f));
+        }
+        LinearLayout.LayoutParams dockParams=new LinearLayout.LayoutParams(-1,dp(69));
+        dockParams.topMargin=dp(3);
+        page.addView(dock,dockParams);
         if(p.name.equals("home"))home();
         else if(p.name.equals("speech"))speech();
         else if(p.name.equals("engines"))engines();
@@ -396,6 +417,8 @@ final class BlueStarSettingsScreen {
         row("当前视觉模型 · "+app.visionModelDescription(),"全局共享",
             ()->navigate("models",""));
         action("打开C110+实时预览和机身设置",()->app.openC110FromUnifiedSettings());
+        row("照片分辨率/OCR准确率实验","仅明确进入实验页才拍照，不影响快捷拍照",
+            ()->app.openC110PhotoLabFromUnifiedSettings());
         note("机身提示音(9011)与指示灯(9038)需要连接C110后，"
             +"由其原有相机设置界面操作；本页不直接发送硬件指令。"
             +"分辨率由原厂SJCAM Zone选择，安全策略不开放未验证的4003删图。");
