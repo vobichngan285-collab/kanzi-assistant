@@ -77,14 +77,17 @@ public final class HomeActivity extends Activity {
             quickStatusView.setPadding(dp(12),dp(5),dp(12),dp(8));
             quickStatusView.setVisibility(quickStatus.isEmpty()?View.GONE:View.VISIBLE);
             content.addView(quickStatusView,new LinearLayout.LayoutParams(-1,-2));
-            option(content,"▶","C110+ 实时预览","保留 150ms 播放与竖屏裁切",()->
-                startActivity(new Intent(this,C110CameraActivity.class)));
+            option(content,"▶","C110+ 实时预览","保留 150ms 播放与竖屏裁切",()->{
+                prepareOtherScreenSpeech();
+                startActivity(new Intent(this,C110CameraActivity.class));
+            });
             option(content,"▤","朗读任务","选择当前 OCR 或 AI 任务",this::chooseTask);
             option(content,"✦","AI 视觉分析","切换到预览后执行视觉任务",()->{
                 selectVisionTask();
                 openPreview();
             });
             option(content,"▦","阅读模式","进入原来的书页阅读页面",()->{
+                prepareOtherScreenSpeech();
                 Intent intent=new Intent(this,MainActivity.class);
                 intent.putExtra("bluestar_launch_preview",true);
                 intent.putExtra("bluestar_launch_reading",true);
@@ -155,12 +158,17 @@ public final class HomeActivity extends Activity {
             quickStatusView.setVisibility(quickStatus.isEmpty()?View.GONE:View.VISIBLE);
         }
     }
+    private void prepareOtherScreenSpeech(){
+        if(quickShot!=null)quickShot.beforeOpenAnotherScreen();
+    }
     private void openPreview(){
+        prepareOtherScreenSpeech();
         Intent intent=new Intent(this,MainActivity.class);
         intent.putExtra("bluestar_launch_preview",true);
         startActivity(intent);
     }
     private void openSettings(){
+        prepareOtherScreenSpeech();
         // Both Home and Preview enter the exact SAME full BlueStarSettingsScreen.
         // No extra Home-only shortcuts/model/key page, no nested legacy menu.
         Intent intent=new Intent(this,MainActivity.class);
