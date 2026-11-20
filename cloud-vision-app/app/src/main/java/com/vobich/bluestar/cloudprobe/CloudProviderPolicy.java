@@ -31,6 +31,24 @@ final class CloudProviderPolicy {
                name.equals("qwen3.8-flash")||
                name.equals("qwen3.8-max");
     }
+    /** The two tested vendor Chat models use the SAME photo/prompt/SSE/OCR/TTS
+     * path as Qwen. Only their native thinking flag differs on Zhipu's endpoint.
+     * Never attach provider-specific parameters to Bailian or other services. */
+    static boolean zhipuFastVisualOcr(String url,String model){
+        if(url==null||model==null)return false;
+        String name=model.trim().toLowerCase(Locale.ROOT);
+        if(!("glm-4.6v".equals(name)||"glm-4.6v-flashx".equals(name)||
+                "glm-4.6v-flash".equals(name)))return false;
+        try{
+            URI endpoint=new URI(url.trim());
+            String host=endpoint.getHost();
+            return "https".equalsIgnoreCase(endpoint.getScheme())&&
+                host!=null&&("open.bigmodel.cn".equalsIgnoreCase(host)||
+                    "api.z.ai".equalsIgnoreCase(host))&&
+                endpoint.getPath()!=null&&
+                endpoint.getPath().endsWith("/chat/completions");
+        }catch(Exception ignored){return false;}
+    }
     /** A real OCR probe must return the intended glyph, not just HTTP 200. */
     static boolean probeRecognizedA(String reply){
         if(reply==null)return false;
