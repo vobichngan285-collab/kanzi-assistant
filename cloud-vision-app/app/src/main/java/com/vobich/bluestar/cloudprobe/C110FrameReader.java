@@ -37,6 +37,13 @@ final class C110FrameReader {
     private final AtomicInteger request=new AtomicInteger();
     private TextToSpeech tts;
     private boolean ttsReady,closed,busy;
+    private String activeTtsEngine;
+    private float activeTtsRate=1f;
+    private int ttsGeneration;
+    // The cloud may return before a newly selected TTS engine has initialized.
+    // Keep only the text of the current user-requested photo, not a cache.
+    private final StringBuilder pendingSpeech=new StringBuilder();
+    private int pendingSpeechRequest=-1;
     private long lastTapMs;
     private Future<?> taskFuture;
     private String lastText="";
@@ -45,19 +52,91 @@ final class C110FrameReader {
     C110FrameReader(Activity activity,Consumer<String> updates){
         this.activity=activity;
         this.updates=updates;
+        syncSpeechSettings();
+    }
+
+    /**
+     * Home does not own MainActivity's TTS instance. Share its selected
+     * settings instead: re-create this reader's TTS only when the actual
+     * Android engine package changes; update the speech rate otherwise.
+     * Called after returning from unified Settings and before each capture.
+     */
+    void syncSpeechSettings(){
+        if(closed)return;
         SharedPreferences p=activity.getSharedPreferences(PREFS,Context.MODE_PRIVATE);
-        String engine=p.getString("app_tts_engine_package","");
+        String configured=p.getString("app_tts_engine_package","");
+        final String engine=configured==null?"":configured;
+        final float rate=p.getBoolean("local_tts_follow_default",true)?1f:
+            Math.max(.5f,Math.min(3f,p.getFloat("local_tts_rate",1f))));
+        if(activeTtsEngine!=null&&activeTtsEngine.equals(engine)&&tts!=null){
+            if(Float.compare(activeTtsRate,rate)!=0){
+                activeTtsRate=rate;
+                if(ttsReady)try{tts.setSpeechRate(rate);}
+                    catch(RuntimeException error){report("语速设置失败："+error.getClass().getSimpleName());}
+            }
+            return;
+        }
+        activeTtsEngine=engine;
+        activeTtsRate=rate;
+        final int generation=++ttsGeneration;
+        ttsReady=false;
+        if(tts!=null){
+            tts.stop();tts.shutdown();tts=null;
+        }
+        // Match MainActivity's working initialization: do NOT force
+        // setLanguage(Locale.SIMPLIFIED_CHINESE) on custom engines such as grtts.
         TextToSpeech.OnInitListener ready=status->main.post(()->{
-            if(closed)return;
-            ttsReady=status==TextToSpeech.SUCCESS;
-            if(ttsReady&&tts!=null){
-                tts.setLanguage(Locale.SIMPLIFIED_CHINESE);
-                tts.setSpeechRate(p.getBoolean("local_tts_follow_default",true)?1f:
-                    Math.max(.5f,Math.min(3f,p.getFloat("local_tts_rate",1f))));
+            if(closed||generation!=ttsGeneration)return;
+            ttsReady=status==TextToSpeech.SUCCESS&&tts!=null;
+            if(!ttsReady){
+                report("所选语音引擎初始化失败，请在语音设置里试听");
+                if(tts!=null){tts.shutdown();tts=null;}
+                return;
+            }
+            try{
+                tts.setSpeechRate(activeTtsRate);
+                flushPendingSpeech();
+            }catch(RuntimeException error){
+                report("所选语音引擎准备失败："+error.getClass().getSimpleName());
             }
         });
-        tts=engine==null||engine.isEmpty()?
-            new TextToSpeech(activity,ready):new TextToSpeech(activity,ready,engine);
+        try{
+            tts=engine.isEmpty()?new TextToSpeech(activity,ready):
+                new TextToSpeech(activity,ready,engine);
+        }catch(RuntimeException error){
+            tts=null;ttsReady=false;
+            report("无法启动所选语音引擎："+error.getClass().getSimpleName());
+        }
+    }
+
+    private void clearPendingSpeech(){
+        pendingSpeech.setLength(0);
+        pendingSpeechRequest=-1;
+    }
+    private void flushPendingSpeech(){
+        if(!ttsReady||tts==null||pendingSpeech.length()==0)return;
+        int id=pendingSpeechRequest;
+        String content=pendingSpeech.toString();
+        clearPendingSpeech();
+        if(id==request.get())
+            enqueueSpeech(content,TextToSpeech.QUEUE_FLUSH,"c110-delayed-"+id);
+    }
+    private void enqueueSpeech(String content,int queueMode,String utterance){
+        if(content==null||content.isEmpty()||closed)return;
+        if(tts==null||!ttsReady){
+            int id=request.get();
+            if(pendingSpeechRequest!=id){clearPendingSpeech();pendingSpeechRequest=id;}
+            if(pendingSpeech.length()+content.length()<=100_000)
+                pendingSpeech.append(content);
+            else report("语音未就绪，待播报文字过长；没有继续缓存");
+            return;
+        }
+        try{
+            if(tts.speak(content,queueMode,null,utterance)!=TextToSpeech.SUCCESS)
+                report("所选语音引擎未接受朗读，请在语音设置里试听");
+        }catch(RuntimeException error){
+            report("所选语音引擎朗读失败："+error.getClass().getSimpleName());
+        }
     }
 
     void setVideoOutputReady(boolean ready){outputReady=ready;}
@@ -73,6 +152,7 @@ final class C110FrameReader {
     void tap(View videoRoot,float selectedZoom,boolean portraitCover,
              float viewportAspect){
         if(closed||busy)return;
+        syncSpeechSettings();
         final float zoomAtTap=C110ZoomGeometry.clamp(selectedZoom);
         long now=SystemClock.elapsedRealtime();
         if(now-lastTapMs<850)return;
@@ -94,6 +174,7 @@ final class C110FrameReader {
         }
         if((long)width*height>9_000_000L){report("视频画幅过大，已拒绝拷贝");return;}
         final int id=request.incrementAndGet();
+        clearPendingSpeech();
         lastTapMs=now;
         busy=true;
         if(tts!=null)tts.stop();
@@ -163,10 +244,12 @@ final class C110FrameReader {
     boolean recognizeOriginalJpeg(byte[] jpeg,int width,int height,float selectedZoom,
                                   boolean portraitCover,float viewportAspect){
         if(closed||busy)return false;
+        syncSpeechSettings();
         if(jpeg==null||jpeg.length<256||width<2||height<2){
             report("C110没有返回有效高清原图，未提交云端");return false;
         }
         final int id=request.incrementAndGet();
+        clearPendingSpeech();
         final long started=SystemClock.elapsedRealtime();
         busy=true;
         lastTapMs=started;
@@ -225,12 +308,12 @@ final class C110FrameReader {
             AtomicInteger spokenParts=new AtomicInteger();
             CloudVisionClient.Result result=CloudVisionClient.recognize(jpeg,key,task,model,
                 part->main.post(()->{
-                    if(closed||id!=request.get()||!ttsReady||tts==null)return;
+                    if(closed||id!=request.get())return;
                     String piece=filtered(part,task);
                     if(piece.isEmpty())return;
                     int count=spokenParts.getAndIncrement();
-                    tts.speak(piece,count==0?TextToSpeech.QUEUE_FLUSH:
-                        TextToSpeech.QUEUE_ADD,null,"c110-"+id+"-"+count);
+                    enqueueSpeech(piece,count==0?TextToSpeech.QUEUE_FLUSH:
+                        TextToSpeech.QUEUE_ADD,"c110-"+id+"-"+count);
                 }),speed,cellular);
             main.post(()->{
                 if(closed||id!=request.get())return;
@@ -268,11 +351,11 @@ final class C110FrameReader {
     }
 
     private void speak(String text){
-        if(ttsReady&&tts!=null&&text!=null&&!text.isEmpty())
-            tts.speak(text,TextToSpeech.QUEUE_FLUSH,null,"c110-final-"+request.get());
+        enqueueSpeech(text,TextToSpeech.QUEUE_FLUSH,"c110-final-"+request.get());
     }
 
     void replay(){
+        syncSpeechSettings();
         if(lastText.isEmpty()){report("还没有可重读的画面文字");return;}
         TaskCatalog.Task task=null;
         for(TaskCatalog.Task t:TaskCatalog.all(activity))
@@ -299,6 +382,7 @@ final class C110FrameReader {
 
     void stop(){
         request.incrementAndGet();
+        clearPendingSpeech();
         outputReady=false;
         busy=false;
         if(taskFuture!=null){taskFuture.cancel(true);taskFuture=null;}
@@ -307,8 +391,10 @@ final class C110FrameReader {
 
     void shutdown(){
         closed=true;
+        ++ttsGeneration;
         stop();
         io.shutdownNow();
         if(tts!=null){tts.shutdown();tts=null;}
+        ttsReady=false;
     }
 }
