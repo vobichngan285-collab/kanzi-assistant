@@ -39,10 +39,14 @@ final class C110QuickShotController {
     }
     void onResume(){
         active=true;
-        // Home returned from shared Settings: update grtts/other selected
-        // engine before the next capture, with no new camera or preview.
-        reader.syncSpeechSettings();
+        // Home has no reason to hold a second third-party TTS session until
+        // the user actually requests a photo. trigger() synchronizes voice.
         if(shutterPending&&waiting!=null)main.post(waiting);
+    }
+    void beforeOpenAnotherScreen(){
+        // Prevent Home's retained C110 voice instance competing with the
+        // separate MainActivity TTS used by Settings/phone/USB.
+        reader.releaseSpeechForOtherScreen();
     }
     void onPause(){
         active=false;
