@@ -68,6 +68,7 @@ public final class C110CameraActivity extends Activity {
     private Runnable delayedPlay;
     private C110DeviceControls deviceControls;
     private C110FrameReader frameReader;
+    private CaptureDingFeedback captureDing;
     private TextView taskChip;
     private final C110WifiCamera photoCamera=new C110WifiCamera();
     private Button photoButton;
@@ -93,6 +94,7 @@ public final class C110CameraActivity extends Activity {
         cm=(ConnectivityManager)getSystemService(Context.CONNECTIVITY_SERVICE);
         deviceControls=new C110DeviceControls(this,this::say);
         frameReader=new C110FrameReader(this,this::say);
+        captureDing=new CaptureDingFeedback(this);
         FrameLayout root=new FrameLayout(this);
         cameraRoot=root;
         root.setClipChildren(true);
@@ -566,6 +568,9 @@ public final class C110CameraActivity extends Activity {
         fullscreenPhoto.setEnabled(true);
         beginButton.setEnabled(true);
         pendingDeletion=photo==null?null:C110WifiCamera.DeletionCandidate.fromPhoto(photo);
+        // Real OEM 1001 JPEG completed: play one phone-side metal ding.
+        // Independent of C110's hardware mute command 9011, and never on failure.
+        if(photo!=null&&captureDing!=null)captureDing.photoSucceeded();
         // 1x: send original bytes; >1x: decode only matching normalized JPEG ROI.
         if(photo!=null&&!frameReader.recognizeOriginalJpeg(
             photo.jpeg,photo.width,photo.height,zoomAtShutter,
@@ -894,6 +899,7 @@ public final class C110CameraActivity extends Activity {
             isolatedWifiBootstrap.shutdown();isolatedWifiBootstrap=null;
         }
         main.removeCallbacks(hideStatus);
+        if(captureDing!=null){captureDing.shutdown();captureDing=null;}
         frameReader.shutdown();deviceControls.shutdown();io.shutdownNow();
         super.onDestroy();
     }
