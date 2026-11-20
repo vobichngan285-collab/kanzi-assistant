@@ -1,0 +1,190 @@
+name: Blue Star v1.0.64 Clean Fullscreen Task Page
+on:
+  push:
+    branches: [ 'exp/task-fullscreen-clean-20261120' ]
+    paths:
+      - 'cloud-vision-app/app/**'
+      - 'cloud-vision-app/tests/**'
+      - 'cloud-vision-app/docs/TASK_FULLSCREEN_CLEAN_20261120.md'
+      - '.github/workflows/task-fullscreen-clean-20261120.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  full-ui-regression-and-release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Confirm scope and independent clean task screen
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path("cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe")
+          home=(root/"HomeActivity.java").read_text()
+          page=(root/"TaskDesktopActivity.java").read_text()
+          catalog=(root/"TaskCatalog.java").read_text()
+          manifest=Path("cloud-vision-app/app/src/main/AndroidManifest.xml").read_text()
+          build=Path("cloud-vision-app/app/build.gradle").read_text()
+          quick=(root/"C110QuickShotController.java").read_text()
+          c110=(root/"C110CameraActivity.java").read_text()
+          reader=(root/"C110FrameReader.java").read_text()
+          frame=(root/"MainActivity.java").read_text()
+          bridge=Path("cloud-vision-app/boyuebridge/src/main/java/com/vobich/bluestar/boyuebridge/LaunchActivity.java").read_text()
+          assert 'startActivity(new Intent(this,TaskDesktopActivity.class));' in home
+          assert 'TaskDesktopOverlay.show(this' not in home
+          assert 'option(content,"▤","朗读任务"' in home
+          for title in ("快捷拍照","C110+ 实时预览","阅读模式","设置"):
+              assert title in home
+          assert 'class TaskDesktopActivity extends Activity' in page
+          assert 'screen.setBackgroundColor(BACKGROUND);' in page
+          assert 'private static final int BACKGROUND=0xFF091B32;' in page
+          assert 'setOnApplyWindowInsetsListener' in page
+          assert 'setContentView(screen)' in page
+          assert 'heading=text("朗读任务"' in page
+          assert 'back=text("‹ 返回"' in page
+          assert 'private static final int COLUMNS=4;' in page
+          assert 'grid.setColumnCount(COLUMNS)' in page
+          assert 'TaskCatalog.displayOrder(this,catalog)' in page
+          assert 'TaskCatalog.select(this,task.id)' in page
+          assert 'TaskCatalog.saveDisplayOrder(this,desired,catalog)' in page
+          assert 'TaskCatalog.hidePreset(this,task.id)' in page
+          assert 'TaskCatalog.remove(this,task.id)' in page
+          assert 'TaskCatalog.upsert(this,existing?original.id:null,' in page
+          assert 'TaskCatalog.updatePreset(this,original.id,' in page
+          assert 'view.startDragAndDrop(data,' in page
+          assert 'if(held)' in page and 'showTaskActions(task)' in page
+          assert 'pageIndicator.setText((page+1)+" / "+pages)' in page
+          assert 'pager.setVisibility(pages>1?View.VISIBLE:View.GONE)' in page
+          assert 'new Dialog(' not in page
+          assert 'FLAG_DIM_BEHIND' not in page
+          assert '阅读模式' not in page and '▤ 阅读' not in page
+          assert '✎' not in page
+          assert manifest.count('android.intent.category.LAUNCHER')==1
+          assert '<activity android:name=".TaskDesktopActivity"' in manifest
+          assert 'android:exported="false"' in manifest
+          assert 'android:screenOrientation="portrait"' in manifest
+          assert 'versionCode 73' in build
+          assert "versionName '1.0.64-task-fullscreen-clean'" in build
+          assert "applicationIdSuffix '.c110plusquick159'" in build
+          assert "com.vobich.bluestar.c110plusquick159" in bridge
+          assert 'com.vobich.bluestar.cloudprobe.action.QUICK_SHOT' in bridge
+          assert 'camera.shootAfterLivePreview(owner)' in quick
+          assert 'photoCamera.shootAfterLivePreview(this)' in c110
+          assert '--network-caching=150' in c110 and '--live-caching=150' in c110
+          assert 'C110ZoomFrames.cropNativeJpeg' in reader
+          assert 'tts.setLanguage(Locale.SIMPLIFIED_CHINESE)' in reader
+          assert 'RecentPhotoSession.captured(jpeg,current.cloudNetwork,task.name)' in frame
+          assert 'private void openSettings()' in home
+          print("PASS: opaque independent page, no reading shortcut/overlay/pencil; task behaviors & all critical C110/voice paths intact")
+          PY
+          # Restrict changes to this UI patch: no camera/OCR/TTS/OEM source edits.
+          git diff --name-only 7506f53c567ea0946bbe5352b07a878e1a85aa09 HEAD > /tmp/changed.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          expected={
+            "cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/TaskDesktopActivity.java",
+            "cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/HomeActivity.java",
+            "cloud-vision-app/app/src/main/AndroidManifest.xml",
+            "cloud-vision-app/app/build.gradle",
+            ".github/workflows/task-fullscreen-clean-20261120.yml",
+            "cloud-vision-app/docs/TASK_FULLSCREEN_CLEAN_20261120.md",
+          }
+          actual=set(Path("/tmp/changed.txt").read_text().splitlines())
+          unexpected=actual-expected
+          assert not unexpected, f"Unexpected changes to protected modules: {unexpected}"
+          print("PASS: no changes outside task page, Home route, manifest, version, CI and docs")
+          PY
+      - name: Native Java regression tests for stable task IDs and ordering
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-tests
+          javac -d /tmp/bluestar-tests "$BASE/TaskOrder.java" cloud-vision-app/tests/TaskOrderTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.TaskOrderTest
+          javac -d /tmp/bluestar-tests "$BASE/FollowupPrompt.java" cloud-vision-app/tests/FollowupPromptTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.FollowupPromptTest
+          javac -d /tmp/bluestar-tests "$BASE/C110ZoomGeometry.java" cloud-vision-app/tests/C110ZoomGeometryTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110ZoomGeometryTest
+          javac -d /tmp/bluestar-tests "$BASE/C110PhotoPolicy.java" cloud-vision-app/tests/C110PhotoPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110PhotoPolicyTest
+      - name: Apply known proven pinned UVC patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_usbmonitor.py cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 cloud-vision-app/scripts/patch_pinned_uvc.py
+          grep -q BSG_CLOUD_RAW5_GATED cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/jni/UVCCamera/UVCPreview.cpp
+          grep -q BSG_CLOUD_CLOSE_BARRIER cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
+      - name: Generate unchanged Blue Star launcher icons
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          java scripts/GenerateLauncherIcons.java
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            test -s "app/src/main/res/mipmap-$density/ic_launcher.png"
+          done
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile complete Android arm64 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :app:assembleDebug
+      - name: Verify APK version package, native libraries and sound resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_Task_Fullscreen_Clean_1.0.64.apk
+          APK=out/BlueStar_Guide_Task_Fullscreen_Clean_1.0.64.apk
+          test -s "$APK"
+          unzip -tq "$APK" >/dev/null
+          unzip -Z1 "$APK" >out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlc.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlcjni.so' out/entries.txt
+          grep -Fxq 'res/raw/c_metal_clack_ding.mp3' out/entries.txt
+          grep -Fxq 'res/raw/voice_send_whoosh.wav' out/entries.txt
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging "$APK" >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110plusquick159'" out/badging.txt
+          grep -Fq "versionName='1.0.64-task-fullscreen-clean'" out/badging.txt
+          grep -Fq "launchable-activity: name='com.vobich.bluestar.cloudprobe.HomeActivity'" out/badging.txt
+          test "$(grep -c '^launchable-activity:' out/badging.txt)" -eq 1
+          (cd out && sha256sum BlueStar_Guide_Task_Fullscreen_Clean_1.0.64.apk >SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_Guide_Task_Fullscreen_Clean_1.0.64
+          path: out/*
+          retention-days: 14
+      - name: Publish only after all tests and APK checks succeed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-task-fullscreen-clean-20261120-v0164
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release already exists; do not overwrite" >&2
+            exit 1
+          fi
+          gh release create "$TAG" out/BlueStar_Guide_Task_Fullscreen_Clean_1.0.64.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Blue Star v1.0.64 Clean Fullscreen Task Page" \
+            --notes "Scoped UI correction over v1.0.63: tapping Home > Reading Tasks opens a REAL standalone opaque dark-navy Android Activity, not a translucent pop-up. Top left Back and centered Reading Tasks title; four aligned rows/columns with colored task icons and a permanent Add Task tile. Removed reading shortcut, giant close button, extra explanation, bottom dock and always-visible pencil icons from this page. Tap selects and returns home; long-press shows Edit/Hide/Delete, long-press then drag reorders across tiles; task IDs/instructions/order persist using the unchanged TaskCatalog. Camera, C110 OEM/Wi-Fi/150ms VLC/zoom JPEG cropping, cloud OCR, grtts TTS, recent-photo AI questions, Boyue hotkey launcher, and other settings not modified. CI checks/Gradle compilation passed; final on-device UI/drag/accessibility verification still needed."
