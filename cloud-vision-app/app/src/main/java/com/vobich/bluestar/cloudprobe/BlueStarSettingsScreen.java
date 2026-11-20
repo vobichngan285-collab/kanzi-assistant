@@ -59,7 +59,7 @@ final class BlueStarSettingsScreen {
     void openApiKey(){navigate("cloud","");navigate("key","");}
     void openCloudRole(String role){
         if(!CloudProviderPolicy.validRole(role))return;
-        navigate("cloud","");navigate("providers","");navigate("provider-role",role);
+        navigate("cloud","");navigate("provider-role",role);
     }
     void close(){
         if(closed)return;
@@ -122,8 +122,8 @@ final class BlueStarSettingsScreen {
             case "providers":heading="自定义云端服务";break;
             case "provider-role":heading="独立服务选择";break;
             case "provider-edit":heading="编辑云端接口";break;
-            case "models":heading="视觉模型选择";break;
-            case "ocr-models":heading="文字识别模型选择";break;
+            case "models":heading="百炼视觉模型";break;
+            case "ocr-models":heading="百炼文字识别模型";break;
             case "ocr-speed":heading="文字朗读方式";break;
             case "usage":heading="模型用量统计";break;
             case "usage-clear":heading="清空用量记录";break;
@@ -548,21 +548,27 @@ final class BlueStarSettingsScreen {
         note(app.lastMicDiagnostic());
     }
     private void cloud(){
-        row("自定义服务商 · OCR / 视觉 / 语音","独立填写 HTTPS URL、API Key、模型 ID",
-            ()->navigate("providers",""));
-        row("视觉模型","",()->navigate("models",""));
+        // One source of truth: these rows SHOW the actual route and model,
+        // not a hidden legacy selection overruled by custom configuration.
+        row("文字识别 OCR · "+CloudProviderStore.activeModelDescription(
+            app,CloudProviderStore.OCR,app.ocrModelDescription()),"",
+            ()->navigate("provider-role",CloudProviderStore.OCR));
+        row("视觉分析与AI追问 · "+CloudProviderStore.activeModelDescription(
+            app,CloudProviderStore.VISION,app.visionModelDescription()),"",
+            ()->navigate("provider-role",CloudProviderStore.VISION));
+        row("语音识别 · "+CloudProviderStore.activeModelDescription(
+            app,CloudProviderStore.ASR,"qwen3-asr-flash"),"",
+            ()->navigate("provider-role",CloudProviderStore.ASR));
+        row("文字朗读方式 · "+(OcrSpeedExperiment.C.equals(app.ocrSpeedDescription())?
+                "快速逐行":"兼容全文"),"",()->navigate("ocr-speed",""));
         row("联网智能追问 · "+(app.isWebSearchEnabled()?"开启":"关闭"),
             "",()->{app.setWebSearchEnabled(!app.isWebSearchEnabled());
                  render(history.get(history.size()-1));});
-        row("文字识别模型 · "+OcrModelCatalog.label(app.ocrModelDescription()),
-            "",()->navigate("ocr-models",""));
-        row("文字朗读方式 · "+(OcrSpeedExperiment.C.equals(app.ocrSpeedDescription())?
-                "快速逐行":"兼容全文"),"",()->navigate("ocr-speed",""));
-        row("模型用量统计","查看当前模型、今日真实Token及各模型列表",()->navigate("usage",""));
+        row("模型用量统计","查看当前真正调用的模型与Token",()->navigate("usage",""));
         row("图片分辨率 · "+app.imagePolicyDescription(),"",()->{
             app.cycleImagePolicy();render(history.get(history.size()-1));
         });
-        row("API Key","",()->navigate("key",""));
+        row("原有百炼 API Key","仅用于选择百炼时",()->navigate("key",""));
     }
     private static String roleTitle(String role){
         if(CloudProviderStore.OCR.equals(role))return "文字识别 OCR";
@@ -573,6 +579,7 @@ final class BlueStarSettingsScreen {
         if(CloudProviderStore.ASR_MULTIPART.equals(type))return "通用音频转写 /audio/transcriptions";
         if(CloudProviderStore.ASR_QWEN.equals(type))return "百炼兼容 Chat 音频输入";
         if(CloudProviderStore.ASR_CHAT_AUDIO.equals(type))return "OpenAI Chat 音频输入";
+        if(CloudProviderStore.LAYOUT.equals(type))return "Layout Parsing（专用OCR，非流式）";
         return "OpenAI 兼容 Chat Completions（图文）";
     }
     private void providers(){
@@ -586,23 +593,46 @@ final class BlueStarSettingsScreen {
     }
     private void providerRole(String role){
         if(!CloudProviderPolicy.validRole(role)){note("无效云端任务类别");return;}
-        heading(roleTitle(role));
+        String builtin=CloudProviderStore.OCR.equals(role)?app.ocrModelDescription():
+            CloudProviderStore.ASR.equals(role)?"qwen3-asr-flash":app.visionModelDescription();
+        heading("当前实际使用");
+        note(CloudProviderStore.activeModelDescription(app,role,builtin));
         String selected=CloudProviderStore.selectedId(app,role);
-        row((selected.isEmpty()?"✓ ":"")+"原有百炼（不改变之前的 API Key 与模型）","",()->{
-            CloudProviderStore.select(app,role,"");
-            app.toastShort("已切回原有百炼 "+roleTitle(role));
-            render(history.get(history.size()-1));
-        });
+        heading("原有百炼");
+        if(CloudProviderStore.ASR.equals(role)){
+            row((selected.isEmpty()?"✓ ":"")+"百炼 · qwen3-asr-flash","",()->{
+                CloudProviderStore.select(app,role,"");
+                render(history.get(history.size()-1));
+            });
+        }else if(CloudProviderStore.OCR.equals(role)){
+            for(int i=0;i<OcrModelCatalog.IDS.length;i++){
+                final String id=OcrModelCatalog.IDS[i];
+                row((selected.isEmpty()&&id.equals(app.ocrModelDescription())?"✓ ":"")+
+                    "百炼 · "+OcrModelCatalog.LABELS[i],"",()->{
+                    app.selectOcrModel(id); // Also switches active provider to Bailian.
+                    render(history.get(history.size()-1));
+                });
+            }
+        }else{
+            for(int i=0;i<VisionModelCatalog.IDS.length;i++){
+                final String id=VisionModelCatalog.IDS[i];
+                row((selected.isEmpty()&&id.equals(app.visionModelDescription())?"✓ ":"")+
+                    "百炼 · "+VisionModelCatalog.LABELS[i],"",()->{
+                    app.selectVisionModel(id);
+                    render(history.get(history.size()-1));
+                });
+            }
+        }
+        heading("自定义服务商");
         int total=0;
         for(CloudProviderStore.Profile profile:CloudProviderStore.list(app)){
             if(!CloudProviderPolicy.accepts(role,profile.protocol))continue;
             total++;
-            row((profile.id.equals(selected)?"✓ ":"")+profile.name+" · "+profile.model,
-                "",()->{
-                    CloudProviderStore.select(app,role,profile.id);
-                    app.toastShort("已启用："+profile.name);
-                    render(history.get(history.size()-1));
-                });
+            row((profile.id.equals(selected)?"✓ ":"")+profile.name+" · "+profile.model,"",()->{
+                CloudProviderStore.select(app,role,profile.id);
+                app.toastShort("当前实际启用："+profile.model);
+                render(history.get(history.size()-1));
+            });
             row("编辑配置 · "+profile.name,"",()->navigate(
                 "provider-edit",role+"|"+profile.id));
         }
@@ -610,11 +640,11 @@ final class BlueStarSettingsScreen {
         action("＋ 新建 "+roleTitle(role)+" 接口",()->
             navigate("provider-edit",role+"|"));
         if(CloudProviderStore.ASR.equals(role)){
-            note("选好 ASR 服务后，返回主页按住 AI 说一句话，就是实时语音测试；不使用无声测试录音冒充成功。");
+            note("ASR直接按住AI说话测试。它的服务商与OCR和视觉彼此独立。");
         }else{
-            action("▶ 测试当前 "+roleTitle(role)+" 接口（少量付费）",()->
+            action("▶ 测试当前 "+roleTitle(role)+" （少量付费）",()->
                 app.testCloudProvider(role,CloudProviderStore.selectedId(app,role)));
-            note("测试使用本机生成的一张带字母 A 的小图片，不发送你的照片。");
+            note("发送一张本机生成的清晰字母 A 图片，只有正确识别出 A 才显示成功。");
         }
     }
     private EditText providerInput(String title,String value,String hint,int inputType){
@@ -653,33 +683,46 @@ final class BlueStarSettingsScreen {
         final String[] protocol=new String[]{
             old!=null?old.protocol:(CloudProviderStore.ASR.equals(role)?
                 CloudProviderStore.ASR_MULTIPART:CloudProviderStore.CHAT)};
-        if(CloudProviderStore.ASR.equals(role)){
-            heading("语音协议（需要和厂商接口格式一致）");
+        final Switch streaming=new Switch(app);
+        if(CloudProviderStore.ASR.equals(role)||CloudProviderStore.OCR.equals(role)){
+            heading("接口协议");
             TextView current=text("协议："+protocolTitle(protocol[0])+"  ›",18,TEXT,true);
             current.setPadding(dp(10),dp(14),dp(10),dp(14));
             current.setBackground(bg(PANEL,12));
             current.setClickable(true);current.setFocusable(true);
             content.addView(current,new LinearLayout.LayoutParams(-1,-2));
             current.setOnClickListener(v->{
-                final String[] protocols={CloudProviderStore.ASR_MULTIPART,
-                    CloudProviderStore.ASR_QWEN,CloudProviderStore.ASR_CHAT_AUDIO};
-                final String[] labels=new String[protocols.length];
-                for(int i=0;i<protocols.length;i++)labels[i]=protocolTitle(protocols[i]);
-                new AlertDialog.Builder(app).setTitle("选择语音 API 格式")
+                final String[] options=CloudProviderStore.ASR.equals(role)?
+                    new String[]{CloudProviderStore.ASR_MULTIPART,
+                        CloudProviderStore.ASR_QWEN,CloudProviderStore.ASR_CHAT_AUDIO}:
+                    new String[]{CloudProviderStore.CHAT,CloudProviderStore.LAYOUT};
+                final String[] labels=new String[options.length];
+                for(int i=0;i<options.length;i++)labels[i]=protocolTitle(options[i]);
+                new AlertDialog.Builder(app).setTitle("选择 "+roleTitle(role)+" 协议")
                     .setItems(labels,(dialog,index)->{
-                        protocol[0]=protocols[index];
+                        protocol[0]=options[index];
                         current.setText("协议："+protocolTitle(protocol[0])+"  ›");
+                        if(CloudProviderStore.OCR.equals(role)){
+                            boolean layout=CloudProviderStore.LAYOUT.equals(protocol[0]);
+                            streaming.setVisibility(layout?View.GONE:View.VISIBLE);
+                            if(layout)streaming.setChecked(false);
+                            else if(old==null)streaming.setChecked(true);
+                            if(layout)url.setHint(
+                                "https://open.bigmodel.cn/api/paas/v4/layout_parsing");
+                            else url.setHint("https://服务商域名/v1/chat/completions");
+                        }
                     }).setNegativeButton("取消",null).show();
             });
-        }else note("协议：OpenAI 兼容 Chat Completions（图文，支持 Base64 图片）。");
-        Switch streaming=new Switch(app);
+        }else note("协议：OpenAI 兼容 Chat Completions（图文、Base64 图片）。");
         if(!CloudProviderStore.ASR.equals(role)){
-            streaming.setText("开启流式返回（SSE）");
+            streaming.setText("快速流式返回 SSE（支持逐行朗读）");
             streaming.setTextColor(TEXT);
             streaming.setTextSize(TypedValue.COMPLEX_UNIT_SP,18);
-            streaming.setChecked(old!=null&&old.stream);
+            streaming.setChecked(old==null||old.stream);
+            streaming.setVisibility(CloudProviderStore.LAYOUT.equals(protocol[0])?
+                View.GONE:View.VISIBLE);
             content.addView(streaming);
-            note("首次接入建议关闭流式；确认厂商支持 SSE 再开启。");
+            note("Chat协议默认快速流式；不支持SSE的厂商可关闭。Layout Parsing同步返回完整OCR结果。");
         }
         action("保存并用于 "+roleTitle(role),()->{
             try{
@@ -771,10 +814,13 @@ final class BlueStarSettingsScreen {
     private void usage(){
         ModelUsageLedger.Snapshot snapshot=app.todayModelUsage();
         if(snapshot==null){note("模型统计暂未初始化");return;}
-        heading("当前选择的视觉模型");
-        note(app.visionModelDescription());
-        heading("当前文字识别模型");
-        note(app.ocrModelDescription());
+        heading("当前真正生效的云端模型");
+        note("OCR："+CloudProviderStore.activeModelDescription(
+            app,CloudProviderStore.OCR,app.ocrModelDescription())+
+            "\n视觉："+CloudProviderStore.activeModelDescription(
+            app,CloudProviderStore.VISION,app.visionModelDescription())+
+            "\nASR："+CloudProviderStore.activeModelDescription(
+            app,CloudProviderStore.ASR,"qwen3-asr-flash"));
         heading("今日统计 · "+snapshot.day);
         note("已报告 Token 合计："+(snapshot.input+snapshot.output)
             +"\n输入："+snapshot.input+"  输出："+snapshot.output
