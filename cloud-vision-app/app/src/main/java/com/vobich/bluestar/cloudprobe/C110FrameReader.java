@@ -344,6 +344,7 @@ final class C110FrameReader {
             String speed=ocr?OcrSpeedExperiment.normalize(
                 prefs.getString(OcrSpeedExperiment.PREF,OcrSpeedExperiment.DEFAULT)):
                 OcrSpeedExperiment.A;
+            RecentPhotoSession.captured(jpeg,cellular,task.name);
             AtomicInteger spokenParts=new AtomicInteger();
             CloudVisionClient.Result result=CloudVisionClient.recognize(jpeg,key,task,model,
                 part->main.post(()->{
@@ -358,6 +359,7 @@ final class C110FrameReader {
                 if(closed||id!=request.get())return;
                 busy=false;
                 lastText=result.text==null?"":result.text;
+                RecentPhotoSession.analyzed(jpeg,lastText);
                 report("已识别："+task.name+"，取帧到识别 "+(SystemClock.elapsedRealtime()-started)+"ms");
                 // A/B have no early OCR speech; C streams lines. Visual tasks
                 // already stream parts, so do not repeat the entire response.
