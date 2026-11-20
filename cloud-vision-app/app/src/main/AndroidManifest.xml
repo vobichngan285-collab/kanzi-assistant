@@ -40,12 +40,6 @@
             android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize"
             android:theme="@android:style/Theme.Material.Light.NoActionBar"
             android:exported="false"/>
-        <!-- User manually changes native image size in OEM SJCAM Zone; this page
-             only performs one real C110+ photo + one existing cloud OCR request. -->
-        <activity android:name=".C110ResolutionLabActivity"
-            android:screenOrientation="portrait"
-            android:theme="@android:style/Theme.Material.Light.NoActionBar"
-            android:exported="false"/>
         <!-- Disabled until the in-app USB auto-launch setting enables it.
              Android's USB host resolver/chooser, not an implicit background launch. -->
         <activity-alias
