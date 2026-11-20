@@ -6,8 +6,8 @@ android {
         applicationId 'com.vobich.bluestar'
         minSdk 26
         targetSdk 35
-        versionCode 73
-        versionName '1.0.64-task-fullscreen-clean'
+        versionCode 74
+        versionName '1.0.65-c110-minimal-controls'
         ndk { abiFilters 'arm64-v8a' }
     }
     buildTypes {
