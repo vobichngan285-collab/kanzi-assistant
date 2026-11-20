@@ -172,10 +172,6 @@ final class CloudProviderStore {
         String name=CloudProviderPolicy.cleanName(raw.name);
         String url=CloudProviderPolicy.validatedUrl(raw.url);
         String model=CloudProviderPolicy.cleanModel(raw.model);
-        if(LAYOUT.equals(protocol)&&!raw.id.isEmpty()){
-            // Existing OCR profile can be switched from Chat to Layout;
-            // vision assignments, if any, will be rejected below.
-        }
         ArrayList<Profile> all=new ArrayList<>(list(ctx));
         boolean fresh=raw.id==null||raw.id.isEmpty();
         String id=fresh?UUID.randomUUID().toString():raw.id;
