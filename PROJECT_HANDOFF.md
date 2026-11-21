@@ -1,3 +1,21 @@
+# 2026-11-21｜v1.0.74 主页/预览共用「按住AI」＋寻找任务跨页＋同服务商 API Key 复用｜完整CI成功已发布
+
+- **用户完整授权**：六项：①统一主页与预览按住AI；②寻找目标在主页、预览间共享，拍照检查、取消同步；③识别“如果看到医院的招牌立马告诉我”等自然表达；④同服务商 API Key 复用；⑤新建同服务商配置第二次 Key 留空可保存；⑥完整静态/Java/Gradle/资源回归。用户反复强调 **主页现有五行和底部三按钮、所有布局、字体严格50%、图标、配色、无障碍必须保持不变**，不能另搞界面。不新增自动连拍或持续视频识别。
+- **仓库、基线、分支**：唯一仓库 `vobichngan285-collab/kanzi-assistant`；从已发布 v1.0.73 HEAD `3115fa804298a7a6d8f362ec319a9f9ed8f2a725` 创建独立 `exp/voice-key-reuse-20261121`；**最终源HEAD/tag SHA `5627db373d0a41dd7e1bc9578631f5f759874011`**。版本 `versionCode 83`／`versionName '1.0.74-voice-key-reuse'`，debug包名 `com.vobich.bluestar.c110plusquick159`、唯一HomeActivity Launcher不变。
+- **主页“看不到”的真实原因及处理**：旧 `HomeVoiceAssistant` 识别语音后未执行 `VoiceAction.classify`，直接在没有照片时调用 CloudVisionClient 的 text-only AI，返回“我看不到画面”；`MainActivity` 预览按住AI已有 `VoiceAction`，能创建`findingTarget`。现在主页使用**同一个`VoiceAction.classify`**；启动/停止寻找只写共享目标并通过原TTS确认，不发送“无图聊天”；普通问题仍保留真实旧照片追问/无图聊天。主页“读文字/观察场景”改为同一 C110 原厂1001手动快拍路径的**一次性任务覆盖**，不改用户当前默认任务、USB/手机预览、相机控制与新的后台摄像工作。
+- **自然语言与目标招牌**：扩展 `VoiceAction.naturalReminderTarget`：例如“如果看到医院的招牌立马告诉我”、“如果你看到医院招牌就告诉我”、“发现药店提醒我”；保留老语音寻找/停止语法、不得把“医院在哪里”等查询误认为寻找，保留“医院的招牌”目标文本不再剥掉“招牌”。视觉检查仍只针对用户实际拍下的照片，并允许真实建筑门头招牌作为有效证据，广告、地图标签/孤立指示牌与猜测不算。需要云视觉真实审核 `TargetVisionClient` 返回 found 且有可见证据才停止寻找，未找到继续下次**手动**拍照。
+- **跨页面共享寻找**：新 `FindingTargetStore` 原样复用已有 `kanzi_settings.continuous_find_target`，无需迁移或新配置。主页、`MainActivity`（onResume 和拍照时刷新）、`C110FrameReader`（C110 高分辨率1001/预览点击取帧）都读取同一目标。`clearIfCurrent` 在已找到时原子核对当前目标，以免前一张异步照片覆盖或清空后设立的新任务。原原图JPEG/CI缓存/TTS、C110 Wi-Fi租约、PixelCopy、USB、手机Camera2和运行诊断没有重做。
+- **同服务商密钥复用**：保留 `CloudKeyStore` 现有 Android Keystore AES-GCM、历史独立Profile JSON、已选模型、原有百炼密钥。新 `ProviderKeyReusePolicy.sameProvider` 限制**HTTPS+真实完整 hostname 严格相等+同端口**，禁止假子域、跨智谱/百炼混用、HTTP降级。新 `CloudProviderStore.reusableProfiles` 只找实际能解密的同源Key，包含满足同源限制的**原有百炼单Key**作为可选来源。新建时 API Key 留空且**恰好一个有效来源**，自动复用；多个来源必须在原编辑页点击新增的“复用已有密钥（可选）”按钮指定；无来源则明确要求手填。源密钥不回显、不写日志，不以明文保存在Profile metadata；复用时用原Keystore密钥给新Profile独立随机IV重新加密，删除源配置不影响新配置。编辑旧配置时Key留空仍保留自己的Key，显式切源又修改URL成不同域会拒绝保存。
+- **界面严格保留**：逐段检查 `HomeActivity.render/nav/option` 与 v1.0.73 **字节级一致**（仅constructor与传递一次性拍照callback改变）；其他布局、`BlueStarFontScale`和图标代码未修改。仅在已有服务器编辑表单的 Key 输入框占位字及下方添加 **48dp“复用已有密钥（可选）”** 操作，不改其它设置页。
+- **严格差异**：GitHub Compare v1.0.73→v1.0.74 **16个文件**：`HomeVoiceAssistant.java`、`HomeActivity.java`、`MainActivity.java`、`VoiceAction.java`、`FindingTargetStore.java`、`C110FrameReader.java`、`C110QuickShotController.java`、`TargetVisionClient.java`、`CloudProviderStore.java`、`ProviderKeyReusePolicy.java`、`BlueStarSettingsScreen.java`、`app/build.gradle`、两项纯Java测试 `VoiceActionSharedTest.java` / `ProviderKeyReusePolicyTest.java`、`docs/VOICE_KEY_REUSE_20261121.md`、`.github/workflows/voice-key-reuse-20261121.yml`。
+- **实测构建证据**：GitHub Actions Run **44879539006** `completed/success`；全十六文件范围、主页字体/布局、AI指令/跨页目标/OCR与新密钥加密调用保护断言PASS；既有 Qwen/GLM、模型去重、任务/OCR行序、Zoom/照片策略和新增自然指令／HTTPS同服务商防混用测试PASS；固定AndroidUSBCamera 3.6.0 UVC补丁/LibVLC3.6.5，完整 Java17/Gradle8.11.1 ARM64 Android compile PASS；APK ZIP/aapt/包名/versionName/唯一HomeLauncher/UVC native/LibVLC native/提示音/语音发出音/SHA256/Artifact/最终Release PASS。
+- **已经发布**：`bluestar-shared-ai-key-20261121-v0174`；发布 APK **BlueStar_Guide_Shared_AI_Key_1.0.74.apk**，**53,516,350 bytes**；SHA256 `78d58be94742394383de23a3a2e4f9e4ed70c06497dd735168995bfed794b735`。Tag和发布资产均已核验指向最终HEAD `5627db373d0a41dd7e1bc9578631f5f759874011`。
+  APK直链：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-shared-ai-key-20261121-v0174/BlueStar_Guide_Shared_AI_Key_1.0.74.apk
+  CI：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44879539006
+- **下一步真机**（尚未由用户做）：vivo X200 Pro Android16 的主页与预览分别说“如果看到医院的招牌立马告诉我”、再用主页C110快拍、预览手机/USB照片与C110预览取帧，验证目标持续、找到才结束、取消跨页面同步、真实扬声器发声，普通ASR/AI追问/菜单阅读/TTS/无障碍没有回归；智谱FlashX/4.6V同一host首次填Key第二次留空自动保存、多个候选可指定、不同平台不复用、编辑旧配置留空不丢Key、删原来源配置不破坏复制出来的新Key。**CI不是实机验收**，不能声称用户当前已验证。保留 v1.0.73 原版以备回退。若 debug签名冲突不要直接卸载旧包，避免Android Keystore密钥丢失。
+
+---
+
 # 2026-11-21｜v1.0.73 云服务器管理页面紧凑修正版：CI成功，发布已核验，真机待验收
 
 - **用户明确授权的更正**：用户真机截图显示 v1.0.72 云服务器管理里百炼 Qwen 3.7 / 3.8 系列按 OCR 与视觉任务被列了两遍、卡片又高又空、已添加的智谱等自定义服务器排到下方。用户确认“我的服务器”在前、原有百炼默认折叠、内置同型号仅一次、文字在紧凑卡片中间、点击/长按管理，然后说“开始”。**不授权擅改主页、其他设置布局、全局字号或其他拍照/TTS功能。**
