@@ -121,6 +121,9 @@ final class BlueStarSettingsScreen {
             case "cloud":heading="云端 AI";break;
             case "provider-role":heading="独立服务选择";break;
             case "provider-edit":heading="编辑云端接口";break;
+            case "server-manage":heading="云服务器管理";break;
+            case "server-actions":heading="模型管理";break;
+            case "model-prompt":heading="模型专属OCR提示词";break;
             case "ocr-speed":heading="文字朗读方式";break;
             case "usage":heading="模型用量统计";break;
             case "usage-clear":heading="清空用量记录";break;
@@ -175,6 +178,9 @@ final class BlueStarSettingsScreen {
         else if(p.name.equals("cloud"))cloud();
         else if(p.name.equals("provider-role"))providerRole(p.param);
         else if(p.name.equals("provider-edit"))providerEdit(p.param);
+        else if(p.name.equals("server-manage"))cloudServers();
+        else if(p.name.equals("server-actions"))serverActions(p.param);
+        else if(p.name.equals("model-prompt"))modelPrompt(p.param);
         else if(p.name.equals("ocr-speed"))ocrSpeed();
         else if(p.name.equals("usage"))usage();
         else if(p.name.equals("usage-clear"))usageClear();
@@ -204,6 +210,22 @@ final class BlueStarSettingsScreen {
         block.setMinimumHeight(dp(66));
         block.setClickable(true);block.setFocusable(true);
         block.setOnClickListener(v->clicked.run());
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+        lp.bottomMargin=dp(12);
+        content.addView(block,lp);
+    }
+    private void row(String label,String description,Runnable clicked,Runnable held){
+        LinearLayout block=new LinearLayout(app);
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.setPadding(dp(18),dp(11),dp(18),dp(11));
+        block.setBackground(bg(PANEL,15));
+        TextView title=text(label+"  ›",22,TEXT,true);
+        block.addView(title);
+        block.setMinimumHeight(dp(66));
+        block.setClickable(true);block.setFocusable(true);
+        block.setContentDescription(label);
+        block.setOnClickListener(v->clicked.run());
+        block.setOnLongClickListener(v->{held.run();return true;});
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
         lp.bottomMargin=dp(12);
         content.addView(block,lp);
@@ -302,6 +324,7 @@ final class BlueStarSettingsScreen {
         action("▶ 试听拍照提示音",()->app.previewCaptureFeedback());
         action("▶ 试听语音发送音",()->app.previewVoiceSendFeedback());
         action("▶ 体验录音振动",()->app.previewVoiceStartHaptic());
+        row("云服务器管理","",()->navigate("server-manage",""));
     }
     private void engines(){
         List<TextToSpeech.EngineInfo> engines=app.availableTtsEngines();
@@ -628,28 +651,17 @@ final class BlueStarSettingsScreen {
                 app.toastShort("当前实际启用："+profile.model);
                 render(history.get(history.size()-1));
             });
-            row("编辑配置 · "+profile.name,"",()->navigate(
-                "provider-edit",role+"|"+profile.id));
+
         }
-        if(total==0)note("还没有可用于此任务的自定义配置");
-        action("＋ 新建 "+roleTitle(role)+" 接口",()->
-            navigate("provider-edit",role+"|"));
-        if(CloudProviderStore.ASR.equals(role)){
-            note("ASR直接按住AI说话测试。它的服务商与OCR和视觉彼此独立。");
-        }else{
-            action("▶ 测试当前 "+roleTitle(role)+" （少量付费）",()->
-                app.testCloudProvider(role,CloudProviderStore.selectedId(app,role)));
-            note("发送一张本机生成的清晰字母 A 图片，只有正确识别出 A 才显示成功。");
-        }
-    }
+        if(total==0)note("没有已保存的自定义模型");
     private EditText providerInput(String title,String value,String hint,int inputType){
-        heading(title);
         EditText input=new EditText(app);
+        input.setContentDescription(title);
         input.setSingleLine(true);
         input.setTextSize(TypedValue.COMPLEX_UNIT_SP,18);
         input.setTextColor(TEXT);input.setHintTextColor(SUB);
         input.setInputType(inputType);
-        input.setHint(hint);
+        input.setHint(title+" · "+hint);
         if(value!=null&&!value.isEmpty())input.setText(value);
         content.addView(input,new LinearLayout.LayoutParams(-1,dp(60)));
         return input;
@@ -661,7 +673,6 @@ final class BlueStarSettingsScreen {
         if(!CloudProviderPolicy.validRole(role)){note("无效配置类别");return;}
         CloudProviderStore.Profile old=id.isEmpty()?null:CloudProviderStore.find(app,id);
         if(!id.isEmpty()&&old==null){note("配置不存在，请返回重新选择");return;}
-        heading(roleTitle(role));
         EditText name=providerInput("配置名称",old==null?"":old.name,
             "例如 火山OCR / 千问视觉 / 自选语音",
             InputType.TYPE_CLASS_TEXT);
@@ -680,7 +691,6 @@ final class BlueStarSettingsScreen {
                 CloudProviderStore.ASR_MULTIPART:CloudProviderStore.CHAT)};
         final Switch streaming=new Switch(app);
         if(CloudProviderStore.ASR.equals(role)||CloudProviderStore.OCR.equals(role)){
-            heading("接口协议");
             TextView current=text("协议："+protocolTitle(protocol[0])+"  ›",18,TEXT,true);
             current.setPadding(dp(10),dp(14),dp(10),dp(14));
             current.setBackground(bg(PANEL,12));
@@ -708,7 +718,7 @@ final class BlueStarSettingsScreen {
                         }
                     }).setNegativeButton("取消",null).show();
             });
-        }else note("协议：OpenAI 兼容 Chat Completions（图文、Base64 图片）。");
+        }
         if(!CloudProviderStore.ASR.equals(role)){
             streaming.setText("快速流式返回 SSE（支持逐行朗读）");
             streaming.setTextColor(TEXT);
@@ -717,36 +727,135 @@ final class BlueStarSettingsScreen {
             streaming.setVisibility(CloudProviderStore.LAYOUT.equals(protocol[0])?
                 View.GONE:View.VISIBLE);
             content.addView(streaming);
-            note("Chat协议默认快速流式；不支持SSE的厂商可关闭。Layout Parsing同步返回完整OCR结果。");
         }
-        action("保存并用于 "+roleTitle(role),()->{
+        action("保存配置",()->{
             try{
                 CloudProviderStore.Profile profile=new CloudProviderStore.Profile(
                     id,name.getText().toString(),url.getText().toString(),
                     model.getText().toString(),protocol[0],streaming.isChecked());
                 CloudProviderStore.Profile saved=CloudProviderStore.save(
                     app,profile,key.getText().toString());
-                CloudProviderStore.select(app,role,saved.id);
                 key.setText("");
-                app.toastShort("已加密保存并启用："+saved.name);
+                app.toastShort("已保存："+saved.name);
                 back();
             }catch(Exception error){
                 app.toastShort("保存失败："+error.getMessage());
             }
         });
-        if(!id.isEmpty()){
-            action("删除这套配置（其他任务若使用它会切回百炼）",()->
-                new AlertDialog.Builder(app).setTitle("删除自定义云端配置？")
-                    .setMessage("只删除这套配置和它的加密密钥，不清除原有百炼配置。")
-                    .setNegativeButton("取消",null)
-                    .setPositiveButton("删除",(dialog,which)->{
-                        CloudProviderStore.delete(app,id);
-                        app.toastShort("配置已删除");back();
-                    }).show());
+    // Model selection stays in providerRole(). This page edits/deletes
+    // profiles, without silently switching the active role's selection.
+    private void cloudServers(){
+        heading("原有百炼");
+        for(String id:OcrModelCatalog.IDS){
+            final String model=id;
+            String spec="b|"+CloudProviderStore.OCR+"|"+model;
+            row("OCR · "+model,"",()->navigate("server-actions",spec),
+                ()->navigate("server-actions",spec));
         }
-        note("API Key 不在页面回显，也不进入诊断日志。仅在你选择的 HTTPS 地址发送认证信息。");
+        for(String id:VisionModelCatalog.IDS){
+            final String model=id;
+            String spec="b|"+CloudProviderStore.VISION+"|"+model;
+            row("视觉 · "+model,"",()->navigate("server-actions",spec),
+                ()->navigate("server-actions",spec));
+        }
+        heading("自定义服务器");
+        for(CloudProviderStore.Profile profile:CloudProviderStore.list(app)){
+            String role=CloudProviderStore.ASR_MULTIPART.equals(profile.protocol)||
+                CloudProviderStore.ASR_QWEN.equals(profile.protocol)||
+                CloudProviderStore.ASR_CHAT_AUDIO.equals(profile.protocol)?
+                CloudProviderStore.ASR:CloudProviderStore.OCR;
+            String spec="c|"+role+"|"+profile.id;
+            row(profile.name+" · "+profile.model,"",()->navigate("server-actions",spec),
+                ()->navigate("server-actions",spec));
+        }
+        action("＋ 添加新服务器",()->new AlertDialog.Builder(app)
+            .setTitle("选择接口用途")
+            .setItems(new String[]{"文字识别 OCR","视觉分析与AI追问","语音识别"},
+                (d,i)->navigate("provider-edit",
+                    new String[]{CloudProviderStore.OCR,
+                        CloudProviderStore.VISION,CloudProviderStore.ASR}[i]+"|"))
+            .setNegativeButton("取消",null).show());
     }
 
+    // A standard tap and a long press open exactly the SAME accessible menu.
+    private void serverActions(String spec){
+        String[] args=spec==null?new String[0]:spec.split("\\|",3);
+        if(args.length!=3){note("模型参数无效");return;}
+        final boolean custom="c".equals(args[0]);
+        final String role=args[1],identity=args[2];
+        if(!CloudProviderPolicy.validRole(role)){note("无效服务类别");return;}
+        final CloudProviderStore.Profile saved=custom?
+            CloudProviderStore.find(app,identity):null;
+        if(custom&&saved==null){note("服务器已被删除");return;}
+        final String model=custom?saved.model:identity;
+        final String protocol=custom?saved.protocol:
+            (CloudProviderStore.ASR.equals(role)?
+                CloudProviderStore.ASR_QWEN:CloudProviderStore.CHAT);
+        final String url=custom?saved.url:CloudProviderStore.BAILIAN_URL;
+        final String profileId=custom?saved.id:"";
+        heading(custom?saved.name+" · "+model:"百炼 · "+model);
+        if(custom)row("修改服务器","",()->navigate("provider-edit",role+"|"+profileId));
+        String thinkingStyle=CloudThinkingPolicy.style(url,model,protocol);
+        if(!CloudThinkingPolicy.NONE.equals(thinkingStyle)){
+            boolean thinking=CloudModelOptions.get(app,role,profileId,model).thinking;
+            row("深度思考 · "+(thinking?"开启":"关闭"),"",()->{
+                CloudModelOptions.saveThinking(app,role,profileId,model,!thinking);
+                render(history.get(history.size()-1));
+            });
+        }
+        if(CloudProviderStore.OCR.equals(role)&&CloudProviderStore.CHAT.equals(protocol))
+            row("自定义 OCR 提示词","",()->
+                navigate("model-prompt",spec));
+        if(!CloudProviderStore.ASR.equals(role))
+            row("测试连接（少量付费）","",()->
+                app.testCloudProvider(role,profileId));
+        if(custom)
+            row("删除服务器","",()->new AlertDialog.Builder(app)
+                .setTitle("删除 "+saved.name+"？")
+                .setMessage("将删除这套配置和加密密钥；若正在使用将切回原有百炼。")
+                .setNegativeButton("取消",null)
+                .setPositiveButton("确认删除",(d,w)->{
+                    CloudProviderStore.delete(app,profileId);
+                    app.toastShort("已删除："+saved.name);
+                    back();
+                }).show());
+    }
+    private void modelPrompt(String spec){
+        String[] args=spec==null?new String[0]:spec.split("\\|",3);
+        if(args.length!=3||!CloudProviderStore.OCR.equals(args[1])){
+            note("只有文字识别模型可以编辑OCR提示词");return;
+        }
+        boolean custom="c".equals(args[0]);
+        String id=custom?args[2]:"";
+        CloudProviderStore.Profile saved=custom?
+            CloudProviderStore.find(app,id):null;
+        if(custom&&saved==null){note("服务器不存在");return;}
+        String model=custom?saved.model:args[2];
+        if(custom&&!CloudProviderStore.CHAT.equals(saved.protocol)){
+            note("Layout Parsing接口不接收自定义提示词");return;
+        }
+        EditText input=new EditText(app);
+        input.setContentDescription("该模型的OCR提示词");
+        input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        input.setGravity(Gravity.TOP);
+        input.setTextColor(TEXT);input.setHintTextColor(SUB);
+        input.setTextSize(TypedValue.COMPLEX_UNIT_SP,20);
+        input.setMinLines(5);input.setMaxLines(12);
+        input.setHint("填写这款模型专用的OCR指令，留空使用原任务提示词");
+        input.setText(CloudModelOptions.get(app,args[1],id,model).ocrPrompt);
+        content.addView(input,new LinearLayout.LayoutParams(-1,-2));
+        action("保存提示词",()->{
+            try{
+                CloudModelOptions.saveOcrPrompt(app,args[1],id,model,
+                    input.getText().toString());
+                app.toastShort("提示词已保存");back();
+            }catch(Exception e){input.setError(e.getMessage());}
+        });
+        action("恢复默认",()->{
+            CloudModelOptions.saveOcrPrompt(app,args[1],id,model,"");
+            app.toastShort("已使用原任务提示词");back();
+        });
+    }
     private void ocrSpeed(){
         for(String id:new String[]{OcrSpeedExperiment.C,OcrSpeedExperiment.A}){
             final boolean selected=id.equals(app.ocrSpeedDescription());
