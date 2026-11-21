@@ -51,8 +51,9 @@ final class TargetVisionClient {
         String model=visualModel;
         // Use natural image-relative words only, never distances, street directions or GPS.
         String instruction="你是盲人辅助寻找物品的视觉审核员。要寻找的目标是："+target+
-            "。仅根据本张真实照片判断目标是否作为实际店铺、场所或物体出现。"+
-            "广告图片、地图标记、指示牌、模糊难辨文字不能算已找到真实目标。"+
+            "。仅根据本张真实照片判断目标是否作为实际店铺、场所、清晰真实门头招牌或物体出现。"+
+            "实际商铺或建筑门口的清晰招牌可以是证据，但广告图片、地图标记、"+
+            "不属于目标场所的孤立指示牌、模糊难辨文字不能算已找到真实目标。"+
             "明确看见符合目标的实体和证据才给found，疑似给possible，否则not_found。"+
             "请严格输出一行JSON对象，字段decision只能为found/possible/not_found，"+
             "字段position只能为左侧/中间/右侧/画面中/未知，"+
