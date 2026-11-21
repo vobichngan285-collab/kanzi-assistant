@@ -2810,6 +2810,10 @@ public final class MainActivity extends CameraActivity {
                         RecentPhotoSession.analyzed(jpeg,inspection.message);
                         lastSessionTask="寻找"+targetToFind;
                         lastCloudResult=inspection.message;
+                        if(!targetToFind.equals(FindingTargetStore.current(this))){
+                            setResultStatus("寻找目标已更改，本次旧照片结果已取消");
+                            return;
+                        }
                         if(inspection.confirmed()&&
                             FindingTargetStore.clearIfCurrent(this,targetToFind)){
                             findingTarget="";
