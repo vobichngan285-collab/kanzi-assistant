@@ -1,3 +1,14 @@
+# 2026-11-21｜v1.0.70 智谱 OCR 提速专项实验代码已提交（CI/Release 待核验）
+
+- **用户明确授权下一版优化**：基于 11月21日 09:27–09:30 手机摄像头分三轮实测，目标对比智谱高速 `glm-4.6v-flashx`、高精度 `glm-4.6v` 与原千问 `qwen3.7-flash` 的首句、整体耗时及完整识别率。凌晨历史样本不参与三模型排名。**不得为了快牺牲漏字率或改坏既有千问流程**。
+- **原仓及代码**：`vobichngan285-collab/kanzi-assistant`，从 v1.0.69 已发布源码 `5206ad1c2688c215e0dcfedf55785f4b0de01907` 新建分支 `exp/glm-ocr-speed-20261121`；实验代码最新 HEAD `12062f26b224d6a63c35384c660861513732fd25`，app versionCode79、versionName `1.0.70-glm-ocr-speed-trial`。旧 v1.0.69 完全保留。
+- **严格 7 文件差异**：`CloudProviderPolicy.java`、`CloudVisionClient.java`、`MainActivity.java`、`tests/CloudProviderPolicyTest.java`、`app/build.gradle`、`docs/GLM_OCR_SPEED_TRIAL_20261121.md`、`.github/workflows/glm-ocr-speed-20261121.yml`。已经用 GitHub 比较接口核实：源头 v1.0.69，领先7个独立提交，文件名正好是以上7项。
+- **实验改动**：仅对智谱官方 Chat Completions 视觉模型、`朗读文字`默认未编辑提示词，尝试更直接的逐行输出要求；不覆盖用户自定义 OCR 提示词。智谱OCR成功完整读取并校验的 HTTP 请求允许 Java HTTPS keep-alive 复用尝试，失败/中断和非智谱通路仍显式断开。智谱 Chat OCR 成功日志增加纯数值 `cloud.output_chars`、`cloud.after_first_text_ms` 用于分析长尾。原千问3.7、GLM-OCR Layout、TTS、SSE分行器、拍照锁、原厂C110/USB、UI、Keystore/声音全部未修改。
+- **构建状态必须严守真实性**：本条交接记录时，已创建完整自动构建与Release工作流，但尚未能由已连接的GitHub只读接口核验新 run 成功、Release目标或APK资产。因此 **不可称 v1.0.70 已成功编译或已发布 APK**。CI 应发布 `bluestar-glm-ocr-speed-20261121-v0170` 的 `BlueStar_Guide_GLM_OCR_Speed_1.0.70.apk`，**仅在实际 tag/Release/资产和工作流成功后确认**；不允许把尚未核验的预定 URL 冒充下载链接。
+- **下一步**：先查实际 GitHub Actions workflow `glm-ocr-speed-20261121.yml` 的 job/step/Artifact/Release结果；有失败则只修复本实验，不碰千问/C110等。成功后需 vivo 真机进行 v1.0.69 → v1.0.70 同场景对照：FlashX与GLM4.6V各5轮，记录 `first_text_ms` / `first_speakable_ms` / `network_ms` / `output_chars` / `after_first_text_ms` 和识别原文完整性。尚不能预先承诺提速幅度。
+ 
+---
+
 # 2026-11-21｜v1.0.69 已构建发布：智谱 4.6V/FlashX 复用千问3.7原图文SSE/OCR/TTS流程
 
 - 用户授权：新视觉模型接入后反馈连续拍照不响应，要求原样复用先前已成功的千问3.7拍照→可编辑OCR提示词→Chat图文SSE→完成行朗读→本地TTS流程；不得新建独立相机、OCR或语音逻辑。
