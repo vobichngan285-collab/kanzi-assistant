@@ -1,3 +1,19 @@
+# 2026-11-21｜v1.0.71 减肥版已成功发布：无效入口、历史实验与 Media3 清理
+
+- **用户授权与目的**：在 v1.0.70 智谱提速初步有正向体感之后，用户要求“简单直接简单粗暴”，明确授权精简无用设置、不可达代码、历史实验及可安全删掉的依赖。本轮以不重造、保留已通过真机验证的手机/USB/C110、Qwen/GLM OCR SSE、TTS 和用户配置为前提。**这是结构减肥，不宣称云端模型推理速度变快**。
+- **唯一仓库与基线**：`vobichngan285-collab/kanzi-assistant`；从已发布 v1.0.70 HEAD `12062f26b224d6a63c35384c660861513732fd25` 新建 `exp/lean-cleanup-20261121`，**最终 HEAD `b5996933d69da71ec198358e0283be49e93c39c7`**；主App `versionCode 80`、`versionName '1.0.71-lean-cleanup'`，debug applicationId `com.vobich.bluestar.c110plusquick159` 不变，唯一 Launcher 保留。未覆盖原 v1.0.70 Release 或其源码。
+- **功能层级精简**：`BlueStarSettingsScreen.java` 主设置从七入口整合为 **相机、语音与提示、云端AI、任务管理、高级与诊断** 五入口；提示音/振动并入语音页，最近识别/匿名运行诊断归入高级；C110 机身设置保留 Wi-Fi、提示音、指示灯，详细选项弹窗，原有 9011/9038 和可自定义延时不变。删掉没有任何导航入口的 `providers`／`models`／`ocr-models` 旧页面，真正的 `provider-role` OCR/视觉/ASR 模型选择与 API Key 保留。
+- **旧代码清理**：`MainActivity.java` 删除未绑定按钮、未赋值播放器的第二套 C110 实时预览和其 PixelCopy/旧任务、旧模型/相机/语音弹窗、隐藏顶部工具栏与从未显示的状态控件；`C110CameraActivity.java` 只移除无入口的任务/模式弹窗及 4003 单照片删除实验；`C110WifiCamera.java` 仅删不可达 4003 删除指令代码，保留真实 1001 拍照、照片索引、原生 JPEG。**C110 独立 VLC 播放器、预览轻触取帧、高清拍照、C110WiFi 管理、USB/Camera2、grtts/本地TTS 原方案保留**。
+- **完全删除历史实验源码**：`C110DeletePolicy.java`、`C110LivePreview.java`、`C110PreviewProbe.java`、`C110ResolutionLabActivity.java`、`C110ResolutionScore.java`、`C110RtspSessionProbe.java`、`C110VolumeShortcut.java`、`C110VolumeTiming.java`、`TaskDesktopOverlay.java`；及对应四个已失去源类的测试 `C110DeletePolicyTest.java`／`C110ResolutionScoreTest.java`／`C110RtspSessionProbeTest.java`／`C110VolumeTimingTest.java`。旧分支保留全部历史源码。
+- **构建依赖**：全本应用 Java 源文件未出现 Media3/ExoPlayer 使用，移除 app 模块 `media3-exoplayer`、`media3-exoplayer-rtsp` 和 `media3-ui` 三依赖；仍保留已验证 `org.videolan.android:libvlc-all:3.6.5`、`:libausbc`、`:libuvc`，未启用 minify/R8。变更范围严格20文件，CI静态Diff与保护断言通过。
+- **构建与修复过程**：首次 GitHub Actions `44856924371` 通过静态、Java测试/UVC补丁后在 Android 编译发现 `MainActivity` 清旧预览时误删的 `c110Camera` 字段。只补回原 `private final C110WifiCamera c110Camera=new C110WifiCamera();`（保留真实 C110 高清 1001），其余逻辑不变。**最终 GitHub Actions `44857208883` 完整成功**：静态严格范围、Java回归（含 OCR A/C、完整行顺序无重复）、固定USB补丁、arm64 Android Gradle 编译、APK ZIP/原生 UVC/LibVLC/声音资源、包名/版本/唯一启动入口、SHA256、上传Artifact、发布Release 均PASS。
+- **正式实验预览包**：Release `bluestar-lean-cleanup-20261121-v0171`；GitHub资产 `BlueStar_Guide_Lean_1.0.71.apk` **53,499,962 bytes**；对应 v1.0.70 GitHub资产 56,748,549 bytes，**实际减少 3,248,587 bytes（约5.72%）**。Release tag 解析到最终HEAD `b5996933d69da71ec198358e0283be49e93c39c7`，与成功Actions Run的 HEAD 一致。
+- **直接下载**：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-lean-cleanup-20261121-v0171/BlueStar_Guide_Lean_1.0.71.apk
+  **CI**：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44857208883
+- **真机仍需验收**：vivo X200 Pro Android 16：①五类设置均可达，用户API Key / 千问3.7/智谱FlashX/4.6V 与 OCR 快逐行配置完整；②手机后置、USB和C110独立预览帧、真实高清1001拍照/OCR、相机设置 LED与静音及叮声；③主页快拍、追问、阅读及所有已用TTS引擎/音色。检查上一次 1.0.70 的首次朗读体感是否保留。**CI成功不等于真机已通过**；如有回归按场景精确修复，不贸然重写Camera/OCR/TTS，不在下一版本擅改云模型速度与拍照锁。
+
+---
+
 # 2026-11-21｜v1.0.70 智谱 OCR 提速实验已发布标签（真机性能待测）
 
 - **用户明确授权下一版优化**：基于 11月21日 09:27–09:30 手机摄像头分三轮实测，目标对比智谱高速 `glm-4.6v-flashx`、高精度 `glm-4.6v` 与原千问 `qwen3.7-flash` 的首句、整体耗时及完整识别率。凌晨历史样本不参与三模型排名。**不得为了快牺牲漏字率或改坏既有千问流程**。
