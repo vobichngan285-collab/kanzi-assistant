@@ -974,6 +974,10 @@ public final class MainActivity extends CameraActivity {
     /** Explicit, paid micro-image test of an independently saved OCR or Vision
      * profile. Does NOT activate it; failing tests leave every selection intact. */
     void testCloudProvider(String role,String profileId){
+        testCloudProvider(role,profileId,null);
+    }
+    /** Exact model test; does NOT switch the active cloud profile or model. */
+    void testCloudProvider(String role,String profileId,String modelOverride){
         if(CloudProviderStore.ASR.equals(role)){
             toastShort("语音识别请在主页按住AI说一句话进行真实测试");return;
         }
@@ -986,7 +990,8 @@ public final class MainActivity extends CameraActivity {
         modelTestExecutor.execute(()->{
             Bitmap bitmap=null;
             try{
-                String builtin=CloudProviderStore.OCR.equals(role)?ocrModel:visionModel;
+                String builtin=modelOverride==null?
+                    (CloudProviderStore.OCR.equals(role)?ocrModel:visionModel):modelOverride;
                 CloudProviderStore.Config choice=CloudProviderStore.resolveFor(
                     this,role,profileId,builtin);
                 // 64x64 is too tiny to reliably validate a real OCR service.
