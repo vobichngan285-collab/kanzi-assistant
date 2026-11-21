@@ -27,6 +27,7 @@ final class HomeVoiceAssistant {
     private final Activity activity;
     private final Consumer<String> status;
     private final Runnable releasePhotoSpeech;
+    private final Consumer<TaskCatalog.Task> requestOneShotPhoto;
     private final Handler main=new Handler(Looper.getMainLooper());
     private final VoiceRecorder recorder=new VoiceRecorder();
     private final VoicePressState gesture=new VoicePressState();
@@ -39,8 +40,10 @@ final class HomeVoiceAssistant {
     private int generation,ttsGeneration;
     private byte[] conversationImage;
 
-    HomeVoiceAssistant(Activity a,Consumer<String> onStatus,Runnable beforeTalk){
+    HomeVoiceAssistant(Activity a,Consumer<String> onStatus,Runnable beforeTalk,
+                       Consumer<TaskCatalog.Task> capture){
         activity=a;status=onStatus;releasePhotoSpeech=beforeTalk;
+        requestOneShotPhoto=capture;
     }
     void onResume(){active=true;}
     void onPause(){
@@ -131,6 +134,62 @@ final class HomeVoiceAssistant {
                 network=C110WifiCamera.requireCellular(activity);
             String question=CloudAsrClient.recognize(wav,asrService,network);
             if(question.isEmpty())throw new Exception("没有识别到问题");
+            // Identical deterministic command router as Preview. A target
+            // command does NOT call a blind text-only vision model.
+            VoiceAction command=VoiceAction.classify(
+                question,FindingTargetStore.current(activity));
+            if(command.type==VoiceAction.Type.START_FINDING||
+               command.type==VoiceAction.Type.STOP_FINDING){
+                main.post(()->{
+                    if(!active||ticket!=generation)return;
+                    working=false;
+                    if(command.type==VoiceAction.Type.STOP_FINDING){
+                        if(FindingTargetStore.current(activity).isEmpty()){
+                            announce("目前没有正在寻找的目标");
+                            speak("目前没有正在寻找的目标。");
+                        }else{
+                            FindingTargetStore.set(activity,"");
+                            turns.clear();
+                            announce("已停止寻找");
+                            speak("好的，已停止寻找。");
+                        }
+                    }else{
+                        FindingTargetStore.set(activity,command.target);
+                        turns.clear();
+                        announce("已开始寻找："+command.target+" · 拍照后自动检查");
+                        speak("好的，正在帮你找"+command.target+
+                            "。请用主页快捷拍照或进入预览拍照，我会逐张检查。");
+                    }
+                });
+                return;
+            }
+            if(command.type==VoiceAction.Type.READ_TEXT||
+               command.type==VoiceAction.Type.OBSERVE_SCENE){
+                main.post(()->{
+                    if(!active||ticket!=generation)return;
+                    working=false;
+                    boolean read=command.type==VoiceAction.Type.READ_TEXT;
+                    TaskCatalog.Task oneShot=read?
+                        new TaskCatalog.Task("voice-read","朗读文字",
+                            TaskCatalog.defaultInstruction(TaskCatalog.OCR),
+                            TaskCatalog.OCR,false,"▤"):
+                        new TaskCatalog.Task("voice-scene","观察场景",
+                            "用户刚才说："+question.substring(0,Math.min(180,question.length()))+
+                            "。只根据本张真实照片简短描述可见的画面，不猜测。",
+                            TaskCatalog.VISION,false,"◉");
+                    announce("正在通过主页C110快捷拍照…");
+                    requestOneShotPhoto.accept(oneShot);
+                });
+                return;
+            }
+            if(command.type==VoiceAction.Type.REVIEW_IMAGE&&shot==null){
+                main.post(()->{
+                    if(!active||ticket!=generation)return;
+                    working=false;announce("还没有照片，请先拍照");
+                    speak("还没有可重新查看的照片，请先拍照。");
+                });
+                return;
+            }
             main.post(()->{if(active&&ticket==generation)announce("已听到问题，正在回答…");});
             if(shot!=null&&shot.jpeg!=conversationImage){
                 turns.clear();
