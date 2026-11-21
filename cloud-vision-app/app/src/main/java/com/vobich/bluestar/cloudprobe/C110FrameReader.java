@@ -265,7 +265,7 @@ final class C110FrameReader {
             if(region!=null&&region!=fresh&&!region.isRecycled())region.recycle();
             fresh.recycle();
         }
-        recognizeJpeg(id,jpeg,started);
+        recognizeJpeg(id,jpeg,started,null);
     }
 
     /**
@@ -282,6 +282,17 @@ final class C110FrameReader {
 
     boolean recognizeOriginalJpeg(byte[] jpeg,int width,int height,float selectedZoom,
                                   boolean portraitCover,float viewportAspect){
+        return recognizeOriginalJpeg(jpeg,width,height,selectedZoom,portraitCover,
+                                    viewportAspect,null);
+    }
+    /** One explicit Home voice task overrides only this photo. */
+    boolean recognizeOriginalJpeg(byte[] jpeg,int width,int height,
+                                  TaskCatalog.Task oneShotTask){
+        return recognizeOriginalJpeg(jpeg,width,height,1f,false,1f,oneShotTask);
+    }
+    private boolean recognizeOriginalJpeg(byte[] jpeg,int width,int height,float selectedZoom,
+                                  boolean portraitCover,float viewportAspect,
+                                  TaskCatalog.Task oneShotTask){
         if(closed||busy)return false;
         syncSpeechSettings();
         if(jpeg==null||jpeg.length<256||width<2||height<2){
@@ -306,7 +317,7 @@ final class C110FrameReader {
                     report("高清OCR实际裁剪："+width+"×"+height+" → "+
                         region.width+"×"+region.height+"，倍率"+
                         String.format(Locale.ROOT,"%.1f",zoomAtTap)+"倍");
-                recognizeJpeg(id,region.jpeg,started);
+                recognizeJpeg(id,region.jpeg,started,oneShotTask);
             }catch(Exception e){
                 main.post(()->{
                     if(id!=request.get()||closed)return;
@@ -318,7 +329,7 @@ final class C110FrameReader {
         return true;
     }
 
-    private void recognizeJpeg(int id,byte[] jpeg,long started){
+    private void recognizeJpeg(int id,byte[] jpeg,long started,TaskCatalog.Task oneShotTask){
         if(closed||id!=request.get())return;
         if(jpeg.length<256){
             main.post(()->{if(id==request.get()&&!closed){
@@ -328,13 +339,44 @@ final class C110FrameReader {
         try{
             // The camera AP is local-only; all cloud traffic must explicitly use cellular.
             Network cellular=C110WifiCamera.requireCellular(activity);
-            TaskCatalog.Task selected=null;
-            String idTask=TaskCatalog.selectedId(activity);
-            for(TaskCatalog.Task task:TaskCatalog.all(activity))
-                if(task.id.equals(idTask)){selected=task;break;}
+            // Share one target between Home quickshot, C110 preview and
+            // MainActivity. Explicit voice read/observe applies to one shot.
+            final String target=oneShotTask==null?
+                FindingTargetStore.current(activity):"";
+            SharedPreferences prefs=activity.getSharedPreferences(PREFS,Context.MODE_PRIVATE);
+            if(!target.isEmpty()){
+                String visual=VisionModelCatalog.normalize(prefs.getString(
+                    "cloud_vision_model",VisionModelCatalog.DEFAULT));
+                CloudProviderStore.Config service=CloudProviderStore.resolve(
+                    activity,CloudProviderStore.VISION,visual);
+                RecentPhotoSession.captured(jpeg,cellular,"寻找"+target);
+                TargetVisionClient.Result check=TargetVisionClient.inspect(
+                    jpeg,target,service,cellular);
+                main.post(()->{
+                    if(closed||id!=request.get())return;
+                    busy=false;
+                    if(!target.equals(FindingTargetStore.current(activity))){
+                        report("寻找目标已更改，本次旧照片结果已取消");
+                        return;
+                    }
+                    lastText=check.message;
+                    RecentPhotoSession.analyzed(jpeg,check.message);
+                    if(check.confirmed())
+                        FindingTargetStore.clearIfCurrent(activity,target);
+                    report(check.confirmed()?"已找到："+target:
+                        "寻找："+target+" · "+check.decision);
+                    speak(check.message);
+                });
+                return;
+            }
+            TaskCatalog.Task selected=oneShotTask;
+            if(selected==null){
+                String idTask=TaskCatalog.selectedId(activity);
+                for(TaskCatalog.Task task:TaskCatalog.all(activity))
+                    if(task.id.equals(idTask)){selected=task;break;}
+            }
             if(selected==null)selected=TaskCatalog.defaults()[0];
             final TaskCatalog.Task task=selected;
-            SharedPreferences prefs=activity.getSharedPreferences(PREFS,Context.MODE_PRIVATE);
             boolean ocr=TaskCatalog.OCR.equals(task.engine);
             String model=ocr?
                 OcrModelCatalog.normalize(prefs.getString("cloud_ocr_model_v1",OcrModelCatalog.DEFAULT)):
