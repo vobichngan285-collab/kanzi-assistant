@@ -88,6 +88,9 @@ public final class C110CameraActivity extends Activity {
     private float zoom=1f;
     private boolean fullscreen;
 
+    @Override protected void attachBaseContext(Context base) {
+        super.attachBaseContext(BlueStarFontScale.wrap(base));
+    }
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
         cm=(ConnectivityManager)getSystemService(Context.CONNECTIVITY_SERVICE);
