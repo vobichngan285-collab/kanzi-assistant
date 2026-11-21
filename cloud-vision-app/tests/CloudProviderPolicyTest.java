@@ -29,6 +29,15 @@ public final class CloudProviderPolicyTest {
             "https://open.bigmodel.cn/api/paas/v4/layout_parsing","glm-4.6v"));
         ok(!CloudProviderPolicy.zhipuFastVisualOcr(
             "https://open.bigmodel.cn.evil.example/chat/completions","glm-4.6v"));
+        String oldPrompt="用户自定义逐字原样朗读";
+        ok(oldPrompt.equals(CloudProviderPolicy.fastZhipuOcrInstruction(
+            oldPrompt,false,true))); // Qwen untouched
+        ok(oldPrompt.equals(CloudProviderPolicy.fastZhipuOcrInstruction(
+            oldPrompt,true,false))); // User-edited GLM unchanged
+        String fastPrompt=CloudProviderPolicy.fastZhipuOcrInstruction(
+            oldPrompt,true,true);
+        ok(fastPrompt.contains("逐行")&&fastPrompt.contains("原文"));
+        ok(!fastPrompt.equals(oldPrompt));
         ok(CloudProviderPolicy.probeRecognizedA("A"));
         ok(CloudProviderPolicy.probeRecognizedA("字母 A"));
         ok(CloudProviderPolicy.probeRecognizedA("Ａ"));
