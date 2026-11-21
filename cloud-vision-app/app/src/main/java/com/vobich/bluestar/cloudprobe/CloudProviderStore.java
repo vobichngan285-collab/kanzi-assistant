@@ -27,6 +27,7 @@ final class CloudProviderStore {
     private static final String SELECT="cloud_custom_selected_v1_";
     private static final int MAX_PROFILES=20;
     private static final String SSE_MIGRATED="cloud_custom_chat_fast_stream_v2";
+    private static final String BAILIAN_KEY_SOURCE="legacy_bailian";
     private CloudProviderStore(){}
 
     static final class Profile {
@@ -171,7 +172,41 @@ final class CloudProviderStore {
         }
         pref(ctx).edit().putString(SELECT+role,id).apply();
     }
+    /** Only display re-usable choices with an actually decryptable secret.
+     * Return metadata, never the key itself. A legacy Bailian key is eligible
+     * ONLY for a URL on the same real HTTPS origin. */
+    static List<Profile> reusableProfiles(Context ctx,String destinationUrl,
+                                          String excludeId)throws Exception{
+        String valid=CloudProviderPolicy.validatedUrl(destinationUrl);
+        ArrayList<Profile> result=new ArrayList<>();
+        for(Profile candidate:list(ctx)){
+            if(candidate.id.equals(excludeId)||!ProviderKeyReusePolicy.sameProvider(
+                valid,candidate.url))continue;
+            try{
+                if(!CloudKeyStore.loadNamed(ctx,candidate.id).isEmpty())
+                    result.add(candidate);
+            }catch(Exception unreadable){
+                // An invalidated KeyStore entry is not a reusable credential.
+            }
+        }
+        if(ProviderKeyReusePolicy.sameProvider(valid,BAILIAN_URL)){
+            try{
+                if(!CloudKeyStore.load(ctx).isEmpty())
+                    result.add(new Profile(BAILIAN_KEY_SOURCE,"原有百炼",
+                        BAILIAN_URL,"共用原有百炼Key",CHAT,false));
+            }catch(Exception unreadable){/* no reusable legacy credential */}
+        }
+        return result;
+    }
+
     static Profile save(Context ctx,Profile raw,String newKey)throws Exception{
+        return save(ctx,raw,newKey,"");
+    }
+    /** On a blank new-key field, re-encrypt a same-origin source key with a
+     * fresh IV under the NEW profile ID. Never reference the old profile's
+     * ciphertext, so deleting either profile does not invalidate the other. */
+    static Profile save(Context ctx,Profile raw,String newKey,
+                        String preferredKeySource)throws Exception{
         String protocol=raw.protocol;
         if(!(CHAT.equals(protocol)||LAYOUT.equals(protocol)||ASR_QWEN.equals(protocol)||
             ASR_MULTIPART.equals(protocol)||ASR_CHAT_AUDIO.equals(protocol)))
@@ -191,8 +226,34 @@ final class CloudProviderStore {
                 throw new IllegalArgumentException("此配置正在被"+role+"使用，不能修改为不兼容协议");
         }
         String key=newKey==null?"":newKey.trim();
-        if(fresh&&key.isEmpty())throw new IllegalArgumentException("请填写此配置的 API Key");
-        if(!key.isEmpty())CloudKeyStore.saveNamed(ctx,id,key);
+        if(key.isEmpty()){
+            String source=preferredKeySource==null?"":preferredKeySource.trim();
+            if(fresh&&source.isEmpty()){
+                List<Profile> candidates=reusableProfiles(ctx,url,id);
+                if(candidates.size()==1)source=candidates.get(0).id;
+                else if(candidates.size()>1)
+                    throw new IllegalArgumentException("找到多套同服务商密钥，请点击“复用已有密钥”选择");
+                else throw new IllegalArgumentException("未找到同服务商的有效密钥，请填写 API Key");
+            }
+            if(!source.isEmpty()){
+                String sourceKey;
+                if(BAILIAN_KEY_SOURCE.equals(source)){
+                    if(!ProviderKeyReusePolicy.sameProvider(url,BAILIAN_URL))
+                        throw new IllegalArgumentException("不能跨服务商复用百炼密钥");
+                    sourceKey=CloudKeyStore.load(ctx);
+                }else{
+                    Profile previous=find(ctx,source);
+                    if(previous==null||source.equals(id)||
+                       !ProviderKeyReusePolicy.sameProvider(url,previous.url))
+                        throw new IllegalArgumentException("密钥来源不存在或不属于同一个 HTTPS 服务商");
+                    sourceKey=CloudKeyStore.loadNamed(ctx,source);
+                }
+                if(sourceKey==null||sourceKey.isEmpty())
+                    throw new IllegalArgumentException("来源密钥已失效，请重新填写");
+                CloudKeyStore.saveNamed(ctx,id,sourceKey);
+            }else if(!fresh&&CloudKeyStore.loadNamed(ctx,id).isEmpty())
+                throw new IllegalArgumentException("原配置密钥已失效，请重新填写");
+        }else CloudKeyStore.saveNamed(ctx,id,key);
         Profile p=new Profile(id,name,url,model,protocol,raw.stream&&CHAT.equals(protocol));
         if(where<0)all.add(p);else all.set(where,p);
         JSONArray saved=new JSONArray();
