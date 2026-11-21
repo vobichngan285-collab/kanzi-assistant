@@ -120,6 +120,8 @@ public final class MainActivity extends CameraActivity {
     private C110DeviceControls settingsC110DeviceControls;
     private String settingsC110Status="";
     private C110QuickShotController quickShot;
+    // Real one-shot 1001 OEM photo path remains active after removing the unused video player.
+    private final C110WifiCamera c110Camera=new C110WifiCamera();
     private volatile android.net.Network lastSessionCloudNetwork;
     private View tapOverlay;
     private ScaleGestureDetector zoomDetector;
