@@ -180,6 +180,11 @@ final class CloudVisionClient {
         // Users who edited the OCR instruction keep their exact own text.
         instruction=CloudProviderPolicy.fastZhipuOcrInstruction(
             instruction,officialZhipuChat,trialZhipuOcr&&!customPreset);
+        // Only the standard "朗读文字" OCR job uses the user's explicitly
+        // saved model-specific prompt. Other tasks/book pages are untouched.
+        if(cfg!=null&&isOcr&&!textOnly&&"ocr".equals(task.id)&&
+           cfg.ocrPrompt!=null&&!cfg.ocrPrompt.isEmpty())
+            instruction=cfg.ocrPrompt;
         JSONArray content=new JSONArray()
             .put(new JSONObject().put("type","text").put("text",instruction));
         if(!textOnly){
@@ -196,15 +201,17 @@ final class CloudVisionClient {
         JSONObject body=new JSONObject().put("model",model).put("stream",streaming)
             .put("max_tokens",maxOutput).put("messages",new JSONArray().put(
                 new JSONObject().put("role","user").put("content",content)));
-        // Flash/Max stays non-thinking for speed; dedicated OCR is unchanged.
-        if(!custom&&(VisionModelCatalog.isBudgetFlash(model)||fastMax))
+        // Only allow-listed official vendor APIs receive reasoning parameters.
+        // Each model has its own persisted switch; default remains OFF.
+        if(cfg!=null&&CloudThinkingPolicy.QWEN.equals(cfg.thinkingStyle))
+            body.put("enable_thinking",cfg.thinking);
+        else if(cfg!=null&&CloudThinkingPolicy.ZHIPU.equals(cfg.thinkingStyle))
+            body.put("thinking",new JSONObject().put("type",
+                cfg.thinking?"enabled":"disabled"));
+        else if(!custom&&(VisionModelCatalog.isBudgetFlash(model)||fastMax))
             body.put("enable_thinking",false);
-        // Reuse the proven Qwen OCR flow entirely: JPEG+user prompt, SSE,
-        // complete OCR lines and the existing TTS callback. GLM-4.6V on the
-        // official Zhipu Chat endpoint differs ONLY in its thinking switch.
-        // Non-thinking avoids making photo OCR wait for visual reasoning.
-        if(officialZhipuChat)
-            body.put("thinking",new JSONObject().put("type","disabled"));
+        // For unknown/unsupported vendors: NO guessed thinking parameters.
+        // SSE reads only delta.content; reasoning_content is never sent to TTS.
         // Official Bailian Chat Completions: enable_search on the SAME request.
         // Only explicit follow-ups qualify. This never forces a paid search,
         // never creates an extra HTTP request, and never searches OCR photos.
