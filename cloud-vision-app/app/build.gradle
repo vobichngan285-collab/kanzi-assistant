@@ -6,8 +6,8 @@ android {
         applicationId 'com.vobich.bluestar'
         minSdk 26
         targetSdk 35
-        versionCode 80
-        versionName '1.0.71-lean-cleanup'
+        versionCode 81
+        versionName '1.0.72-font50-model-manager'
         ndk { abiFilters 'arm64-v8a' }
     }
     buildTypes {
