@@ -732,8 +732,33 @@ final class BlueStarSettingsScreen {
         EditText model=providerInput("模型 ID",old==null?"":old.model,
             "填厂商控制台给出的完整模型 ID",InputType.TYPE_CLASS_TEXT);
         EditText key=providerInput("API Key（本机加密）","",
-            old==null?"粘贴服务商提供的 API Key":"留空＝保留原来的 API Key",
+            old==null?"留空自动复用同服务商有效密钥，或粘贴新Key":"留空＝保留原来的 API Key",
             InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        final String[] reuseKeySource={""};
+        Button reuseKey=button("复用已有密钥（可选）",PANEL);
+        reuseKey.setContentDescription("从相同HTTPS服务商的已保存密钥中选择，不显示密钥内容");
+        content.addView(reuseKey,new LinearLayout.LayoutParams(-1,dp(48)));
+        reuseKey.setOnClickListener(v->{
+            try{
+                List<CloudProviderStore.Profile> available=
+                    CloudProviderStore.reusableProfiles(
+                        app,url.getText().toString(),id);
+                if(available.isEmpty()){
+                    app.toastShort("没有找到相同HTTPS服务商的有效密钥，请填写API Key");
+                    return;
+                }
+                String[] labels=new String[available.size()];
+                for(int i=0;i<available.size();i++)
+                    labels[i]=available.get(i).name+" · "+available.get(i).model;
+                new AlertDialog.Builder(app).setTitle("选择复用的密钥")
+                    .setItems(labels,(dialog,index)->{
+                        CloudProviderStore.Profile chosen=available.get(index);
+                        reuseKeySource[0]=chosen.id;
+                        key.setText("");
+                        reuseKey.setText("✓ 复用："+chosen.name+" 的密钥");
+                    }).setNegativeButton("取消",null).show();
+            }catch(Exception error){app.toastShort("无法复用："+error.getMessage());}
+        });
         final String[] protocol=new String[]{
             old!=null?old.protocol:(CloudProviderStore.ASR.equals(role)?
                 CloudProviderStore.ASR_MULTIPART:CloudProviderStore.CHAT)};
@@ -782,7 +807,7 @@ final class BlueStarSettingsScreen {
                     id,name.getText().toString(),url.getText().toString(),
                     model.getText().toString(),protocol[0],streaming.isChecked());
                 CloudProviderStore.Profile saved=CloudProviderStore.save(
-                    app,profile,key.getText().toString());
+                    app,profile,key.getText().toString(),reuseKeySource[0]);
                 key.setText("");
                 app.toastShort("已保存："+saved.name);
                 back();
