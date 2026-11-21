@@ -1,5 +1,6 @@
 package com.vobich.bluestar.cloudprobe;
 
+import android.content.Context;
 import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
@@ -32,6 +33,9 @@ public final class HomeActivity extends Activity {
     private TextView quickStatusView;
     private String quickStatus="";
 
+    @Override protected void attachBaseContext(Context base){
+        super.attachBaseContext(BlueStarFontScale.wrap(base));
+    }
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
         quickLaunchPending=isQuickShotIntent(getIntent());
