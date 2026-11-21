@@ -48,7 +48,7 @@ import android.os.SystemClock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** A separate minimal C110 video player. No photos, OCR, BLE, uploads or retries. */
+/** Verified standalone C110 VLC view, manual OEM 1001 still photo and cloud OCR. */
 public final class C110CameraActivity extends Activity {
     private static final String IP="192.168.1.254";
     private static final String VIDEO_URL="rtsp://192.168.1.254:554/xxx.mp4";
@@ -404,38 +404,6 @@ public final class C110CameraActivity extends Activity {
         b.setBackground(bg);
         b.setOnClickListener(v->click.run());
         return b;
-    }
-
-    private void returnToMain(String action){
-        Intent result=new Intent();
-        result.putExtra("c110_action",action);
-        setResult(RESULT_OK,result);
-        finish();
-    }
-
-    private void showCameraModes(){
-        new android.app.AlertDialog.Builder(this).setTitle("选择模式")
-            .setItems(new String[]{"手机摄像头","C110 运动相机","USB 摄像头"},(d,i)->{
-                if(i==0)returnToMain("mode_phone");
-                else if(i==2)returnToMain("mode_usb");
-            }).setNegativeButton("取消",null).show();
-    }
-
-    private void showCameraTasks(){
-        TaskDesktopOverlay.show(this,TaskCatalog.all(this),TaskCatalog.selectedId(this),
-            new TaskDesktopOverlay.Listener(){
-                @Override public void selected(TaskCatalog.Task task){
-                    TaskCatalog.select(C110CameraActivity.this,task.id);
-                    if(taskChip!=null)taskChip.setText("任务："+task.name);
-                    say("当前任务："+task.name);
-                }
-                @Override public void createTask(){returnToMain("tasks");}
-                @Override public void edit(TaskCatalog.Task task){returnToMain("tasks");}
-                @Override public void openReading(){returnToMain("reading");}
-                @Override public void removed(TaskCatalog.Task task){
-                    say("任务列表已更新："+task.name);
-                }
-            });
     }
 
     private void showC110Settings(){
