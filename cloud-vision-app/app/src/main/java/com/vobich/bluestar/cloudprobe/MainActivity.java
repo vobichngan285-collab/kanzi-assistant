@@ -1100,6 +1100,9 @@ public final class MainActivity extends CameraActivity {
             .setRawPreviewData(true).setAspectRatioShow(true).create();
     }
 
+    @Override protected void attachBaseContext(Context base) {
+        super.attachBaseContext(BlueStarFontScale.wrap(base));
+    }
     @Override public void onCreate(Bundle state) {
         Intent launch=getIntent();
         settingsOnly=launch!=null&&launch.getBooleanExtra("bluestar_launch_settings",false);
