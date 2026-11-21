@@ -490,9 +490,8 @@ public final class MainActivity extends CameraActivity {
     }
 
     private void setFindingTarget(String target){
-        findingTarget=target==null?"":target.trim();
-        getSharedPreferences(PREFS,MODE_PRIVATE).edit()
-            .putString(PREF_FINDING_TARGET,findingTarget).apply();
+        FindingTargetStore.set(this,target);
+        findingTarget=FindingTargetStore.current(this);
     }
 
     private final Runnable hideStatus=()->{
@@ -1146,8 +1145,7 @@ public final class MainActivity extends CameraActivity {
             prefs.getString(OcrSpeedExperiment.PREF,OcrSpeedExperiment.DEFAULT));
         webSearchEnabled=prefs.getBoolean(SearchRoutePolicy.PREF,
             SearchRoutePolicy.DEFAULT_ENABLED);
-        findingTarget=prefs.getString(PREF_FINDING_TARGET,"");
-        if(findingTarget==null)findingTarget="";
+        findingTarget=FindingTargetStore.current(this);
         ttsEngine=prefs.getString(PREF_TTS_ENGINE,"");
         if(ttsEngine==null)ttsEngine="";
         refreshTask(TaskCatalog.selectedId(this));
@@ -2091,6 +2089,7 @@ public final class MainActivity extends CameraActivity {
 
     /** One conversation button: intent determines photo question vs ongoing target search. */
     private void routeSpokenRequest(String transcript){
+        findingTarget=FindingTargetStore.current(this);
         VoiceAction action=VoiceAction.classify(transcript,findingTarget);
         if(action.type==VoiceAction.Type.STOP_FINDING){
             if(findingTarget.isEmpty()){
@@ -2721,7 +2720,7 @@ public final class MainActivity extends CameraActivity {
         }
         final TaskCatalog.Task task=oneShotTask==null?currentTask:oneShotTask;
         // A one-shot voice observation should not be hijacked by an ongoing search.
-        final String targetToFind=oneShotTask==null?findingTarget:"";
+        final String targetToFind=oneShotTask==null?FindingTargetStore.current(this):"";
         final boolean c110Source=current.remoteJpeg!=null;
         final String source=c110Source?
             (current.c110LiveFrame?"C110实时取帧":"C110高清原图"):(usingPhoneCamera?
@@ -2811,8 +2810,9 @@ public final class MainActivity extends CameraActivity {
                         RecentPhotoSession.analyzed(jpeg,inspection.message);
                         lastSessionTask="寻找"+targetToFind;
                         lastCloudResult=inspection.message;
-                        if(inspection.confirmed()&&targetToFind.equals(findingTarget)){
-                            setFindingTarget("");
+                        if(inspection.confirmed()&&
+                            FindingTargetStore.clearIfCurrent(this,targetToFind)){
+                            findingTarget="";
                             setResultStatus("已经找到目标 · 自动结束寻找");
                             vibrationForTargetFound();
                         }else setResultStatus("寻找："+targetToFind+" · "+inspection.decision);
@@ -2931,6 +2931,7 @@ public final class MainActivity extends CameraActivity {
             currentModels.getString(PREF_OCR_MODEL,OcrModelCatalog.DEFAULT));
         visionModel=VisionModelCatalog.normalize(
             currentModels.getString(PREF_VISION_MODEL,VisionModelCatalog.DEFAULT));
+        findingTarget=FindingTargetStore.current(this);
         uiActive=true;usbForeground=!settingsOnly;
         if(quickShot!=null)quickShot.onResume();
         if(settingsOnly){
