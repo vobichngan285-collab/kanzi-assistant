@@ -613,8 +613,6 @@ final class BlueStarSettingsScreen {
         if(!CloudProviderPolicy.validRole(role)){note("无效云端任务类别");return;}
         String builtin=CloudProviderStore.OCR.equals(role)?app.ocrModelDescription():
             CloudProviderStore.ASR.equals(role)?"qwen3-asr-flash":app.visionModelDescription();
-        heading("当前实际使用");
-        note(CloudProviderStore.activeModelDescription(app,role,builtin));
         String selected=CloudProviderStore.selectedId(app,role);
         heading("原有百炼");
         if(CloudProviderStore.ASR.equals(role)){
@@ -662,7 +660,13 @@ final class BlueStarSettingsScreen {
         input.setTextSize(TypedValue.COMPLEX_UNIT_SP,18);
         input.setTextColor(TEXT);input.setHintTextColor(SUB);
         input.setInputType(inputType);
-        input.setHint(title+" · "+hint);
+        final String example=title+" · "+hint;
+        input.setHint(example);
+        // Tap/focus clears the example immediately; empty blur restores it.
+        input.setOnFocusChangeListener((v,focused)->{
+            if(focused)input.setHint("");
+            else if(input.getText().length()==0)input.setHint(example);
+        });
         if(value!=null&&!value.isEmpty())input.setText(value);
         content.addView(input,new LinearLayout.LayoutParams(-1,dp(60)));
         return input;
@@ -810,7 +814,7 @@ final class BlueStarSettingsScreen {
                 navigate("model-prompt",spec));
         if(!CloudProviderStore.ASR.equals(role))
             row("测试连接（少量付费）","",()->
-                app.testCloudProvider(role,profileId));
+                app.testCloudProvider(role,profileId,model));
         if(custom)
             row("删除服务器","",()->new AlertDialog.Builder(app)
                 .setTitle("删除 "+saved.name+"？")
