@@ -23,6 +23,7 @@ import android.widget.TextView;
 import android.speech.tts.TextToSpeech;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 
 /** Canonical single Blue Star settings page shared by Home and live preview.
@@ -34,6 +35,8 @@ final class BlueStarSettingsScreen {
     private final MainActivity app;
     private final FrameLayout host,overlay;
     private LinearLayout content;
+    private ScrollView currentScroll;
+    private boolean builtinModelsExpanded;
     private TextView c110LiveStatus;
     private final ArrayList<Page> history=new ArrayList<>();
     private boolean closed;
@@ -74,6 +77,7 @@ final class BlueStarSettingsScreen {
         render(p);
     }
     private void navigate(String name,String param){
+        if("server-manage".equals(name))builtinModelsExpanded=false;
         history.add(new Page(name,param));
         render(history.get(history.size()-1));
     }
@@ -137,6 +141,7 @@ final class BlueStarSettingsScreen {
         bar.addView(title,new LinearLayout.LayoutParams(0,dp(64),1f));
         page.addView(bar);
         ScrollView scroll=new ScrollView(app);
+        currentScroll=scroll;
         scroll.setFillViewport(true);
         page.addView(scroll,new LinearLayout.LayoutParams(-1,0,1f));
         content=new LinearLayout(app);
@@ -229,6 +234,60 @@ final class BlueStarSettingsScreen {
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
         lp.bottomMargin=dp(12);
         content.addView(block,lp);
+    }
+    /** Only server-management rows are compact; no other settings or Home
+     * geometry changes. Keep a >=48dp real touch target at 50% text scale. */
+    private void compactServerRow(String label,Runnable clicked,Runnable held){
+        LinearLayout card=new LinearLayout(app);
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(16),0,dp(16),0);
+        card.setBackground(bg(PANEL,15));
+        TextView name=text(label,22,TEXT,true);
+        name.setGravity(Gravity.CENTER_VERTICAL);
+        name.setSingleLine(true);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        card.addView(name,new LinearLayout.LayoutParams(0,-1,1f));
+        // The chevron is an icon, not a label: keep its apparent size.
+        TextView arrow=text("›",42,TEXT,false);
+        arrow.setGravity(Gravity.CENTER);
+        card.addView(arrow,new LinearLayout.LayoutParams(dp(20),-1));
+        card.setClickable(true);card.setFocusable(true);
+        card.setContentDescription(label);
+        card.setOnClickListener(v->clicked.run());
+        card.setOnLongClickListener(v->{held.run();return true;});
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(54));
+        lp.bottomMargin=dp(7);
+        content.addView(card,lp);
+    }
+    private void compactServerRow(String label,Runnable clicked){
+        compactServerRow(label,clicked,clicked);
+    }
+    private void compactServerHeading(String title){
+        TextView h=text(title,21,TEXT,true);
+        h.setPadding(dp(8),dp(9),dp(8),dp(9));
+        content.addView(h);
+    }
+    private void compactAddServer(){
+        Button add=button("＋ 添加新服务器",0xFF246AA6);
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(54));
+        lp.bottomMargin=dp(10);
+        content.addView(add,lp);
+        add.setOnClickListener(v->new AlertDialog.Builder(app)
+            .setTitle("选择接口用途")
+            .setItems(new String[]{"文字识别 OCR","视觉分析与AI追问","语音识别"},
+                (d,i)->navigate("provider-edit",
+                    new String[]{CloudProviderStore.OCR,
+                        CloudProviderStore.VISION,CloudProviderStore.ASR}[i]+"|"))
+            .setNegativeButton("取消",null).show());
+    }
+    private void rerenderManagementAtSamePosition(){
+        final int y=currentScroll==null?0:currentScroll.getScrollY();
+        render(history.get(history.size()-1));
+        if(currentScroll!=null){
+            ScrollView current=currentScroll;
+            current.post(()->{if(!closed&&current==currentScroll)current.scrollTo(0,y);});
+        }
     }
     private void heading(String value){
         TextView h=text(value,21,TEXT,true);
@@ -748,42 +807,54 @@ final class BlueStarSettingsScreen {
             }
         });
     }
-    // Model selection stays in providerRole(). This page edits/deletes
-    // profiles, without silently switching the active role's selection.
+    // List user's actual saved profiles FIRST; never infer a duplicate from
+    // similar model IDs because two profiles may use different keys/endpoints.
     private void cloudServers(){
-        heading("原有百炼");
-        for(String id:OcrModelCatalog.IDS){
-            final String model=id;
-            String spec="b|"+CloudProviderStore.OCR+"|"+model;
-            row("OCR · "+model,"",()->navigate("server-actions",spec),
-                ()->navigate("server-actions",spec));
+        compactServerHeading("我的服务器");
+        List<CloudProviderStore.Profile> profiles=CloudProviderStore.list(app);
+        if(profiles.isEmpty()){
+            TextView empty=text("暂无自定义服务器",18,SUB,false);
+            empty.setGravity(Gravity.CENTER_VERTICAL);
+            empty.setPadding(dp(16),0,dp(16),0);
+            content.addView(empty,new LinearLayout.LayoutParams(-1,dp(44)));
         }
-        for(String id:VisionModelCatalog.IDS){
-            final String model=id;
-            String spec="b|"+CloudProviderStore.VISION+"|"+model;
-            row("视觉 · "+model,"",()->navigate("server-actions",spec),
-                ()->navigate("server-actions",spec));
-        }
-        String asr="b|"+CloudProviderStore.ASR+"|qwen3-asr-flash";
-        row("语音 · qwen3-asr-flash","",()->navigate("server-actions",asr),
-            ()->navigate("server-actions",asr));
-        heading("自定义服务器");
-        for(CloudProviderStore.Profile profile:CloudProviderStore.list(app)){
-            String role=CloudProviderStore.ASR_MULTIPART.equals(profile.protocol)||
+        for(CloudProviderStore.Profile profile:profiles){
+            boolean asr=CloudProviderStore.ASR_MULTIPART.equals(profile.protocol)||
                 CloudProviderStore.ASR_QWEN.equals(profile.protocol)||
-                CloudProviderStore.ASR_CHAT_AUDIO.equals(profile.protocol)?
-                CloudProviderStore.ASR:CloudProviderStore.OCR;
+                CloudProviderStore.ASR_CHAT_AUDIO.equals(profile.protocol);
+            // Chat can serve both OCR and vision; use the currently selected
+            // role when possible, while showing the saved profile exactly ONCE.
+            String role=asr?CloudProviderStore.ASR:
+                (profile.id.equals(CloudProviderStore.selectedId(app,CloudProviderStore.OCR))?
+                    CloudProviderStore.OCR:
+                    profile.id.equals(CloudProviderStore.selectedId(app,CloudProviderStore.VISION))?
+                    CloudProviderStore.VISION:CloudProviderStore.OCR);
             String spec="c|"+role+"|"+profile.id;
-            row(profile.name+" · "+profile.model,"",()->navigate("server-actions",spec),
+            compactServerRow(profile.name+" · "+profile.model,
                 ()->navigate("server-actions",spec));
         }
-        action("＋ 添加新服务器",()->new AlertDialog.Builder(app)
-            .setTitle("选择接口用途")
-            .setItems(new String[]{"文字识别 OCR","视觉分析与AI追问","语音识别"},
-                (d,i)->navigate("provider-edit",
-                    new String[]{CloudProviderStore.OCR,
-                        CloudProviderStore.VISION,CloudProviderStore.ASR}[i]+"|"))
-            .setNegativeButton("取消",null).show());
+        compactAddServer();
+        // Built-ins are a collapsed group by default. A model supporting
+        // both OCR and Vision gets one management entry and one thinking key.
+        LinkedHashSet<String> models=new LinkedHashSet<>();
+        for(String id:OcrModelCatalog.IDS)models.add(id);
+        for(String id:VisionModelCatalog.IDS)models.add(id);
+        models.add("qwen3-asr-flash");
+        compactServerRow("原有百炼模型（"+models.size()+"） · "+
+            (builtinModelsExpanded?"收起":"展开"),()->
+                rerenderBuiltinsToggle());
+        if(!builtinModelsExpanded)return;
+        for(String model:models){
+            String role="qwen3-asr-flash".equals(model)?CloudProviderStore.ASR:
+                OcrModelCatalog.indexOf(model)>=0?
+                    CloudProviderStore.OCR:CloudProviderStore.VISION;
+            String spec="b|"+role+"|"+model;
+            compactServerRow("百炼 · "+model,()->navigate("server-actions",spec));
+        }
+    }
+    private void rerenderBuiltinsToggle(){
+        builtinModelsExpanded=!builtinModelsExpanded;
+        rerenderManagementAtSamePosition();
     }
 
     // A standard tap and a long press open exactly the SAME accessible menu.
@@ -802,26 +873,24 @@ final class BlueStarSettingsScreen {
                 CloudProviderStore.ASR_QWEN:CloudProviderStore.CHAT);
         final String url=custom?saved.url:CloudProviderStore.BAILIAN_URL;
         final String profileId=custom?saved.id:"";
-        heading(custom?saved.name+" · "+model:"百炼 · "+model);
-        if(!custom&&CloudProviderStore.ASR.equals(role))
-            note("内置语音识别模型；切换模型请返回云端 AI");
-        if(custom)row("修改服务器","",()->navigate("provider-edit",role+"|"+profileId));
+        compactServerHeading(custom?saved.name+" · "+model:"百炼 · "+model);
+        if(custom)compactServerRow("修改服务器",()->navigate("provider-edit",role+"|"+profileId));
         String thinkingStyle=CloudThinkingPolicy.style(url,model,protocol);
         if(!CloudThinkingPolicy.NONE.equals(thinkingStyle)){
             boolean thinking=CloudModelOptions.get(app,role,profileId,model).thinking;
-            row("深度思考 · "+(thinking?"开启":"关闭"),"",()->{
+            compactServerRow("深度思考 · "+(thinking?"开启":"关闭"),()->{
                 CloudModelOptions.saveThinking(app,role,profileId,model,!thinking);
                 render(history.get(history.size()-1));
             });
         }
-        if(CloudProviderStore.OCR.equals(role)&&CloudProviderStore.CHAT.equals(protocol))
-            row("自定义 OCR 提示词","",()->
-                navigate("model-prompt",spec));
+        if(!CloudProviderStore.ASR.equals(role)&&CloudProviderStore.CHAT.equals(protocol))
+            compactServerRow("自定义 OCR 提示词",()->
+                navigate("model-prompt",(custom?"c":"b")+"|"+CloudProviderStore.OCR+"|"+identity));
         if(!CloudProviderStore.ASR.equals(role))
-            row("测试连接（少量付费）","",()->
+            compactServerRow("测试连接（少量付费）",()->
                 app.testCloudProvider(role,profileId,model));
         if(custom)
-            row("删除服务器","",()->new AlertDialog.Builder(app)
+            compactServerRow("删除服务器",()->new AlertDialog.Builder(app)
                 .setTitle("删除 "+saved.name+"？")
                 .setMessage("将删除这套配置和加密密钥；若正在使用将切回原有百炼。")
                 .setNegativeButton("取消",null)
