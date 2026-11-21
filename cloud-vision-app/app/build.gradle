@@ -6,8 +6,8 @@ android {
         applicationId 'com.vobich.bluestar'
         minSdk 26
         targetSdk 35
-        versionCode 82
-        versionName '1.0.73-server-manager-compact'
+        versionCode 83
+        versionName '1.0.74-voice-key-reuse'
         ndk { abiFilters 'arm64-v8a' }
     }
     buildTypes {
