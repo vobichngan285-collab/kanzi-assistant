@@ -114,16 +114,13 @@ final class BlueStarSettingsScreen {
             case "preset":heading="编辑预设提示词";break;
             case "custom":heading="编辑自定义任务";break;
             case "camera":heading="相机";break;
-            case "c110-camera":heading="C110+ 运动相机";break;
+            case "c110-camera":heading="C110 运动相机";break;
             case "usb-picture":heading="USB 画质调节";break;
             case "sources":heading="选择摄像头";break;
-            case "feedback":heading="提示音与振动";break;
+            case "advanced":heading="高级与诊断";break;
             case "cloud":heading="云端 AI";break;
-            case "providers":heading="自定义云端服务";break;
             case "provider-role":heading="独立服务选择";break;
             case "provider-edit":heading="编辑云端接口";break;
-            case "models":heading="百炼视觉模型";break;
-            case "ocr-models":heading="百炼文字识别模型";break;
             case "ocr-speed":heading="文字朗读方式";break;
             case "usage":heading="模型用量统计";break;
             case "usage-clear":heading="清空用量记录";break;
@@ -174,13 +171,10 @@ final class BlueStarSettingsScreen {
         else if(p.name.equals("c110-camera"))c110Camera();
         else if(p.name.equals("usb-picture"))usbPicture();
         else if(p.name.equals("sources"))sources();
-        else if(p.name.equals("feedback"))feedback();
+        else if(p.name.equals("advanced"))advanced();
         else if(p.name.equals("cloud"))cloud();
-        else if(p.name.equals("providers"))providers();
         else if(p.name.equals("provider-role"))providerRole(p.param);
         else if(p.name.equals("provider-edit"))providerEdit(p.param);
-        else if(p.name.equals("models"))models();
-        else if(p.name.equals("ocr-models"))ocrModels();
         else if(p.name.equals("ocr-speed"))ocrSpeed();
         else if(p.name.equals("usage"))usage();
         else if(p.name.equals("usage-clear"))usageClear();
@@ -252,15 +246,20 @@ final class BlueStarSettingsScreen {
         content.addView(line,lp);
     }
     private void home(){
-        // Single source of truth, visually matched to HomeActivity's Blue
-        // Star blue navigation and retained complete settings capabilities.
-        row("相机","C110+机身提示音和灯光、手机/USB、方向、画质",()->navigate("camera",""));
-        row("语音与朗读","语音引擎、朗读速度、内容过滤",()->navigate("speech",""));
-        row("云端 AI","OCR与视觉模型、速度、API Key、用量",()->navigate("cloud",""));
-        row("任务管理","预设提示词、任务显示与自定义",()->navigate("tasks",""));
-        row("提示音与振动","拍照音效、语音发送音和振动",()->navigate("feedback",""));
-        row("上次识别结果","文字内容和再次朗读",()->navigate("result",""));
-        row("运行诊断","匿名耗时、错误和日志导出",()->navigate("diagnostics",""));
+        row("相机","手机、USB、C110及画面设置",()->navigate("camera",""));
+        row("语音与提示","语音引擎、语速、文字过滤、音效和振动",
+            ()->navigate("speech",""));
+        row("云端 AI","OCR、视觉模型、API Key和速度",()->navigate("cloud",""));
+        row("任务管理","文字识别任务与自定义提示词",()->navigate("tasks",""));
+        row("高级与诊断","上次识别、匿名日志和故障排查",
+            ()->navigate("advanced",""));
+    }
+    private void advanced(){
+        row("上次识别结果","查看文字并再次朗读",()->navigate("result",""));
+        row("运行诊断","查看耗时、错误记录及导出日志",
+            ()->navigate("diagnostics",""));
+        heading("最近一次录音诊断");
+        note(app.lastMicDiagnostic());
     }
     private void speech(){
         SharedPreferences prefs=app.getSharedPreferences("kanzi_settings",Context.MODE_PRIVATE);
@@ -295,6 +294,14 @@ final class BlueStarSettingsScreen {
         toggle("过滤符号","跳过特殊符号，保留停顿","speech_skip_symbols",false);
         toggle("对所有任务生效","默认只过滤「朗读文字」任务","speech_filter_all_tasks",false);
         action("▶ 试听当前语音",()->app.previewSpeech());
+        heading("音效与振动");
+        toggle("提示音","拍照咔嗒声与语音发送嗖声",
+            "shutter_feedback_sound",true);
+        toggle("触觉反馈","拍照、开始录音、找到目标时振动",
+            "shutter_feedback_vibration",true);
+        action("▶ 试听拍照提示音",()->app.previewCaptureFeedback());
+        action("▶ 试听语音发送音",()->app.previewVoiceSendFeedback());
+        action("▶ 体验录音振动",()->app.previewVoiceStartHaptic());
     }
     private void engines(){
         List<TextToSpeech.EngineInfo> engines=app.availableTtsEngines();
@@ -409,16 +416,22 @@ final class BlueStarSettingsScreen {
         content.addView(c110LiveStatus,new LinearLayout.LayoutParams(-1,-2));
         updateC110Status(app.lastC110SettingsStatus());
         action("连接相机 Wi-Fi",()->app.connectC110WifiFromSettings());
-        heading("机身提示音");
-        row("关闭提示音","",()->app.setC110BeepFromSettings(false));
-        row("恢复提示音","",()->app.setC110BeepFromSettings(true));
-        heading("指示灯");
-        row("关闭指示灯","",()->app.setC110LightFromSettings(0));
-        row("开启指示灯","",()->app.setC110LightFromSettings(-1));
-        row("15秒后关灯","",()->app.setC110LightFromSettings(15));
-        row("30秒后关灯","",()->app.setC110LightFromSettings(30));
-        row("60秒后关灯","",()->app.setC110LightFromSettings(60));
-        row("自定义关灯时间","",this::c110CustomLightDelay);
+        row("机身提示音","开关机与拍照声音",()->{
+            new AlertDialog.Builder(app).setTitle("C110 机身提示音")
+                .setItems(new String[]{"关闭提示音","恢复提示音"},(dialog,which)->
+                    app.setC110BeepFromSettings(which==1))
+                .setNegativeButton("取消",null).show();
+        });
+        row("指示灯","立即熄灭、保持开启或延时关闭",()->{
+            String[] choices={"立即关闭","保持开启","15秒后关闭",
+                "30秒后关闭","60秒后关闭","自定义关闭时间"};
+            new AlertDialog.Builder(app).setTitle("C110 指示灯")
+                .setItems(choices,(dialog,which)->{
+                    if(which==5)c110CustomLightDelay();
+                    else app.setC110LightFromSettings(
+                        new int[]{0,-1,15,30,60}[which]);
+                }).setNegativeButton("取消",null).show();
+        });
     }
     private void c110CustomLightDelay(){
         EditText seconds=new EditText(app);
@@ -444,7 +457,7 @@ final class BlueStarSettingsScreen {
     }
 
     private void camera(){
-        row("C110+ 运动相机","直接设置机身声音、灯光和相机Wi-Fi",
+        row("C110 运动相机","机身声音、指示灯和相机Wi-Fi",
             ()->navigate("c110-camera",""));
         row("摄像头 · "+app.sourceDescription(),"",()->navigate("sources",""));
         row("画面旋转 · "+app.rotationDescription(),"",()->{app.adjustCamera(1);render(history.get(history.size()-1));});
@@ -538,15 +551,6 @@ final class BlueStarSettingsScreen {
         row("手机后置摄像头","原生 Camera2",()->{app.setCameraSourceFromSettings(1);back();});
         row("手机前置摄像头","原生 Camera2",()->{app.setCameraSourceFromSettings(2);back();});
     }
-    private void feedback(){
-        toggle("提示音","拍照金属咔嗒声、语音松手嗖声","shutter_feedback_sound",true);
-        toggle("触觉反馈","拍照短振、按住录音重振、找到目标双振","shutter_feedback_vibration",true);
-        action("▶ 试听拍照咔嗒声",()->app.previewCaptureFeedback());
-        action("▶ 试听语音发送嗖声",()->app.previewVoiceSendFeedback());
-        action("▶ 体验按住说话振动",()->app.previewVoiceStartHaptic());
-        heading("最近一次录音诊断");
-        note(app.lastMicDiagnostic());
-    }
     private void cloud(){
         // One source of truth: these rows SHOW the actual route and model,
         // not a hidden legacy selection overruled by custom configuration.
@@ -581,15 +585,6 @@ final class BlueStarSettingsScreen {
         if(CloudProviderStore.ASR_CHAT_AUDIO.equals(type))return "OpenAI Chat 音频输入";
         if(CloudProviderStore.LAYOUT.equals(type))return "Layout Parsing（专用OCR，非流式）";
         return "OpenAI 兼容 Chat Completions（图文）";
-    }
-    private void providers(){
-        note("三个功能可以选择三家不同云服务。原百炼保留为每项的默认方案。");
-        for(String role:new String[]{
-            CloudProviderStore.OCR,CloudProviderStore.VISION,CloudProviderStore.ASR}){
-            row(roleTitle(role)+" · "+CloudProviderStore.activeName(app,role),"",
-                ()->navigate("provider-role",role));
-        }
-        note("仅支持与所选协议兼容的 HTTPS API。图文模型需支持 image_url Base64；语音接口还需选择对应音频协议。");
     }
     private void providerRole(String role){
         if(!CloudProviderPolicy.validRole(role)){note("无效云端任务类别");return;}
@@ -752,41 +747,11 @@ final class BlueStarSettingsScreen {
         note("API Key 不在页面回显，也不进入诊断日志。仅在你选择的 HTTPS 地址发送认证信息。");
     }
 
-    private void models(){
-        for(int i=0;i<VisionModelCatalog.IDS.length;i++){
-            final String id=VisionModelCatalog.IDS[i];
-            final boolean selected=id.equals(app.visionModelDescription());
-            row((selected?"✓ ":"")+VisionModelCatalog.LABELS[i],"",
-                ()->{app.selectVisionModel(id);render(history.get(history.size()-1));});
-        }
-        // Only show important cost warning when someone actually tests Max.
-        action("▶ 测试当前模型",()->{
-            if(VisionModelCatalog.isEmergencyMax(app.visionModelDescription())){
-                new AlertDialog.Builder(app).setTitle("测试高精度 Max")
-                    .setMessage("测试将发送一张小图，可能产生费用。")
-                    .setNegativeButton("取消",null)
-                    .setPositiveButton("确认测试",(dialog,which)->app.testSelectedVisionModel())
-                    .show();
-            }else app.testSelectedVisionModel();
-        });
-    }
-
     private void ocrSpeed(){
         for(String id:new String[]{OcrSpeedExperiment.C,OcrSpeedExperiment.A}){
             final boolean selected=id.equals(app.ocrSpeedDescription());
             row((selected?"✓ ":"")+OcrSpeedExperiment.LABELS[OcrSpeedExperiment.index(id)],"",
                 ()->{app.selectOcrSpeedMode(id);render(history.get(history.size()-1));});
-        }
-    }
-
-    private void ocrModels(){
-        for(int i=0;i<OcrModelCatalog.IDS.length;i++){
-            final String id=OcrModelCatalog.IDS[i];
-            final boolean selected=id.equals(app.ocrModelDescription());
-            row((selected?"✓ ":"")+OcrModelCatalog.LABELS[i],"",()->{
-                app.selectOcrModel(id);
-                render(history.get(history.size()-1));
-            });
         }
     }
 
