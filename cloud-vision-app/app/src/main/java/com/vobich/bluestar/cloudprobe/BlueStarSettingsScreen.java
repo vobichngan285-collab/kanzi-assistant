@@ -219,22 +219,6 @@ final class BlueStarSettingsScreen {
         lp.bottomMargin=dp(12);
         content.addView(block,lp);
     }
-    private void row(String label,String description,Runnable clicked,Runnable held){
-        LinearLayout block=new LinearLayout(app);
-        block.setOrientation(LinearLayout.VERTICAL);
-        block.setPadding(dp(18),dp(11),dp(18),dp(11));
-        block.setBackground(bg(PANEL,15));
-        TextView title=text(label+"  ›",22,TEXT,true);
-        block.addView(title);
-        block.setMinimumHeight(dp(66));
-        block.setClickable(true);block.setFocusable(true);
-        block.setContentDescription(label);
-        block.setOnClickListener(v->clicked.run());
-        block.setOnLongClickListener(v->{held.run();return true;});
-        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
-        lp.bottomMargin=dp(12);
-        content.addView(block,lp);
-    }
     /** Only server-management rows are compact; no other settings or Home
      * geometry changes. Keep a >=48dp real touch target at 50% text scale. */
     private void compactServerRow(String label,Runnable clicked,Runnable held){
@@ -256,8 +240,8 @@ final class BlueStarSettingsScreen {
         card.setContentDescription(label);
         card.setOnClickListener(v->clicked.run());
         card.setOnLongClickListener(v->{held.run();return true;});
-        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(54));
-        lp.bottomMargin=dp(7);
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(52));
+        lp.bottomMargin=dp(6);
         content.addView(card,lp);
     }
     private void compactServerRow(String label,Runnable clicked){
@@ -270,7 +254,7 @@ final class BlueStarSettingsScreen {
     }
     private void compactAddServer(){
         Button add=button("＋ 添加新服务器",0xFF246AA6);
-        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(54));
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(52));
         lp.bottomMargin=dp(10);
         content.addView(add,lp);
         add.setOnClickListener(v->new AlertDialog.Builder(app)
@@ -874,6 +858,11 @@ final class BlueStarSettingsScreen {
         final String url=custom?saved.url:CloudProviderStore.BAILIAN_URL;
         final String profileId=custom?saved.id:"";
         compactServerHeading(custom?saved.name+" · "+model:"百炼 · "+model);
+        if(!custom&&CloudProviderStore.ASR.equals(role)){
+            TextView builtin=text("系统内置语音模型，无可修改设置",18,SUB,false);
+            builtin.setPadding(dp(16),dp(10),dp(12),dp(10));
+            content.addView(builtin);
+        }
         if(custom)compactServerRow("修改服务器",()->navigate("provider-edit",role+"|"+profileId));
         String thinkingStyle=CloudThinkingPolicy.style(url,model,protocol);
         if(!CloudThinkingPolicy.NONE.equals(thinkingStyle)){
