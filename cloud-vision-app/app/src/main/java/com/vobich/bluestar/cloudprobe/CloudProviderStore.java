@@ -39,11 +39,16 @@ final class CloudProviderStore {
     }
     static final class Config {
         final String name,url,model,key,protocol;
-        final boolean custom,stream;
+        final boolean custom,stream,thinking;
+        final String ocrPrompt,thinkingStyle;
         Config(String name,String url,String model,String key,
-               String protocol,boolean custom,boolean stream){
+               String protocol,boolean custom,boolean stream,
+               CloudModelOptions.Settings settings){
             this.name=name;this.url=url;this.model=model;this.key=key;
             this.protocol=protocol;this.custom=custom;this.stream=stream;
+            this.ocrPrompt=settings.ocrPrompt;
+            this.thinkingStyle=CloudThinkingPolicy.style(url,model,protocol);
+            this.thinking=!CloudThinkingPolicy.NONE.equals(thinkingStyle)&&settings.thinking;
         }
     }
     private static SharedPreferences pref(Context ctx){
@@ -136,7 +141,8 @@ final class CloudProviderStore {
                 throw new IllegalArgumentException("请先在云端 AI 中配置原有百炼 API Key");
             String model=role.equals(ASR)?"qwen3-asr-flash":oldModel;
             return new Config("原有百炼",BAILIAN_URL,model,key,
-                role.equals(ASR)?ASR_QWEN:CHAT,false,false);
+                role.equals(ASR)?ASR_QWEN:CHAT,false,false,
+                CloudModelOptions.get(ctx,role,"",model));
         }
         Profile chosen=find(ctx,profileId);
         if(chosen==null)throw new IllegalArgumentException("当前自定义服务商配置不存在，请重新选择");
@@ -146,7 +152,8 @@ final class CloudProviderStore {
         if(key.isEmpty())throw new IllegalArgumentException("此服务商尚未保存 API Key");
         return new Config(chosen.name,CloudProviderPolicy.validatedUrl(chosen.url),
             CloudProviderPolicy.cleanModel(chosen.model),key,
-            chosen.protocol,true,chosen.stream);
+            chosen.protocol,true,chosen.stream,
+            CloudModelOptions.get(ctx,role,chosen.id,chosen.model));
     }
     /** A permission or key check only, without issuing any paid cloud request. */
     static boolean hasKey(Context ctx,String role)throws Exception {
@@ -214,5 +221,6 @@ final class CloudProviderStore {
             if(id.equals(selectedId(ctx,role)))changes.putString(SELECT+role,"");
         changes.apply();
         CloudKeyStore.clearNamed(ctx,id);
+        CloudModelOptions.clearProfile(ctx,id);
     }
 }
