@@ -116,18 +116,10 @@ public final class MainActivity extends CameraActivity {
     private boolean settingsOnly;
     private FrameLayout previewContainer,rootFrame;
     private TextView currentTaskChip,zoomChip,resultChip;
-    private Button c110Button,c110PreviewButton;
-    private C110LivePreview c110Preview;
     private C110WifiBootstrap c110WifiBootstrap;
     private C110DeviceControls settingsC110DeviceControls;
     private String settingsC110Status="";
     private C110QuickShotController quickShot;
-    private boolean c110PreviewWanted,c110PreviewPlaying;
-    // C110 has independent digital zoom. Never silently reuse phone/USB zoom.
-    private float c110PreviewZoom=1f;
-    private final ExecutorService c110PreviewExecutor=Executors.newSingleThreadExecutor();
-    private final AtomicInteger c110PreviewSeq=new AtomicInteger();
-    private final C110WifiCamera c110Camera=new C110WifiCamera();
     private volatile android.net.Network lastSessionCloudNetwork;
     private View tapOverlay;
     private ScaleGestureDetector zoomDetector;
@@ -347,15 +339,14 @@ public final class MainActivity extends CameraActivity {
         tapOverlay.setContentDescription("点击当前画面识别文字；双指缩放普通摄像头画面");
         tapOverlay.setFocusable(true);
         tapOverlay.setOnClickListener(v->{
-            if(c110PreviewWanted)captureC110LiveFrame();else captureOneFrame();
+            captureOneFrame();
         });
         zoomDetector=new ScaleGestureDetector(this,new ScaleGestureDetector.SimpleOnScaleGestureListener(){
             @Override public boolean onScaleBegin(ScaleGestureDetector d){
                 touchMulti=true;return true;
             }
             @Override public boolean onScale(ScaleGestureDetector d){
-                setCameraZoom((c110PreviewWanted?c110PreviewZoom:zoom)*
-                    d.getScaleFactor());return true;
+                setCameraZoom(zoom*d.getScaleFactor());return true;
             }
             @Override public void onScaleEnd(ScaleGestureDetector d){
                 lastPinchMs=SystemClock.elapsedRealtime();
@@ -383,71 +374,6 @@ public final class MainActivity extends CameraActivity {
             }
         });
         root.addView(tapOverlay,new FrameLayout.LayoutParams(-1,-1));
-
-        LinearLayout title=new LinearLayout(this);
-        title.setGravity(Gravity.CENTER_VERTICAL);
-        title.setPadding(dp(12),dp(5),dp(12),dp(5));
-        ImageView brand=new ImageView(this);
-        brand.setImageResource(R.drawable.bluestar_globe);
-        title.addView(brand,new LinearLayout.LayoutParams(dp(40),dp(40)));
-        TextView appTitle=new TextView(this);
-        appTitle.setText("蓝星向导");
-        appTitle.setTypeface(null,android.graphics.Typeface.BOLD);
-        appTitle.setTextColor(Color.WHITE);
-        appTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP,19);
-        appTitle.setPadding(dp(6),0,dp(6),0);
-        title.addView(appTitle,new LinearLayout.LayoutParams(0,dp(50),1f));
-        // Settings in upper-right; C110 player has its own Activity.
-        settingsButton=new Button(this);
-        settingsButton.setAllCaps(false);
-        settingsButton.setText("☰");
-        settingsButton.setTextSize(TypedValue.COMPLEX_UNIT_SP,27);
-        settingsButton.setTextColor(Color.WHITE);
-        settingsButton.setBackground(roundRect(0xFF245477,12));
-        settingsButton.setContentDescription("打开蓝星向导统一设置");
-        LinearLayout.LayoutParams slp=new LinearLayout.LayoutParams(dp(48),dp(45));
-        slp.rightMargin=dp(6);
-        title.addView(settingsButton,slp);
-        settingsButton.setOnClickListener(v->openLargeSettings());
-        // Fast photo remains available without using the old four-item dock.
-        c110Button=new Button(this);
-        c110Button.setText("快拍");
-        c110Button.setTextSize(15);
-        c110Button.setAllCaps(false);
-        c110Button.setTextColor(Color.WHITE);
-        c110Button.setBackground(roundRect(0xFF245477,12));
-        c110Button.setContentDescription("立即触发一次C110+高清拍照与朗读");
-        title.addView(c110Button,new LinearLayout.LayoutParams(dp(60),dp(43)));
-        c110Button.setOnClickListener(v->shortcutPhoto());
-        Button aiTalk=new Button(this);
-        aiTalk.setText("🎙");aiTalk.setTextSize(19);aiTalk.setAllCaps(false);
-        aiTalk.setTextColor(Color.WHITE);
-        aiTalk.setBackground(roundRect(0xFF245477,12));
-        aiTalk.setContentDescription("AI对话，按住说话，松开发送");
-        aiTalk.setOnTouchListener((v,event)->handleVoiceButtonTouch(event));
-        title.addView(aiTalk,new LinearLayout.LayoutParams(dp(48),dp(43)));
-        zoomChip=new TextView(this);
-        zoomChip.setText("1.0×");
-        zoomChip.setGravity(Gravity.CENTER);
-        zoomChip.setTextColor(Color.WHITE);
-        zoomChip.setBackground(roundRect(0xDD204365,15));
-        zoomChip.setPadding(dp(12),dp(9),dp(12),dp(9));
-        title.addView(zoomChip);
-        root.addView(title,new FrameLayout.LayoutParams(-1,dp(58),Gravity.TOP));
-        // User-approved camera-only preview: keep existing internal controls
-        // initialized for legacy callbacks, but draw NO top toolbar.
-        title.setVisibility(View.GONE);
-
-        currentTaskChip=new TextView(this);
-        currentTaskChip.setTextColor(0xFFECF6FF);
-        currentTaskChip.setTextSize(TypedValue.COMPLEX_UNIT_SP,15);
-        currentTaskChip.setPadding(dp(14),dp(7),dp(14),dp(7));
-        currentTaskChip.setBackground(roundRect(0xC9153359,14));
-        FrameLayout.LayoutParams chip=new FrameLayout.LayoutParams(-2,dp(37),Gravity.TOP|Gravity.LEFT);
-        chip.topMargin=dp(64);chip.leftMargin=dp(12);
-        root.addView(currentTaskChip,chip);
-        // Task selection belongs on Home's separate task desktop, not on live video.
-        currentTaskChip.setVisibility(View.GONE);
 
         resultChip=new TextView(this);
         resultChip.setGravity(Gravity.CENTER);
@@ -520,7 +446,7 @@ public final class MainActivity extends CameraActivity {
                 case "reading":openReadingMode();break;
                 case "mode_phone":setCameraSourceFromSettings(phoneFrontFacing?2:1);break;
                 case "mode_usb":setCameraSourceFromSettings(0);break;
-                case "tasks":showTaskSelector();break;
+                case "tasks":startActivity(new Intent(this,TaskDesktopActivity.class));break;
                 case "settings":openLargeSettings();break;
                 case "ai":
                     toastShort("按住底部 AI 对话说话，松开发送");
@@ -573,134 +499,6 @@ public final class MainActivity extends CameraActivity {
         getSharedPreferences(PREFS,MODE_PRIVATE).edit()
             .putString(PREF_FINDING_TARGET,findingTarget).apply();
         updateTaskBadge();
-    }
-
-    private void showTaskSelector(){
-        TaskDesktopOverlay.show(this,TaskCatalog.all(this),currentTask.id,
-            new TaskDesktopOverlay.Listener(){
-                @Override public void selected(TaskCatalog.Task task){
-                    invalidate();
-                    if(!findingTarget.isEmpty())setFindingTarget("");
-                    refreshTask(task.id);
-                    setResultStatus("已选择："+task.name);
-                }
-                @Override public void createTask(){editTask(null);}
-                @Override public void edit(TaskCatalog.Task task){editTask(task);}
-                @Override public void openReading(){openReadingMode();}
-                @Override public void removed(TaskCatalog.Task task){
-                    if(currentTask!=null&&task.id.equals(currentTask.id)){
-                        invalidate();
-                        if(!findingTarget.isEmpty())setFindingTarget("");
-                        refreshTask(TaskCatalog.selectedId(MainActivity.this));
-                    }
-                    setResultStatus((task.custom?"已删除：":"已隐藏：")+task.name);
-                }
-            });
-    }
-
-    private void editTask(TaskCatalog.Task original){
-        boolean existing=original!=null;
-        String[] icon={existing?original.icon:"✦"};
-        EditText name=new EditText(this);
-        name.setSingleLine(true);name.setTextColor(Color.WHITE);
-        name.setHint("任务名称");name.setText(existing?original.name:"");
-        EditText prompt=new EditText(this);
-        prompt.setTextColor(Color.WHITE);
-        prompt.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);
-        prompt.setMinLines(4);prompt.setHint("请输入AI任务指令");
-        prompt.setText(existing?original.instruction:"");
-        Button symbol=new Button(this);
-        symbol.setAllCaps(false);symbol.setText("选择图标："+icon[0]);
-        symbol.setOnClickListener(v->{
-            String[] symbols=TaskCatalog.iconPalette();
-            new AlertDialog.Builder(this).setTitle("选择任务图标")
-                .setItems(symbols,(d,which)->{
-                    icon[0]=symbols[which];symbol.setText("选择图标："+icon[0]);
-                }).show();
-        });
-        LinearLayout form=new LinearLayout(this);
-        form.setPadding(dp(20),dp(8),dp(20),dp(8));
-        form.setOrientation(LinearLayout.VERTICAL);
-        form.addView(name);form.addView(prompt);form.addView(symbol);
-        AlertDialog dialog=new AlertDialog.Builder(this)
-            .setTitle(existing?"编辑自定义任务":"新建自定义任务")
-            .setView(form).setNegativeButton("取消",null)
-            .setPositiveButton("保存",null).create();
-        dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-            .setOnClickListener(w->{
-                try{
-                    TaskCatalog.Task saved=TaskCatalog.upsert(this,
-                        existing?original.id:null,name.getText().toString(),
-                        prompt.getText().toString(),icon[0]);
-                    invalidate();refreshTask(saved.id);dialog.dismiss();
-                }catch(IllegalArgumentException error){prompt.setError(error.getMessage());}
-            }));
-        dialog.show();
-    }
-
-    private void showTaskManagement(){
-        List<TaskCatalog.Task> tasks=TaskCatalog.all(this);
-        String[] names=new String[tasks.size()+1];
-        for(int i=0;i<tasks.size();i++)
-            names[i]=(TaskCatalog.isPresetHidden(this,tasks.get(i).id)?"已隐藏 · ":"")+
-                (tasks.get(i).custom?"✦ ":"预设 · ")+tasks.get(i).name;
-        names[tasks.size()]="＋ 新建自定义任务";
-        new AlertDialog.Builder(this).setTitle("任务管理 · 编辑AI提示词")
-            .setItems(names,(d,index)->{
-                if(index==tasks.size()){editTask(null);return;}
-                TaskCatalog.Task task=tasks.get(index);
-                if(task.custom)showCustomTaskEditActions(task);
-                else if(TaskCatalog.isPresetHidden(this,task.id))
-                    new AlertDialog.Builder(this).setTitle(task.name)
-                        .setItems(new String[]{"恢复显示到任务宫格","编辑提示词"},
-                            (d2,option)->{
-                                if(option==0){
-                                    TaskCatalog.restoreHiddenPreset(this,task.id);
-                                    toastShort("已恢复："+task.name);
-                                }else editPresetTask(task);
-                            }).show();
-                else editPresetTask(task);
-            }).setNegativeButton("关闭",null).show();
-    }
-    private void showCustomTaskEditActions(TaskCatalog.Task task){
-        new AlertDialog.Builder(this).setTitle(task.name)
-            .setItems(new String[]{"编辑任务、图标及提示词","删除任务"},(d,index)->{
-                if(index==0)editTask(task);
-                else new AlertDialog.Builder(this).setTitle("确认删除："+task.name)
-                    .setNegativeButton("取消",null)
-                    .setPositiveButton("删除",(yes,which)->{
-                        TaskCatalog.remove(this,task.id);
-                        refreshTask(TaskCatalog.selectedId(this));
-                    }).show();
-            }).show();
-    }
-    private void editPresetTask(TaskCatalog.Task task){
-        EditText prompt=new EditText(this);
-        prompt.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);
-        prompt.setTextColor(Color.WHITE);
-        prompt.setMinLines(4);prompt.setText(task.instruction);
-        LinearLayout panel=new LinearLayout(this);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(20),dp(8),dp(20),dp(8));panel.addView(prompt);
-        AlertDialog dialog=new AlertDialog.Builder(this)
-            .setTitle("编辑："+task.name)
-            .setMessage("保存后下次识别将使用这里的AI指令。")
-            .setView(panel)
-            .setNeutralButton("恢复默认",(d,w)->{
-                TaskCatalog.restorePreset(this,task.id);
-                refreshTask(currentTask.id);
-                Toast.makeText(this,"已恢复："+task.name,Toast.LENGTH_SHORT).show();
-            })
-            .setNegativeButton("取消",null).setPositiveButton("保存",null).create();
-        dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-            .setOnClickListener(w->{
-                try{
-                    TaskCatalog.updatePreset(this,task.id,prompt.getText().toString());
-                    refreshTask(currentTask.id);dialog.dismiss();
-                    Toast.makeText(this,"提示词已保存",Toast.LENGTH_SHORT).show();
-                }catch(IllegalArgumentException e){prompt.setError(e.getMessage());}
-            }));
-        dialog.show();
     }
 
     private final Runnable hideStatus=()->{
@@ -1172,8 +970,6 @@ public final class MainActivity extends CameraActivity {
             .putString(PREF_VISION_MODEL,id).apply();
         return true;
     }
-    // Legacy settings route remains functional and uses the shared model catalog.
-    void toggleVisionModel(){showVisionModelSelector();}
     ModelUsageLedger.Snapshot todayModelUsage(){
         return modelUsage==null?null:modelUsage.today();
     }
@@ -1292,48 +1088,6 @@ public final class MainActivity extends CameraActivity {
     void cycleImagePolicy(){
         imagePolicy="auto".equals(imagePolicy)?"720":("720".equals(imagePolicy)?"1080":"auto");
         getSharedPreferences(PREFS,MODE_PRIVATE).edit().putString(PREF_IMAGE_POLICY,imagePolicy).apply();
-    }
-
-    /** Identical selection labels and saved preferences as 2.0. */
-    private void showCameraSourceSelector() {
-        final String[] choices={"USB 外接摄像头","手机后置摄像头","手机前置摄像头"};
-        final int selected=usingPhoneCamera?(phoneFrontFacing?2:1):0;
-        new AlertDialog.Builder(this).setTitle("摄像头")
-            .setSingleChoiceItems(choices,selected,(dialog,which)->{
-                dialog.dismiss();
-                boolean phone=which!=0;
-                boolean front=which==2;
-                selectManualPhoneOverride(phone);
-                if(phone==usingPhoneCamera&&(!phone||front==phoneFrontFacing))return;
-                saveCameraProfile();
-                if(phone){
-                    phoneFrontFacing=front;
-                    getSharedPreferences(PREFS,MODE_PRIVATE).edit()
-                        .putBoolean(PREF_FRONT_CAMERA,front).apply();
-                }
-                switchCameraSource(phone);
-            }).setNegativeButton("取消",null).show();
-    }
-
-    private void showInstalledTtsSelector() {
-        if(tts==null){Toast.makeText(this,"语音引擎未初始化",Toast.LENGTH_SHORT).show();return;}
-        List<TextToSpeech.EngineInfo> engines=tts.getEngines();
-        java.util.ArrayList<String> labels=new java.util.ArrayList<>();
-        java.util.ArrayList<String> ids=new java.util.ArrayList<>();
-        labels.add("跟随手机系统默认");ids.add("");
-        for(TextToSpeech.EngineInfo e:engines){
-            if(e==null||e.name==null)continue;
-            labels.add(e.label==null?e.name:e.label);ids.add(e.name);
-        }
-        new AlertDialog.Builder(this).setTitle("选择本机已安装的语音引擎")
-            .setSingleChoiceItems(labels.toArray(new String[0]),Math.max(0,ids.indexOf(ttsEngine)),
-                (dialog,which)->{
-                    dialog.dismiss();
-                    ttsEngine=ids.get(which);
-                    getSharedPreferences(PREFS,MODE_PRIVATE).edit()
-                        .putString(PREF_TTS_ENGINE,ttsEngine).apply();
-                    initializeSpeech();
-                    }).setNegativeButton("取消",null).show();
     }
 
     @Override protected IAspectRatio getCameraView() {
@@ -1457,33 +1211,6 @@ public final class MainActivity extends CameraActivity {
         }
         // USBMonitor still owns permission, UVC opening and physical detach.
         // The system intent only schedules a check; no second receiver is added.
-    }
-
-    private void showImagePolicySelector(){
-        String[] names={"自动：清晰720p／低细节原生1080p（推荐）",
-            "固定720p（速度对照）","固定1080p（清晰度对照）"};
-        String[] values={"auto","720","1080"};
-        int selected="720".equals(imagePolicy)?1:("1080".equals(imagePolicy)?2:0);
-        new AlertDialog.Builder(this).setTitle("图片分辨率实验")
-            .setMessage("自动档只在原始相机画面足够大且细节较少时使用1080p，不放大小图，不会重复收费请求。")
-            .setSingleChoiceItems(names,selected,(d,i)->{
-                imagePolicy=values[i];getSharedPreferences(PREFS,MODE_PRIVATE)
-                    .edit().putString(PREF_IMAGE_POLICY,imagePolicy).apply();
-                d.dismiss();
-                Toast.makeText(this,"已选："+names[i],Toast.LENGTH_SHORT).show();
-            }).setNegativeButton("取消",null).show();
-    }
-
-    private void showVisionModelSelector(){
-        // Legacy selector: the primary large-text settings page uses a solid dark panel.
-        int selected=Math.max(0,VisionModelCatalog.indexOf(visionModel));
-        new AlertDialog.Builder(this).setTitle("视觉模型")
-            .setMessage("视觉分析三选一；文字识别模型在「云端 AI → 文字识别模型」单独设置。")
-            .setSingleChoiceItems(VisionModelCatalog.LABELS,selected,(d,i)->{
-                selectVisionModel(VisionModelCatalog.IDS[i]);
-                d.dismiss();
-                toastShort("视觉模型："+visionModel);
-            }).setNegativeButton("取消",null).show();
     }
 
     private void showCloudKeyDialog() {
@@ -1887,16 +1614,6 @@ public final class MainActivity extends CameraActivity {
     }
 
     private void setCameraZoom(float next){
-        if(c110PreviewWanted&&c110Preview!=null){
-            float applied=Math.round(C110ZoomGeometry.clamp(next)*10f)/10f;
-            if(Math.abs(applied-c110PreviewZoom)<.04f)return;
-            c110PreviewZoom=applied;
-            c110Preview.view().setScaleX(applied);
-            c110Preview.view().setScaleY(applied);
-            if(zoomChip!=null)zoomChip.setText(
-                String.format(Locale.CHINA,"%.1f×",c110PreviewZoom));
-            return;
-        }
         float limit=3f;
         if(usingPhoneCamera&&phoneController!=null)
             limit=Math.max(1f,Math.min(3f,phoneController.zoomLimit()));
@@ -2834,7 +2551,6 @@ public final class MainActivity extends CameraActivity {
     /** USB retains its last owned NV21; Camera2 only converts a new frame after tap. */
     private void captureOneFrame(){captureOneFrame(null);}
     private void captureOneFrame(TaskCatalog.Task oneShotTask){
-        if(c110PreviewWanted){captureC110LiveFrame(oneShotTask);return;}
         boolean fromVoice=oneShotTask!=null;
         if(voiceListening||voiceRecorder.isBusy()){
             toastShort("正在录音，请松手后再拍照");return;
@@ -2895,244 +2611,6 @@ public final class MainActivity extends CameraActivity {
         }else beginCapturedFrame(usbShot,now,token,oneShotTask);
     }
 
-    /** Preview uses the already phone-verified OEM minimal playback sequence. */
-    private void toggleC110LivePreview(){
-        if(c110PreviewWanted){
-            stopC110LivePreview(true);
-            setResultStatus("已关闭C110预览");
-        }else startC110LivePreview();
-    }
-
-    private void stopC110LivePreview(boolean clearIntent){
-        if(clearIntent)c110PreviewWanted=false;
-        if(clearIntent&&zoomChip!=null)
-            zoomChip.setText(String.format(Locale.CHINA,"%.1f×",zoom));
-        c110PreviewPlaying=false;
-        c110PreviewSeq.incrementAndGet();
-        if(c110Preview!=null)c110Preview.stop();
-        // Keep the VLCVideoLayout attached and VISIBLE, as in the working mini.
-        // Return only the draw-order to the normal phone/USB preview.
-        if(previewContainer!=null){
-            if(usingPhoneCamera&&phoneTexture!=null&&
-                phoneTexture.getParent()==previewContainer)
-                phoneTexture.bringToFront();
-            else if(cameraTextureView!=null&&
-                cameraTextureView.getParent()==previewContainer)
-                cameraTextureView.bringToFront();
-        }
-        if(c110PreviewButton!=null)
-            c110PreviewButton.setText(c110PreviewWanted?"关闭预览":"C110预览");
-        if(tapOverlay!=null)
-            tapOverlay.setContentDescription("点击普通摄像头画面识别文字");
-    }
-
-    private void startC110LivePreviewAfterPhoto(){startC110LivePreview(true);}
-    private void startC110LivePreview(){startC110LivePreview(false);}
-    private void startC110LivePreview(boolean resumingAfterPhoto){
-        if(!uiActive||readingScreen!=null){
-            toastShort("请退出阅读页面后打开C110实时预览");return;
-        }
-        if(cloudBusy&&!resumingAfterPhoto){
-            toastShort("AI正在处理上一项操作");return;
-        }
-        c110PreviewWanted=true;
-        c110PreviewPlaying=false;
-        if(zoomChip!=null)zoomChip.setText(
-            String.format(Locale.CHINA,"%.1f×",c110PreviewZoom));
-        final int seq=c110PreviewSeq.incrementAndGet();
-        if(c110PreviewButton!=null)c110PreviewButton.setText("关闭预览");
-        setResultStatus("C110正在按原厂流程启动视频…");
-        if(diagnostics!=null){
-            diagnostics.begin("c110_live");
-            diagnostics.event("c110","preview_try",1,"ok");
-        }
-        c110PreviewExecutor.submit(()->{
-            try{
-                android.net.Network wifi=C110WifiCamera.previewNetwork(this);
-                // Exact successful mini: 3012 -> 3016 -> 3001/1 -> 2015/1.
-                C110WifiCamera.PreviewInit init=c110Camera.startPreview(this,wifi);
-                handler.post(()->{
-                    if(seq!=c110PreviewSeq.get()||!uiActive||!c110PreviewWanted)return;
-                    if(diagnostics!=null){
-                        diagnostics.event("c110","device_kind",init.deviceKind,"probe");
-                        diagnostics.event("c110","original_mode",init.currentMode,"probe");
-                        diagnostics.event("c110","live_mode_cmd",init.modeStatus,
-                            init.modeStatus==0?"ok":"failed");
-                        diagnostics.event("c110","live_cmd",init.startStatus,
-                            init.startStatus==0?"ok":"failed");
-                    }
-                    if(init.modeStatus!=0||init.startStatus!=0){
-                        stopC110LivePreview(true);
-                        setResultStatus("C110原厂视频指令未成功；高清拍照仍可用");
-                        return;
-                    }
-                    // No explicit Surface readiness gate, no manual RTSP PLAY,
-                    // no custom VLC timeout. These broke previous versions.
-                    c110Preview.view().bringToFront();
-                    c110Preview.view().setScaleX(c110PreviewZoom);
-                    c110Preview.view().setScaleY(c110PreviewZoom);
-                    c110Preview.start(this,wifi,new C110LivePreview.Listener(){
-                        @Override public void routeBound(int status){
-                            if(seq!=c110PreviewSeq.get())return;
-                            if(diagnostics!=null)
-                                diagnostics.event("c110","vlc_wifi_bind",status,"ok");
-                        }
-                        @Override public void state(int state){
-                            if(seq!=c110PreviewSeq.get())return;
-                            if(diagnostics!=null)
-                                diagnostics.event("c110","vlc_state",state,"probe");
-                        }
-                        @Override public void videoOutput(int count,long ms){
-                            if(seq!=c110PreviewSeq.get())return;
-                            c110PreviewPlaying=true;
-                            if(diagnostics!=null){
-                                diagnostics.event("c110","vlc_vout_count",count,"ok");
-                                diagnostics.event("c110","vlc_vout_ms",ms,"ok");
-                            }
-                            setResultStatus("C110实时预览已建立 · 点击画面取帧识别");
-                            if(tapOverlay!=null)
-                                tapOverlay.setContentDescription(
-                                    "C110实时视频，点击抓取当前帧并进行云端识别朗读");
-                        }
-                        @Override public void error(int code){
-                            if(seq!=c110PreviewSeq.get())return;
-                            if(diagnostics!=null)
-                                diagnostics.event("c110","vlc_native_error",code,"failed");
-                            setResultStatus("C110视频播放器报告错误；高清拍照仍可用");
-                            stopC110LivePreview(true);
-                        }
-                    });
-                });
-            }catch(Exception ex){
-                handler.post(()->{
-                    if(seq!=c110PreviewSeq.get())return;
-                    stopC110LivePreview(true);
-                    if(diagnostics!=null)
-                        diagnostics.event("c110","vlc_start",0,"failed");
-                    setResultStatus("C110视频启动失败："+ex.getClass().getSimpleName());
-                    toastShort("C110预览启动失败；请复制运行诊断");
-                });
-            }
-        });
-    }
-
-    /**
-     * User-tapped VIDEO frame -> existing cloud recognition/TTS task.
-     * PixelCopy gets the actual C110 video Surface, not a phone/USB frame.
-     * Does not call camera shutter, switch firmware modes or stop RTSP.
-     */
-    private void captureC110LiveFrame(){captureC110LiveFrame(null);}
-    private void captureC110LiveFrame(TaskCatalog.Task oneShotTask){
-        if(!uiActive||readingScreen!=null||c110Preview==null||
-           !c110PreviewWanted||!c110PreviewPlaying||
-           !c110Preview.hasVideoOutput()){
-            toastShort("C110实时画面尚未就绪");return;
-        }
-        if(voiceListening||voiceRecorder.isBusy()||cloudBusy){
-            toastShort("上一项操作未结束，请稍后取帧");return;
-        }
-        long now=SystemClock.elapsedRealtime();
-        if(now-lastTapMs<1500L)return;
-        // The camera AP may have no internet. The current JPEG/CloudVision
-        // code already accepts an explicitly selected cellular Network.
-        final android.net.Network cellular;
-        try{cellular=C110WifiCamera.requireCellular(this);}
-        catch(Exception ex){
-            toastShort("请开启移动数据，以便C110视频帧进行云端识别");return;
-        }
-        try{
-            // Ongoing "find target" overrides an OCR desktop preset;
-            // the preflight Key check must match the later VISION request.
-            String role=!findingTarget.isEmpty()&&oneShotTask==null?
-                CloudProviderStore.VISION:
-                (TaskCatalog.OCR.equals(oneShotTask==null?
-                    (currentTask==null?"":currentTask.engine):oneShotTask.engine)?
-                    CloudProviderStore.OCR:CloudProviderStore.VISION);
-            if(!CloudProviderStore.hasKey(this,role)){
-                openLargeSettings();
-                if(largeSettings!=null)largeSettings.openCloudRole(role);
-                return;
-            }
-        }catch(Exception keyError){
-            toastShort("读取当前云端服务商 API Key 失败，请检查设置");
-            return;
-        }
-        lastTapMs=now;
-        invalidate();
-        final int token=requestVersion.get();
-        final int seq=c110PreviewSeq.get();
-        final float liveZoomAtTap=c110PreviewZoom;
-        cloudBusy=true;
-        speechRequestToken=token;
-        speechCaptureAtMs=now;
-        ttsEngineStartMs=-1;ttsAudioCallbackMs=-1;
-        if(diagnostics!=null){
-            diagnostics.begin("c110_frame");
-            diagnostics.event("c110","frame_tap",1,"ok");
-        }
-        setResultStatus("C110：正在抓取当前视频画面…");
-        c110Preview.copyVisibleFrame((copyStatus,bitmap)->{
-            if(!uiActive||token!=requestVersion.get()||
-               seq!=c110PreviewSeq.get()){
-                if(bitmap!=null)bitmap.recycle();
-                return;
-            }
-            if(copyStatus!=PixelCopy.SUCCESS||bitmap==null){
-                cloudBusy=false;
-                if(diagnostics!=null)
-                    diagnostics.event("c110","pixelcopy",copyStatus,"failed");
-                setResultStatus("C110未取得当前视频帧，请确认预览仍在播放");
-                return;
-            }
-            final int videoWidth=bitmap.getWidth(),videoHeight=bitmap.getHeight();
-            // PixelCopy returns ORIGINAL unscaled surface. Crop to what the
-            // user saw zoomed, before JPEG encoding and before the single cloud call.
-            encodingTask=encoder.submit(()->{
-                byte[] jpeg=null;
-                int roiWidth=0,roiHeight=0;
-                Bitmap roi=null;
-                try{
-                    roi=C110ZoomFrames.cropPreviewBitmap(bitmap,liveZoomAtTap);
-                    roiWidth=roi.getWidth();roiHeight=roi.getHeight();
-                    ByteArrayOutputStream data=new ByteArrayOutputStream();
-                    if(roi.compress(Bitmap.CompressFormat.JPEG,90,data))
-                        jpeg=data.toByteArray();
-                }catch(RuntimeException ignored){
-                    // A failed zoom crop must NOT send the entire uncropped frame.
-                }finally{
-                    if(roi!=null&&roi!=bitmap&&!roi.isRecycled())roi.recycle();
-                    bitmap.recycle();
-                }
-                final byte[] fresh=jpeg;
-                final int width=roiWidth,height=roiHeight;
-                handler.post(()->{
-                    if(!uiActive||token!=requestVersion.get()||
-                       seq!=c110PreviewSeq.get())return;
-                    if(fresh==null||fresh.length<256){
-                        cloudBusy=false;
-                        if(diagnostics!=null)
-                            diagnostics.event("c110","frame_jpeg",0,"failed");
-                        setResultStatus("C110视频取帧编码失败，请重试");
-                        return;
-                    }
-                    if(diagnostics!=null){
-                        diagnostics.event("c110","pixelcopy",copyStatus,"ok");
-                        diagnostics.event("c110","frame_width_px",width,"ok");
-                        diagnostics.event("c110","frame_height_px",height,"ok");
-                        diagnostics.event("c110","zoom_x10",
-                            Math.round(liveZoomAtTap*10f),"ok");
-                        diagnostics.event("c110","video_width_px",videoWidth,"ok");
-                        diagnostics.event("c110","video_height_px",videoHeight,"ok");
-                        diagnostics.event("c110","frame_bytes",fresh.length,"ok");
-                    }
-                    Frame selected=new Frame(null,width,height,
-                        SystemClock.elapsedRealtime(),fresh,cellular,true);
-                    beginCapturedFrame(selected,now,token,oneShotTask);
-                });
-            });
-        });
-    }
-
     /** User-triggered C110 high-resolution photo -> existing OCR/vision/TTS pipeline. */
     private void captureC110OneShot(){
         if(!uiActive||readingScreen!=null){
@@ -3156,12 +2634,9 @@ public final class MainActivity extends CameraActivity {
         // RTSP playback may hold the firmware in streaming mode.
         // Close the player and explicitly re-enter photo mode for this tap,
         // then resume live preview only after complete original JPEG download.
-        final boolean resumeLiveAfterPhoto=c110PreviewWanted;
-        final float highPhotoZoomAtTap=c110PreviewWanted?c110PreviewZoom:1f;
-        if(resumeLiveAfterPhoto){
-            stopC110LivePreview(false);
-            c110Camera.resetPhotoMode();
-        }
+        // MainActivity no longer owns a second, unreachable C110 video player.
+        // The separate C110 page keeps its proven video/photo state machine.
+        final float highPhotoZoomAtTap=1f;
         invalidate();
         final int token=requestVersion.get();
         cloudBusy=true;
@@ -3230,19 +2705,11 @@ public final class MainActivity extends CameraActivity {
                         setResultStatus("C110高清原图已拍摄 "+photo.width+"×"+photo.height);
                         toastShort(issue);
                     }
-                    if(resumeLiveAfterPhoto){
-                        // Restore the optional in-main VLC view only AFTER the
-                        // C110 JPEG completes; never re-trigger the shutter.
-                        handler.postDelayed(()->{
-                            if(uiActive&&c110PreviewWanted)startC110LivePreviewAfterPhoto();
-                        },100L);
-                    }
                 });
             }catch(Exception ex){
                 handler.post(()->{
                     if(token!=requestVersion.get()||!uiActive)return;
                     cloudBusy=false;
-                    if(resumeLiveAfterPhoto)stopC110LivePreview(true);
                     if(diagnostics!=null)diagnostics.event("c110","photo",0,"failed");
                     String message=ex.getMessage()==null?ex.getClass().getSimpleName():ex.getMessage();
                     setResultStatus("C110高清快门或取图失败");
@@ -3540,7 +3007,6 @@ public final class MainActivity extends CameraActivity {
     }
     @Override protected void onPause(){
         if(quickShot!=null)quickShot.onPause();
-        stopC110LivePreview(true);
         if(!usingPhoneCamera&&diagnostics!=null){
             diagnostics.event("usb","pause",0,"ok");
             Frame frame=latestUsbFrame;
@@ -3584,8 +3050,6 @@ public final class MainActivity extends CameraActivity {
             settingsC110DeviceControls.shutdown();settingsC110DeviceControls=null;
         }
         if(c110WifiBootstrap!=null){c110WifiBootstrap.shutdown();c110WifiBootstrap=null;}
-        stopC110LivePreview(true);
-        c110PreviewExecutor.shutdownNow();
         invalidate();
         if(readingScreen!=null){readingScreen.dispose();readingScreen=null;}
         if(phoneController!=null)phoneController.stop();
