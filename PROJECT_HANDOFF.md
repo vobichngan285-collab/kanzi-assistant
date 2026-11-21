@@ -1,3 +1,21 @@
+# 2026-11-21｜v1.0.72 已通过完整 CI 发布：严格全局字体50%＋云服务器独立管理＋模型专属思考与OCR提示词
+
+- **用户明确批准的9项内容**：全App所有字号严格50%（不是局部）、删掉重复说明、输入框内示例并聚焦清空、语音设置新增“云服务器管理”、已接入模型集中操作、模型选择与管理完全分离、各型号手动开关思考、各型号独立OCR提示词、构建前全面回归。尤其强调 **绝对禁止擅自重做主页**：现有五个主功能行“快捷拍照/C110+实时预览/朗读任务/阅读模式/设置”，底部三个“主页/预览/按住AI”，图标、按钮尺寸、位置、颜色保持原样。用户此前拒绝额外快捷卡片、模型状态区或重新排版。
+- **唯一仓库与版本**：`vobichngan285-collab/kanzi-assistant`；从已发布 v1.0.71 HEAD `b5996933d69da71ec198358e0283be49e93c39c7` 创建独立分支 `exp/ui-font50-model-manager-20261121`，最终 HEAD `d5f4aac056904015350ec77acd09618efcd2258a`（CI 与 tag 已核验一致）。主包 `versionCode 81`、`versionName 1.0.72-font50-model-manager`；仍 `com.vobich.bluestar.c110plusquick159` debug applicationId，唯一 HomeActivity Launcher。旧 v1.0.71 正式发布保留。
+- **十四文件严格差异，已 GitHub compare 确认**：`.github/workflows/ui-font50-model-manager-20261121.yml`、`cloud-vision-app/app/build.gradle`、`BlueStarFontScale.java`（新）、`BlueStarSettingsScreen.java`、`C110CameraActivity.java`、`CloudModelOptions.java`（新）、`CloudProviderStore.java`、`CloudThinkingPolicy.java`（新）、`CloudVisionClient.java`、`HomeActivity.java`、`MainActivity.java`、`TaskDesktopActivity.java`、`docs/UI_FONT50_MODEL_MANAGER_20261121.md`（新）、`tests/CloudThinkingPolicyTest.java`（新）。原 C110/USB/Wi-Fi/相机TTS核心无其他改动。
+- **严格50%全屏字号**：四个当前主包Android Activities在 `attachBaseContext` 使用拷贝后的 `Configuration.fontScale *=0.5f`，不篡改系统设置，也不动任何 dp 按钮大小、排列、颜色或触摸区域。该值会缩小含弹窗、文本框提示在内的 app sp。极小字体有可读性风险但用户明确指定严格50%，不可未经许可添加字号最小值或动排版。
+- **云服务器管理**：`设置→语音与提示→云服务器管理` 列出内置OCR/视觉/ASR与所有用户已接入自定义Profile；点击或长按进入同一模型操作菜单：修改配置、思考开关（支持才显示）、OCR专属提示词（Chat OCR才显示）、精准选中型号的付费微图像测试、二次确认删除（仅自定义）。系统内置不可删除。自定义Profile 新建编辑不再偷偷切换当前模型；原来 `云端AI→OCR/视觉/ASR→独立服务选择` 页面只保留模型单选，不放编辑/删除。已有 Profile JSON、KeyStore Key、当前生效选择键完全兼容旧版本；删Profile才删除该ID的模型选项与命名密钥，所选Profile自动切回百炼旧逻辑。
+- **输入框瘦身**：云端接口编辑页面仅留配置名称、完整HTTPS地址、模型ID、API Key输入框与必要协议/SSE选择；重复技术描述删掉。EditText 无内容显示灰色说明，获得焦点提示立即消失，空输入失焦后恢复。已保存配置会回填非密钥字段，API Key编辑框继续隐藏且留空保留原Key。
+- **独立模型控制**：新增 `cloud_model_options_v1` Prefs；内置同一模型ID共用设置，自定义按ProfileId+ModelId保存。默认关闭思考；仅对官方百炼 `qwen3.7-flash`/`qwen3.8-flash`/`qwen3.8-max` 在 Chat body 设置 `enable_thinking=true/false`，对官方智谱 `glm-4.6v`/`glm-4.6v-flashx`/`glm-4.6v-flash` 设置 `thinking.type=enabled/disabled`；其他模型/未知第三方/ASR/Layout Parsing **绝不猜参数**。只在普通 `task.id=ocr` 的照片 OCR 请求覆写用户设置的专用提示词，书页、视觉、菜单、自定义任务、追问和text-only保持旧任务行为。SSE 只收 `delta.content`，reasoning_content 不进 TTS。若同时设置任务提示词和模型OCR提示词，普通OCR由模型专用提示词优先；清空模型提示词即回到任务规则。Layout Parsing glm-ocr 既不能开启思考也不接受自由Chat提示词，UI不会给虚假设置。
+- **构建证据**：GitHub Actions Run **44869321355** `completed/success`，全部环节通过：确切14文件静态差异、四Activity字体钩子/主页布局不增删、接口协议隔离、严格官方模型思考白名单 Java 回归、新旧CloudPolicy与 Task/Zoom/OCR行序测试、既有UVC补丁、全ARM64 Gradle编译、APK ZIP校验、包名/版本/单Launcher/LibVLC/UVC/2种音效、SHA256、Artifact、Release全部成功。Run SHA 和 Release tag 均 `d5f4aac056904015350ec77acd09618efcd2258a`。
+- **已实际发布**：Tag `bluestar-ui-font50-model-manager-20261121-v0172`，资产 `BlueStar_Guide_UI_Font50_Model_Manager_1.0.72.apk`，53,516,358 bytes（比v1.0.71新增16,396 bytes，因加入用户授权的新设置），SHA256 `3b1607b50fa677288ff9531a5873a492d99158d7b556ed7b4d0f7af97f03ca93`。
+  **APK**：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-ui-font50-model-manager-20261121-v0172/BlueStar_Guide_UI_Font50_Model_Manager_1.0.72.apk
+  **CI**：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44869321355
+- **未真机验收**：vivo X200 Pro 安装后必须检查用户真实五行主页和底部3栏不位移（此版仅缩字）、TalkBack能读输入框与按钮、C110标准版实时预览/快拍、USB和手机帧、TTS发声/按住AI/书页阅读，及多次切换千问/智谱/GLM-OCR的API Key、生效Model、深度思考和模型提示词保持。CI不能替代真机 API / OCR准确率与实际出声。**不要未经用户授权再修结构**。
+- **潜在安装问题**：构建仍为 GitHub Actions debug签名。不同CI机器默认debug证书可能不同，因此即使相同applicationId，可能无法直接覆盖安装，绝不能为了升级自动卸载旧版本造成Keystore密钥丢失。先备份需要重填的API Key/配置；安装发生证书冲突时再与用户商量安全迁移方案。
+
+---
+
 # 2026-11-21｜v1.0.71 减肥版已成功发布：无效入口、历史实验与 Media3 清理
 
 - **用户授权与目的**：在 v1.0.70 智谱提速初步有正向体感之后，用户要求“简单直接简单粗暴”，明确授权精简无用设置、不可达代码、历史实验及可安全删掉的依赖。本轮以不重造、保留已通过真机验证的手机/USB/C110、Qwen/GLM OCR SSE、TTS 和用户配置为前提。**这是结构减肥，不宣称云端模型推理速度变快**。
