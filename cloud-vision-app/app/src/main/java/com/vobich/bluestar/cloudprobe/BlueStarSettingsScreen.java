@@ -654,6 +654,7 @@ final class BlueStarSettingsScreen {
 
         }
         if(total==0)note("没有已保存的自定义模型");
+    }
     private EditText providerInput(String title,String value,String hint,int inputType){
         EditText input=new EditText(app);
         input.setContentDescription(title);
@@ -742,6 +743,7 @@ final class BlueStarSettingsScreen {
                 app.toastShort("保存失败："+error.getMessage());
             }
         });
+    }
     // Model selection stays in providerRole(). This page edits/deletes
     // profiles, without silently switching the active role's selection.
     private void cloudServers(){
