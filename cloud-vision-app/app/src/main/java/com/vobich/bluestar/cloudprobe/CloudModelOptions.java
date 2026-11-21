@@ -18,8 +18,10 @@ final class CloudModelOptions {
     }
     private static String key(String role,String profileId,String model){
         // Editing the model ID yields a NEW independent set of options.
+        // The same built-in model used for OCR and Vision shares its switch.
+        // OCR instructions are only consumed by the OCR task.
         return profileId==null||profileId.isEmpty()?
-            "builtin|"+role+"|"+model:"custom|"+profileId+"|"+model;
+            "builtin|"+model:"custom|"+profileId+"|"+model;
     }
     static Settings get(Context ctx,String role,String profileId,String model){
         String prefix=key(role,profileId,model);
