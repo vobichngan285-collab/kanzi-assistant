@@ -56,7 +56,9 @@ final class C110QuickShotController {
         // pending shutter but do not keep polling while the app is paused.
         if(waiting!=null)main.removeCallbacks(waiting);
     }
-    void trigger(){
+    void trigger(){trigger(null);}
+    /** Explicit voice observation can override only this one photo's task. */
+    void trigger(TaskCatalog.Task oneShotTask){
         if(destroyed||!active)return;
         reader.syncSpeechSettings(); // also covers changes made while Home remains alive
         if(shutterPending||reader.isBusy()){
@@ -67,7 +69,7 @@ final class C110QuickShotController {
         shutterPending=true;
         emit("正在连接C110+，准备拍摄一张高清原图…");
         if(C110WifiBootstrap.connected(owner)!=null){
-            takeOnce(token);
+            takeOnce(token,oneShotTask);
             return;
         }
         // Borrow MainActivity's existing Wi-Fi lease when possible. Do NOT
@@ -82,7 +84,7 @@ final class C110QuickShotController {
                 if(destroyed||token!=generation||!shutterPending||!active)return;
                 if(C110WifiBootstrap.connected(owner)!=null){
                     waiting=null;
-                    takeOnce(token);
+                    takeOnce(token,oneShotTask);
                     return;
                 }
                 if(SystemClock.elapsedRealtime()-waitingSince>=WIFI_WAIT_MS){
@@ -95,7 +97,7 @@ final class C110QuickShotController {
         };
         main.postDelayed(waiting,450L);
     }
-    private void takeOnce(int token){
+    private void takeOnce(int token,TaskCatalog.Task oneShotTask){
         if(destroyed||token!=generation||!shutterPending)return;
         emit("C110+已连接，正在拍一张高清原图…");
         // Only this one worker can dispatch the single user-triggered 1001.
@@ -110,7 +112,7 @@ final class C110QuickShotController {
                     emit("已拍照 "+photo.width+"×"+photo.height+"，正在识别朗读…");
                     // Same cloud model/key/task as Home settings; no test
                     // prompts and no re-encoding at native 1x.
-                    if(!reader.recognizeOriginalJpeg(photo.jpeg,photo.width,photo.height))
+                    if(!reader.recognizeOriginalJpeg(photo.jpeg,photo.width,photo.height,oneShotTask))
                         emit("已拍摄原图，但朗读任务仍忙，请稍后再试");
                 });
             }catch(Exception error){
