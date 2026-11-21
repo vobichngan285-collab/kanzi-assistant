@@ -1,0 +1,207 @@
+name: Blue Star v1.0.70 GLM OCR Speed Trial
+on:
+  push:
+    branches: [ 'exp/glm-ocr-speed-20261121' ]
+    paths:
+      - 'cloud-vision-app/app/**'
+      - 'cloud-vision-app/tests/**'
+      - 'cloud-vision-app/docs/GLM_OCR_SPEED_TRIAL_20261121.md'
+      - '.github/workflows/glm-ocr-speed-20261121.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  validated-apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify GLM reuses proven Qwen image OCR, SSE and TTS path
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          r=Path("cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe")
+          m=(r/"MainActivity.java").read_text()
+          ui=(r/"BlueStarSettingsScreen.java").read_text()
+          store=(r/"CloudProviderStore.java").read_text()
+          cv=(r/"CloudVisionClient.java").read_text()
+          lc=(r/"LayoutParsingClient.java").read_text()
+          pol=(r/"CloudProviderPolicy.java").read_text()
+          cam=(r/"C110CameraActivity.java").read_text()
+          quick=(r/"C110QuickShotController.java").read_text()
+          reader=(r/"C110FrameReader.java").read_text()
+          build=Path("cloud-vision-app/app/build.gradle").read_text()
+          manifest=Path("cloud-vision-app/app/src/main/AndroidManifest.xml").read_text()
+          bridge=Path("cloud-vision-app/boyuebridge/src/main/java/com/vobich/bluestar/boyuebridge/LaunchActivity.java").read_text()
+          chooser=ui.split("    private void cloud(){",1)[1].split("    private static String roleTitle",1)[0]
+          assert chooser.count('CloudProviderStore.activeModelDescription')==3
+          assert 'navigate("provider-role",CloudProviderStore.OCR)' in chooser
+          assert 'navigate("ocr-models"' not in chooser
+          assert 'navigate("models"' not in chooser
+          assert 'selected.isEmpty()&&id.equals(app.ocrModelDescription())' in ui
+          assert 'selected.isEmpty()&&id.equals(app.visionModelDescription())' in ui
+          assert 'profile.id.equals(selected)' in ui
+          assert 'CloudProviderStore.select(this,CloudProviderStore.OCR,"")' in m
+          assert 'CloudProviderStore.select(this,CloudProviderStore.VISION,"")' in m
+          assert '当前真正生效的云端模型' in ui
+          assert 'LAYOUT="layout_parsing"' in pol
+          assert 'OCR.equals(role)&&LAYOUT.equals(protocol)' in pol
+          assert 'CloudProviderStore.LAYOUT.equals(cfg.protocol)' in cv
+          assert 'return LayoutParsingClient.recognize(jpeg,cfg,cloudNetwork)' in cv
+          assert '.put("file","data:image/jpeg;base64,"+' in lc
+          assert 'optString("md_results","")' in lc
+          assert 'OcrResponseGate.requireReadable(markdown)' in lc
+          assert 'network.openConnection(endpoint)' in lc
+          assert 'setInstanceFollowRedirects(false)' in lc
+          assert '.put("messages"' not in lc
+          assert 'CloudProviderStore.LAYOUT' in ui
+          assert 'CloudKeyStore.loadNamed(ctx,chosen.id)' in store
+          assert 'upgradeKnownFastStreaming(ctx)' in store
+          assert 'CloudProviderPolicy.recommendedFastStream(model,protocol)' in store
+          assert 'SSE_MIGRATED' in store
+          assert 'streaming.setChecked(old==null||old.stream)' in ui
+          assert 'streaming.setVisibility(layout?View.GONE:View.VISIBLE)' in ui
+          assert 'boolean streaming=custom?(cfg.stream&&!connectionTest)' in cv
+          assert 'CloudProviderPolicy.zhipuFastVisualOcr(cfg.url,visionModel)' in cv
+          assert 'body.put("thinking",new JSONObject().put("type","disabled"))' in cv
+          assert 'fastZhipuOcrInstruction(' in cv and 'fastZhipuOcrInstruction(' in pol
+          assert 'trialZhipuOcr&&!customPreset' in cv
+          assert 'boolean keepAliveEligible=false' in cv
+          assert 'if(!keepAliveEligible)connection.disconnect()' in cv
+          assert 'diagnostics.event("cloud","output_chars"' in m
+          assert 'diagnostics.event("cloud","after_first_text_ms"' in m
+          assert 'if(cloudBusy)' in m
+          assert 'static boolean zhipuFastVisualOcr(String url,String model)' in pol
+          assert '"glm-4.6v-flashx".equals(name)' in pol
+          assert 'open.bigmodel.cn' in pol and 'api.z.ai' in pol
+          assert 'return LayoutParsingClient.recognize(jpeg,cfg,cloudNetwork)' in cv
+          assert 'JSONArray content=new JSONArray()' in cv
+          assert '"image_url"' in cv and 'new JSONObject().put("role","user")' in cv
+          assert 'OcrSpeedExperiment.earlySpeak(ocrSpeedMode)' in cv
+          assert 'OcrLineChunks ocrLines=isOcr?new OcrLineChunks():null' in cv
+          assert 'OcrSpeedExperiment.earlySpeak(ocrSpeedMode)' in cv
+          assert 'if(!custom&&isOcr&&OcrModelCatalog.indexOf(visionModel)<0)' in cv
+          assert 'Bitmap.createBitmap(512,512,Bitmap.Config.RGB_565)' in m
+          assert 'if(!CloudProviderPolicy.probeRecognizedA(result.text))' in m
+          assert 'captureDing.photoSucceeded();' in cam and 'captureDing.photoSucceeded();' in quick
+          assert 'photoCamera.shootAfterLivePreview(this)' in cam
+          assert '--network-caching=150' in cam and '--live-caching=150' in cam
+          assert 'tts.setLanguage(Locale.SIMPLIFIED_CHINESE)' in reader
+          assert 'com.vobich.bluestar.cloudprobe.action.QUICK_SHOT' in bridge
+          assert 'versionCode 79' in build and "versionName '1.0.70-glm-ocr-speed-trial'" in build
+          assert "applicationIdSuffix '.c110plusquick159'" in build
+          assert manifest.count('android.intent.category.LAUNCHER')==1
+          print("PASS: GLM OCR speed experiment uses stock-only prompt, safe keep-alive and numeric diagnostics; Qwen retained")
+          PY
+          # Always compare to the published v1.0.68 baseline, not the HEAD.
+          git fetch --no-tags origin +refs/heads/exp/glm-qwen-chat-parity-20261121:refs/remotes/origin/exp/glm-qwen-chat-parity-20261121
+          git diff --name-only refs/remotes/origin/exp/glm-qwen-chat-parity-20261121 HEAD >/tmp/changed.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          root="cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/"
+          allowed={root+x for x in ("CloudProviderPolicy.java","CloudVisionClient.java","MainActivity.java")}
+          allowed.update({"cloud-vision-app/tests/CloudProviderPolicyTest.java",
+                "cloud-vision-app/app/build.gradle",
+                "cloud-vision-app/docs/GLM_OCR_SPEED_TRIAL_20261121.md",
+                ".github/workflows/glm-ocr-speed-20261121.yml"})
+          actual=set(Path("/tmp/changed.txt").read_text().splitlines())
+          assert actual==allowed,f"Changed-file scope mismatch! unexpected={actual-allowed}; missing={allowed-actual}"
+          print("PASS: only GLM trial, numeric diagnostics + tests/metadata/doc/workflow changed; Qwen/camera/TTS intact")
+          PY
+      - name: Run provider policy, task, AI prompt and C110 photo/zoom Java regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-tests
+          javac -d /tmp/bluestar-tests "$BASE/CloudProviderPolicy.java" cloud-vision-app/tests/CloudProviderPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudProviderPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/TaskOrder.java" cloud-vision-app/tests/TaskOrderTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.TaskOrderTest
+          javac -d /tmp/bluestar-tests "$BASE/FollowupPrompt.java" cloud-vision-app/tests/FollowupPromptTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.FollowupPromptTest
+          javac -d /tmp/bluestar-tests "$BASE/C110ZoomGeometry.java" cloud-vision-app/tests/C110ZoomGeometryTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110ZoomGeometryTest
+          javac -d /tmp/bluestar-tests "$BASE/C110PhotoPolicy.java" cloud-vision-app/tests/C110PhotoPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110PhotoPolicyTest
+      - name: Apply already-proven pinned UVC patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_usbmonitor.py cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 cloud-vision-app/scripts/patch_pinned_uvc.py
+          grep -q BSG_CLOUD_RAW5_GATED cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/jni/UVCCamera/UVCPreview.cpp
+          grep -q BSG_CLOUD_CLOSE_BARRIER cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
+      - name: Generate unchanged Blue Star launcher assets
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          java scripts/GenerateLauncherIcons.java
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            test -s "app/src/main/res/mipmap-$density/ic_launcher.png"
+          done
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile full Android arm64 app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :app:assembleDebug
+      - name: Verify APK actual package, launcher, native libraries, sound and SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_GLM_OCR_Speed_1.0.70.apk
+          APK=out/BlueStar_Guide_GLM_OCR_Speed_1.0.70.apk
+          test -s "$APK"
+          unzip -tq "$APK" >/dev/null
+          unzip -Z1 "$APK" >out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlc.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlcjni.so' out/entries.txt
+          grep -Fxq 'res/raw/c_metal_clack_ding.mp3' out/entries.txt
+          grep -Fxq 'res/raw/voice_send_whoosh.wav' out/entries.txt
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging "$APK" >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110plusquick159'" out/badging.txt
+          grep -Fq "versionName='1.0.70-glm-ocr-speed-trial'" out/badging.txt
+          grep -Fq "launchable-activity: name='com.vobich.bluestar.cloudprobe.HomeActivity'" out/badging.txt
+          test "$(grep -c '^launchable-activity:' out/badging.txt)" -eq 1
+          (cd out && sha256sum BlueStar_Guide_GLM_OCR_Speed_1.0.70.apk >SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_Guide_GLM_OCR_Speed_1.0.70
+          path: out/*
+          retention-days: 14
+      - name: Publish ONLY if every test and package verification passed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-glm-ocr-speed-20261121-v0170
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing release" >&2
+            exit 1
+          fi
+          gh release create "$TAG" out/BlueStar_Guide_GLM_OCR_Speed_1.0.70.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Blue Star v1.0.70 GLM OCR Speed Trial" \
+            --notes "v1.0.70 isolated from v1.0.69. Only official GLM stock photo OCR uses concise line-first prompt; user-edited prompts preserved; successful GLM OCR HTTP sessions may reuse TLS via keep-alive. Numeric output length/response tail diagnostics added. Original Qwen, camera, C110, USB, grtts, KeyStore, UI, cloudBusy and TTS unchanged. CI is not evidence of a speed improvement; compare identical photos with v1.0.69 and check missing text."
