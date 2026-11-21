@@ -75,7 +75,6 @@ public final class C110CameraActivity extends Activity {
     private Future<?> photoJob;
     private boolean photoBusy,pageVisible=true;
     private int photoGeneration;
-    private C110WifiCamera.DeletionCandidate pendingDeletion;
     private C110WifiBootstrap isolatedWifiBootstrap;
     private Runnable cameraConnectPoll;
     private long cameraConnectStartedMs;
@@ -445,66 +444,6 @@ public final class C110CameraActivity extends Activity {
         deviceControls.showSettings();
     }
 
-    private void confirmSingleFileDelete(){
-        if(pendingDeletion==null){
-            say("无可删除对象：先在本页完成一次高清拍照及完整JPEG下载");
-            return;
-        }
-        if(photoBusy||frameReader.isBusy()||!started){
-            say("请等识别完成且实时预览恢复后，再执行单张删除实验");
-            return;
-        }
-        new android.app.AlertDialog.Builder(this)
-            .setTitle("确认删除本次拍摄的单张原图？")
-            .setMessage("该操作不可撤销。只允许删除刚才由本软件拍摄、已完整下载并验证的那一张JPEG；先核对目录和相机4003能力，再发送一次原厂4003，不会批量删除、格式化或自动重试。\n\n建议先用不重要的测试照片验证。")
-            .setPositiveButton("确认，仅删除这一张",(dialog,which)->deleteOneConfirmedPhoto())
-            .setNegativeButton("取消",null).show();
-    }
-
-    private void deleteOneConfirmedPhoto(){
-        if(pendingDeletion==null||photoBusy||frameReader.isBusy()||!started)return;
-        C110WifiCamera.DeletionCandidate candidate=pendingDeletion;
-        pendingDeletion=null; // consume the one-use authorization even on uncertain response
-        photoBusy=true;
-        final int ticket=++photoGeneration;
-        stop(false); // prevent RTSP/SD file-system activity during the one-time test
-        photoButton.setEnabled(false);
-        beginButton.setEnabled(false);
-        say("单张删除实验：检查原图、型号和固件能力（仅一次4003）…");
-        photoJob=io.submit(()->{
-            try{
-                C110WifiCamera.DeleteResult result=
-                    photoCamera.deleteDownloadedOriginal(this,candidate);
-                main.post(()->{
-                    if(ticket!=photoGeneration||!pageVisible||isFinishing())return;
-                    say("4003单张删除实验：HTTP="+result.httpCode+
-                        " Status="+result.ackStatus+
-                        " 文件消失="+(result.fileGone?"是":"尚未确认")+
-                        " 耗时="+result.elapsedMs+"ms（不含OCR）");
-                    finishDeletionTest(ticket);
-                });
-            }catch(Exception error){
-                String type=error.getClass().getSimpleName();
-                String message=error.getMessage()==null?"未给出原因":error.getMessage();
-                main.post(()->{
-                    if(ticket!=photoGeneration||!pageVisible||isFinishing())return;
-                    say("删除实验已停止："+type+" "+message+
-                        "；不会自动重复发送删除指令");
-                    finishDeletionTest(ticket);
-                });
-            }
-        });
-    }
-
-    private void finishDeletionTest(int ticket){
-        if(ticket!=photoGeneration||!pageVisible)return;
-        photoJob=null;
-        photoBusy=false;
-        photoButton.setEnabled(true);
-        beginButton.setEnabled(true);
-        connectAndBeginWhenReady(); // restored OEM RTSP pipeline, no extra shot
-    }
-
     /**
      * C110 high resolution capture stays in this page.
      * Close RTSP before entering photo mode; issue exactly one 1001 shutter;
@@ -521,7 +460,6 @@ public final class C110CameraActivity extends Activity {
             say("上一项AI识别尚未结束，请稍后拍照");return;
         }
         photoBusy=true;
-        pendingDeletion=null; // the previous photo can no longer be deleted by mistake
         final int ticket=++photoGeneration;
         final float zoomAtShutter=zoom;
         final boolean portraitCoverAtShutter=fullscreen;
@@ -567,7 +505,6 @@ public final class C110CameraActivity extends Activity {
         photoButton.setEnabled(true);
         fullscreenPhoto.setEnabled(true);
         beginButton.setEnabled(true);
-        pendingDeletion=photo==null?null:C110WifiCamera.DeletionCandidate.fromPhoto(photo);
         // Real OEM 1001 JPEG completed: play one phone-side metal ding.
         // Independent of C110's hardware mute command 9011, and never on failure.
         if(photo!=null&&captureDing!=null)captureDing.photoSucceeded();
