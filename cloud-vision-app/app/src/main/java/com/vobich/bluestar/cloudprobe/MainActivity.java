@@ -115,7 +115,7 @@ public final class MainActivity extends CameraActivity {
 
     private boolean settingsOnly;
     private FrameLayout previewContainer,rootFrame;
-    private TextView currentTaskChip,zoomChip,resultChip;
+    private TextView resultChip;
     private C110WifiBootstrap c110WifiBootstrap;
     private C110DeviceControls settingsC110DeviceControls;
     private String settingsC110Status="";
@@ -159,7 +159,7 @@ public final class MainActivity extends CameraActivity {
     private AspectRatioTextureView cameraTextureView;
     private TextureView phoneTexture;
     private TextView phonePreviewStatus;
-    private Button modeButton, startButton, cameraEntryButton, settingsButton;
+    private Button modeButton, startButton, cameraEntryButton;
     private volatile ReadingScreen readingScreen;
     private ReadingLibrary readingLibrary;
     private ReadingNarrationQueue readingNarration;
@@ -484,21 +484,13 @@ public final class MainActivity extends CameraActivity {
         for(TaskCatalog.Task t:tasks)if(t.id.equals(id)){currentTask=t;break;}
         if(currentTask==null)currentTask=tasks.get(0);
         TaskCatalog.select(this,currentTask.id);
-        updateTaskBadge();
         if(modeButton!=null)modeButton.setContentDescription("返回主页；当前任务："+currentTask.name);
     }
 
-    private void updateTaskBadge(){
-        if(currentTaskChip==null)return;
-        currentTaskChip.setText(findingTarget.isEmpty()?
-            ("任务："+(currentTask==null?"朗读文字":currentTask.name)):
-            ("寻找："+findingTarget));
-    }
     private void setFindingTarget(String target){
         findingTarget=target==null?"":target.trim();
         getSharedPreferences(PREFS,MODE_PRIVATE).edit()
             .putString(PREF_FINDING_TARGET,findingTarget).apply();
-        updateTaskBadge();
     }
 
     private final Runnable hideStatus=()->{
@@ -1213,33 +1205,6 @@ public final class MainActivity extends CameraActivity {
         // The system intent only schedules a check; no second receiver is added.
     }
 
-    private void showCloudKeyDialog() {
-        EditText input=new EditText(this);
-        input.setSingleLine(true);
-        input.setHint("粘贴百炼普通按量付费 API Key");
-        input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        LinearLayout layout=new LinearLayout(this);
-        layout.setPadding(dp(20),dp(10),dp(20),0);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.addView(input);
-        new AlertDialog.Builder(this).setTitle("配置云端 API Key（北京地域）")
-            .setMessage("密钥由 Android Keystore 加密后仅保存在本机；不会写入APK或GitHub。请勿截图密钥。")
-            .setView(layout).setNegativeButton("取消",null)
-            .setNeutralButton("清除已保存密钥",(d,w)->{
-                CloudKeyStore.clear(this);
-                Toast.makeText(this,"已清除本机API Key",Toast.LENGTH_SHORT).show();
-            })
-            .setPositiveButton("加密保存",(d,w)->{
-                try {
-                    CloudKeyStore.save(this,input.getText().toString());
-                    input.setText("");
-                    Toast.makeText(this,"API Key已安全保存",Toast.LENGTH_SHORT).show();
-                }catch(Exception e){
-                    Toast.makeText(this,"密钥保存失败："+e.getClass().getSimpleName(),Toast.LENGTH_LONG).show();
-                }
-            }).show();
-    }
-
     private void initializeSpeech() {
         if(tts!=null){tts.stop();tts.shutdown();tts=null;}
         ttsReady=false;
@@ -1595,7 +1560,6 @@ public final class MainActivity extends CameraActivity {
         previewVerticalFlip=p.getBoolean(id+"flip",false);
         usbPreviewCorrectMirror=p.getBoolean(id+"usbCorrectMirror",true);
         zoom=Math.max(1f,Math.min(3f,p.getFloat(id+"zoom",1f)));
-        if(zoomChip!=null)zoomChip.setText(String.format(Locale.CHINA,"%.1f×",zoom));
     }
 
     private void saveCameraProfile(){
@@ -1620,7 +1584,6 @@ public final class MainActivity extends CameraActivity {
         float applied=Math.max(1f,Math.min(limit,next));
         if(Math.abs(applied-zoom)<.01f)return;
         zoom=applied;
-        if(zoomChip!=null)zoomChip.setText(String.format(Locale.CHINA,"%.1f×",zoom));
         if(usingPhoneCamera&&phoneController!=null){
             long now=SystemClock.elapsedRealtime();
             if(now-lastZoomSentMs>60L){
