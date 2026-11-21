@@ -3415,6 +3415,14 @@ public final class MainActivity extends CameraActivity {
                                 result.firstLineReadyMs,"ok");
                         }else diagnostics.event("cloud","first_text_ms",result.firstTextMs,"ok");
                         diagnostics.event("cloud","first_speakable_ms",result.firstSpeakableMs,"ok");
+                        if(service.custom&&CloudProviderPolicy.zhipuFastVisualOcr(
+                                service.url,result.model)){
+                            // Numeric-only performance data: never store OCR text.
+                            diagnostics.event("cloud","output_chars",result.text.length(),"ok");
+                            if(result.firstTextMs>=0)
+                                diagnostics.event("cloud","after_first_text_ms",
+                                    Math.max(0,result.networkMs-result.firstTextMs),"ok");
+                        }
                         diagnostics.event("capture","total_ms",overallMs,"ok");
                     }
                     Log.i(TAG,"Cloud timing: route="+task.engine+" model="+result.model+
