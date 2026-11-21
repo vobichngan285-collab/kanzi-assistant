@@ -1,3 +1,18 @@
+# 2026-11-21｜v1.0.73 云服务器管理页面紧凑修正版：CI成功，发布已核验，真机待验收
+
+- **用户明确授权的更正**：用户真机截图显示 v1.0.72 云服务器管理里百炼 Qwen 3.7 / 3.8 系列按 OCR 与视觉任务被列了两遍、卡片又高又空、已添加的智谱等自定义服务器排到下方。用户确认“我的服务器”在前、原有百炼默认折叠、内置同型号仅一次、文字在紧凑卡片中间、点击/长按管理，然后说“开始”。**不授权擅改主页、其他设置布局、全局字号或其他拍照/TTS功能。**
+- **仓库与基线**：继续唯一原仓库 `vobichngan285-collab/kanzi-assistant`。基于已经成功发布的 v1.0.72 `d5f4aac056904015350ec77acd09618efcd2258a` 创建独立实验分支 `exp/server-manager-compact-20261121`；**最终HEAD `3115fa804298a7a6d8f362ec319a9f9ed8f2a725`**。主APK `versionCode 82`，`versionName 1.0.73-server-manager-compact`，仍使用同一应用ID `com.vobich.bluestar.c110plusquick159` debug和唯一 HomeActivity Launcher。旧 v1.0.72、v1.0.71 APK/源码均保留。
+- **唯一 UI 改动**：仅 `BlueStarSettingsScreen.java` 中云服务器管理页面及其下级模型操作菜单。真实 `CloudProviderStore.list(app)` 自定义配置先显示，单条profile只出现一次（相同模型ID但不同profile仍保留以防误删密钥）。再显示“＋ 添加新服务器”。最下面“原有百炼模型（5） · 展开/收起”默认折叠；用 `LinkedHashSet` 汇总 OCR/视觉/ASR，五个唯一模型 `qwen-vl-ocr`、`qwen3.7-flash`、`qwen3.8-flash`、`qwen3.8-max`、`qwen3-asr-flash`；点击展开保留已有滚动位置。管理行/操作行采用 **52dp高、6dp行距、文字垂直居中、箭头独立显示、全行TalkBack无障碍描述**，点击/长按打开相同动作。其它原有设置 `row()`、主页原五行/底部三项、卡片高度、图标颜色位置、全软件强制字体50% **没有改动**。
+- **云模型操作保留并纠正用途**：用户自定义Chat配置只有一条列表项，优先按其当前生效OCR或视觉角色管理，ASR单独识别；无论该 Chat 模型当前选为视觉还是OCR，都可进入“自定义OCR提示词”并保存至OCR专属配置。内置百炼模型不可删除，用户配置修改和删除需要有效操作与二次确认，原有模型独立思考开关、原KeyStore API Key、URL/Model/选择、SSE逐行朗读不变。Layout Parsing / ASR 不会误收Chat提示词/思考参数。
+- **GitHub严格对照五文件**：相对 v1.0.72 实际仅变更 `BlueStarSettingsScreen.java`、`app/build.gradle`、`docs/SERVER_MANAGER_COMPACT_20261121.md`、`tests/CloudServerListTest.java`、`.github/workflows/server-manager-compact-20261121.yml`。CI的同基线五文件断言已PASS；主程序 `HomeActivity`、`MainActivity`、C110 Camera/USB/CloudVisionClient、CloudProviderStore/CloudThinkingPolicy等全部未修改。
+- **构建与发布核验**：GitHub Actions `44873158789` `completed/success`：包含静态范围、字体与主页、云端角色/提示词/思考路径保护断言、Java纯单测（新增内置五型号去重，原Qwen/GLM provider、Task/Zoom/OCR行序）、固定USB补丁、ARM64 Android Gradle build、APK包名/版本/唯一Launcher/LibVLC3.6.5/UVC/音效/SHA256、Artifact上传、最终Release均通过。
+- **成功发布**：Tag `bluestar-server-manager-compact-20261121-v0173`，核实tag与分支均指向 `3115fa804298a7a6d8f362ec319a9f9ed8f2a725`；资产 `BlueStar_Guide_Server_Manager_1.0.73.apk`，**53,516,354 bytes**，SHA256 `5c440ec0cfa30674ab93664fe6aec0c48c9a9c716f90cefa6728d490c70eee82`。
+  **APK**：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-server-manager-compact-20261121-v0173/BlueStar_Guide_Server_Manager_1.0.73.apk
+  **CI**：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/44873158789
+- **真机尚未验收**：需要vivo X200 Pro确认云服务器管理首屏现在能直接看到真实已配置模型；百炼折叠默认关闭、点击展开五项、不重复、不跳滚动位置；行居中且上下卡片间距确实缩短；Tap/长按在TalkBack或普通模式能正确操作；模型修改/删除/连接测试/每个模型的深度思考及OCR提示词保持；主页/C110/USB/手机/TTS/音量及所有原有配置继续正常。CI仅证明构建和静态回归，**不能代替手机实际显示和朗读**。请勿擅自执行卸载清除，否则Keystore用户密钥可能丢失，遇到签名冲突需单独妥善处理。
+
+---
+
 # 2026-11-21｜v1.0.72 已通过完整 CI 发布：严格全局字体50%＋云服务器独立管理＋模型专属思考与OCR提示词
 
 - **用户明确批准的9项内容**：全App所有字号严格50%（不是局部）、删掉重复说明、输入框内示例并聚焦清空、语音设置新增“云服务器管理”、已接入模型集中操作、模型选择与管理完全分离、各型号手动开关思考、各型号独立OCR提示词、构建前全面回归。尤其强调 **绝对禁止擅自重做主页**：现有五个主功能行“快捷拍照/C110+实时预览/朗读任务/阅读模式/设置”，底部三个“主页/预览/按住AI”，图标、按钮尺寸、位置、颜色保持原样。用户此前拒绝额外快捷卡片、模型状态区或重新排版。
