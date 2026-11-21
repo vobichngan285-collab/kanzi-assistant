@@ -1,5 +1,7 @@
 package com.vobich.bluestar.cloudprobe;
 
+import android.content.Context;
+
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ClipData;
@@ -52,6 +54,9 @@ public final class TaskDesktopActivity extends Activity {
     private Runnable pendingHold;
     private View holdOwner;
 
+    @Override protected void attachBaseContext(Context base) {
+        super.attachBaseContext(BlueStarFontScale.wrap(base));
+    }
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
         getWindow().setStatusBarColor(BACKGROUND);
