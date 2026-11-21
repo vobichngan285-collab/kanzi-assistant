@@ -139,6 +139,12 @@ final class CloudVisionClient {
         // Default Bailian behavior is intentionally byte-for-byte unchanged.
         // Other vendors start non-streaming unless the user explicitly enables SSE.
         boolean custom=cfg!=null&&cfg.custom;
+        boolean officialZhipuChat=custom&&
+            CloudProviderPolicy.zhipuFastVisualOcr(cfg.url,visionModel);
+        // Trial only: leave reading pages, customized prompts and all non-GLM
+        // providers on their already-verified path.
+        boolean trialZhipuOcr=officialZhipuChat&&isOcr&&!textOnly&&
+            !isBook&&"ocr".equals(task.id);
         boolean streaming=custom?(cfg.stream&&!connectionTest):
             ((!isOcr&&!connectionTest)||(isOcr&&OcrSpeedExperiment.streaming(ocrSpeedMode)));
         // Text recognition permits dedicated OCR plus the three visual models.
@@ -170,6 +176,10 @@ final class CloudVisionClient {
                 "。用中文直接说最重要的信息，尽量控制在80字以内，最多3句。"+
                 "不做冗长解释，不重复题目，不使用Markdown符号；文字和细节看不清就说明看不清。";
         }
+        // Stock GLM photo OCR only: faster direct line-first output.
+        // Users who edited the OCR instruction keep their exact own text.
+        instruction=CloudProviderPolicy.fastZhipuOcrInstruction(
+            instruction,officialZhipuChat,trialZhipuOcr&&!customPreset);
         JSONArray content=new JSONArray()
             .put(new JSONObject().put("type","text").put("text",instruction));
         if(!textOnly){
@@ -193,7 +203,7 @@ final class CloudVisionClient {
         // complete OCR lines and the existing TTS callback. GLM-4.6V on the
         // official Zhipu Chat endpoint differs ONLY in its thinking switch.
         // Non-thinking avoids making photo OCR wait for visual reasoning.
-        if(custom&&CloudProviderPolicy.zhipuFastVisualOcr(cfg.url,model))
+        if(officialZhipuChat)
             body.put("thinking",new JSONObject().put("type","disabled"));
         // Official Bailian Chat Completions: enable_search on the SAME request.
         // Only explicit follow-ups qualify. This never forces a paid search,
@@ -214,6 +224,10 @@ final class CloudVisionClient {
         connection.setRequestProperty("Authorization","Bearer "+key.trim());
         connection.setRequestProperty("Content-Type","application/json");
         long started=SystemClock.elapsedRealtime();
+        // A fully read, successfully validated Zhipu OCR response may reuse
+        // Java's standard HTTPS keep-alive connection on the next capture.
+        // Errors, interruptions and other vendors still disconnect explicitly.
+        boolean keepAliveEligible=false;
         try{
             byte[] request=body.toString().getBytes(StandardCharsets.UTF_8);
             try(OutputStream out=connection.getOutputStream()){out.write(request);}
@@ -254,6 +268,7 @@ final class CloudVisionClient {
                     readable=answer==null?"":answer.trim();
                     if(readable.isEmpty())throw new Exception("模型连接测试没有返回文字");
                 }
+                keepAliveEligible=trialZhipuOcr;
                 return new Result(readable,model,response.optString("model",""),
                     SystemClock.elapsedRealtime()-started,
                     uploadMs,-1,-1,-1,headersMs,
@@ -330,10 +345,13 @@ final class CloudVisionClient {
             else if(answer.isEmpty())throw new Exception("云端没有返回有效内容");
             if(isOcr)ocrLines.finish(ocrLine);
             else speechChunks.finish(speakPart);
+            keepAliveEligible=trialZhipuOcr;
             return new Result(answer,model,serverModel,SystemClock.elapsedRealtime()-started,
                 uploadMs,firstText,firstSpeakable[0],firstLineReady[0],headersMs,
                 promptTokens,completionTokens);
-        }finally{connection.disconnect();}
+        }finally{
+            if(!keepAliveEligible)connection.disconnect();
+        }
     }
 
     private static String readLimited(InputStream stream) throws Exception {
