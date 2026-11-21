@@ -6,8 +6,8 @@ android {
         applicationId 'com.vobich.bluestar'
         minSdk 26
         targetSdk 35
-        versionCode 79
-        versionName '1.0.70-glm-ocr-speed-trial'
+        versionCode 80
+        versionName '1.0.71-lean-cleanup'
         ndk { abiFilters 'arm64-v8a' }
     }
     buildTypes {
@@ -25,8 +25,6 @@ dependencies {
     implementation project(':libausbc')
     // USBMonitor.UsbControlBlock is a public callback type from libuvc.
     implementation project(':libuvc')
-    implementation 'androidx.media3:media3-exoplayer:1.11.1'
-    implementation 'androidx.media3:media3-exoplayer-rtsp:1.11.1'
-    implementation 'androidx.media3:media3-ui:1.11.1'
+    // Media3 ExoPlayer/RTSP/UI were not referenced by this app. Preserve proven LibVLC 3.6.5.
     implementation 'org.videolan.android:libvlc-all:3.6.5'
 }
