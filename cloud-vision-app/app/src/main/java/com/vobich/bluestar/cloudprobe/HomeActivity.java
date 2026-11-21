@@ -40,7 +40,7 @@ public final class HomeActivity extends Activity {
         super.onCreate(state);
         quickLaunchPending=isQuickShotIntent(getIntent());
         quickShot=new C110QuickShotController(this,this::quickStatusChanged);
-        homeVoice=new HomeVoiceAssistant(this,this::quickStatusChanged,this::prepareOtherScreenSpeech);
+        homeVoice=new HomeVoiceAssistant(this,this::quickStatusChanged,this::prepareOtherScreenSpeech,this::voiceOneShotPhoto);
         root=new FrameLayout(this);
         root.setBackgroundColor(BG);
         root.setOnApplyWindowInsetsListener((view,insets)->{
@@ -148,6 +148,10 @@ public final class HomeActivity extends Activity {
         // No Activity, dialog, camera preview, or experiment screen: the
         // native photo + existing OCR/TTS starts on THIS homepage.
         if(quickShot!=null)quickShot.trigger();
+    }
+    /** Explicit voice read/observe changes only the current C110 shot. */
+    private void voiceOneShotPhoto(TaskCatalog.Task oneShot){
+        if(quickShot!=null)quickShot.trigger(oneShot);
     }
     private void quickStatusChanged(String message){
         quickStatus=message==null?"":message;
