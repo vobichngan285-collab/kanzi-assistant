@@ -764,6 +764,9 @@ final class BlueStarSettingsScreen {
             row("视觉 · "+model,"",()->navigate("server-actions",spec),
                 ()->navigate("server-actions",spec));
         }
+        String asr="b|"+CloudProviderStore.ASR+"|qwen3-asr-flash";
+        row("语音 · qwen3-asr-flash","",()->navigate("server-actions",asr),
+            ()->navigate("server-actions",asr));
         heading("自定义服务器");
         for(CloudProviderStore.Profile profile:CloudProviderStore.list(app)){
             String role=CloudProviderStore.ASR_MULTIPART.equals(profile.protocol)||
@@ -800,6 +803,8 @@ final class BlueStarSettingsScreen {
         final String url=custom?saved.url:CloudProviderStore.BAILIAN_URL;
         final String profileId=custom?saved.id:"";
         heading(custom?saved.name+" · "+model:"百炼 · "+model);
+        if(!custom&&CloudProviderStore.ASR.equals(role))
+            note("内置语音识别模型；切换模型请返回云端 AI");
         if(custom)row("修改服务器","",()->navigate("provider-edit",role+"|"+profileId));
         String thinkingStyle=CloudThinkingPolicy.style(url,model,protocol);
         if(!CloudThinkingPolicy.NONE.equals(thinkingStyle)){
