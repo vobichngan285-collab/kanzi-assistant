@@ -49,6 +49,16 @@ final class CloudProviderPolicy {
                 endpoint.getPath().endsWith("/chat/completions");
         }catch(Exception ignored){return false;}
     }
+    /** Experimental concise OCR instruction, ONLY for the stock photo OCR task
+     * on the recognized official Zhipu Chat endpoint. Never overwrite a
+     * user-edited instruction or alter Qwen / GLM-OCR Layout requests. */
+    static String fastZhipuOcrInstruction(String original,
+                                          boolean officialZhipuChat,
+                                          boolean untouchedStockOcr){
+        if(!officialZhipuChat||!untouchedStockOcr)return original;
+        return "逐行原样识别照片中清晰可见的全部文字，每行换行。"
+            +"仅输出原文，不加前言、说明、总结、重复内容或猜测。";
+    }
     /** A real OCR probe must return the intended glyph, not just HTTP 200. */
     static boolean probeRecognizedA(String reply){
         if(reply==null)return false;
