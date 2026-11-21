@@ -30,6 +30,11 @@ final class VoiceAction {
         if(change>=0)v=v.substring(change);
         if(isStopFinding(v,activeTarget))
             return new VoiceAction(Type.STOP_FINDING,"");
+        // Natural reminder commands are a search setup, not a question to
+        // send to text-only chat. Use the same rule on Home and Preview.
+        String naturalTarget=naturalReminderTarget(v);
+        if(!naturalTarget.isEmpty())
+            return new VoiceAction(Type.START_FINDING,naturalTarget);
         // Explicit intent must take precedence over the broad historical
         // "帮我看..." target-search grammar. These commands capture a NEW frame.
         if(isReadTextRequest(v))return new VoiceAction(Type.READ_TEXT,"");
@@ -47,12 +52,35 @@ final class VoiceAction {
         if(target.matches(".*(了吗|了没|了没有|找到了吗|找到了没)$"))
             return new VoiceAction(Type.QUESTION,"");
         target=target.replaceAll("^(?:有没有|一[家个处]?(?:卖|叫)|的|到|个|家|一个|一家|附近的|周围的)+","");
-        target=target.replaceAll("(?:在哪里|在哪儿|在哪|的位置|有没有|在什么地方|的招牌|招牌|吧|呀|好吗|可以吗|谢谢|一下)+$","");
+        // Keep the actual requested sign target: 医院的招牌 is different from
+        // 医院 (the entire building). Only drop conversational suffixes.
+        target=target.replaceAll("(?:在哪里|在哪儿|在哪|的位置|有没有|在什么地方|吧|呀|好吗|可以吗|谢谢|一下)+$","");
         target=target.trim();
         if(target.length()<1||target.length()>28 ||
             target.contains("这张")||target.contains("这个")||target.contains("那张")||target.contains("刚才")||target.contains("是什么")||target.contains("那是什么"))
             return new VoiceAction(Type.QUESTION,"");
         return new VoiceAction(Type.START_FINDING,target);
+    }
+
+    /** "如果看到医院招牌就告诉我" / "发现药店提醒我".
+     * Only explicit action phrasing is routed; "医院在哪里" stays a question.
+     * Never starts a camera or records continuously. */
+    private static String naturalReminderTarget(String message){
+        String v=message.replaceAll("[\\s，,。！!？?；;]","");
+        Matcher matcher=Pattern.compile(
+            "^(?:现在|以后|接下来|请|麻烦)?(?:如果|要是|假如|一旦|当|一)?"+
+            "(?:你|软件|相机|镜头)?(?:看到|发现|识别到|遇到)了?"+
+            "(.{1,38}?)(?:时|的时候)?(?:就|请)?"+
+            "(?:马上|立马|立即|及时)?"+
+            "(?:告诉我|提醒我|通知我|跟我说|说一声|叫我一声)"+
+            "(?:一下|好吗|可以吗|吧)?$").matcher(v);
+        if(!matcher.matches())return "";
+        String target=matcher.group(1).replaceAll("^(?:有|一个|一家|一处|附近的)+","");
+        if(target.isEmpty()||target.length()>28||
+            target.contains("这张")||target.contains("刚才")||
+            target.contains("是什么")||target.contains("在哪里"))
+            return "";
+        return target;
     }
 
     private static boolean isStopFinding(String v,String activeTarget){
