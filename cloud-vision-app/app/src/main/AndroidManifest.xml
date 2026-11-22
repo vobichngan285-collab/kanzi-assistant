@@ -42,7 +42,7 @@
         <activity android:name=".C110CameraActivity"
             android:screenOrientation="portrait"
             android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize"
-            android:theme="@android:style/Theme.Material.Light.NoActionBar"
+            android:theme="@style/BlueStarC110Theme"
             android:exported="false"/>
         <!-- Disabled until the in-app USB auto-launch setting enables it.
              Android's USB host resolver/chooser, not an implicit background launch. -->
