@@ -393,14 +393,14 @@ public final class TaskDesktopActivity extends Activity {
         String[] actions=task.custom?
             new String[]{"编辑任务","删除任务"}:
             new String[]{"编辑任务要求","隐藏这个任务"};
-        new AlertDialog.Builder(this).setTitle(task.name)
+        new BlueStarDialogChoices.PlatformBuilder(this).setTitle(task.name)
             .setItems(actions,(dialog,choice)->{
                 if(choice==0)editTask(task);
                 else confirmRemoval(task);
             }).setNegativeButton("取消",null).show();
     }
     private void confirmRemoval(TaskCatalog.Task task){
-        new AlertDialog.Builder(this)
+        new BlueStarDialogChoices.PlatformBuilder(this)
             .setTitle(task.custom?"删除任务":"隐藏任务")
             .setMessage(task.custom?"确定删除「"+task.name+"」？":
                 "将「"+task.name+"」从此页面隐藏，可在设置中的任务管理恢复。")
@@ -435,7 +435,7 @@ public final class TaskDesktopActivity extends Activity {
         icon.setVisibility(preset?View.GONE:View.VISIBLE);
         icon.setOnClickListener(v->{
             String[] icons=TaskCatalog.iconPalette();
-            new AlertDialog.Builder(this).setTitle("选择图标")
+            new BlueStarDialogChoices.PlatformBuilder(this).setTitle("选择图标")
                 .setItems(icons,(dialog,index)->{
                     chosen[0]=icons[index];icon.setText("图标："+chosen[0]);
                 }).show();
@@ -444,7 +444,7 @@ public final class TaskDesktopActivity extends Activity {
         form.setOrientation(LinearLayout.VERTICAL);
         form.setPadding(dp(20),dp(8),dp(20),dp(8));
         form.addView(name);form.addView(prompt);form.addView(icon);
-        AlertDialog dialog=new AlertDialog.Builder(this)
+        AlertDialog dialog=new BlueStarDialogChoices.PlatformBuilder(this)
             .setTitle(existing?"编辑任务":"添加任务")
             .setView(form).setNegativeButton("取消",null)
             .setPositiveButton("保存",null).create();
