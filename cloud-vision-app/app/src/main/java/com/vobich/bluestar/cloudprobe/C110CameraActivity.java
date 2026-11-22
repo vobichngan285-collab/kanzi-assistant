@@ -521,7 +521,7 @@ public final class C110CameraActivity extends Activity {
                     cancelCameraWait();
                     say("C110连接超时；可以在本页重新请求系统连接");
                     beginButton.setEnabled(true);
-                    new android.app.AlertDialog.Builder(C110CameraActivity.this)
+                    new BlueStarDialogChoices.PlatformBuilder(C110CameraActivity.this)
                         .setTitle("C110 自动连接未成功")
                         .setMessage("若Android不支持同时连接家用Wi-Fi和相机热点，可先点“重新请求”；仍失败时可直接打开系统Wi-Fi快捷面板选择C110，不必翻找系统设置。")
                         .setPositiveButton("重新请求",(dialog,which)->{
