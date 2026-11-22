@@ -75,7 +75,7 @@ jobs:
           assert 'compactServerRow("修改服务器"' in actions
           assert 'compactServerRow("删除服务器"' in actions
           assert '"|"+CloudProviderStore.OCR+"|"+identity' in actions
-          assert 'new AlertDialog.Builder(app)' in actions
+          assert 'new BlueStarDialogChoices.AppCompatBuilder(app)' in actions
           assert 'CloudProviderStore.delete(app,profileId)' in actions
           assert 'private void serverActions(String spec)' in ui
           assert 'setOnLongClickListener(v->{held.run();return true;})' in ui
