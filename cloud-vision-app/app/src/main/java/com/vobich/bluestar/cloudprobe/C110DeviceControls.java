@@ -60,7 +60,7 @@ final class C110DeviceControls {
 
     void showSettings(){
         if(closed)return;
-        new AlertDialog.Builder(activity).setTitle("C110 相机设置")
+        new BlueStarDialogChoices.PlatformBuilder(activity).setTitle("C110 相机设置")
             .setItems(new String[]{
                 "机身提示音：关闭",
                 "机身提示音：恢复",
@@ -82,7 +82,7 @@ final class C110DeviceControls {
     private void chooseLightDelay(){
         int s=lightDelaySeconds();
         int selected=s==15?0:s==30?1:s==60?2:s==0?5:s<0?4:3;
-        new AlertDialog.Builder(activity).setTitle("灯光自动熄灭时间")
+        new BlueStarDialogChoices.PlatformBuilder(activity).setTitle("灯光自动熄灭时间")
             .setSingleChoiceItems(new String[]{
                 "15 秒","30 秒（默认）","60 秒","自定义秒数",
                 "始终显示","连接后立即关闭"
@@ -106,7 +106,7 @@ final class C110DeviceControls {
         input.setSingleLine(true);
         input.setHint("5–600 秒");
         input.setText(String.valueOf(Math.max(15,lightDelaySeconds())));
-        new AlertDialog.Builder(activity).setTitle("自定义亮灯时间（秒）")
+        new BlueStarDialogChoices.PlatformBuilder(activity).setTitle("自定义亮灯时间（秒）")
             .setView(input)
             .setPositiveButton("保存",(d,i)->{
                 try{
