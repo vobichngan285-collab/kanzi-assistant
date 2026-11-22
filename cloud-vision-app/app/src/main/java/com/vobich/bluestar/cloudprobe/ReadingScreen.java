@@ -336,7 +336,7 @@ final class ReadingScreen {
         LinearLayout wrap=new LinearLayout(activity);
         wrap.setPadding(dp(20),dp(8),dp(20),0);
         wrap.addView(input);
-        new AlertDialog.Builder(activity).setTitle("重命名书页")
+        new BlueStarDialogChoices.AppCompatBuilder(activity).setTitle("重命名书页")
             .setView(wrap).setNegativeButton("取消",null)
             .setPositiveButton("保存",(d,w)->{
                 try{
@@ -346,7 +346,7 @@ final class ReadingScreen {
             }).show();
     }
     private void confirmDeletePage(String id,ReadingLibrary.Page page){
-        new AlertDialog.Builder(activity).setTitle("删除 "+page.displayName()+"？")
+        new BlueStarDialogChoices.AppCompatBuilder(activity).setTitle("删除 "+page.displayName()+"？")
             .setMessage("只删除这一页的文字，无法撤销。")
             .setNegativeButton("取消",null)
             .setPositiveButton("确认删除",(d,w)->{
@@ -381,7 +381,7 @@ final class ReadingScreen {
         field.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         LinearLayout wrap=new LinearLayout(activity);
         wrap.setPadding(dp(22),dp(10),dp(22),0);wrap.addView(field);
-        new AlertDialog.Builder(activity).setTitle("新建书籍")
+        new BlueStarDialogChoices.AppCompatBuilder(activity).setTitle("新建书籍")
             .setView(wrap).setNegativeButton("取消",null)
             .setPositiveButton("创建",(d,which)->{
                 try{
@@ -448,7 +448,7 @@ final class ReadingScreen {
     private void showContents(){showBookPages(bookId);}
     private void confirmDelete(){
         final String id=bookId;
-        new AlertDialog.Builder(activity).setTitle("删除这本书？")
+        new BlueStarDialogChoices.AppCompatBuilder(activity).setTitle("删除这本书？")
             .setMessage("将删除本机这本书的所有识别文字，无法撤销。")
             .setNegativeButton("取消",null)
             .setPositiveButton("确认删除",(d,w)->{
