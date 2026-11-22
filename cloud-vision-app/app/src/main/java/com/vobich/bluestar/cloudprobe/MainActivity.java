@@ -419,7 +419,7 @@ public final class MainActivity extends CameraActivity {
     private void showUnifiedModeSelector(){
         if(readingScreen!=null){toastShort("请先退出阅读页面");return;}
         String[] modes={"手机摄像头","C110 运动相机","USB 摄像头"};
-        new AlertDialog.Builder(this).setTitle("选择模式")
+        new BlueStarDialogChoices.AppCompatBuilder(this).setTitle("选择模式")
             .setItems(modes,(dialog,which)->{
                 if(which==1){
                     // OEM hotspot picker belongs to the foreground C110
@@ -735,7 +735,7 @@ public final class MainActivity extends CameraActivity {
         view.setScaleType(ImageView.ScaleType.FIT_CENTER);
         view.setMaxHeight(getResources().getDisplayMetrics().heightPixels*3/4);
         view.setImageBitmap(bitmap);
-        AlertDialog dialog=new AlertDialog.Builder(this)
+        AlertDialog dialog=new BlueStarDialogChoices.AppCompatBuilder(this)
             .setTitle("上次实际发送给 AI 的 JPEG")
             .setMessage("仅本机临时查看；不保存、不再上传、不计入匿名日志。可核对方向、镜像和文字。")
             .setView(view)
@@ -2142,7 +2142,7 @@ public final class MainActivity extends CameraActivity {
         LinearLayout content=new LinearLayout(this);
         content.setPadding(dp(22),dp(10),dp(22),dp(4));
         content.addView(question);
-        new AlertDialog.Builder(this).setTitle("AI对话")
+        new BlueStarDialogChoices.AppCompatBuilder(this).setTitle("AI对话")
             .setMessage(reason).setView(content).setNegativeButton("取消",null)
             .setPositiveButton("发送",(d,w)->{
                 String text=question.getText().toString().trim();
@@ -2685,7 +2685,7 @@ public final class MainActivity extends CameraActivity {
                     if(diagnostics!=null)diagnostics.event("c110","photo",0,"failed");
                     String message=ex.getMessage()==null?ex.getClass().getSimpleName():ex.getMessage();
                     setResultStatus("C110高清快门或取图失败");
-                    new AlertDialog.Builder(this).setTitle("C110高清拍照失败（不会自动重拍）")
+                    new BlueStarDialogChoices.AppCompatBuilder(this).setTitle("C110高清拍照失败（不会自动重拍）")
                         .setMessage(message).setPositiveButton("知道了",null).show();
                 });
             }
@@ -2916,7 +2916,7 @@ public final class MainActivity extends CameraActivity {
                             SystemClock.elapsedRealtime()-tapAtMs,"failed");
                     }
                     setResultStatus("云端识别失败，请重试");
-                    new AlertDialog.Builder(this).setTitle("云端识别失败")
+                    new BlueStarDialogChoices.AppCompatBuilder(this).setTitle("云端识别失败")
                         .setMessage(error.getMessage()==null?
                             error.getClass().getSimpleName():error.getMessage())
                         .setPositiveButton("知道了",null).show();
