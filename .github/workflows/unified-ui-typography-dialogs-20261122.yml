@@ -1,0 +1,343 @@
+name: Blue Star v1.0.75 Unified Typography and Dialogs
+on:
+  push:
+    branches: [ 'exp/unified-ui-typography-dialogs-20261122' ]
+    paths:
+      - 'cloud-vision-app/app/**'
+      - 'cloud-vision-app/tests/**'
+      - 'cloud-vision-app/docs/UNIFIED_UI_TYPOGRAPHY_DIALOGS_20261122.md'
+      - '.github/workflows/unified-ui-typography-dialogs-20261122.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  validated-apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify strict UI layout scope and cloud parameter boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path("cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe")
+          def source(name): return (root/name).read_text()
+          m=source("MainActivity.java")
+          ui=source("BlueStarSettingsScreen.java")
+          store=source("CloudProviderStore.java")
+          cv=source("CloudVisionClient.java")
+          policy=source("CloudThinkingPolicy.java")
+          opts=source("CloudModelOptions.java")
+          font=source("BlueStarFontScale.java")
+          cam=source("C110CameraActivity.java")
+          home=source("HomeActivity.java")
+          task=source("TaskDesktopActivity.java")
+          layout=source("LayoutParsingClient.java")
+          manifest=Path("cloud-vision-app/app/src/main/AndroidManifest.xml").read_text()
+          gradle=Path("cloud-vision-app/app/build.gradle").read_text()
+          assert 'copy.fontScale=copy.fontScale*0.825f;' in font
+          for activity in (m,home,task,cam):
+              assert activity.count('BlueStarFontScale.wrap(base)')==1
+          assert home.count('快捷拍照')>0 and home.count('实时预览')>0
+          assert 'new Intent(this,C110CameraActivity.class)' in home
+          assert 'TaskDesktopActivity.class' in home
+          assert 'row("云服务器管理"' in ui and 'private void cloudServers()' in ui
+          manager=ui.split('    private void cloudServers(){',1)[1].split(
+              '    private void rerenderBuiltinsToggle(){',1)[0]
+          assert manager.index('CloudProviderStore.list(app)') < manager.index('LinkedHashSet<String> models')
+          assert 'compactServerHeading("我的服务器")' in manager
+          assert 'compactAddServer()' in manager
+          assert 'if(!builtinModelsExpanded)return;' in manager
+          assert 'for(String id:OcrModelCatalog.IDS)models.add(id)' in manager
+          assert 'for(String id:VisionModelCatalog.IDS)models.add(id)' in manager
+          assert 'models.add("qwen3-asr-flash")' in manager
+          assert 'builtinModelsExpanded=false;' in ui
+          assert 'card.setGravity(Gravity.CENTER_VERTICAL)' in ui
+          assert 'new LinearLayout.LayoutParams(-1,dp(52))' in ui
+          assert 'lp.bottomMargin=dp(6)' in ui
+          assert 'card.setContentDescription(label)' in ui
+          assert 'profile.id.equals(CloudProviderStore.selectedId(app,CloudProviderStore.VISION))' in manager
+          actions=ui.split('    private void serverActions(String spec){',1)[1].split(
+              '    private void modelPrompt(String spec){',1)[0]
+          assert 'compactServerRow("修改服务器"' in actions
+          assert 'compactServerRow("删除服务器"' in actions
+          assert '"|"+CloudProviderStore.OCR+"|"+identity' in actions
+          assert 'new AlertDialog.Builder(app)' in actions
+          assert 'CloudProviderStore.delete(app,profileId)' in actions
+          assert 'private void serverActions(String spec)' in ui
+          assert 'setOnLongClickListener(v->{held.run();return true;})' in ui
+          assert 'private void modelPrompt(String spec)' in ui
+          selection=ui.split('    private void providerRole(',1)[1].split('    private EditText providerInput(',1)[0]
+          assert 'row("编辑配置' not in selection and 'action("＋ 新建' not in selection
+          assert 'app.testCloudProvider(role,profileId,model)' in ui
+          assert 'input.setOnFocusChangeListener((v,focused)->{' in ui
+          assert 'if(focused)input.setHint("")' in ui
+          assert 'CloudKeyStore.saveNamed(ctx,id,key)' in store
+          homeVoice=source("HomeVoiceAssistant.java")
+          c110Reader=source("C110FrameReader.java")
+          c110Shot=source("C110QuickShotController.java")
+          target=source("TargetVisionClient.java")
+          speech=source("VoiceAction.java")
+          keyPolicy=source("ProviderKeyReusePolicy.java")
+          targetStore=source("FindingTargetStore.java")
+          assert 'VoiceAction.classify(' in homeVoice
+          assert 'FindingTargetStore.set(activity,command.target)' in homeVoice
+          assert 'FindingTargetStore.set(activity,"")' in homeVoice
+          assert 'requestOneShotPhoto.accept(oneShot)' in homeVoice
+          assert 'new HomeVoiceAssistant(this,this::quickStatusChanged,' in home
+          assert 'private void voiceOneShotPhoto(TaskCatalog.Task oneShot)' in home
+          assert 'FindingTargetStore.current(this)' in m
+          assert 'FindingTargetStore.clearIfCurrent(this,targetToFind)' in m
+          assert 'FindingTargetStore.current(activity)' in c110Reader
+          assert 'TargetVisionClient.inspect(' in c110Reader
+          assert 'FindingTargetStore.clearIfCurrent(activity,target)' in c110Reader
+          assert 'reader.recognizeOriginalJpeg(photo.jpeg,photo.width,photo.height,oneShotTask)' in c110Shot
+          assert 'clearIfCurrent' in targetStore and '"continuous_find_target"' in targetStore
+          assert 'naturalReminderTarget(v)' in speech
+          assert '清晰真实门头招牌' in target
+          assert 'ProviderKeyReusePolicy.sameProvider' in store
+          assert 'BAILIAN_KEY_SOURCE' in store and 'reusableProfiles(' in store
+          assert 'if(candidates.size()==1)' in store
+          assert 'CloudKeyStore.saveNamed(ctx,id,sourceKey)' in store
+          assert 'CloudKeyStore.loadNamed(ctx,id)' in store
+          assert 'CloudKeyStore.loadNamed(ctx,source)' in store
+          assert 'reuseKey.setOnClickListener' in ui
+          assert 'CloudProviderStore.reusableProfiles(' in ui
+          assert 'key.getText().toString(),reuseKeySource[0]' in ui
+          assert 'legacy_bailian' in store
+          assert '443:' in keyPolicy
+          assert 'getRawUserInfo()!=null' in keyPolicy
+          assert 'TextToSpeech' in homeVoice
+          assert 'CloudAsrClient.recognize(' in homeVoice
+          assert 'CloudVisionClient.recognizeText(' in homeVoice
+          assert 'CloudVisionClient.recognize(' in c110Reader
+          assert 'RecentPhotoSession.captured(' in c110Reader
+          assert 'Recognizer' not in targetStore
+          assert 'CloudKeyStore.loadNamed(ctx,chosen.id)' in store
+          assert 'CloudModelOptions.get(ctx,role,chosen.id,chosen.model)' in store
+          assert 'CloudModelOptions.clearProfile(ctx,id)' in store
+          assert 'cfg.ocrPrompt!=null&&!cfg.ocrPrompt.isEmpty()' in cv
+          assert '"ocr".equals(task.id)' in cv
+          assert 'CloudThinkingPolicy.QWEN.equals(cfg.thinkingStyle)' in cv
+          assert 'CloudThinkingPolicy.ZHIPU.equals(cfg.thinkingStyle)' in cv
+          assert 'cfg.thinking?"enabled":"disabled"' in cv
+          assert 'delta.optString("content","")' in cv
+          assert 'optString("reasoning_content"' not in cv
+          assert 'CloudProviderStore.LAYOUT.equals(cfg.protocol)' in cv
+          assert 'return LayoutParsingClient.recognize(jpeg,cfg,cloudNetwork)' in cv
+          assert '.put("file","data:image/jpeg;base64,"+' in layout
+          assert 'CloudThinkingPolicy' not in layout
+          assert 'CloudProviderPolicy.zhipuFastVisualOcr(url,model)' in policy
+          assert '"dashscope.aliyuncs.com".equalsIgnoreCase(host)' in policy
+          assert '"custom|"+profileId+"|"+model' in opts
+          assert '"builtin|"+model' in opts
+          assert 'photoCamera.shootAfterLivePreview(this)' in cam
+          assert '--network-caching=150' in cam
+          assert 'captureC110OneShot()' in m
+          assert 'cloudBusy' in m
+          assert "versionCode 84" in gradle
+          assert "versionName '1.0.75-unified-ui'" in gradle
+          assert "applicationIdSuffix '.c110plusquick159'" in gradle
+          assert manifest.count('android.intent.category.LAUNCHER')==1
+          assert 'org.videolan.android:libvlc-all:3.6.5' in gradle
+          assert "implementation project(':libausbc')" in gradle
+          assert "implementation project(':libuvc')" in gradle
+          # App-owned UI strings & all 4 Activities adopt the unified
+          # typography; OS-owned status/permission windows remain outside scope.
+          import xml.etree.ElementTree as ET
+          res=Path("cloud-vision-app/app/src/main/res")
+          styles=(res/"values/styles.xml").read_text()
+          popup=(res/"drawable/bluestar_dialog_background.xml").read_text()
+          ET.fromstring(styles); ET.fromstring(popup); ET.fromstring(manifest)
+          assert '<style name="AppTheme" parent="Theme.AppCompat.NoActionBar">' in styles
+          assert 'android:fontFamily">sans-serif' in styles
+          assert 'BlueStarAppCompatDialogTheme' in styles
+          assert 'BlueStarPlatformDialogTheme' in styles
+          assert 'BlueStarC110Theme' in styles
+          assert 'android:alertDialogTheme' in styles and 'name="alertDialogTheme"' in styles
+          assert 'android:dialogTheme' in styles
+          assert '#102C4B' in popup and 'radius="22dp"' in popup
+          assert 'android:theme="@style/BlueStarC110Theme"' in manifest
+          dialogs=source("BlueStarDialogChoices.java")
+          assert 'class AppCompatBuilder extends androidx.appcompat.app.AlertDialog.Builder' in dialogs
+          assert 'class PlatformBuilder extends android.app.AlertDialog.Builder' in dialogs
+          assert 'new ChoiceRows(getContext(),items,-1)' in dialogs
+          assert 'new ChoiceRows(getContext(),items,checked)' in dialogs
+          assert 'dp(52)' in dialogs
+          assert 'setContentDescription(label)' in dialogs
+          # All AlertDialog call sites are covered, without UI callback edits.
+          mapping={
+              "BlueStarSettingsScreen.java":("AppCompatBuilder",9),
+              "C110WifiBootstrap.java":("PlatformBuilder",3),
+              "C110CameraActivity.java":("PlatformBuilder",1),
+              "MainActivity.java":("AppCompatBuilder",5),
+              "TaskDesktopActivity.java":("PlatformBuilder",4),
+              "ReadingScreen.java":("AppCompatBuilder",4),
+              "C110DeviceControls.java":("PlatformBuilder",3),
+          }
+          for file,(kind,count) in mapping.items():
+              content=source(file)
+              assert content.count('new BlueStarDialogChoices.'+kind+'(')==count,(file,kind)
+              assert 'new AlertDialog.Builder(' not in content,file
+              assert 'new android.app.AlertDialog.Builder(' not in content,file
+          assert sum(x[1] for x in mapping.values())==29
+          print("PASS: all four Activity fonts 82.5%, two dark dialog themes, 29 styled dialog call sites, original OEM/TTS/SSE flows")
+          PY
+          git fetch --no-tags origin +refs/heads/exp/voice-key-reuse-20261121:refs/remotes/origin/exp/voice-key-reuse-20261121
+          git diff --name-only refs/remotes/origin/exp/voice-key-reuse-20261121 HEAD >/tmp/changed.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          r="cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/"
+          expected={r+x for x in (
+              "BlueStarFontScale.java","BlueStarDialogChoices.java",
+              "BlueStarSettingsScreen.java","C110WifiBootstrap.java",
+              "C110CameraActivity.java","MainActivity.java",
+              "TaskDesktopActivity.java","ReadingScreen.java","C110DeviceControls.java")}
+          expected.update({
+              "cloud-vision-app/app/build.gradle",
+              "cloud-vision-app/app/src/main/AndroidManifest.xml",
+              "cloud-vision-app/app/src/main/res/values/styles.xml",
+              "cloud-vision-app/app/src/main/res/drawable/bluestar_dialog_background.xml",
+              "cloud-vision-app/docs/UNIFIED_UI_TYPOGRAPHY_DIALOGS_20261122.md",
+              ".github/workflows/unified-ui-typography-dialogs-20261122.yml"})
+          actual=set(Path("/tmp/changed.txt").read_text().splitlines())
+          assert actual==expected,f"Unexpected={actual-expected}; missing={expected-actual}"
+          # Prove each old UI file changed ONLY its dialog Builder types:
+          # no camera, BLE, prompts, TTS or click handler logic was edited.
+          import subprocess
+          for name in ["BlueStarSettingsScreen.java","C110WifiBootstrap.java",
+                       "C110CameraActivity.java","MainActivity.java",
+                       "TaskDesktopActivity.java","ReadingScreen.java",
+                       "C110DeviceControls.java"]:
+              path=r+name
+              baseline=subprocess.check_output(
+                  ["git","show","refs/remotes/origin/exp/voice-key-reuse-20261121:"+path],
+                  text=True)
+              updated=Path(path).read_text()
+              if name in ("BlueStarSettingsScreen.java","MainActivity.java","ReadingScreen.java"):
+                  updated=updated.replace(
+                      "new BlueStarDialogChoices.AppCompatBuilder(","new AlertDialog.Builder(")
+              elif name=="C110CameraActivity.java":
+                  updated=updated.replace(
+                      "new BlueStarDialogChoices.PlatformBuilder(","new android.app.AlertDialog.Builder(")
+              else:
+                  updated=updated.replace(
+                      "new BlueStarDialogChoices.PlatformBuilder(","new AlertDialog.Builder(")
+              assert updated==baseline,f"Unexpected non-dialog changes in {name}"
+          old_home=subprocess.check_output(
+              ["git","show","refs/remotes/origin/exp/voice-key-reuse-20261121:"+r+"HomeActivity.java"],
+              text=True)
+          assert Path(r+"HomeActivity.java").read_text()==old_home
+          print("PASS: strict 15-file UI-only scope; 7 Activities untouched except Builder substitutions; Home byte-identical")
+          PY
+      - name: Run vendor allow-list, task and C110 pure Java regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-tests
+          javac -d /tmp/bluestar-tests "$BASE/CloudProviderPolicy.java" cloud-vision-app/tests/CloudProviderPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudProviderPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/CloudProviderPolicy.java" "$BASE/CloudThinkingPolicy.java" cloud-vision-app/tests/CloudThinkingPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudThinkingPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/VisionModelCatalog.java" "$BASE/OcrModelCatalog.java" cloud-vision-app/tests/CloudServerListTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudServerListTest
+          javac -d /tmp/bluestar-tests "$BASE/VoiceAction.java" cloud-vision-app/tests/VoiceActionSharedTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.VoiceActionSharedTest
+          javac -d /tmp/bluestar-tests "$BASE/ProviderKeyReusePolicy.java" cloud-vision-app/tests/ProviderKeyReusePolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.ProviderKeyReusePolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/TaskOrder.java" cloud-vision-app/tests/TaskOrderTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.TaskOrderTest
+          javac -d /tmp/bluestar-tests "$BASE/FollowupPrompt.java" cloud-vision-app/tests/FollowupPromptTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.FollowupPromptTest
+          javac -d /tmp/bluestar-tests "$BASE/C110ZoomGeometry.java" cloud-vision-app/tests/C110ZoomGeometryTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110ZoomGeometryTest
+          javac -d /tmp/bluestar-tests "$BASE/C110PhotoPolicy.java" cloud-vision-app/tests/C110PhotoPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110PhotoPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/OcrLineChunks.java" "$BASE/OcrSpeedExperiment.java" cloud-vision-app/tests/OcrSpeedExperimentTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.OcrSpeedExperimentTest
+      - name: Apply already-proven pinned UVC patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_usbmonitor.py cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 cloud-vision-app/scripts/patch_pinned_uvc.py
+          grep -q BSG_CLOUD_RAW5_GATED cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/jni/UVCCamera/UVCPreview.cpp
+          grep -q BSG_CLOUD_CLOSE_BARRIER cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
+      - name: Generate unchanged Blue Star launcher assets
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          java scripts/GenerateLauncherIcons.java
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            test -s "app/src/main/res/mipmap-$density/ic_launcher.png"
+          done
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile full Android arm64 app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :app:assembleDebug
+      - name: Verify APK actual package, launcher, native libraries, sound and SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_Unified_UI_1.0.75.apk
+          APK=out/BlueStar_Guide_Unified_UI_1.0.75.apk
+          test -s "$APK"
+          unzip -tq "$APK" >/dev/null
+          unzip -Z1 "$APK" >out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlc.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlcjni.so' out/entries.txt
+          grep -Fxq 'res/raw/c_metal_clack_ding.mp3' out/entries.txt
+          grep -Fxq 'res/raw/voice_send_whoosh.wav' out/entries.txt
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging "$APK" >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110plusquick159'" out/badging.txt
+          grep -Fq "versionName='1.0.75-unified-ui'" out/badging.txt
+          grep -Fq "launchable-activity: name='com.vobich.bluestar.cloudprobe.HomeActivity'" out/badging.txt
+          test "$(grep -c '^launchable-activity:' out/badging.txt)" -eq 1
+          (cd out && sha256sum BlueStar_Guide_Unified_UI_1.0.75.apk >SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+          BYTES=$(stat -c%s "$APK")
+          echo "New v1.0.75 APK bytes: $BYTES" >> "$GITHUB_STEP_SUMMARY"
+          echo "Baseline v1.0.74 APK bytes: 53516350" >> "$GITHUB_STEP_SUMMARY"
+          echo "Compared to v1.0.74: $((BYTES-53516350)) bytes (negative means smaller)" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_Guide_Unified_UI_1.0.75
+          path: out/*
+          retention-days: 14
+      - name: Publish ONLY if every test and package verification passed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-unified-ui-20261122-v0175
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing release" >&2
+            exit 1
+          fi
+          gh release create "$TAG" out/BlueStar_Guide_Unified_UI_1.0.75.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Blue Star v1.0.75 Unified Typography and Dialogs" \
+            --notes "v1.0.75 all-app UI and dialog typography update matching user-confirmed mockup (font 82.5% of original = prior 75% plus 10%); native and AndroidX dialogs are unified dark blue with clear natural sans-serif text, compact rounded choice rows and original callbacks; all app Activities, Home, Preview, Task, Reading, Cloud and C110 dialogs included. Original Home layout, camera Wi-Fi/RTSP/USB, cloud AI, OCR/TTS, AES-GCM keys and accessibility labels preserved. Android system-owned permissions not altered. CI success does not replace actual vivo device acceptance."
