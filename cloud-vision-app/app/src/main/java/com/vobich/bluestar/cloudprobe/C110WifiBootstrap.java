@@ -272,7 +272,7 @@ final class C110WifiBootstrap {
             labels[i]=(u.contains("C110")||u.startsWith("SJ")?"📷 ":"")+item.ssid;
         }
         chooserOpen=true;
-        new AlertDialog.Builder(foreground)
+        new BlueStarDialogChoices.PlatformBuilder(foreground)
             .setTitle("选择C110实际Wi-Fi热点（原厂方式）")
             .setItems(labels,(dialog,which)->{
                 chooserOpen=false;
@@ -301,7 +301,7 @@ final class C110WifiBootstrap {
         input.setText(prefs().getString(KEY_SSID,""));
         layout.addView(input);
         chooserOpen=true;
-        new AlertDialog.Builder(foreground)
+        new BlueStarDialogChoices.PlatformBuilder(foreground)
             .setTitle("连接真实C110热点")
             .setView(layout)
             .setPositiveButton("下一步",(d,which)->{
@@ -328,7 +328,7 @@ final class C110WifiBootstrap {
         input.setSelectAllOnFocus(true);
         input.setHint("相机热点密码（如未修改可用默认值）");
         chooserOpen=true;
-        new AlertDialog.Builder(foreground)
+        new BlueStarDialogChoices.PlatformBuilder(foreground)
             .setTitle("确认C110热点："+exactSsid)
             .setMessage("原厂按所选SSID和密码连接；请确认密码。不会将密码写进诊断日志。")
             .setView(input)
