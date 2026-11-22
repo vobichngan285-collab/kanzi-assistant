@@ -257,7 +257,7 @@ final class BlueStarSettingsScreen {
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(52));
         lp.bottomMargin=dp(10);
         content.addView(add,lp);
-        add.setOnClickListener(v->new AlertDialog.Builder(app)
+        add.setOnClickListener(v->new BlueStarDialogChoices.AppCompatBuilder(app)
             .setTitle("选择接口用途")
             .setItems(new String[]{"文字识别 OCR","视觉分析与AI追问","语音识别"},
                 (d,i)->navigate("provider-edit",
@@ -483,7 +483,7 @@ final class BlueStarSettingsScreen {
         updateC110Status(app.lastC110SettingsStatus());
         action("连接相机 Wi-Fi",()->app.connectC110WifiFromSettings());
         row("机身提示音","开关机与拍照声音",()->{
-            new AlertDialog.Builder(app).setTitle("C110 机身提示音")
+            new BlueStarDialogChoices.AppCompatBuilder(app).setTitle("C110 机身提示音")
                 .setItems(new String[]{"关闭提示音","恢复提示音"},(dialog,which)->
                     app.setC110BeepFromSettings(which==1))
                 .setNegativeButton("取消",null).show();
@@ -491,7 +491,7 @@ final class BlueStarSettingsScreen {
         row("指示灯","立即熄灭、保持开启或延时关闭",()->{
             String[] choices={"立即关闭","保持开启","15秒后关闭",
                 "30秒后关闭","60秒后关闭","自定义关闭时间"};
-            new AlertDialog.Builder(app).setTitle("C110 指示灯")
+            new BlueStarDialogChoices.AppCompatBuilder(app).setTitle("C110 指示灯")
                 .setItems(choices,(dialog,which)->{
                     if(which==5)c110CustomLightDelay();
                     else app.setC110LightFromSettings(
@@ -507,7 +507,7 @@ final class BlueStarSettingsScreen {
         seconds.setTextSize(21);
         seconds.setHint("5～600秒");
         seconds.setHintTextColor(SUB);
-        new AlertDialog.Builder(app)
+        new BlueStarDialogChoices.AppCompatBuilder(app)
             .setTitle("指示灯自动关闭时间")
             .setView(seconds)
             .setNegativeButton("取消",null)
@@ -582,7 +582,7 @@ final class BlueStarSettingsScreen {
             });
         }
         action("重新读取设备控制项",()->render(history.get(history.size()-1)));
-        action("恢复USB画质默认设置",()->new AlertDialog.Builder(app)
+        action("恢复USB画质默认设置",()->new BlueStarDialogChoices.AppCompatBuilder(app)
             .setTitle("恢复USB摄像头硬件画质")
             .setMessage("只恢复该USB设备的亮度、对比度、饱和度和增益，"
                 +"不会改变已修复的旋转、左右校正、缩放或云端模型。")
@@ -750,7 +750,7 @@ final class BlueStarSettingsScreen {
                 String[] labels=new String[available.size()];
                 for(int i=0;i<available.size();i++)
                     labels[i]=available.get(i).name+" · "+available.get(i).model;
-                new AlertDialog.Builder(app).setTitle("选择复用的密钥")
+                new BlueStarDialogChoices.AppCompatBuilder(app).setTitle("选择复用的密钥")
                     .setItems(labels,(dialog,index)->{
                         CloudProviderStore.Profile chosen=available.get(index);
                         reuseKeySource[0]=chosen.id;
@@ -776,7 +776,7 @@ final class BlueStarSettingsScreen {
                     new String[]{CloudProviderStore.CHAT,CloudProviderStore.LAYOUT};
                 final String[] labels=new String[options.length];
                 for(int i=0;i<options.length;i++)labels[i]=protocolTitle(options[i]);
-                new AlertDialog.Builder(app).setTitle("选择 "+roleTitle(role)+" 协议")
+                new BlueStarDialogChoices.AppCompatBuilder(app).setTitle("选择 "+roleTitle(role)+" 协议")
                     .setItems(labels,(dialog,index)->{
                         protocol[0]=options[index];
                         current.setText("协议："+protocolTitle(protocol[0])+"  ›");
@@ -904,7 +904,7 @@ final class BlueStarSettingsScreen {
             compactServerRow("测试连接（少量付费）",()->
                 app.testCloudProvider(role,profileId,model));
         if(custom)
-            compactServerRow("删除服务器",()->new AlertDialog.Builder(app)
+            compactServerRow("删除服务器",()->new BlueStarDialogChoices.AppCompatBuilder(app)
                 .setTitle("删除 "+saved.name+"？")
                 .setMessage("将删除这套配置和加密密钥；若正在使用将切回原有百炼。")
                 .setNegativeButton("取消",null)
@@ -1041,7 +1041,7 @@ final class BlueStarSettingsScreen {
         action("复制诊断摘要",()->app.copyRuntimeDiagnostics());
         action("导出匿名诊断日志",()->app.exportRuntimeDiagnostics());
         action("刷新诊断记录",()->render(history.get(history.size()-1)));
-        action("清空全部诊断记录",()->new AlertDialog.Builder(app)
+        action("清空全部诊断记录",()->new BlueStarDialogChoices.AppCompatBuilder(app)
             .setTitle("清空运行诊断")
             .setMessage("确定清除本机保存的全部匿名性能事件？此操作不能撤销。")
             .setNegativeButton("取消",null)
