@@ -1,10 +1,60 @@
 <resources>
+    <!-- Match the user-confirmed Blue Star dark-blue typography throughout all
+         four Activities, including Android-created lists and confirmations. -->
     <style name="AppTheme" parent="Theme.AppCompat.NoActionBar">
-        <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#FFDA67</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:colorAccent">#72C6FF</item>
+        <item name="colorAccent">#72C6FF</item>
+        <item name="colorPrimary">#123A60</item>
+        <item name="colorPrimaryDark">#07192B</item>
         <item name="android:statusBarColor">#101828</item>
         <item name="android:navigationBarColor">#101828</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
+        <item name="alertDialogTheme">@style/BlueStarAppCompatDialogTheme</item>
+        <item name="android:alertDialogTheme">@style/BlueStarPlatformDialogTheme</item>
+        <item name="android:dialogTheme">@style/BlueStarPlatformDialogTheme</item>
+    </style>
+
+    <!-- C110 previously had a native light Activity theme. Keep its parent
+         theme and VLC/video controls unchanged; override dialog styling only. -->
+    <style name="BlueStarC110Theme" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:alertDialogTheme">@style/BlueStarPlatformDialogTheme</item>
+        <item name="android:dialogTheme">@style/BlueStarPlatformDialogTheme</item>
+    </style>
+
+    <style name="BlueStarAppCompatDialogTheme" parent="Theme.AppCompat.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/bluestar_dialog_background</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textColorPrimary">#FAFCFF</item>
+        <item name="android:textColorSecondary">#C6DBF0</item>
+        <item name="android:colorAccent">#72C6FF</item>
+        <item name="colorAccent">#72C6FF</item>
+        <item name="android:backgroundDimAmount">0.65</item>
+        <item name="android:listPreferredItemHeightSmall">52dp</item>
+        <item name="android:listPreferredItemHeight">52dp</item>
+        <item name="android:textAppearanceListItem">@style/BlueStarDialogItemText</item>
+        <item name="android:textAppearanceListItemSmall">@style/BlueStarDialogItemText</item>
+    </style>
+
+    <style name="BlueStarPlatformDialogTheme" parent="@android:style/Theme.Material.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/bluestar_dialog_background</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textColorPrimary">#FAFCFF</item>
+        <item name="android:textColorSecondary">#C6DBF0</item>
+        <item name="android:colorAccent">#72C6FF</item>
+        <item name="android:backgroundDimAmount">0.65</item>
+        <item name="android:listPreferredItemHeightSmall">52dp</item>
+        <item name="android:listPreferredItemHeight">52dp</item>
+        <item name="android:textAppearanceListItem">@style/BlueStarDialogItemText</item>
+        <item name="android:textAppearanceListItemSmall">@style/BlueStarDialogItemText</item>
+    </style>
+
+    <style name="BlueStarDialogItemText" parent="@android:style/TextAppearance.Material.Body1">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textSize">18sp</item>
+        <item name="android:textColor">#FAFCFF</item>
+        <item name="android:textStyle">normal</item>
     </style>
 </resources>
