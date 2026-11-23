@@ -280,6 +280,9 @@ final class CloudVisionClient {
         boolean keepAliveEligible=false;
         try{
             byte[] request=body.toString().getBytes(StandardCharsets.UTF_8);
+            // Images are large: avoid HttpURLConnection's extra full-body buffer.
+            // Text-only followups retain their existing transport behavior.
+            if(!textOnly)connection.setFixedLengthStreamingMode(request.length);
             try(OutputStream out=connection.getOutputStream()){out.write(request);}
             if(cancel!=null)cancel.check();
             // Includes connection establishment and request-body upload, not model execution.
