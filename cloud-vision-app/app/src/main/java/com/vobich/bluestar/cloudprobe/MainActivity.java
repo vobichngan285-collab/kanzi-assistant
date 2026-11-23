@@ -94,6 +94,7 @@ public final class MainActivity extends CameraActivity {
     private static final String USB_ATTACH_ALIAS="com.vobich.bluestar.cloudprobe.UsbAttachEntry";
     private static final String PREF_FRONT_CAMERA = "phone_camera_front";
     private static final String PREF_PHONE_HD_STILL = "phone_true_hd_still_v1";
+    private static final String PREF_PHONE_HD_UPLOAD_MODE = "phone_hd_upload_mode_trial_v1";
     private static final String PREF_PREVIEW_ROTATION = "preview_rotation";
     private static final String PREF_PREVIEW_MIRROR = "preview_mirror";
     private static final String PREF_PREVIEW_FLIP = "preview_flip";
@@ -137,6 +138,7 @@ public final class MainActivity extends CameraActivity {
     private volatile int pendingPhoneFrameToken=-1;
     private volatile int pendingPhoneStillToken=-1;
     private boolean phoneHighRes;
+    private int phoneHdUploadMode=PhoneStillUploadPolicy.ORIGINAL;
     private long phoneCaptureTapAtMs;
     private RuntimeDiagnostics diagnostics;
     private ModelUsageLedger modelUsage;
@@ -927,6 +929,20 @@ public final class MainActivity extends CameraActivity {
         return phoneHighRes?"高清静态拍照":"快速预览截帧";
     }
     boolean isPhoneHighRes(){return phoneHighRes;}
+    int phoneHdUploadModeIndex(){return phoneHdUploadMode;}
+    String phoneHdUploadDescription(){
+        switch(phoneHdUploadMode){
+            case PhoneStillUploadPolicy.P1440:return "1440P";
+            case PhoneStillUploadPolicy.P1080:return "1080P";
+            default:return "原图约800万";
+        }
+    }
+    void setPhoneHdUploadModeFromSettings(int choice){
+        phoneHdUploadMode=PhoneStillUploadPolicy.normalize(choice);
+        getSharedPreferences(PREFS,MODE_PRIVATE).edit()
+            .putInt(PREF_PHONE_HD_UPLOAD_MODE,phoneHdUploadMode).apply();
+        // Only the JPEG upload is affected. No camera restart.
+    }
     void setPhonePhotoModeFromSettings(boolean enabled){
         if(phoneHighRes==enabled)return;
         if(cloudBusy){toastShort("正在处理照片，请完成后再切换拍照模式");return;}
@@ -1156,6 +1172,8 @@ public final class MainActivity extends CameraActivity {
             !hasConnectedUsbVideoDevice():prefs.getBoolean(PREF_PHONE_CAMERA,false);
         phoneFrontFacing=prefs.getBoolean(PREF_FRONT_CAMERA,false);
         phoneHighRes=prefs.getBoolean(PREF_PHONE_HD_STILL,false);
+        phoneHdUploadMode=PhoneStillUploadPolicy.normalize(
+            prefs.getInt(PREF_PHONE_HD_UPLOAD_MODE,PhoneStillUploadPolicy.ORIGINAL));
         previewRotation=prefs.getInt(PREF_PREVIEW_ROTATION,0);
         previewMirror=prefs.getBoolean(PREF_PREVIEW_MIRROR,false);
         previewVerticalFlip=prefs.getBoolean(PREF_PREVIEW_FLIP,false);
@@ -2800,8 +2818,10 @@ public final class MainActivity extends CameraActivity {
         cloudBusy=true;
         setResultStatus("已拍照 · 正在云端识别…");
         if(diagnostics!=null){
-            if(current.phoneStillJpeg)
+            if(current.phoneStillJpeg){
                 diagnostics.event("camera","phone_still_jpeg",1,"ok");
+                diagnostics.event("camera","phone_hd_upload_mode",phoneHdUploadMode,"ok");
+            }
             else if(current.remoteJpeg!=null)
                 diagnostics.event("camera","c110_input",current.c110LiveFrame?2:1,"ok");
             else if(usingPhoneCamera)
@@ -2812,6 +2832,7 @@ public final class MainActivity extends CameraActivity {
             diagnostics.event("camera","raw_width_px",current.width,"ok");
             diagnostics.event("camera","raw_height_px",current.height,"ok");
         }
+        final int phoneHdUploadSnapshot=phoneHdUploadMode;
         final TaskCatalog.Task task=oneShotTask==null?currentTask:oneShotTask;
         // A one-shot voice observation should not be hijacked by an ongoing search.
         final String targetToFind=oneShotTask==null?FindingTargetStore.current(this):"";
@@ -2862,7 +2883,8 @@ public final class MainActivity extends CameraActivity {
                 // C110 stays byte-for-byte original. Phone still JPEG is
                 // normalized in RAM; never enlarged from the preview stream.
                 PhoneStillJpeg.Result still=phoneStill?PhoneStillJpeg.prepare(
-                    current.remoteJpeg,stillRotation,photoMirror,photoFlip):null;
+                    current.remoteJpeg,stillRotation,photoMirror,photoFlip,
+                    phoneHdUploadSnapshot):null;
                 byte[] jpeg=c110Source?current.remoteJpeg:
                     phoneStill?still.jpeg:encoded.jpeg;
                 long encodingMs=SystemClock.elapsedRealtime()-takenAt;

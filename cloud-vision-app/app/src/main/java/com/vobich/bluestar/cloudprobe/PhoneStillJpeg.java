@@ -12,7 +12,7 @@ import java.io.ByteArrayOutputStream;
  */
 final class PhoneStillJpeg {
     // One source of truth for both native Camera2 still selection and upload cap.
-    static final long MAX_UPLOAD_PIXELS=8000000L;
+    static final long MAX_UPLOAD_PIXELS=PhoneStillUploadPolicy.ORIGINAL_MAX_PIXELS;
     private PhoneStillJpeg(){}
 
     static final class Result {
@@ -22,7 +22,7 @@ final class PhoneStillJpeg {
     }
 
     static Result prepare(byte[] original,int clockwiseRotation,
-                          boolean mirrorX,boolean flipY) {
+                          boolean mirrorX,boolean flipY,int uploadMode) {
         if(original==null||original.length<4)throw new IllegalArgumentException("高清JPEG为空");
         int angle=((clockwiseRotation%360)+360)%360;
         if(angle%90!=0)throw new IllegalArgumentException("无法处理的高清拍照旋转角度");
@@ -31,7 +31,7 @@ final class PhoneStillJpeg {
         Bitmap finalImage=source;
         try{
             int w=source.getWidth(),h=source.getHeight();
-            double scale=Math.min(1.0,Math.sqrt(MAX_UPLOAD_PIXELS/(double)((long)w*h)));
+            double scale=PhoneStillUploadPolicy.scaleFor(w,h,uploadMode);
             boolean change=angle!=0||mirrorX||flipY||scale<0.999;
             if(!change)return new Result(original,w,h);
             Matrix transform=new Matrix();
