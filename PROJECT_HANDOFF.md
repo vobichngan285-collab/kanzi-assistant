@@ -1,3 +1,17 @@
+# 2026-11-23｜v1.0.79 图片HTTP固定长度流式上传单项实验：CI成功发布，A/B真机待验证
+
+- **明确授权**：用户看到1200万高清拍照时首句话延迟后，确认**先不改像素**，仅把 `HttpURLConnection` 的大图片JSON上传改为固定长度流式发送，保持原有云端识别、TTS和其他功能完全不变，发测试APK用真实首句延迟对照。并非授权800万像素、参数上限、其他优化。
+- **唯一原仓与完整基线**：`vobichngan285-collab/kanzi-assistant`，从已发布v1.0.78 `83077e40dd4cbcc8099635a8167a413a17260648` 新建独立分支 `exp/fixed-length-photo-upload-20261123`；最终HEAD `bf05a9521f6243c33f440c9cc586f6348c9a72cb`，`versionCode 88`，`versionName '1.0.79-photo-stream-upload'`；debug安装包ID `com.vobich.bluestar.c110plusquick159` 不变，唯一 HomeActivity Launcher不变。
+- **精确6文件改动且比较完成**：只改 `CloudVisionClient.java`、`TargetVisionClient.java`、`LayoutParsingClient.java` 三个图像上传接口、`cloud-vision-app/app/build.gradle`、新增`cloud-vision-app/docs/PHOTO_FIXED_LENGTH_STREAM_UPLOAD_20261123.md`、新增 `.github/workflows/photo-fixed-length-upload-20261123.yml`。未改 `MainActivity.java`、`InternalCameraController.java`、`PhoneStillJpeg.java`、`FrameCompressor.java`、`C110WifiCamera.java`、`C110QuickShotController.java`、`C110FrameReader.java`、`HomeActivity.java`、模型/图片压缩/TTS/USB驱动/LibVLC/云端密钥逻辑。
+- **实际代码**：①`CloudVisionClient` 在原 `byte[] request=body.toString().getBytes(StandardCharsets.UTF_8)` 后，仅对`!textOnly`图像请求、在`getOutputStream()`前调用`connection.setFixedLengthStreamingMode(request.length)`，既有`out.write(request)`与SSE响应、旧请求Cancel/断链、超时/HTTP错误处理不变；纯文字追问原路径不变。②目标寻找`TargetVisionClient`和③版面解析`LayoutParsingClient`把原UTF-8 JSON字节数组提前建出，在`getOutputStream()`前设`c.setFixedLengthStreamingMode(request.length)`，仍完整写入原JSON字节，没有改提示词/模型/输出。
+- **技术边界**：此处“流式上传”是**已知UTF-8请求体长度的fixed-length streaming**，绕过`HttpURLConnection`自身的完整HTTP request body缓冲；**没有**改变客户端事先生成Base64图片及完整JSON和`byte[]`的事实、没有缩图或压图、没有更改服务器是否缩放图片、也不保证实际首句必定更快。请求上传`cloud.upload_ms`的统计口径可能因原本写入缓冲、现在写入传输层而改变，**不应直接拿该字段对比1.0.78的值**；用户应比较相同模型/照片内容下的`tts.onstart_ms`、`tts.first_audio_callback_ms`（仅回调不等于真正出声）、`cloud.first_speakable_ms`和真实耳朵听到的首句等待。
+- **完成CI与Release验证**：Actions run `45201737971` =`completed/success`，分支HEAD、run SHA和GitHub release tag target一致（`bf05a9521f6243c33f440c9cc586f6348c9a72cb`）。通过严格6文件作用域检查、图像请求`setFixedLengthStreamingMode(request.length)`先于`getOutputStream`、保留纯文字旧传输/旧Cancel/SSE、固定1200万像素高精度与原720p、完整原纯Java模型/语音/任务/C110回归、原UVC固定补丁、arm64全量Gradle Debug构建、包名/唯一Launcher/LibVLC3.6.5/UVC native/音效/APK ZIP/SHA256、Artifact与Release发布。
+- **已发布**：tag `bluestar-photo-fixed-stream-20261123-v0179`，APK `BlueStar_Guide_Photo_Stream_1.0.79.apk`（53,534,159 bytes），直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-photo-fixed-stream-20261123-v0179/BlueStar_Guide_Photo_Stream_1.0.79.apk ；CI https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45201737971 。
+- **真机仍待验收**：vivo X200 Pro Android16维持1200万真实高清静拍4096×3072、上传3000×4000，选择相同千问OCR模型和相同文字，v1.0.78、v1.0.79各测至少3～5次；不要拿`upload_ms`新旧直接比较。比按下至第一句真正出声，参考`tts.onstart_ms`和`cloud.first_speakable_ms`，以及是否有HTTP401、失败或明显增时。再检查快速720P、上一张未返回拍第二张、C110原图和自定义云端接口（特别是非2xx/认证重定向兼容）。CI不代表实际网络加速或所有云服务商兼容。如果有兼容问题优先回退v1.0.78，**不要直接卸载旧debug包**导致Keystore中云密钥丢失。
+- **本轮没有触及未授权待办**：800万/500万像素、C110+/普通C110机型识别、自动恢复、优化JPEG内存、改变图像视觉Token限额，仍需各自明确授权才可动手。
+
+---
+
 # 2026-11-23｜v1.0.78 两项高优先级首轮优化：最新照片优先+旧云端HTTP取消，CI成功发布，真机待验收
 
 - **明确授权范围**：用户要求“一项一项来”，第一轮**只修两个高优先级问题**：（1）云端处理旧照片时不能拍第二张的忙锁；（2）旧云端请求与拍照/JPEG处理共用单线程、旧网络卡住时挡住新任务。明确不开展其他优化，尤其不改手机1200万像素、云端视觉像素上限、模型、TTS音色、主题UI、USB底层、C110原厂命令、内存优化和自动故障恢复。
