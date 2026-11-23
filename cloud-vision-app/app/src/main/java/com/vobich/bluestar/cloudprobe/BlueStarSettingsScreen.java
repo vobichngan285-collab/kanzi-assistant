@@ -528,7 +528,8 @@ final class BlueStarSettingsScreen {
         row("摄像头 · "+app.sourceDescription(),"",()->navigate("sources",""));
         row("手机拍照模式 · "+app.phonePhotoModeDescription(),
             "快速取预览帧（默认） / 高清真实拍照（仅手机摄像头）",()->{
-            String[] choices={"快速模式（预览截帧，默认）","高清模式（Camera2真正拍照）"};
+            String[] choices={"快速模式（预览截帧，默认）",
+                "高清模式（约1200万像素真实拍照）"};
             new BlueStarDialogChoices.AppCompatBuilder(app)
                 .setTitle("手机摄像头拍照模式")
                 .setSingleChoiceItems(choices,app.isPhoneHighRes()?1:0,(dialog,which)->{
@@ -536,6 +537,12 @@ final class BlueStarSettingsScreen {
                     dialog.dismiss();
                     render(history.get(history.size()-1));
                 }).setNegativeButton("取消",null).show();
+        });
+        // This existing 720p/1080p setting applies ONLY to NV21 preview frames
+        // (phone fast and USB). Real phone JPEG and C110 native JPEG bypass it.
+        row("手机/USB预览上传 · "+app.imagePolicyDescription(),
+            "仅限预览截帧；手机高清约1200万像素不受限制",()->{
+            app.cycleImagePolicy();render(history.get(history.size()-1));
         });
         row("画面旋转 · "+app.rotationDescription(),"",()->{app.adjustCamera(1);render(history.get(history.size()-1));});
         row("水平镜像 · "+app.mirrorDescription(),"",()->{app.adjustCamera(2);render(history.get(history.size()-1));});
@@ -646,9 +653,6 @@ final class BlueStarSettingsScreen {
             "",()->{app.setWebSearchEnabled(!app.isWebSearchEnabled());
                  render(history.get(history.size()-1));});
         row("模型用量统计","查看当前真正调用的模型与Token",()->navigate("usage",""));
-        row("图片分辨率 · "+app.imagePolicyDescription(),"",()->{
-            app.cycleImagePolicy();render(history.get(history.size()-1));
-        });
         row("原有百炼 API Key","仅用于选择百炼时",()->navigate("key",""));
     }
     private static String roleTitle(String role){
