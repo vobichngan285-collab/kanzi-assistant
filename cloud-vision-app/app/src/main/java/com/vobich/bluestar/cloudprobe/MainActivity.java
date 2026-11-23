@@ -2541,8 +2541,12 @@ public final class MainActivity extends CameraActivity {
     private void invalidate(){
         requestVersion.incrementAndGet();
         pendingPhoneFrameToken=-1;
+        pendingPhoneStillToken=-1;
         pendingPhoneCaptureTask=null;
-        if(phoneController!=null)phoneController.cancelFreshFrame();
+        if(phoneController!=null){
+            phoneController.cancelFreshFrame();
+            phoneController.cancelPendingStill();
+        }
         cloudBusy=false;
         if(encodingTask!=null){encodingTask.cancel(true);encodingTask=null;}
         if(tts!=null)tts.stop();
@@ -2590,7 +2594,47 @@ public final class MainActivity extends CameraActivity {
                 (phoneFrontFacing?"phone_front":"phone_back"):"usb");
             diagnostics.event("camera","tap",0,"ok");
         }
-        if(usingPhoneCamera){
+        if(usingPhoneCamera&&phoneHighRes){
+            // Opt-in Camera2 true JPEG still; original preview pipeline is untouched.
+            pendingPhoneStillToken=token;
+            setResultStatus("正在拍摄手机高清照片…");
+            phoneController.requestStillPhoto(new InternalCameraController.StillListener(){
+                @Override public void onJpeg(byte[] jpeg,int width,int height,long atMs){
+                    handler.post(()->{
+                        if(!uiActive||token!=requestVersion.get()||
+                           pendingPhoneStillToken!=token||!usingPhoneCamera)return;
+                        pendingPhoneStillToken=-1;
+                        if(diagnostics!=null)
+                            diagnostics.event("camera","phone_still_ms",
+                                Math.max(0,atMs-now),"ok");
+                        beginCapturedFrame(new Frame(jpeg,width,height,atMs,true),
+                            now,token,oneShotTask);
+                    });
+                }
+                @Override public void onFailure(String reason){
+                    handler.post(()->{
+                        if(!uiActive||token!=requestVersion.get()||
+                           pendingPhoneStillToken!=token)return;
+                        pendingPhoneStillToken=-1;
+                        cloudBusy=false;
+                        if(diagnostics!=null)
+                            diagnostics.event("camera","phone_still",0,"failed");
+                        setResultStatus("手机高清拍照失败");
+                        toastShort(reason);
+                    });
+                }
+            });
+            handler.postDelayed(()->{
+                if(!uiActive||token!=requestVersion.get()||
+                    pendingPhoneStillToken!=token)return;
+                pendingPhoneStillToken=-1;
+                phoneController.cancelPendingStill();
+                cloudBusy=false;
+                if(diagnostics!=null)diagnostics.event("camera","phone_still_ms",
+                    SystemClock.elapsedRealtime()-now,"timeout");
+                setResultStatus("手机高清拍照超时，请检查相机后重试");
+            },8000L);
+        }else if(usingPhoneCamera){
             pendingPhoneFrameToken=token;
             pendingPhoneCaptureTask=oneShotTask;
             phoneCaptureTapAtMs=now;
