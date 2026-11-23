@@ -1,3 +1,17 @@
+# 2026-11-23｜v1.0.77 手机高清近1200万像素 + 预览上传画质设置移至相机：CI全部通过，APK发布，待真机验证
+
+- **用户授权范围**：在v1.0.76实机已确认真实Camera2 JPEG 3712×2088（约775万像素）、点击到JPEG仅141～216ms后，用户决定下一版以约1200万像素为高清目标，且提出旧「设置→云端AI→图片分辨率」最多仅1080P、容易误认为限制手机高清。明确授权一起修复，要求保留原快速模式与C110/USB/云AI/TTS。之前“先停”针对上一修改尝试；本轮用户已重新明确授权这两项。
+- **仓库与基线**：唯一原仓 `vobichngan285-collab/kanzi-assistant`，从已发布v1.0.76 `2a560da336223bcf4c6da12075382149a1620e31` 新建独立分支 `exp/phone-hd12mp-settings-20261123`，最终HEAD `4118b708e17e4fc436f1c03f4b5c515aa792008f`，`versionCode 86` / `versionName 1.0.77-phone-hd12mp-camera-settings`，debug安装包ID依旧 `com.vobich.bluestar.c110plusquick159`，唯一 HomeActivity Launcher。
+- **实际仅6文件修改，GitHub compare已核验**：`InternalCameraController.java`、`PhoneStillJpeg.java`、`BlueStarSettingsScreen.java`、`cloud-vision-app/app/build.gradle`、新增`cloud-vision-app/docs/PHONE_HD12MP_CAMERA_SETTINGS_20261123.md`、新增`.github/workflows/phone-hd12mp-camera-settings-20261123.yml`。未修改`MainActivity.java`、`FrameCompressor.java`、`CloudVisionClient.java`、`HomeActivity.java`、C110识别及拍照、USB驱动、TTS/AI问答/密钥/字体/主页。
+- **分辨率方案**：`InternalCameraController.chooseStillSize` 的目标由800万提升到`PhoneStillJpeg.MAX_UPLOAD_PIXELS`，统一常量12000000像素；在设备Camera2真正支持的`ImageFormat.JPEG`尺寸中选最接近1200万的原生输出，略微偏好16:9但不强行放大或固定尺寸。超过1200万才按比例缩小，方向/镜像沿用既有RAM JPEG处理，不写相册。用户实机最终支持的真实尺寸仍待核实，不能保证恰好4000×3000。
+- **设置归位而非更改旧快速算法**：原「云端AI→图片分辨率」的自动720P/必要时1080P、固定720P、固定1080P，从`BlueStarSettingsScreen.cloud()`移至`camera()`，显示「手机/USB预览上传」；仅影响手机**快速模式**和USB预览截帧，不限制手机高清真实JPEG或C110 OEM原图。旧`cloud_capture_quality`偏好键及三档行为均保持，升级不重置用户选择。「手机拍照模式」仍快速/高清两种且首次默认快速，高清选项注明约1200万。主页不新增按钮。
+- **完整构建证据**：GitHub Actions run `45190939711` 已`completed/success`，任务SHA与分支/发布tag均为`4118b708e17e4fc436f1c03f4b5c515aa792008f`。通过严格6文件静态范围与图像链路校验、既有Qwen/GLM/任务/语音/C110纯Java回归、原UVC补丁、图标素材、全ARM64 Gradle构建、APK包名版本/唯一Launcher/ZIP/LibVLC3.6.5/UVC native/声音资源/SHA256、Artifact上传及GitHub Release全部成功。
+- **正式实验包已发布**：Tag `bluestar-phone-hd12mp-camera-20261123-v0177`；APK `BlueStar_Guide_Phone_HD12MP_1.0.77.apk`（53,534,167 bytes）。直接下载：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-phone-hd12mp-camera-20261123-v0177/BlueStar_Guide_Phone_HD12MP_1.0.77.apk 。CI：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45190939711 。
+- **真机待验收**：vivo X200 Pro Android16使用已开启高清模式，在「设置→相机」观察手机/USB预览上传三档，云端设置不再显示旧分辨率；拍摄同场景3～5张，日志`camera.phone_still_jpeg=1`、`camera.raw_width_px/raw_height_px`与`jpeg.width_px/height_px`确认尺寸接近1200万，比较此前775万下的拍照毫秒、云端首字、整体时间及小字漏读；验证快速720P与1080P原逻辑、旧偏好值、手机前后置、C110+/普通C110（需独立身份核查）、USB、TTS和AI追问未回归。CI不等于真实像素或扬声器验收。安装如有debug签名冲突**不得直接卸载旧版**，以免丢失 Android Keystore 中密钥。
+- **未合并的旧待办**：2026-11-22关于C110+/C110机型标识与协议不统一、上一张云端未返回时连拍锁等讨论仍未改，不能误报已经修复。旧v1.0.76源码和安装包完整保留。
+
+---
+
 # 2026-11-23｜v1.0.76 手机 Camera2 真实高清拍照模式（仅本项）：完整CI成功，已发布，真机待验收
 
 - **明确授权**：用户要求仅实现“手机摄像头拍照模式手动选择：默认原有预览截帧；高清模式用手机原生 Camera2 真正拍照，原JPEG直接接入云端OCR/视觉与现有TTS”，逐项检查构建。不得顺手修C110型号判断、连拍锁、USB、主页UI或离线模型。
