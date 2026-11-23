@@ -203,6 +203,7 @@ public final class InternalCameraController {
                             StillListener cb=pendingStill;
                             pendingStill=null;
                             if(cb!=null)cb.onFailure("读取高清JPEG失败："+failure.getMessage());
+                            Log.w(TAG,"Could not obtain Camera2 JPEG image",failure);
                         }finally{
                             if(shot!=null)shot.close();
                         }
