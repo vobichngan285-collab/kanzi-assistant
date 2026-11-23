@@ -210,6 +210,12 @@ public final class MainActivity extends CameraActivity {
     private final AtomicLong usbFrameCount = new AtomicLong();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService encoder = Executors.newSingleThreadExecutor();
+    // Camera/JPEG work and old network waits must never share a single queue.
+    private final ExecutorService photoCloudExecutor = Executors.newFixedThreadPool(2);
+    private final Object photoCloudLock = new Object();
+    private java.util.concurrent.Future<?> photoCloudTask;
+    private CloudVisionClient.Cancellation activePhotoCloud;
+    private boolean c110NativeShutterBusy;
     private final AtomicInteger requestVersion = new AtomicInteger();
     private long lastTapMs;
     private Future<?> encodingTask;
@@ -2540,6 +2546,10 @@ public final class MainActivity extends CameraActivity {
 
     private void invalidate(){
         requestVersion.incrementAndGet();
+        synchronized(photoCloudLock){
+            if(activePhotoCloud!=null){activePhotoCloud.cancel();activePhotoCloud=null;}
+            if(photoCloudTask!=null){photoCloudTask.cancel(true);photoCloudTask=null;}
+        }
         pendingPhoneFrameToken=-1;
         pendingPhoneStillToken=-1;
         pendingPhoneCaptureTask=null;
@@ -2548,7 +2558,10 @@ public final class MainActivity extends CameraActivity {
             phoneController.cancelPendingStill();
         }
         cloudBusy=false;
-        if(encodingTask!=null){encodingTask.cancel(true);encodingTask=null;}
+        // Never interrupt a real C110 1001 shutter/JPEG download in flight.
+        if(encodingTask!=null&&!c110NativeShutterBusy){
+            encodingTask.cancel(true);encodingTask=null;
+        }
         if(tts!=null)tts.stop();
     }
 
@@ -2559,10 +2572,14 @@ public final class MainActivity extends CameraActivity {
         if(voiceListening||voiceRecorder.isBusy()){
             toastShort("正在录音，请松手后再拍照");return;
         }
-        if(cloudBusy){toastShort("AI正在处理上一项操作");return;}
+        // Never confuse a physical exposure with a safely replaceable cloud job.
+        if(c110NativeShutterBusy||pendingPhoneStillToken>=0||
+                pendingPhoneFrameToken>=0){
+            toastShort("当前照片尚未取得，请完成拍摄后再拍下一张");return;
+        }
         long now=SystemClock.elapsedRealtime();
         if(now-lastPinchMs<550L||!uiActive)return;
-        if(now-lastTapMs<1500L){
+        if(now-lastTapMs<350L){
             toastShort("已忽略连续误触");
             if(fromVoice)speakUnfiltered("拍照间隔太短，请再说一次。");
             return;
@@ -2669,11 +2686,11 @@ public final class MainActivity extends CameraActivity {
             toastShort("请允许Android系统连接C110热点，然后再拍一张");
             return;
         }
-        if(voiceListening||voiceRecorder.isBusy()||cloudBusy){
-            toastShort("上一项操作未结束，请稍后再拍照");return;
+        if(voiceListening||voiceRecorder.isBusy()||c110NativeShutterBusy){
+            toastShort("正在录音或C110仍在执行真实快门，请稍后拍照");return;
         }
         long now=SystemClock.elapsedRealtime();
-        if(now-lastTapMs<1500L){toastShort("拍照间隔太短");return;}
+        if(now-lastTapMs<350L){toastShort("拍照间隔太短");return;}
         lastTapMs=now;
         // RTSP playback may hold the firmware in streaming mode.
         // Close the player and explicitly re-enter photo mode for this tap,
@@ -2692,6 +2709,7 @@ public final class MainActivity extends CameraActivity {
             diagnostics.event("c110","tap",1,"ok");
         }
         setResultStatus("C110：正在取高清照片…");
+        c110NativeShutterBusy=true;
         encodingTask=encoder.submit(()->{
             try{
                 // The C110 shutter is NEVER gated on cloud key or mobile data.
@@ -2719,6 +2737,7 @@ public final class MainActivity extends CameraActivity {
                 final android.net.Network cloudNetwork=cellular;
                 final String issue=cloudIssue;
                 handler.post(()->{
+                    c110NativeShutterBusy=false;
                     if(!uiActive||token!=requestVersion.get())return;
                     if(diagnostics!=null){
                         diagnostics.event("c110","mode_ms",photo.modeMs,"ok");
@@ -2752,6 +2771,7 @@ public final class MainActivity extends CameraActivity {
                 });
             }catch(Exception ex){
                 handler.post(()->{
+                    c110NativeShutterBusy=false;
                     if(token!=requestVersion.get()||!uiActive)return;
                     cloudBusy=false;
                     if(diagnostics!=null)diagnostics.event("c110","photo",0,"failed");
@@ -2829,6 +2849,8 @@ public final class MainActivity extends CameraActivity {
         final boolean photoFlip=c110Source?false:
             (usingPhoneCamera?previewVerticalFlip:usbOrientation.displayFlip);
         final float photoZoom=c110Source?1f:(usingPhoneCamera?1f:zoom);
+        final CloudVisionClient.Cancellation photoCancel=new CloudVisionClient.Cancellation();
+        synchronized(photoCloudLock){activePhotoCloud=photoCancel;}
         encodingTask=encoder.submit(()->{
             long takenAt=SystemClock.elapsedRealtime();
             try{
@@ -2873,6 +2895,13 @@ public final class MainActivity extends CameraActivity {
                     });
                     return;
                 }
+                // The encoder is free as soon as the JPEG is ready. A stale
+                // HTTP call cannot hold this queue (or a C110 native shutter).
+                synchronized(photoCloudLock){
+                    if(token!=requestVersion.get()||photoCancel.isCancelled())return;
+                    photoCloudTask=photoCloudExecutor.submit(()->{
+                        try{
+                            photoCancel.check();
                 // Store only the original byte[] being submitted, in volatile memory.
                 // Diagnostic export remains numeric and never exports the photo.
                 lastSubmittedJpeg=jpeg;
@@ -2880,7 +2909,7 @@ public final class MainActivity extends CameraActivity {
                 if(!targetToFind.isEmpty()){
                     long cloudAt=SystemClock.elapsedRealtime();
                     TargetVisionClient.Result inspection=TargetVisionClient.inspect(
-                        jpeg,targetToFind,service,current.cloudNetwork);
+                        jpeg,targetToFind,service,current.cloudNetwork,photoCancel);
                     if(modelUsage!=null)modelUsage.recordAsync(service.model,inspection.serverModel,
                         inspection.promptTokens,inspection.completionTokens,true);
                     if(diagnostics!=null)diagnostics.event("cloud","target_ms",
@@ -2919,7 +2948,7 @@ public final class MainActivity extends CameraActivity {
                         int mode=index==0?TextToSpeech.QUEUE_FLUSH:TextToSpeech.QUEUE_ADD;
                         if(tts.speak(spoken,mode,null,"vision-"+token+"-"+index)
                             ==TextToSpeech.SUCCESS)delivered.incrementAndGet();
-                    }),thisOcrMode,current.cloudNetwork);
+                    }),thisOcrMode,current.cloudNetwork,photoCancel);
                 if(modelUsage!=null)modelUsage.recordAsync(result.model,result.serverModel,
                     result.promptTokens,result.completionTokens,true);
                 long overallMs=SystemClock.elapsedRealtime()-tapAtMs;
@@ -3004,6 +3033,17 @@ public final class MainActivity extends CameraActivity {
                         .setMessage(error.getMessage()==null?
                             error.getClass().getSimpleName():error.getMessage())
                         .setPositiveButton("知道了",null).show();
+                });
+            }
+                    });
+                }
+            }catch(Exception encodeError){
+                handler.post(()->{
+                    if(token!=requestVersion.get()||!uiActive)return;
+                    cloudBusy=false;
+                    if(diagnostics!=null)diagnostics.event("jpeg","prepare",0,"failed");
+                    setResultStatus("照片处理失败，请重新拍照");
+                    toastShort("无法处理当前照片："+encodeError.getClass().getSimpleName());
                 });
             }
         });
@@ -3116,6 +3156,7 @@ public final class MainActivity extends CameraActivity {
         if(readingScreen!=null){readingScreen.dispose();readingScreen=null;}
         if(phoneController!=null)phoneController.stop();
         encoder.shutdownNow();
+        photoCloudExecutor.shutdownNow();
         modelTestExecutor.shutdownNow();
         usbPictureExecutor.shutdownNow();
         handler.removeCallbacks(usbHealthTicker);
