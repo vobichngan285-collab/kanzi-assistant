@@ -54,8 +54,11 @@ final class LayoutParsingClient {
                 .put("model",CloudProviderPolicy.cleanModel(choice.model))
                 .put("file","data:image/jpeg;base64,"+
                     Base64.encodeToString(jpeg,Base64.NO_WRAP));
+            byte[] request=payload.toString().getBytes(StandardCharsets.UTF_8);
+            // Layout/OCR photo JSON has a known length, so avoid double buffering.
+            c.setFixedLengthStreamingMode(request.length);
             try(OutputStream out=c.getOutputStream()){
-                out.write(payload.toString().getBytes(StandardCharsets.UTF_8));
+                out.write(request);
             }
             if(cancel!=null)cancel.check();
             upload=SystemClock.elapsedRealtime()-start;
