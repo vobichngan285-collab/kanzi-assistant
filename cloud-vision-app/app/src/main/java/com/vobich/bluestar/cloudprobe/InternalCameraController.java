@@ -38,6 +38,11 @@ public final class InternalCameraController {
         void onPreviewStarted();
         void onError(String message);
     }
+    /** A real JPEG capture, never a preview-frame enlargement. */
+    public interface StillListener {
+        void onJpeg(byte[] jpeg,int width,int height,long capturedAtMs);
+        void onFailure(String reason);
+    }
 
     private static final String TAG = "KanziPhoneCamera";
     private final Activity activity;
@@ -48,6 +53,9 @@ public final class InternalCameraController {
     private CameraDevice camera;
     private CameraCaptureSession session;
     private ImageReader reader;
+    private ImageReader stillReader;
+    private StillListener pendingStill;
+    private boolean highResolutionEnabled;
     private boolean front;
     private boolean active;
     private int rotationDegrees;
@@ -74,10 +82,13 @@ public final class InternalCameraController {
         return activity.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
     }
 
-    public void start(boolean frontFacing) {
+    public void start(boolean frontFacing) { start(frontFacing,false); }
+
+    public void start(boolean frontFacing, boolean enableStillJpeg) {
         if (!hasPermission()) { listener.onError("未获得手机摄像头权限"); return; }
         stop();
         front = frontFacing;
+        highResolutionEnabled = enableStillJpeg;
         active = true;
         final int token = generation;
         openRequested = false;
@@ -164,6 +175,40 @@ public final class InternalCameraController {
             Size chosen = chooseCommonSize(yuv, surface);
             activeWidth = chosen.getWidth(); activeHeight = chosen.getHeight();
             reader = ImageReader.newInstance(activeWidth, activeHeight, ImageFormat.YUV_420_888, 2);
+            // Allocate the JPEG stream ONLY in high-quality mode. Normal preview
+            // keeps its already-verified two-surface configuration unchanged.
+            if(highResolutionEnabled){
+                Size jpegSize=chooseStillSize(map.getOutputSizes(ImageFormat.JPEG));
+                if(jpegSize!=null){
+                    stillReader=ImageReader.newInstance(jpegSize.getWidth(),
+                        jpegSize.getHeight(),ImageFormat.JPEG,2);
+                    stillReader.setOnImageAvailableListener(source->{
+                        Image shot=null;
+                        try{
+                            shot=source.acquireNextImage();
+                            if(shot==null)return;
+                            StillListener cb=pendingStill;
+                            pendingStill=null;
+                            if(cb==null||!active)return;
+                            ByteBuffer data=shot.getPlanes()[0].getBuffer();
+                            byte[] jpeg=new byte[data.remaining()];
+                            data.get(jpeg);
+                            if(jpeg.length<4||(jpeg[0]&255)!=255||(jpeg[1]&255)!=216){
+                                cb.onFailure("手机高清照片数据无效");
+                                return;
+                            }
+                            cb.onJpeg(jpeg,shot.getWidth(),shot.getHeight(),
+                                android.os.SystemClock.elapsedRealtime());
+                        }catch(RuntimeException failure){
+                            StillListener cb=pendingStill;
+                            pendingStill=null;
+                            if(cb!=null)cb.onFailure("读取高清JPEG失败："+failure.getMessage());
+                        }finally{
+                            if(shot!=null)shot.close();
+                        }
+                    },handler);
+                }
+            }
             reader.setOnImageAvailableListener(source -> {
                 Image image = source.acquireLatestImage();
                 if (image == null) return;
@@ -262,6 +307,62 @@ public final class InternalCameraController {
         throw new IllegalArgumentException("摄像头没有可同时用于预览和OCR的图像尺寸");
     }
 
+    /** Prefer a real ~8MP Camera2 still size; don't upscale preview frames. */
+    private static Size chooseStillSize(Size[] supported){
+        if(supported==null||supported.length==0)return null;
+        Size best=null;
+        double bestScore=Double.POSITIVE_INFINITY;
+        final double target=8000000.0;
+        for(Size candidate:supported){
+            long pixels=(long)candidate.getWidth()*candidate.getHeight();
+            if(pixels<2000000L)continue;
+            double ratio=candidate.getWidth()/(double)candidate.getHeight();
+            // Favor physical output nearest 8MP, with a small preference for
+            // the same 16:9 field of view as the existing phone preview.
+            double score=Math.abs(Math.log(pixels/target))+
+                Math.abs(Math.log(ratio/(16.0/9.0)))*0.15;
+            if(score<bestScore){best=candidate;bestScore=score;}
+        }
+        return best;
+    }
+
+    public void requestStillPhoto(StillListener callback){
+        if(callback==null)return;
+        Handler h=handler;
+        if(h==null){callback.onFailure("手机摄像头尚未启动");return;}
+        final int token=generation;
+        h.post(()->{
+            if(!active||token!=generation||camera==null||session==null||
+                stillReader==null){
+                callback.onFailure("高清拍照通道未就绪，请确认摄像头支持JPEG拍照");
+                return;
+            }
+            if(pendingStill!=null){callback.onFailure("上一张高清照片还在拍摄");return;}
+            pendingStill=callback;
+            try{
+                CaptureRequest.Builder still=camera.createCaptureRequest(
+                    CameraDevice.TEMPLATE_STILL_CAPTURE);
+                still.addTarget(stillReader.getSurface());
+                still.set(CaptureRequest.CONTROL_AF_MODE,
+                    CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+                still.set(CaptureRequest.CONTROL_AE_MODE,CaptureRequest.CONTROL_AE_MODE_ON);
+                still.set(CaptureRequest.JPEG_QUALITY,(byte)92);
+                // No device/EXIF rotation: upload geometry is normalized
+                // once, explicitly, by PhoneStillJpeg in the shared pipeline.
+                still.set(CaptureRequest.JPEG_ORIENTATION,0);
+                if(repeatBuilder!=null){
+                    Rect crop=repeatBuilder.get(CaptureRequest.SCALER_CROP_REGION);
+                    if(crop!=null)still.set(CaptureRequest.SCALER_CROP_REGION,crop);
+                }
+                session.capture(still.build(),null,handler);
+            }catch(CameraAccessException|IllegalStateException|
+                    IllegalArgumentException error){
+                pendingStill=null;
+                callback.onFailure("高清拍照失败："+error.getMessage());
+            }
+        });
+    }
+
     private void configureSession(final int token) {
         if (camera == null || reader == null || !active || token != generation) return;
         SurfaceTexture st = textureView.getSurfaceTexture();
@@ -285,7 +386,10 @@ public final class InternalCameraController {
                 CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_AUTO);
             repeatBuilder=builder;
             applyZoomCrop();
-            camera.createCaptureSession(Arrays.asList(previewSurface, analysis),
+            java.util.ArrayList<Surface> outputs=new java.util.ArrayList<>(
+                Arrays.asList(previewSurface,analysis));
+            if(stillReader!=null)outputs.add(stillReader.getSurface());
+            camera.createCaptureSession(outputs,
                 new CameraCaptureSession.StateCallback() {
                     @Override public void onConfigured(CameraCaptureSession configured) {
                         if (!active || camera == null || token != generation) {
@@ -369,9 +473,14 @@ public final class InternalCameraController {
         openRequested = false;
         previewDelivered = false;
         repeatBuilder=null;
+        pendingStill=null;
         if (session != null) { try { session.close(); } catch (Exception ignored) {} session = null; }
         if (camera != null) { try { camera.close(); } catch (Exception ignored) {} camera = null; }
         if (reader != null) { try { reader.close(); } catch (Exception ignored) {} reader = null; }
+        if (stillReader != null) {
+            try { stillReader.close(); } catch (Exception ignored) {}
+            stillReader = null;
+        }
         if (previewSurface != null) {
             try { previewSurface.release(); } catch (Exception ignored) {}
             previewSurface = null;
