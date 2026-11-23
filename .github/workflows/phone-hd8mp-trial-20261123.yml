@@ -1,0 +1,188 @@
+name: Blue Star v1.0.80 Phone Real 8MP Still Trial
+on:
+  push:
+    branches: [ 'exp/phone-hd8mp-trial-20261123' ]
+    paths:
+      - 'cloud-vision-app/app/**'
+      - 'cloud-vision-app/docs/PHONE_HD8MP_TRIAL_20261123.md'
+      - '.github/workflows/phone-hd8mp-trial-20261123.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  validated-apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify only real phone 8MP JPEG selection and unchanged upload/cloud/voice
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          base='bf05a9521f6243c33f440c9cc586f6348c9a72cb'
+          prefix='cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/'
+          expected={
+              '.github/workflows/phone-hd8mp-trial-20261123.yml',
+              'cloud-vision-app/docs/PHONE_HD8MP_TRIAL_20261123.md',
+              'cloud-vision-app/app/build.gradle',
+              prefix+'PhoneStillJpeg.java',
+              prefix+'InternalCameraController.java',
+          }
+          changed=set(subprocess.check_output(
+              ['git','diff','--name-only',base,'HEAD'],text=True).splitlines())
+          assert changed==expected, ('unexpected scope',sorted(changed^expected))
+          get=lambda file:Path(prefix+file).read_text()
+          jpeg=get('PhoneStillJpeg.java')
+          cam=get('InternalCameraController.java')
+          main=get('MainActivity.java')
+          cloud=get('CloudVisionClient.java')
+          comp=get('FrameCompressor.java')
+          c110=get('C110WifiCamera.java')
+          gradle=Path('cloud-vision-app/app/build.gradle').read_text()
+          assert jpeg.count('static final long MAX_UPLOAD_PIXELS=8000000L;')==1
+          assert 'MAX_UPLOAD_PIXELS=12000000L' not in jpeg
+          assert 'PhoneStillJpeg.MAX_UPLOAD_PIXELS' in cam
+          assert 'final double target=(double)PhoneStillJpeg.MAX_UPLOAD_PIXELS' in cam
+          assert 'map.getOutputSizes(ImageFormat.JPEG)' in cam
+          assert 'CameraDevice.TEMPLATE_STILL_CAPTURE' in cam
+          assert 'Math.abs(Math.log(pixels/target))' in cam
+          assert 'Math.abs(Math.log(ratio/(16.0/9.0)))*0.15' in cam
+          assert 'return best' in cam
+          assert 'Math.min(1.0,Math.sqrt(MAX_UPLOAD_PIXELS' in jpeg
+          assert 'Bitmap.CompressFormat.JPEG,90' in jpeg
+          assert 'rotation' in jpeg.lower() and 'postRotate' in jpeg
+          assert 'C110实时取帧' in main and 'C110高清原图' in main
+          assert 'phoneStill?PhoneStillJpeg.prepare' in main
+          assert 'FrameCompressor.choose(' in main
+          assert 'LONG_1080 = 1920' in comp
+          assert 'c110Camera.shootAfterLivePreview' in main
+          assert 'shootAfterLivePreview' in c110
+          # Keep v1.0.79 image POST fixed-length streaming, v1.0.78 cancel.
+          assert 'if(!textOnly)connection.setFixedLengthStreamingMode(request.length)' in cloud
+          assert 'static final class Cancellation' in cloud
+          assert 'photoCloudExecutor=Executors.newFixedThreadPool(2)' in main
+          assert 'photoCloudTask=photoCloudExecutor.submit' in main
+          assert 'c110NativeShutterBusy' in main
+          assert 'stream_options' in cloud and 'include_usage' in cloud
+          assert 'versionCode 89' in gradle
+          assert "versionName '1.0.80-phone-hd8mp-trial'" in gradle
+          assert "applicationIdSuffix '.c110plusquick159'" in gradle
+          assert 'org.videolan.android:libvlc-all:3.6.5' in gradle
+          assert "implementation project(':libausbc')" in gradle
+          assert "implementation project(':libuvc')" in gradle
+          print('PASS: exact 5-file 8MP-only diff; genuine Camera2 JPEG selection')
+          print('      and upload cap share 8000000 pixels; unchanged 720p, C110, USB,')
+          print('      image fixed-length POST, latest-photo cancellation and TTS code')
+          PY
+      - name: Run vendor allow-list, task and C110 pure Java regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-tests
+          javac -d /tmp/bluestar-tests "$BASE/CloudProviderPolicy.java" cloud-vision-app/tests/CloudProviderPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudProviderPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/CloudProviderPolicy.java" "$BASE/CloudThinkingPolicy.java" cloud-vision-app/tests/CloudThinkingPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudThinkingPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/VisionModelCatalog.java" "$BASE/OcrModelCatalog.java" cloud-vision-app/tests/CloudServerListTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudServerListTest
+          javac -d /tmp/bluestar-tests "$BASE/VoiceAction.java" cloud-vision-app/tests/VoiceActionSharedTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.VoiceActionSharedTest
+          javac -d /tmp/bluestar-tests "$BASE/ProviderKeyReusePolicy.java" cloud-vision-app/tests/ProviderKeyReusePolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.ProviderKeyReusePolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/TaskOrder.java" cloud-vision-app/tests/TaskOrderTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.TaskOrderTest
+          javac -d /tmp/bluestar-tests "$BASE/FollowupPrompt.java" cloud-vision-app/tests/FollowupPromptTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.FollowupPromptTest
+          javac -d /tmp/bluestar-tests "$BASE/C110ZoomGeometry.java" cloud-vision-app/tests/C110ZoomGeometryTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110ZoomGeometryTest
+          javac -d /tmp/bluestar-tests "$BASE/C110PhotoPolicy.java" cloud-vision-app/tests/C110PhotoPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110PhotoPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/OcrLineChunks.java" "$BASE/OcrSpeedExperiment.java" cloud-vision-app/tests/OcrSpeedExperimentTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.OcrSpeedExperimentTest
+      - name: Apply already-proven pinned UVC patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_usbmonitor.py cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 cloud-vision-app/scripts/patch_pinned_uvc.py
+          grep -q BSG_CLOUD_RAW5_GATED cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/jni/UVCCamera/UVCPreview.cpp
+          grep -q BSG_CLOUD_CLOSE_BARRIER cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
+      - name: Generate unchanged Blue Star launcher assets
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          java scripts/GenerateLauncherIcons.java
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            test -s "app/src/main/res/mipmap-$density/ic_launcher.png"
+          done
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile full Android arm64 app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :app:assembleDebug
+      - name: Verify APK actual package, launcher, native libraries, sound and SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_Phone_HD8MP_1.0.80.apk
+          APK=out/BlueStar_Guide_Phone_HD8MP_1.0.80.apk
+          test -s "$APK"
+          unzip -tq "$APK" >/dev/null
+          unzip -Z1 "$APK" >out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlc.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlcjni.so' out/entries.txt
+          grep -Fxq 'res/raw/c_metal_clack_ding.mp3' out/entries.txt
+          grep -Fxq 'res/raw/voice_send_whoosh.wav' out/entries.txt
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging "$APK" >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110plusquick159'" out/badging.txt
+          grep -Fq "versionName='1.0.80-phone-hd8mp-trial'" out/badging.txt
+          grep -Fq "launchable-activity: name='com.vobich.bluestar.cloudprobe.HomeActivity'" out/badging.txt
+          test "$(grep -c '^launchable-activity:' out/badging.txt)" -eq 1
+          (cd out && sha256sum BlueStar_Guide_Phone_HD8MP_1.0.80.apk >SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+          BYTES=$(stat -c%s "$APK")
+          echo "New v1.0.80 APK bytes: $BYTES" >> "$GITHUB_STEP_SUMMARY"
+          echo "Baseline v1.0.79 APK bytes: 53534159" >> "$GITHUB_STEP_SUMMARY"
+          echo "Compared to v1.0.79: $((BYTES-53534159)) bytes (negative means smaller)" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_Guide_Phone_HD8MP_1.0.80
+          path: out/*
+          retention-days: 14
+      - name: Publish ONLY if every test and package verification passed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-phone-hd8mp-trial-20261123-v0180
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing release" >&2
+            exit 1
+          fi
+          gh release create "$TAG" out/BlueStar_Guide_Phone_HD8MP_1.0.80.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Blue Star v1.0.80 Phone Real 8MP Trial" \
+            --notes "v1.0.80 PHONE 8MP EXPERIMENT ONLY: choose a genuinely supported Camera2 JPEG size near 8 million pixels using existing selector, and cap phone still JPEG to 8000000 pixels. Do not upscale 720p preview. The prior 12MP model, 720p fast path, fixed-length image upload introduced in v1.0.79, latest-photo cancellation introduced in v1.0.78, Qwen/other models, TTS, C110 original photo, USB, UI, keys and camera firmware remain untouched. CI source-scope check, pure Java regressions, full Android build, native assets and APK validation passed. Only vivo X200 Pro device A/B can establish actual native resolution, OCR accuracy and first-audible-sentence latency."
