@@ -18,6 +18,31 @@ import java.nio.charset.StandardCharsets;
 final class CloudVisionClient {
     private static final String ENDPOINT="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
     interface PartListener { void onSpeakablePart(String part); }
+
+    /** Per-photo cancellation: mark stale first, then disconnect its actual socket. */
+    static final class Cancellation {
+        private volatile boolean cancelled;
+        private HttpURLConnection active;
+        synchronized void attach(HttpURLConnection connection) throws InterruptedException {
+            if(cancelled||Thread.currentThread().isInterrupted()){
+                connection.disconnect();
+                throw new InterruptedException("旧照片云端请求已取消");
+            }
+            active=connection;
+        }
+        synchronized void cancel(){
+            cancelled=true;
+            if(active!=null)active.disconnect();
+        }
+        synchronized void detach(HttpURLConnection connection){
+            if(active==connection)active=null;
+        }
+        boolean isCancelled(){return cancelled;}
+        void check() throws InterruptedException {
+            if(cancelled||Thread.currentThread().isInterrupted())
+                throw new InterruptedException("旧照片云端请求已取消");
+        }
+    }
     static final class Result {
         final String text, model, serverModel;
         final long networkMs, uploadMs, firstTextMs, firstSpeakableMs;
@@ -95,6 +120,13 @@ final class CloudVisionClient {
         return recognizeInternal(jpeg,cfg.key,task,cfg.model,listener,false,false,
             OcrSpeedExperiment.normalize(ocrSpeedMode),network,cfg);
     }
+    /** Latest-photo capture can abandon ONLY its own HTTP connection. */
+    static Result recognize(byte[] jpeg,CloudProviderStore.Config cfg,TaskCatalog.Task task,
+                            PartListener listener,String ocrSpeedMode,Network network,
+                            Cancellation cancel) throws Exception {
+        return recognizeInternal(jpeg,cfg.key,task,cfg.model,listener,false,false,
+            OcrSpeedExperiment.normalize(ocrSpeedMode),network,cfg,cancel);
+    }
     static Result recognize(byte[] jpeg,CloudProviderStore.Config cfg,TaskCatalog.Task task,
                             PartListener listener,boolean allowSearch,Network network)
                             throws Exception {
@@ -124,6 +156,16 @@ final class CloudVisionClient {
                                String visionModel,PartListener listener,
                                boolean textOnly,boolean allowSearch,String ocrSpeedMode,
                                Network cloudNetwork,CloudProviderStore.Config cfg) throws Exception {
+        return recognizeInternal(jpeg,key,task,visionModel,listener,textOnly,
+            allowSearch,ocrSpeedMode,cloudNetwork,cfg,null);
+    }
+
+    private static Result recognizeInternal(byte[] jpeg,String key,TaskCatalog.Task task,
+                               String visionModel,PartListener listener,
+                               boolean textOnly,boolean allowSearch,String ocrSpeedMode,
+                               Network cloudNetwork,CloudProviderStore.Config cfg,
+                               Cancellation cancel) throws Exception {
+        if(cancel!=null)cancel.check();
         if(key==null||key.trim().isEmpty())
             throw new IllegalArgumentException("请先在设置中配置API Key");
         boolean isOcr=TaskCatalog.OCR.equals(task.engine);
@@ -132,7 +174,7 @@ final class CloudVisionClient {
         if(cfg!=null&&cfg.custom&&CloudProviderStore.LAYOUT.equals(cfg.protocol)){
             if(!isOcr||textOnly)
                 throw new IllegalArgumentException("Layout Parsing 只能用于图片文字识别");
-            return LayoutParsingClient.recognize(jpeg,cfg,cloudNetwork);
+            return LayoutParsingClient.recognize(jpeg,cfg,cloudNetwork,cancel);
         }
         boolean isBook=isOcr&&ReadingRules.TASK_ID.equals(task.id);
         boolean connectionTest="model-probe".equals(task.id);
@@ -230,6 +272,7 @@ final class CloudVisionClient {
         connection.setDoOutput(true);
         connection.setRequestProperty("Authorization","Bearer "+key.trim());
         connection.setRequestProperty("Content-Type","application/json");
+        if(cancel!=null)cancel.attach(connection);
         long started=SystemClock.elapsedRealtime();
         // A fully read, successfully validated Zhipu OCR response may reuse
         // Java's standard HTTPS keep-alive connection on the next capture.
@@ -238,6 +281,7 @@ final class CloudVisionClient {
         try{
             byte[] request=body.toString().getBytes(StandardCharsets.UTF_8);
             try(OutputStream out=connection.getOutputStream()){out.write(request);}
+            if(cancel!=null)cancel.check();
             // Includes connection establishment and request-body upload, not model execution.
             long uploadMs=SystemClock.elapsedRealtime()-started;
             int status=connection.getResponseCode();
@@ -257,6 +301,7 @@ final class CloudVisionClient {
             }
             if(!streaming){
                 JSONObject response=new JSONObject(readLimited(connection.getInputStream()));
+                if(cancel!=null)cancel.check();
                 JSONArray choices=response.optJSONArray("choices");
                 if(choices==null||choices.length()==0)throw new Exception("云端没有返回识别内容");
                 String answer=choices.getJSONObject(0).getJSONObject("message").optString("content","");
@@ -293,7 +338,7 @@ final class CloudVisionClient {
             java.util.function.Consumer<String> speakPart=part->{
                 if(firstSpeakable[0]<0)
                     firstSpeakable[0]=SystemClock.elapsedRealtime()-started;
-                if(listener!=null)listener.onSpeakablePart(part);
+                if(listener!=null&&(cancel==null||!cancel.isCancelled()))listener.onSpeakablePart(part);
             };
             // B tracks first completed line without speaking. C delivers each
             // completed line once. An unbroken text is held until the end.
@@ -310,7 +355,8 @@ final class CloudVisionClient {
                 String line;
                 int charBudget=0;
                 while((line=reader.readLine())!=null){
-                    if(Thread.currentThread().isInterrupted())throw new InterruptedException();
+                    if(cancel!=null)cancel.check();
+                    else if(Thread.currentThread().isInterrupted())throw new InterruptedException();
                     if(!line.startsWith("data:"))continue;
                     String payload=line.substring(5).trim();
                     if("[DONE]".equals(payload))break;
@@ -340,6 +386,7 @@ final class CloudVisionClient {
                     else speechChunks.append(part,speakPart);
                 }
             }
+            if(cancel!=null)cancel.check();
             String answer=all.toString().trim();
             if(isBook&&outputTruncated)
                 throw new Exception("书页输出达到模型长度限制，文字可能不完整，本页未保存");
@@ -357,7 +404,8 @@ final class CloudVisionClient {
                 uploadMs,firstText,firstSpeakable[0],firstLineReady[0],headersMs,
                 promptTokens,completionTokens);
         }finally{
-            if(!keepAliveEligible)connection.disconnect();
+            if(cancel!=null)cancel.detach(connection);
+            if(!keepAliveEligible||(cancel!=null&&cancel.isCancelled()))connection.disconnect();
         }
     }
 
