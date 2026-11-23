@@ -64,6 +64,7 @@ final class C110WifiBootstrap {
     private static final String KEY_SSID="ssid";
     private static final String KEY_PASSWORD="password";
     private static final String KEY_BSSID="bssid";
+    private static final String KEY_AUTO="auto_connect";
     private static WeakReference<C110WifiBootstrap> mainOwner=new WeakReference<>(null);
     private static volatile Network verifiedNetwork;
 
@@ -80,13 +81,39 @@ final class C110WifiBootstrap {
     private boolean attempted;
     private boolean chooserOpen;
     private volatile Network verifying;
+    private boolean autoLaunchRequested;
+    private Credentials pendingPermission;
+
+    private static final class Credentials {
+        final String ssid,password,bssid;
+        final boolean freshSelection;
+        Credentials(String ssid,String password,String bssid,boolean freshSelection){
+            this.ssid=ssid;this.password=password;this.bssid=bssid;
+            this.freshSelection=freshSelection;
+        }
+    }
+    static String savedSsid(Context context){
+        return context.getSharedPreferences(WIFI_PREF,Context.MODE_PRIVATE)
+            .getString(KEY_SSID,"");
+    }
+    static boolean automatic(Context context){
+        return context.getSharedPreferences(WIFI_PREF,Context.MODE_PRIVATE)
+            .getBoolean(KEY_AUTO,true);
+    }
+    static void setAutomatic(Context context,boolean enabled){
+        context.getSharedPreferences(WIFI_PREF,Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_AUTO,enabled).apply();
+    }
 
     C110WifiBootstrap(Activity activity,Consumer<String> updates){
         owner=activity;
         this.updates=updates;
         cm=(ConnectivityManager)activity.getSystemService(Context.CONNECTIVITY_SERVICE);
         wifiManager=(WifiManager)activity.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-        if(activity instanceof MainActivity)mainOwner=new WeakReference<>(this);
+        // Home owns one long-lived NetworkCallback across the other Activities.
+        C110WifiBootstrap existing=mainOwner.get();
+        if(activity instanceof HomeActivity||existing==null||existing.closed)
+            mainOwner=new WeakReference<>(this);
     }
 
     private SharedPreferences prefs(){
@@ -113,17 +140,31 @@ final class C110WifiBootstrap {
         return true;
     }
 
-    static void onScanPermissionFromCameraPage(Activity foreground,boolean granted){
+    static boolean onScanPermissionFromCameraPage(Activity foreground,boolean granted){
         C110WifiBootstrap target=mainOwner.get();
-        if(target!=null&&!target.closed)target.onScanPermissionResult(foreground,granted);
+        if(target==null||target.closed)return false;
+        target.onScanPermissionResult(foreground,granted);
+        return true;
     }
-
-    static void onWifiPermissionFromCameraPage(Activity foreground,boolean granted){
+    static boolean onWifiPermissionFromCameraPage(Activity foreground,boolean granted){
         C110WifiBootstrap target=mainOwner.get();
-        if(target!=null&&!target.closed){
-            target.currentScreen=new WeakReference<>(foreground);
-            target.onPermissionResult(granted);
-        }
+        if(target==null||target.closed)return false;
+        target.currentScreen=new WeakReference<>(foreground);
+        target.onPermissionResult(granted);
+        return true;
+    }
+    /** Allow changing physical cameras even when another C110 is connected. */
+    static boolean chooseFromCameraPage(Activity foreground){
+        C110WifiBootstrap target=mainOwner.get();
+        if(target==null||target.closed)return false;
+        target.currentScreen=new WeakReference<>(foreground);
+        target.main.post(()->target.chooseCameraFromScreen(foreground));
+        return true;
+    }
+    void chooseCameraFromScreen(Activity foreground){
+        if(closed)return;
+        currentScreen=new WeakReference<>(foreground);
+        showOriginalStyleWifiPicker(foreground);
     }
 
     /** On Android dual-STA, the local-only C110 Wi-Fi can lack a default route. */
@@ -155,19 +196,17 @@ final class C110WifiBootstrap {
         return caps!=null&&caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI);
     }
 
-    /** Auto-connect only AFTER an exact target has been selected once. */
+    /** Home makes one automatic request on its foreground entry, if paired. */
     void startAtLaunch(){
-        if(closed||cm==null||attempted)return;
-        if(connected(owner)!=null){
-            report("已检测到相机Wi-Fi，进入C110模式即可预览");
+        if(closed||cm==null)return;
+        String ssid=prefs().getString(KEY_SSID,"");
+        String password=prefs().getString(KEY_PASSWORD,"");
+        if(!C110WifiPairingPolicy.shouldAutoConnect(automatic(owner),
+                autoLaunchRequested||attempted,connected(owner)!=null,ssid,password))
             return;
-        }
-        if(prefs().getString(KEY_SSID,"").isEmpty()){
-            report("未保存C110热点名称：打开C110模式，从附近热点列表选择一次");
-            return;
-        }
-        Activity current=screen();
-        requestSelected(current,false);
+        autoLaunchRequested=true;
+        report("正在自动连接已记住的相机 "+ssid);
+        requestSelected(screen(),false);
     }
 
     void requestForCameraMode(){
@@ -189,20 +228,18 @@ final class C110WifiBootstrap {
 
     private void retryForCameraMode(){
         if(closed||cm==null)return;
-        if(connected(owner)!=null){
-            report("C110相机Wi-Fi已连接");
-            return;
-        }
+        if(connected(owner)!=null){report("相机Wi-Fi已连接");return;}
         if(requestedCallback!=null)clearCallback(requestedCallback);
-        // Refresh the actual scanned SSID/BSSID instead of blindly retrying
-        // the same assumption that may never match the physical C110 hotspot.
-        showOriginalStyleWifiPicker(screen());
+        requestSelected(screen(),true);
     }
 
     void onPermissionResult(boolean granted){
         if(closed)return;
-        if(granted)requestSelected(screen(),false);
-        else report("未允许附近Wi-Fi设备权限，无法发起原厂式连接");
+        Credentials pending=pendingPermission;
+        pendingPermission=null;
+        if(!granted){report("未授权附近Wi-Fi，无法连接相机");return;}
+        if(pending!=null)requestTarget(screen(),pending,true);
+        else requestSelected(screen(),false);
     }
 
     void onScanPermissionResult(Activity foreground,boolean granted){
@@ -319,8 +356,9 @@ final class C110WifiBootstrap {
         if(closed||foreground.isFinishing()||chooserOpen)return;
         String storedSsid=prefs().getString(KEY_SSID,"");
         String storedPwd=prefs().getString(KEY_PASSWORD,"");
+        // Never silently guess the password for a different camera.
         String suggested=storedSsid.equals(exactSsid)&&!storedPwd.isEmpty()?
-            storedPwd:"12345678";
+            storedPwd:"";
         EditText input=new EditText(foreground);
         input.setSingleLine(true);
         input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
@@ -339,11 +377,10 @@ final class C110WifiBootstrap {
                     report("相机Wi-Fi密码必须是8～63位，未发连接请求");
                     return;
                 }
-                prefs().edit().putString(KEY_SSID,exactSsid)
-                    .putString(KEY_PASSWORD,password)
-                    .putString(KEY_BSSID,actualBssid).apply();
-                report("已选择真实热点 "+exactSsid+"；请求Android连接");
-                requestSelected(foreground,true);
+                // Do not replace the remembered device until verified by 3012.
+                report("正在验证新相机 "+exactSsid+"；成功后才会记住");
+                requestTarget(foreground,
+                    new Credentials(exactSsid,password,actualBssid,true),true);
             })
             .setNegativeButton("取消",(dialog,which)->chooserOpen=false)
             .setOnCancelListener(d->chooserOpen=false)
@@ -351,42 +388,57 @@ final class C110WifiBootstrap {
     }
 
     private void requestSelected(Activity foreground,boolean replaceOld){
-        if(closed||cm==null||foreground==null||foreground.isFinishing())return;
+        if(closed||foreground==null||foreground.isFinishing())return;
         String ssid=prefs().getString(KEY_SSID,"");
         String password=prefs().getString(KEY_PASSWORD,"");
-        String bssid=prefs().getString(KEY_BSSID,"");
-        if(ssid.isEmpty()||password.length()<8){
-            if(!foreground.isFinishing())showOriginalStyleWifiPicker(foreground);
-            return;
+        if(!C110WifiPairingPolicy.validTarget(ssid,password)){
+            showOriginalStyleWifiPicker(foreground);return;
         }
-        if(connected(owner)!=null){
-            report("C110网络已连接，省略重复系统请求");return;
+        // Remember exact SSID; never pin the old BSSID after camera reboot.
+        requestTarget(foreground,new Credentials(ssid,password,"",false),replaceOld);
+    }
+
+    private void requestTarget(Activity foreground,Credentials target,boolean replaceOld){
+        if(closed||cm==null||foreground==null||foreground.isFinishing())return;
+        currentScreen=new WeakReference<>(foreground);
+        if(target==null||!C110WifiPairingPolicy.validTarget(target.ssid,target.password)){
+            report("相机Wi-Fi名称或密码无效，未发起连接");return;
         }
-        if(replaceOld&&requestedCallback!=null)clearCallback(requestedCallback);
-        if(requestedCallback!=null){report("已有相机Wi-Fi请求，等待系统反馈");return;}
-        if(Build.VERSION.SDK_INT<29){report("当前Android需使用系统Wi-Fi页面连接");return;}
+        if(!target.freshSelection&&connected(owner)!=null){
+            report("相机Wi-Fi已连接，不再重复申请");return;
+        }
+        if(replaceOld&&requestedCallback!=null){
+            clearCallback(requestedCallback);
+            verifiedNetwork=null;
+        }
+        if(requestedCallback!=null){
+            report("已有Wi-Fi连接请求，请等待结果");return;
+        }
+        if(Build.VERSION.SDK_INT<29){
+            report("此Android版本需要在系统Wi-Fi中手动连接");return;
+        }
         String permission=Build.VERSION.SDK_INT>=33?
             Manifest.permission.NEARBY_WIFI_DEVICES:Manifest.permission.ACCESS_FINE_LOCATION;
         if(foreground.checkSelfPermission(permission)!=PackageManager.PERMISSION_GRANTED){
-            currentScreen=new WeakReference<>(foreground);
+            pendingPermission=target;
             foreground.requestPermissions(new String[]{permission},PERMISSION_REQUEST);
             return;
         }
-        // The OEM WifiHelper$1.run explicitly disconnects old Wi-Fi before
-        // its vivo WifiNetworkSpecifier request. For a normal app on newer
-        // Android, WifiManager.disconnect() may be ignored by system policy.
-        if(wifiManager!=null&&Build.MANUFACTURER.toLowerCase(Locale.ROOT).contains("vivo")){
-            try{wifiManager.disconnect();}catch(RuntimeException ignored){}
-        }
+        pendingPermission=null;
+        // Let Android switch networks; do not disconnect home Wi-Fi before
+        // knowing the camera can connect. User has disabled dual-WLAN.
         attempted=true;
         final int ticket=++generation;
-        report("原厂式连接：精确热点 "+ssid+"，等待Android系统选择/授权");
+        report("正在请求连接相机 "+target.ssid+"；首次需按Android提示授权");
         try{
             WifiNetworkSpecifier.Builder exact=new WifiNetworkSpecifier.Builder()
-                .setSsid(ssid).setWpa2Passphrase(password);
-            if(bssid!=null&&!bssid.isEmpty()){
+                .setSsid(target.ssid).setWpa2Passphrase(target.password);
+            String bssid=C110WifiPairingPolicy.effectiveBssid(target.bssid,target.freshSelection);
+            if(!bssid.isEmpty()){
                 try{exact.setBssid(MacAddress.fromString(bssid));}
-                catch(IllegalArgumentException wrongBssid){report("无效BSSID，使用精确SSID");}
+                catch(IllegalArgumentException bad){
+                    report("无效相机BSSID，改用SSID连接");
+                }
             }
             NetworkRequest request=new NetworkRequest.Builder()
                 .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
@@ -397,25 +449,27 @@ final class C110WifiBootstrap {
             ConnectivityManager.NetworkCallback cb=new ConnectivityManager.NetworkCallback(){
                 @Override public void onAvailable(Network network){
                     if(closed||ticket!=generation)return;
-                    report("Android报告C110 Wi-Fi已接入，正在核验相机3012");
-                    verifyAsync(ticket,network);
+                    report("Android已接入相机Wi-Fi，正在核验3012身份");
+                    verifyAsync(ticket,network,target);
                 }
                 @Override public void onLinkPropertiesChanged(Network network,LinkProperties info){
-                    verifyAsync(ticket,network);
+                    verifyAsync(ticket,network,target);
                 }
                 @Override public void onUnavailable(){
                     main.post(()->{
                         if(closed||ticket!=generation)return;
-                        report("Android未完成该热点的连接；请核对实际SSID/密码并点↻重新选择");
+                        report("未连接成功；确认相机热点已开启，或重新扫描选择");
                         clearCallback(this);
+                        autoLaunchRequested=false;
                     });
                 }
                 @Override public void onLost(Network network){
                     if(network.equals(verifiedNetwork))verifiedNetwork=null;
                     main.post(()->{
                         if(closed||ticket!=generation)return;
-                        report("相机Wi-Fi已断开；可点击↻重新选择");
+                        report("相机Wi-Fi断开；下次打开软件时重新尝试");
                         clearCallback(this);
+                        autoLaunchRequested=false;
                     });
                 }
             };
@@ -423,8 +477,8 @@ final class C110WifiBootstrap {
             cm.requestNetwork(request,cb,30000);
         }catch(RuntimeException ex){
             if(requestedCallback!=null)clearCallback(requestedCallback);
-            attempted=false;
-            report("原厂式Wi-Fi申请失败："+ex.getClass().getSimpleName());
+            attempted=false;autoLaunchRequested=false;
+            report("Wi-Fi请求失败："+ex.getClass().getSimpleName());
         }
     }
 
@@ -435,7 +489,7 @@ final class C110WifiBootstrap {
         attempted=false;
     }
 
-    private void verifyAsync(int ticket,Network network){
+    private void verifyAsync(int ticket,Network network,Credentials target){
         if(closed||ticket!=generation||!isWifi(cm,network)||
             network.equals(verifiedNetwork)||network.equals(verifying))return;
         verifying=network;
@@ -479,15 +533,33 @@ final class C110WifiBootstrap {
             verifying=null;
             if(standard&&isWifi(cm,network)){
                 verifiedNetwork=network;
-                report("原厂式热点连接成功：3012标准C110已验证，可以播放画面");
+                if(C110WifiPairingPolicy.commitNewTarget(true,target.freshSelection)){
+                    prefs().edit().putString(KEY_SSID,target.ssid)
+                        .putString(KEY_PASSWORD,target.password)
+                        .putString(KEY_BSSID,target.bssid)
+                        .putBoolean(KEY_AUTO,true).apply();
+                    report("相机已验证并记住 "+target.ssid+"；下次打开软件自动连接");
+                }else report("已自动连接并验证相机 "+target.ssid);
             }else{
-                report("已连上选定热点，但3012未验证标准C110；请检查相机Wi-Fi和热点选择");
+                report("3012未验证当前热点为受支持的C110，旧相机记录未覆盖");
+                main.post(()->{
+                    if(ticket!=generation)return;
+                    if(requestedCallback!=null)clearCallback(requestedCallback);
+                    autoLaunchRequested=false;
+                });
             }
         });
     }
 
     private void report(String value){
-        main.post(()->{if(!closed)updates.accept(value);});
+        main.post(()->{
+            if(closed)return;
+            updates.accept(value);
+            Activity foreground=currentScreen.get();
+            // One Home network lease, even when Settings is on top.
+            if(foreground instanceof MainActivity&&foreground!=owner)
+                ((MainActivity)foreground).onC110WifiStatusFromShared(value);
+        });
     }
 
     void shutdown(){
@@ -496,8 +568,10 @@ final class C110WifiBootstrap {
         verifying=null;
         if(requestedCallback!=null&&cm!=null)clearCallback(requestedCallback);
         requestedCallback=null;
-        verifiedNetwork=null;
-        if(mainOwner.get()==this)mainOwner.clear();
+        if(mainOwner.get()==this){
+            verifiedNetwork=null;
+            mainOwner.clear();
+        }
         verifier.shutdownNow();
     }
 }
