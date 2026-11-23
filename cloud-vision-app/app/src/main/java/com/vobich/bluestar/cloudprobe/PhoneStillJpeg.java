@@ -12,7 +12,7 @@ import java.io.ByteArrayOutputStream;
  */
 final class PhoneStillJpeg {
     // One source of truth for both native Camera2 still selection and upload cap.
-    static final long MAX_UPLOAD_PIXELS=12000000L;
+    static final long MAX_UPLOAD_PIXELS=8000000L;
     private PhoneStillJpeg(){}
 
     static final class Result {
