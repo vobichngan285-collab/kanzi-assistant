@@ -1,3 +1,18 @@
+# 2026-11-23｜v1.0.78 两项高优先级首轮优化：最新照片优先+旧云端HTTP取消，CI成功发布，真机待验收
+
+- **明确授权范围**：用户要求“一项一项来”，第一轮**只修两个高优先级问题**：（1）云端处理旧照片时不能拍第二张的忙锁；（2）旧云端请求与拍照/JPEG处理共用单线程、旧网络卡住时挡住新任务。明确不开展其他优化，尤其不改手机1200万像素、云端视觉像素上限、模型、TTS音色、主题UI、USB底层、C110原厂命令、内存优化和自动故障恢复。
+- **真实仓库/基线**：唯一原仓 `vobichngan285-collab/kanzi-assistant`，从已发布并已实机验证1200万像素的v1.0.77 SHA `4118b708e17e4fc436f1c03f4b5c515aa792008f` 创建独立分支 `exp/latest-photo-cancel-cloud-20261123`；本轮最终HEAD SHA `83077e40dd4cbcc8099635a8167a413a17260648`，`versionCode 87` / `versionName 1.0.78-latest-photo-cancel`；debug包名仍 `com.vobich.bluestar.c110plusquick159`，启动入口HomeActivity不变。
+- **精准10文件范围，GitHub compare已核验**：`MainActivity.java`、`CloudVisionClient.java`、`TargetVisionClient.java`、`LayoutParsingClient.java`、`C110FrameReader.java`、`C110QuickShotController.java`、`C110CameraActivity.java`、`cloud-vision-app/app/build.gradle`、新增`cloud-vision-app/docs/LATEST_PHOTO_CANCEL_20261123.md`、新增`.github/workflows/latest-photo-cancel-20261123.yml`。其余文件字节未变，包括`InternalCameraController.java`、`PhoneStillJpeg.java`、`FrameCompressor.java`、`HomeActivity.java`、`C110WifiCamera.java`、`C110WifiBootstrap.java`、TTS、ASR、USB与JNI/LibVLC。
+- **手机/USB/C110 主拍照**：`MainActivity.captureOneFrame`移除云端忙锁；旧任务一旦JPEG已获取允许新照片替换，1500ms防误触改350ms；新照片时旧`requestVersion`失效、停旧TTS、取消旧Future、`CloudVisionClient.Cancellation.cancel`主动断开**其自己的**HTTP连接；`beginCapturedFrame`仅在单线程`encoder`完成JPEG编码后，将识别提交到最多2线程的`photoCloudExecutor`；旧HTTP阻塞不再占用相机/JPEG工作队列。捕获JPEG前保持安全锁：手机静态拍照/快速取帧尚未完成不重复下发；C110独立`c110NativeShutterBusy`确保真快门1001和JPEG下载只串行；在C110机身快门进行中不得取消其拍摄工作。
+- **其他C110入口**：主页`C110QuickShotController`拍下一张前可取消`C110FrameReader`旧识别，`shutterPending`依然禁止双快门；独立`C110CameraActivity`按高清拍照先由既有`stop(false)`取消旧Reader并安全释放RTSP后再发真快门；`C110FrameReader`新增`cancelRecognition()`不关闭预览、旧任务标记作废、停TTS与HTTP；`photoCloudIo`有界2线程，JPEG预处理`io`保留原单线程，避免旧网络阻塞新照片识别；原相机1001/网关/VLC逻辑不动。
+- **三类图片请求可取消**：`CloudVisionClient.Cancellation`记录单请求连接、提供`attach/check/detach/cancel`，网络长等待期间`disconnect()`＋`Future.cancel(true)`；仅拍照调用传cancel signal，原聊天/书页/音频调用保持旧API。相同signal透传给`TargetVisionClient`和`LayoutParsingClient`，防止非Chat图像通道漏掉；客户端不能保证云服务器已接收请求后不继续计费。旧结果经请求序号过滤，不覆盖新照片/朗读。
+- **完整构建/核验**：GitHub Actions run `45197893040` `completed/success`，分支HEAD、CI SHA、Release target精确一致，含严格10文件差异与逻辑边界断言、既有所有模型/voice/任务/C110纯Java回归、固定UVC补丁、Android ARM64完整Gradle debug编译、包名/唯一Launcher/LibVLC3.6.5/UVC native/原提示音/ZIP/SHA256、Artifact上传、Release发布全PASS。
+- **已发布APK**：Tag `bluestar-latest-photo-cancel-20261123-v0178`；`BlueStar_Guide_Latest_Photo_1.0.78.apk`（53,534,155 bytes）。直接下载：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-latest-photo-cancel-20261123-v0178/BlueStar_Guide_Latest_Photo_1.0.78.apk 。CI：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45197893040 。
+- **真机验收还未完成，不能夸大**：vivo X200 Pro Android16先测试手机高清首张拍完等待云端时再拍不同内容第二张（须非误触、间隔>350ms），确认第二张独立1200万像素、旧文字/TTS不会插入，新请求能在旧网络阻塞时及时开始；快速/USB同理。C110+（用户现有已测试实际设备）真实快门/取图后，分别在首页快捷及独立预览页测试第二张，不得双发1001或误关Wi-Fi；新照片只读新结果。断网及401时不自动重拍/重复计费。运行诊断是回归证据，不含照片/密钥；CI成功不代表硬件通过，也不能保证已提交云端的请求无Token费用。安装debug签名冲突**不可直接卸载原版**，防止Keystore密钥丢失。
+- **仍未改动的后续待办**：C110+/普通C110型号识别和原厂协议兼容隐患仍需独立研究；USB与Camera2安全自动恢复、1200万JPEG内存占用优化、云端像素上限调节均不属于本次首轮改动。
+
+---
+
 # 2026-11-23｜v1.0.77 手机高清近1200万像素 + 预览上传画质设置移至相机：CI全部通过，APK发布，待真机验证
 
 - **用户授权范围**：在v1.0.76实机已确认真实Camera2 JPEG 3712×2088（约775万像素）、点击到JPEG仅141～216ms后，用户决定下一版以约1200万像素为高清目标，且提出旧「设置→云端AI→图片分辨率」最多仅1080P、容易误认为限制手机高清。明确授权一起修复，要求保留原快速模式与C110/USB/云AI/TTS。之前“先停”针对上一修改尝试；本轮用户已重新明确授权这两项。
