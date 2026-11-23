@@ -29,6 +29,7 @@ public final class HomeActivity extends Activity {
     private static final int NAV_BG=0xED091D36,NAV_NORMAL=0xFF2C547D,NAV_ACTIVE=0xFF176BAC;
     private FrameLayout root;
     private C110QuickShotController quickShot;
+    private C110WifiBootstrap cameraWifi;
     private HomeVoiceAssistant homeVoice;
     private TextView quickStatusView;
     private String quickStatus="";
@@ -39,6 +40,8 @@ public final class HomeActivity extends Activity {
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
         quickLaunchPending=isQuickShotIntent(getIntent());
+        // The ONE network lease belongs to Home, not transient Settings/VLC.
+        cameraWifi=new C110WifiBootstrap(this,this::quickStatusChanged);
         quickShot=new C110QuickShotController(this,this::quickStatusChanged);
         homeVoice=new HomeVoiceAssistant(this,this::quickStatusChanged,this::prepareOtherScreenSpeech,this::voiceOneShotPhoto);
         root=new FrameLayout(this);
@@ -77,6 +80,11 @@ public final class HomeActivity extends Activity {
         heading.setTypeface(null,android.graphics.Typeface.BOLD);
         content.addView(heading,new LinearLayout.LayoutParams(-1,dp(74)));
             option(content,"▣","快捷拍照","C110+ 原厂高清快门 → OCR → 朗读",this::quickPhoto);
+            String cameraSsid=C110WifiBootstrap.savedSsid(this);
+            option(content,"⌁","运动相机 Wi-Fi",
+                cameraSsid.isEmpty()?"首次搜索并选择相机热点，验证成功后记住":
+                    "已记住 "+cameraSsid+" · 点击立即连接",
+                ()->{if(cameraWifi!=null)cameraWifi.requestForCameraMode();});
             quickStatusView=text(quickStatus,15,0xFFC3D7EF);
             quickStatusView.setPadding(dp(12),dp(5),dp(12),dp(8));
             quickStatusView.setVisibility(quickStatus.isEmpty()?View.GONE:View.VISIBLE);
@@ -194,6 +202,7 @@ public final class HomeActivity extends Activity {
         super.onResume();
         if(quickShot!=null)quickShot.onResume();
         if(homeVoice!=null)homeVoice.onResume();
+        if(cameraWifi!=null)cameraWifi.startAtLaunch();
         if(root!=null){
             render();
             // Wait until Home is resumed and the real user-requested camera
@@ -222,6 +231,7 @@ public final class HomeActivity extends Activity {
     @Override protected void onDestroy(){
         if(homeVoice!=null){homeVoice.shutdown();homeVoice=null;}
         if(quickShot!=null){quickShot.shutdown();quickShot=null;}
+        if(cameraWifi!=null){cameraWifi.shutdown();cameraWifi=null;}
         super.onDestroy();
     }
     @Override public void onRequestPermissionsResult(int requestCode,

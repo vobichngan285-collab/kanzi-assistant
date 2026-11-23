@@ -554,9 +554,20 @@ public final class MainActivity extends CameraActivity {
     /** C110 hardware settings are operated directly in unified Settings.
      *  Never start C110CameraActivity/VLC merely to change LED or beep. */
     String currentC110WifiSettingsStatus(){
-        return C110WifiBootstrap.connected(this)!=null?
-            "C110 Wi-Fi已验证连接，可以直接控制机身":
-            "尚未连接C110 Wi-Fi；请先点击连接";
+        String ssid=C110WifiBootstrap.savedSsid(this);
+        if(C110WifiBootstrap.connected(this)!=null)
+            return "运动相机Wi-Fi已连接，可以设置机身";
+        return ssid.isEmpty()?
+            "未记住相机；点击搜索选择实际相机热点":
+            "已记住 "+ssid+"；可点击立即连接";
+    }
+    boolean c110AutoConnectEnabled(){return C110WifiBootstrap.automatic(this);}
+    void setC110AutoConnectEnabled(boolean enabled){
+        C110WifiBootstrap.setAutomatic(this,enabled);
+        setC110SettingsStatus(enabled?"已开启下次进入软件时自动连接":"已关闭自动连接");
+    }
+    void onC110WifiStatusFromShared(String message){
+        setC110SettingsStatus(message);
     }
     String lastC110SettingsStatus(){return settingsC110Status;}
     private void setC110SettingsStatus(String value){
@@ -574,7 +585,14 @@ public final class MainActivity extends CameraActivity {
             return;
         }
         setC110SettingsStatus("正在申请连接C110相机Wi-Fi；按系统提示确认");
-        if(c110WifiBootstrap!=null)c110WifiBootstrap.requestForCameraMode();
+        if(!C110WifiBootstrap.requestFromCameraPage(this,false)&&
+                c110WifiBootstrap!=null)
+            c110WifiBootstrap.requestForCameraMode();
+    }
+    void chooseC110WifiFromSettings(){
+        setC110SettingsStatus("正在扫描附近Wi-Fi，请选择真实运动相机热点");
+        if(!C110WifiBootstrap.chooseFromCameraPage(this)&&c110WifiBootstrap!=null)
+            c110WifiBootstrap.chooseCameraFromScreen(this);
     }
     void setC110BeepFromSettings(boolean enabled){
         if(settingsC110DeviceControls!=null)
@@ -1509,19 +1527,21 @@ public final class MainActivity extends CameraActivity {
     @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] results){
         super.onRequestPermissionsResult(requestCode,permissions,results);
         if(requestCode==C110WifiBootstrap.PERMISSION_REQUEST){
-            if(c110WifiBootstrap!=null)
-                c110WifiBootstrap.onPermissionResult(results.length>0&&
-                    results[0]==PackageManager.PERMISSION_GRANTED);
+            boolean granted=results.length>0&&
+                results[0]==PackageManager.PERMISSION_GRANTED;
+            if(!C110WifiBootstrap.onWifiPermissionFromCameraPage(this,granted)&&
+                    c110WifiBootstrap!=null)
+                c110WifiBootstrap.onPermissionResult(granted);
             return;
         }
         if(requestCode==C110WifiBootstrap.SCAN_PERMISSION_REQUEST){
-            if(c110WifiBootstrap!=null)
-                c110WifiBootstrap.onScanPermissionResult(this,results.length>0&&
-                    results[0]==PackageManager.PERMISSION_GRANTED);
+            boolean granted=results.length>0&&
+                results[0]==PackageManager.PERMISSION_GRANTED;
+            if(!C110WifiBootstrap.onScanPermissionFromCameraPage(this,granted)&&
+                    c110WifiBootstrap!=null)
+                c110WifiBootstrap.onScanPermissionResult(this,granted);
             return;
         }
-        if(requestCode==REQUEST_PHONE_CAMERA&&c110WifiBootstrap!=null)
-            c110WifiBootstrap.startAtLaunch();
         if(requestCode==REQUEST_VOICE_MIC){
             voicePress.interrupt();
             if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)

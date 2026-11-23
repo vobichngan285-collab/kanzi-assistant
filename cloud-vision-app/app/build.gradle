@@ -6,8 +6,8 @@ android {
         applicationId 'com.vobich.bluestar'
         minSdk 26
         targetSdk 35
-        versionCode 92
-        versionName '1.0.83-phone1440-c110-original-toggle'
+        versionCode 93
+        versionName '1.0.84-c110-wifi-pair-auto'
         ndk { abiFilters 'arm64-v8a' }
     }
     buildTypes {

@@ -481,7 +481,13 @@ final class BlueStarSettingsScreen {
         c110LiveStatus.setPadding(dp(12),dp(2),dp(12),dp(12));
         content.addView(c110LiveStatus,new LinearLayout.LayoutParams(-1,-2));
         updateC110Status(app.lastC110SettingsStatus());
-        action("连接相机 Wi-Fi",()->app.connectC110WifiFromSettings());
+        action("立即连接相机 Wi-Fi",()->app.connectC110WifiFromSettings());
+        action("搜索 / 更换运动相机",()->app.chooseC110WifiFromSettings());
+        row("下次打开自动连接 · "+(app.c110AutoConnectEnabled()?"开启":"关闭"),
+            "只在成功验证并记住相机后生效；每次启动尝试一次",()->{
+                app.setC110AutoConnectEnabled(!app.c110AutoConnectEnabled());
+                render(history.get(history.size()-1));
+            });
         row("运动相机高清上传 · "+app.c110PhotoUploadDescription(),
             "只控制上传给千问的JPEG；关闭后不再限制原图像素",()->{
             String[] choices={"原图上传（默认，不限上传尺寸，不重新压缩）",
