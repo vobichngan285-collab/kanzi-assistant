@@ -1,3 +1,17 @@
+# 2026-11-23｜v1.0.81 手机真实约800万拍照＋云端上传分辨率三档实验：CI成功、APK已发布、真机待验收
+
+- **授权与目的**：用户于2026-11-23真机对照确认手机快速720P与手机真实高清约800万有明显速度差：13次快速首个TTS音频回调均值约1574ms、13次高清约2692ms。各自有7/8次完整云端数据时，`cloud.first_text_ms`分别约532ms和2178ms；仍含网络/服务器复杂因素，不可把差额全部算作视觉推理。用户明确表示“可以开始”，授权比较**保持原生800万拍照但缩小上传JPEG**。
+- **唯一原仓/完整基线**：`vobichngan285-collab/kanzi-assistant`；从已发布 v1.0.80 分支提交 `ac287edbd352dd090e3e56fa7e8248c080bf4fe2`创建`exp/phone-hd-upload-ab-20261123`，最终实验HEAD `3273c779db21ac2d2647efe335f7bb43385ca843`，`versionCode=90`，`versionName=1.0.81-phone-hd-upload-ab`，唯一Launcher `HomeActivity`，debug包名`com.vobich.bluestar.c110plusquick159`不变。
+- **严格8文件变更**：修改`MainActivity.java`（偏好设置与拍照时上传档位快照和仅数值日志）、`BlueStarSettingsScreen.java`（设置→相机三选一）、`PhoneStillJpeg.java`（上传时缩放）、`app/build.gradle`（版本号）；新加`PhoneStillUploadPolicy.java`、`tests/PhoneStillUploadPolicyTest.java`、`docs/PHONE_HD_UPLOAD_AB_20261123.md`与独立 workflow `.github/workflows/phone-hd-upload-ab-20261123.yml`。GitHub compare已确认恰好8文件，无其他源码差异。
+- **三档严格限定**：手机Camera2仍按`PhoneStillJpeg.MAX_UPLOAD_PIXELS=8000000`选择原生近8MP的真JPEG，不改变`InternalCameraController`的`TEMPLATE_STILL_CAPTURE`、选择算法和相机拍照。只在手机高清JPEG取得后选择上传图像上限：**0 原图8MP（默认）/1 1440P=2560×1440约369万/2 1080P=1920×1080约207万**；仅等比压小、不放大，不同原生画幅比例不强制拉伸成16:9。`camera.raw_*`仍是原生拍照尺寸，`jpeg.width_px/height_px/bytes`是真正上传值；新日志`camera.phone_hd_upload_mode`=0/1/2。原图默认尽量保留此前JPEG字节，镜像旋转/压缩沿用质量90。选档持久化，不要求摄像头重启。
+- **绝不改动**：手机快速预览取帧720P/1080P、USB、C110/C110+原图及OEM命令、LibVLC/原UVC补丁、云端千问/其他模型与提示词、Base64及固定长度HTTP上传、流式SSE、旧请求取消与最新照片优先、TTS、主界面与云API密钥逻辑。UI原先仍写“约1200万”的文字已更正“约800万”。
+- **完整CI结果**：workflow run `45211993546` **completed/success**，逐项通过准确8文件范围、现有模型/音频/C110纯Java回归、新增三档分辨率纯Java测试、固定UVC补丁、ARM64完整Gradle编译、APK包名/唯一启动Activity/LibVLC与UVCCamera本地so/提示音素材/ZIP/SHA256校验，Artifact上传与GitHub预发布发布成功。workflow head SHA、实验分支HEAD、tag target均为`3273c779db21ac2d2647efe335f7bb43385ca843`。
+- **已发布实验APK**：tag `bluestar-phone-hd-upload-ab-20261123-v0181`，APK `BlueStar_Guide_Phone_HD_Upload_AB_1.0.81.apk`，**53,534,159字节**。直链：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-phone-hd-upload-ab-20261123-v0181/BlueStar_Guide_Phone_HD_Upload_AB_1.0.81.apk ，CI：https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45211993546 。
+- **真机尚未验收**：同一vivo X200 Pro Android16、千问模型/朗读任务、网络、同一段文字/距离/光线，用三档每档至少5次，最好 A/B/C交替。核实真实原始Camera2 JPEG仍`3712×2088`（约775万）、缩图对应约2560×1440/1920×1080（按方向互换）、`jpeg.bytes`、云端`upload_ms/response_headers_ms/first_text_ms/first_speakable_ms`、`tts.first_audio_callback_ms`与真耳听首句时间、小字准确率。中途取消而缺少网络指标的操作不计入云端完成样本。回归快速预览、USB、C110+照片、连续取消旧HTTP/TTS、AI追问及音量键。**回调不代表扬声器发声，CI成功不代表真机速度提升**。若有安装签名冲突，切勿直接卸载导致Android Keystore中密钥丢失。
+- **结论及下一步**：已完成实现、编译、打包、源码提交和发布；三档真实速度/识别质量由用户下一次真机日志决定最佳默认设置，**目前未调整默认800万、未更改模型/网络协议，也未宣称1440P一定最快**。
+
+---
+
 # 2026-11-23｜v1.0.80 手机原生约800万像素单项对照实验：CI完成发布，真机首句延迟待验证
 
 - **用户授权与限制**：在v1.0.79流式上传测试后，用户明确要求“800万像素的实验版再来做测试”并确认“可以开始”。本轮**只降低手机高清拍照像素目标**，不降低手机快速720P、不修改云端像素处理上限、不修改模型、提示词、TTS、USB、C110、HTTP流式上传及连续拍照机制。
