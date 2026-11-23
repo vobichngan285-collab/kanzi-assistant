@@ -427,9 +427,8 @@ public final class C110CameraActivity extends Activity {
         if(busy||!started){
             say("C110预览尚未连接，请确认画面后再拍高清照片");return;
         }
-        if(frameReader.isBusy()){
-            say("上一项AI识别尚未结束，请稍后拍照");return;
-        }
+        // stop(false) below cancels stale OCR and releases the old RTSP
+        // session. The native shutter remains serialized via photoBusy.
         photoBusy=true;
         final int ticket=++photoGeneration;
         final float zoomAtShutter=zoom;
