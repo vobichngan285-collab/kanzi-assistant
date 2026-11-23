@@ -184,10 +184,11 @@ public final class InternalCameraController {
                         jpegSize.getHeight(),ImageFormat.JPEG,2);
                     stillReader.setOnImageAvailableListener(source->{
                         Image shot=null;
+                        StillListener cb=null;
                         try{
                             shot=source.acquireNextImage();
                             if(shot==null)return;
-                            StillListener cb=pendingStill;
+                            cb=pendingStill;
                             pendingStill=null;
                             if(cb==null||!active)return;
                             ByteBuffer data=shot.getPlanes()[0].getBuffer();
@@ -200,7 +201,6 @@ public final class InternalCameraController {
                             cb.onJpeg(jpeg,shot.getWidth(),shot.getHeight(),
                                 android.os.SystemClock.elapsedRealtime());
                         }catch(RuntimeException failure){
-                            StillListener cb=pendingStill;
                             pendingStill=null;
                             if(cb!=null)cb.onFailure("读取高清JPEG失败："+failure.getMessage());
                             Log.w(TAG,"Could not obtain Camera2 JPEG image",failure);
