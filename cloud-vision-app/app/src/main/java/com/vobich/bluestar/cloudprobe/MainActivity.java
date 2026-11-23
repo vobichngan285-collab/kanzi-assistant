@@ -93,6 +93,7 @@ public final class MainActivity extends CameraActivity {
     private static final String PREF_USB_AUTO_LAUNCH="usb_camera_auto_launch_v1";
     private static final String USB_ATTACH_ALIAS="com.vobich.bluestar.cloudprobe.UsbAttachEntry";
     private static final String PREF_FRONT_CAMERA = "phone_camera_front";
+    private static final String PREF_PHONE_HD_STILL = "phone_true_hd_still_v1";
     private static final String PREF_PREVIEW_ROTATION = "preview_rotation";
     private static final String PREF_PREVIEW_MIRROR = "preview_mirror";
     private static final String PREF_PREVIEW_FLIP = "preview_flip";
@@ -134,6 +135,8 @@ public final class MainActivity extends CameraActivity {
     private final VoiceRecorder voiceRecorder=new VoiceRecorder();
     private boolean voiceListening;
     private volatile int pendingPhoneFrameToken=-1;
+    private volatile int pendingPhoneStillToken=-1;
+    private boolean phoneHighRes;
     private long phoneCaptureTapAtMs;
     private RuntimeDiagnostics diagnostics;
     private ModelUsageLedger modelUsage;
@@ -238,19 +241,28 @@ public final class MainActivity extends CameraActivity {
         final byte[] remoteJpeg; // C110 original JPEG, already fully validated in RAM
         final android.net.Network cloudNetwork; // Cellular only, never camera Wi-Fi
         final boolean c110LiveFrame; // Distinguish PixelCopy from original JPEG
+        final boolean phoneStillJpeg; // Real Camera2 TEMPLATE_STILL_CAPTURE
         Frame(byte[] pixels, int width, int height, long atMs) {
-            this(pixels,width,height,atMs,null,null,false);
+            this(pixels,width,height,atMs,null,null,false,false);
         }
         Frame(byte[] pixels,int width,int height,long atMs,
               byte[] remoteJpeg,android.net.Network cloudNetwork) {
-            this(pixels,width,height,atMs,remoteJpeg,cloudNetwork,false);
+            this(pixels,width,height,atMs,remoteJpeg,cloudNetwork,false,false);
         }
         Frame(byte[] pixels,int width,int height,long atMs,
               byte[] remoteJpeg,android.net.Network cloudNetwork,
               boolean c110LiveFrame) {
+            this(pixels,width,height,atMs,remoteJpeg,cloudNetwork,c110LiveFrame,false);
+        }
+        Frame(byte[] stillJpeg,int width,int height,long atMs,boolean phoneStill) {
+            this(null,width,height,atMs,stillJpeg,null,false,phoneStill);
+        }
+        private Frame(byte[] pixels,int width,int height,long atMs,
+              byte[] remoteJpeg,android.net.Network cloudNetwork,
+              boolean c110LiveFrame,boolean phoneStill) {
             this.pixels=pixels;this.width=width;this.height=height;this.atMs=atMs;
             this.remoteJpeg=remoteJpeg;this.cloudNetwork=cloudNetwork;
-            this.c110LiveFrame=c110LiveFrame;
+            this.c110LiveFrame=c110LiveFrame;this.phoneStillJpeg=phoneStill;
         }
     }
 
@@ -905,6 +917,21 @@ public final class MainActivity extends CameraActivity {
         else if(index==5)setCameraZoom(1f);
         saveCameraProfile();applyPreviewTransform();applyPhonePreviewTransform();
     }
+    String phonePhotoModeDescription(){
+        return phoneHighRes?"高清静态拍照":"快速预览截帧";
+    }
+    boolean isPhoneHighRes(){return phoneHighRes;}
+    void setPhonePhotoModeFromSettings(boolean enabled){
+        if(phoneHighRes==enabled)return;
+        if(cloudBusy){toastShort("正在处理照片，请完成后再切换拍照模式");return;}
+        phoneHighRes=enabled;
+        getSharedPreferences(PREFS,MODE_PRIVATE).edit()
+            .putBoolean(PREF_PHONE_HD_STILL,enabled).apply();
+        // Only Camera2 is restarted. USB and C110 state machines are untouched.
+        if(usingPhoneCamera&&uiActive&&!settingsOnly&&phoneController!=null)
+            startPhoneCamera();
+    }
+
     void setCameraSourceFromSettings(int index){
         if(index<0||index>2)return;
         boolean phone=index!=0,front=index==2;
@@ -1122,6 +1149,7 @@ public final class MainActivity extends CameraActivity {
             launch.getBooleanExtra("bluestar_launch_preview",false))?
             !hasConnectedUsbVideoDevice():prefs.getBoolean(PREF_PHONE_CAMERA,false);
         phoneFrontFacing=prefs.getBoolean(PREF_FRONT_CAMERA,false);
+        phoneHighRes=prefs.getBoolean(PREF_PHONE_HD_STILL,false);
         previewRotation=prefs.getInt(PREF_PREVIEW_ROTATION,0);
         previewMirror=prefs.getBoolean(PREF_PREVIEW_MIRROR,false);
         previewVerticalFlip=prefs.getBoolean(PREF_PREVIEW_FLIP,false);
@@ -1429,13 +1457,13 @@ public final class MainActivity extends CameraActivity {
                     @Override public void onViewAttachedToWindow(View v){
                         v.removeOnAttachStateChangeListener(this);
                         if(sequence==phoneStartSequence&&usingPhoneCamera)
-                            phoneController.start(phoneFrontFacing);
+                            phoneController.start(phoneFrontFacing,phoneHighRes);
                     }
                     @Override public void onViewDetachedFromWindow(View v){}
                 });
                 return;
             }
-            phoneController.start(phoneFrontFacing);
+            phoneController.start(phoneFrontFacing,phoneHighRes);
         });
     }
 
