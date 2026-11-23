@@ -61,10 +61,13 @@ final class C110QuickShotController {
     void trigger(TaskCatalog.Task oneShotTask){
         if(destroyed||!active)return;
         reader.syncSpeechSettings(); // also covers changes made while Home remains alive
-        if(shutterPending||reader.isBusy()){
-            emit("上一张正在拍摄或识别，请勿重复触发");
+        // Never overlap two OEM shutters. Once JPEG is acquired, however,
+        // the next user tap takes precedence over the previous cloud request.
+        if(shutterPending){
+            emit("C110+快门或取图尚未完成，请稍后拍照");
             return;
         }
+        if(reader.isBusy())reader.cancelRecognition();
         final int token=++generation;
         shutterPending=true;
         emit("正在连接C110+，准备拍摄一张高清原图…");
