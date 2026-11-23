@@ -312,7 +312,16 @@ final class C110FrameReader {
         if(tts!=null)tts.stop();
         report("已下载 C110 高清原图 "+width+"×"+height+"，正在识别…");
         final float zoomAtTap=C110ZoomGeometry.clamp(selectedZoom);
+        final int uploadMode=C110PhotoUploadPolicy.normalize(
+            activity.getSharedPreferences(PREFS,Context.MODE_PRIVATE)
+                .getInt(C110PhotoUploadPolicy.PREF,C110PhotoUploadPolicy.ORIGINAL));
+        final RuntimeDiagnostics photoDiag=new RuntimeDiagnostics(activity);
+        photoDiag.begin("c110_photo");
+        photoDiag.event("c110","upload_mode",uploadMode,"ok");
+        photoDiag.event("c110","native_width_px",width,"ok");
+        photoDiag.event("c110","native_height_px",height,"ok");
         taskFuture=io.submit(()->{
+            long prepareAt=SystemClock.elapsedRealtime();
             try{
                 // 1x sends the exact original JPEG, with no extra image decode/encode.
                 C110ZoomFrames.JpegResult region=
@@ -323,7 +332,15 @@ final class C110FrameReader {
                     report("高清OCR实际裁剪："+width+"×"+height+" → "+
                         region.width+"×"+region.height+"，倍率"+
                         String.format(Locale.ROOT,"%.1f",zoomAtTap)+"倍");
-                recognizeJpeg(id,region.jpeg,started,oneShotTask);
+                C110ZoomFrames.JpegResult upload=C110ZoomFrames.limitForCloud(
+                    region.jpeg,region.width,region.height,uploadMode);
+                if(id!=request.get()||closed)return;
+                photoDiag.event("jpeg","encode_ms",
+                    SystemClock.elapsedRealtime()-prepareAt,"ok");
+                photoDiag.event("jpeg","width_px",upload.width,"ok");
+                photoDiag.event("jpeg","height_px",upload.height,"ok");
+                photoDiag.event("jpeg","bytes",upload.jpeg.length,"ok");
+                recognizeJpeg(id,upload.jpeg,started,oneShotTask,photoDiag);
             }catch(Exception e){
                 main.post(()->{
                     if(id!=request.get()||closed)return;
@@ -336,6 +353,10 @@ final class C110FrameReader {
     }
 
     private void recognizeJpeg(int id,byte[] jpeg,long started,TaskCatalog.Task oneShotTask){
+        recognizeJpeg(id,jpeg,started,oneShotTask,null);
+    }
+    private void recognizeJpeg(int id,byte[] jpeg,long started,TaskCatalog.Task oneShotTask,
+                               RuntimeDiagnostics photoDiag){
         if(closed||id!=request.get())return;
         if(jpeg.length<256){
             main.post(()->{if(id==request.get()&&!closed){
@@ -347,12 +368,13 @@ final class C110FrameReader {
             if(closed||id!=request.get())return;
             activePhotoCloud=cancel;
             taskFuture=photoCloudIo.submit(()->recognizeJpegNetwork(
-                id,jpeg,started,oneShotTask,cancel));
+                id,jpeg,started,oneShotTask,cancel,photoDiag));
         }
     }
     private void recognizeJpegNetwork(int id,byte[] jpeg,long started,
                                      TaskCatalog.Task oneShotTask,
-                                     CloudVisionClient.Cancellation cancel){
+                                     CloudVisionClient.Cancellation cancel,
+                                     RuntimeDiagnostics photoDiag){
         try{
             cancel.check();
             // The camera AP is local-only; all cloud traffic must explicitly use cellular.
@@ -417,6 +439,14 @@ final class C110FrameReader {
                 }),speed,cellular,cancel);
             main.post(()->{
                 if(closed||id!=request.get())return;
+                if(photoDiag!=null){
+                    photoDiag.event("cloud","upload_ms",result.uploadMs,"ok");
+                    photoDiag.event("cloud","network_ms",result.networkMs,"ok");
+                    photoDiag.event("cloud","first_text_ms",result.firstTextMs,"ok");
+                    photoDiag.event("cloud","first_speakable_ms",result.firstSpeakableMs,"ok");
+                    photoDiag.event("capture","total_ms",
+                        SystemClock.elapsedRealtime()-started,"ok");
+                }
                 busy=false;
                 lastText=result.text==null?"":result.text;
                 RecentPhotoSession.analyzed(jpeg,lastText);

@@ -482,6 +482,18 @@ final class BlueStarSettingsScreen {
         content.addView(c110LiveStatus,new LinearLayout.LayoutParams(-1,-2));
         updateC110Status(app.lastC110SettingsStatus());
         action("连接相机 Wi-Fi",()->app.connectC110WifiFromSettings());
+        row("运动相机高清上传 · "+app.c110PhotoUploadDescription(),
+            "相机拍原图、Wi-Fi取原图均不变，仅改变上云JPEG",()->{
+            String[] choices={"原图上传（默认）",
+                "1440P上传（约370万像素）"};
+            new BlueStarDialogChoices.AppCompatBuilder(app)
+                .setTitle("运动相机高清上传实验")
+                .setSingleChoiceItems(choices,app.c110PhotoUploadModeIndex(),(dialog,which)->{
+                    app.setC110PhotoUploadModeFromSettings(which);
+                    dialog.dismiss();
+                    render(history.get(history.size()-1));
+                }).setNegativeButton("取消",null).show();
+        });
         row("机身提示音","开关机与拍照声音",()->{
             new BlueStarDialogChoices.AppCompatBuilder(app).setTitle("C110 机身提示音")
                 .setItems(new String[]{"关闭提示音","恢复提示音"},(dialog,which)->
@@ -538,8 +550,20 @@ final class BlueStarSettingsScreen {
                     render(history.get(history.size()-1));
                 }).setNegativeButton("取消",null).show();
         });
+        row("手机原生拍照像素 · "+app.phoneNativeStillDescription(),
+            "原生约800万／直接拍300多万，必须由手机Camera2真实支持",()->{
+            String[] choices={"原生约800万（默认）",
+                "直接拍原生300多万（无对应尺寸就报错）"};
+            new BlueStarDialogChoices.AppCompatBuilder(app)
+                .setTitle("手机原生JPEG分辨率实验")
+                .setSingleChoiceItems(choices,app.phoneNativeStillModeIndex(),(dialog,which)->{
+                    app.setPhoneNativeStillModeFromSettings(which);
+                    dialog.dismiss();
+                    render(history.get(history.size()-1));
+                }).setNegativeButton("取消",null).show();
+        });
         row("手机高清上传分辨率 · "+app.phoneHdUploadDescription(),
-            "真实约800万拍照不变；仅缩放上传图（只对手机高清有效）",()->{
+            "对已拍原生JPEG等比缩小，用于原生3MP与8MP对照",()->{
             String[] choices={"原图约800万（默认）",
                 "1440P（约370万像素）","1080P（约207万像素）"};
             new BlueStarDialogChoices.AppCompatBuilder(app)

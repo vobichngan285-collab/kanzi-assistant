@@ -56,6 +56,7 @@ public final class InternalCameraController {
     private ImageReader stillReader;
     private StillListener pendingStill;
     private boolean highResolutionEnabled;
+    private int nativeStillMode=PhoneNativeStillPolicy.ORIGINAL_8MP;
     private boolean front;
     private boolean active;
     private int rotationDegrees;
@@ -85,10 +86,14 @@ public final class InternalCameraController {
     public void start(boolean frontFacing) { start(frontFacing,false); }
 
     public void start(boolean frontFacing, boolean enableStillJpeg) {
+        start(frontFacing,enableStillJpeg,PhoneNativeStillPolicy.ORIGINAL_8MP);
+    }
+    public void start(boolean frontFacing, boolean enableStillJpeg,int nativeMode) {
         if (!hasPermission()) { listener.onError("未获得手机摄像头权限"); return; }
         stop();
         front = frontFacing;
         highResolutionEnabled = enableStillJpeg;
+        nativeStillMode=PhoneNativeStillPolicy.normalize(nativeMode);
         active = true;
         final int token = generation;
         openRequested = false;
@@ -178,7 +183,7 @@ public final class InternalCameraController {
             // Allocate the JPEG stream ONLY in high-quality mode. Normal preview
             // keeps its already-verified two-surface configuration unchanged.
             if(highResolutionEnabled){
-                Size jpegSize=chooseStillSize(map.getOutputSizes(ImageFormat.JPEG));
+                Size jpegSize=chooseStillSize(map.getOutputSizes(ImageFormat.JPEG),nativeStillMode);
                 if(jpegSize!=null){
                     stillReader=ImageReader.newInstance(jpegSize.getWidth(),
                         jpegSize.getHeight(),ImageFormat.JPEG,2);
@@ -308,20 +313,14 @@ public final class InternalCameraController {
         throw new IllegalArgumentException("摄像头没有可同时用于预览和OCR的图像尺寸");
     }
 
-    /** Choose real Camera2 JPEG size nearest ~8MP; never upscale preview frames. */
-    private static Size chooseStillSize(Size[] supported){
+    /** Select only physical Camera2 JPEG modes. No fake 3MP fallback. */
+    private static Size chooseStillSize(Size[] supported,int mode){
         if(supported==null||supported.length==0)return null;
         Size best=null;
         double bestScore=Double.POSITIVE_INFINITY;
-        final double target=(double)PhoneStillJpeg.MAX_UPLOAD_PIXELS;
         for(Size candidate:supported){
-            long pixels=(long)candidate.getWidth()*candidate.getHeight();
-            if(pixels<2000000L)continue;
-            double ratio=candidate.getWidth()/(double)candidate.getHeight();
-            // Favor native JPEG output nearest 8MP, with a small preference for
-            // the same 16:9 field of view as the existing phone preview.
-            double score=Math.abs(Math.log(pixels/target))+
-                Math.abs(Math.log(ratio/(16.0/9.0)))*0.15;
+            double score=PhoneNativeStillPolicy.score(
+                candidate.getWidth(),candidate.getHeight(),mode);
             if(score<bestScore){best=candidate;bestScore=score;}
         }
         return best;
@@ -342,7 +341,9 @@ public final class InternalCameraController {
         h.post(()->{
             if(!active||token!=generation||camera==null||session==null||
                 stillReader==null){
-                callback.onFailure("高清拍照通道未就绪，请确认摄像头支持JPEG拍照");
+                callback.onFailure(nativeStillMode==PhoneNativeStillPolicy.DIRECT_3MP?
+                    "摄像头不支持原生300多万JPEG，请选择800万拍照模式":
+                    "高清拍照通道未就绪，请确认摄像头支持JPEG拍照");
                 return;
             }
             if(pendingStill!=null){callback.onFailure("上一张高清照片还在拍摄");return;}
