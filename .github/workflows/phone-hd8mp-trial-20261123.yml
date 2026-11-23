@@ -74,7 +74,7 @@ jobs:
           # Keep v1.0.79 image POST fixed-length streaming, v1.0.78 cancel.
           assert 'if(!textOnly)connection.setFixedLengthStreamingMode(request.length)' in cloud
           assert 'static final class Cancellation' in cloud
-          assert 'photoCloudExecutor=Executors.newFixedThreadPool(2)' in main
+          assert 'photoCloudExecutor = Executors.newFixedThreadPool(2)' in main
           assert 'photoCloudTask=photoCloudExecutor.submit' in main
           assert 'c110NativeShutterBusy' in main
           assert 'stream_options' in cloud and 'include_usage' in cloud
