@@ -526,6 +526,17 @@ final class BlueStarSettingsScreen {
         row("C110 运动相机","机身声音、指示灯和相机Wi-Fi",
             ()->navigate("c110-camera",""));
         row("摄像头 · "+app.sourceDescription(),"",()->navigate("sources",""));
+        row("手机拍照模式 · "+app.phonePhotoModeDescription(),
+            "快速取预览帧（默认） / 高清真实拍照（仅手机摄像头）",()->{
+            String[] choices={"快速模式（预览截帧，默认）","高清模式（Camera2真正拍照）"};
+            new BlueStarDialogChoices.AppCompatBuilder(app)
+                .setTitle("手机摄像头拍照模式")
+                .setSingleChoiceItems(choices,app.isPhoneHighRes()?1:0,(dialog,which)->{
+                    app.setPhonePhotoModeFromSettings(which==1);
+                    dialog.dismiss();
+                    render(history.get(history.size()-1));
+                }).setNegativeButton("取消",null).show();
+        });
         row("画面旋转 · "+app.rotationDescription(),"",()->{app.adjustCamera(1);render(history.get(history.size()-1));});
         row("水平镜像 · "+app.mirrorDescription(),"",()->{app.adjustCamera(2);render(history.get(history.size()-1));});
         row("垂直翻转 · "+app.flipDescription(),"",()->{app.adjustCamera(3);render(history.get(history.size()-1));});
