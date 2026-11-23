@@ -1,3 +1,16 @@
+# 2026-11-23｜v1.0.76 手机 Camera2 真实高清拍照模式（仅本项）：完整CI成功，已发布，真机待验收
+
+- **明确授权**：用户要求仅实现“手机摄像头拍照模式手动选择：默认原有预览截帧；高清模式用手机原生 Camera2 真正拍照，原JPEG直接接入云端OCR/视觉与现有TTS”，逐项检查构建。不得顺手修C110型号判断、连拍锁、USB、主页UI或离线模型。
+- **原仓库与基线**：唯一 `vobichngan285-collab/kanzi-assistant`，从已发布v1.0.75 SHA `be29823b1cc51aa3ccafb25f18f998435cccf24d` 建独立分支 `exp/phone-hd-still-capture-20261123`；最终 SHA `2a560da336223bcf4c6da12075382149a1620e31`，版本 `versionCode 85`/`versionName 1.0.76-phone-hd-still`。原包名debug applicationId `com.vobich.bluestar.c110plusquick159` 与唯一HomeActivity启动入口不变。
+- **精确7文件改动且compare已核验**：`MainActivity.java`、`InternalCameraController.java`、新增`PhoneStillJpeg.java`、`BlueStarSettingsScreen.java`、`cloud-vision-app/app/build.gradle`、`cloud-vision-app/docs/PHONE_HD_STILL_20261123.md`、专用CI `.github/workflows/phone-hd-still-20261123.yml`。HomeActivity、C110+/C110协议/设备识别、USB、模型路由、TTS、密钥/布局/主题和其余Java文件未改。
+- **功能实现**：设置→相机→手机拍照模式：快速（默认，原Camera2预览YUV取一帧）或高清（Camera2 `TEMPLATE_STILL_CAPTURE`＋单独 JPEG `ImageReader`，约800万像素物理输出，保存偏好 `phone_true_hd_still_v1`；只在高清选择启用JPEG第三Surface），仍使用原云端OCR/视觉、SSE、TTS，不开系统相机、不保存到相册。高清JPEG内存方向/镜像/翻转规范化，超过800万像素按比例压缩；保留C110原生JPEG完全不再压缩。高清超时8秒、取消过时回调且不静默冒充720P；当前旧cloudBusy与误触逻辑保留，非本轮连拍更新。
+- **实际CI验证**：GitHub Actions run `45186523945`，`completed/success`，HEAD `2a560da336223bcf4c6da12075382149a1620e31`；严格7文件静态diff／功能保护断言、既有Qwen/GLM/任务/C110 Java回归、UVC补丁/Launcher素材、Android arm64 Gradle完整debug编译、APK ZIP/包名/Version/唯一Launcher/LibVLC3.6.5/UVC native/声音资源/SHA256校验、Artifact上传和GitHub Release全部成功。
+- **已发布**：标签 `bluestar-phone-hd-20261123-v0176`，资产 `BlueStar_Guide_Phone_HD_1.0.76.apk`（53,534,151 bytes）。下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-phone-hd-20261123-v0176/BlueStar_Guide_Phone_HD_1.0.76.apk 。CI https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45186523945 。Tag/Release target/CI HEAD 一致。
+- **未完成的真机验证**：vivo X200 Pro Android16 上快速模式应保留原约720×1280及已验证速度；高清模式应在运行诊断出现 `camera.phone_still_jpeg=1` 和显著更大的 `jpeg.width_px/height_px`，通过“上次实际发送给 AI 的 JPEG”核实真实小字细节与方向；重复拍照/前后相机/切模式/旧设置迁移、云端完整朗读和TTS实际扬声器、C110+/普通C110/USB/阅读回归需要用户真机实测。**CI编译通过不等于硬件高分辨率通路已经实机成功。** 遇到debug签名冲突不可自动卸载，防止Keystore密钥丢失。
+- **保留此前独立待办**：上方2026-11-22关于C110+/C110识别和不同原厂App的讨论依旧有效，**本次没有修复也不应误报已修复**。
+
+---
+
 # 2026-11-22｜下版待修复（未授权修改代码）：纠正 C110+ / C110 历史机型误标与 3012 身份识别兼容隐患
 
 - **用户最新明确更正（优先于所有旧记录）**：以前实际购买、长期测试并成功运行蓝星向导的是 **SJCAM C110+**，用户曾误认为是普通 C110，导致早期大量口述与交接文档把设备标为“C110 标准版”。过往所有现场成功的 3012→3016→3001/1→2015/1、1001/DCIM JPEG、9011静音、9038灯控等结果应暂归属于**实际设备 C110+**，**不能作为普通 C110 已通过真机验收的证据**。现在用户拟新买/改用的是 **普通 C110**，因为现有 C110+ 镜头视角太广。用户还明确指出两款机型使用不同的原厂 App；需以用户提供的新旧安装包/真实设备数据核实，不能凭名字断定底层完全相同。
