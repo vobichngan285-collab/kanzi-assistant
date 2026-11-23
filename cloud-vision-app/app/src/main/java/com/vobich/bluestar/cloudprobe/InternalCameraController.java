@@ -326,6 +326,13 @@ public final class InternalCameraController {
         return best;
     }
 
+    /** Ignore callbacks from an invalidated or timed-out capture. */
+    public void cancelPendingStill(){
+        Handler h=handler;
+        if(h!=null)h.post(()->pendingStill=null);
+        else pendingStill=null;
+    }
+
     public void requestStillPhoto(StillListener callback){
         if(callback==null)return;
         Handler h=handler;
