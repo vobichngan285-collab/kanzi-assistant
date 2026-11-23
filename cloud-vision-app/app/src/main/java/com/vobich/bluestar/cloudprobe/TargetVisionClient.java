@@ -34,14 +34,20 @@ final class TargetVisionClient {
 
     static Result inspect(byte[] jpeg,String target,String key,String visualModel,
                           Network cloudNetwork) throws Exception {
-        return inspectInternal(jpeg,target,key,visualModel,cloudNetwork,null);
+        return inspectInternal(jpeg,target,key,visualModel,cloudNetwork,null,null);
     }
     static Result inspect(byte[] jpeg,String target,CloudProviderStore.Config chosen,
                           Network cloudNetwork)throws Exception{
-        return inspectInternal(jpeg,target,chosen.key,chosen.model,cloudNetwork,chosen);
+        return inspect(jpeg,target,chosen,cloudNetwork,null);
+    }
+    static Result inspect(byte[] jpeg,String target,CloudProviderStore.Config chosen,
+                          Network cloudNetwork,CloudVisionClient.Cancellation cancel)throws Exception{
+        return inspectInternal(jpeg,target,chosen.key,chosen.model,cloudNetwork,chosen,cancel);
     }
     private static Result inspectInternal(byte[] jpeg,String target,String key,String visualModel,
-                          Network cloudNetwork,CloudProviderStore.Config config)throws Exception{
+                          Network cloudNetwork,CloudProviderStore.Config config,
+                          CloudVisionClient.Cancellation cancel)throws Exception{
+        if(cancel!=null)cancel.check();
         if(jpeg==null||jpeg.length<200)throw new Exception("没有有效的照片");
         if(target==null||target.trim().isEmpty())throw new Exception("没有寻找目标");
         if(key==null||key.trim().isEmpty())throw new Exception("请先设置百炼 API Key");
@@ -86,15 +92,18 @@ final class TargetVisionClient {
         c.setDoOutput(true);
         c.setRequestProperty("Authorization","Bearer "+key.trim());
         c.setRequestProperty("Content-Type","application/json");
+        if(cancel!=null)cancel.attach(c);
         try{
             try(OutputStream out=c.getOutputStream()){
                 out.write(body.toString().getBytes(StandardCharsets.UTF_8));
             }
+            if(cancel!=null)cancel.check();
             int status=c.getResponseCode();
             if(status<200||status>=300)
                 throw new Exception("目标寻找云端请求失败 HTTP "+status+
                     "，请确认模型权限及网络");
             JSONObject response=new JSONObject(readSmall(c.getInputStream()));
+            if(cancel!=null)cancel.check();
             JSONArray choices=response.optJSONArray("choices");
             if(choices==null||choices.length()==0)throw new Exception("云端没有返回视觉结果");
             String raw=choices.getJSONObject(0).getJSONObject("message")
@@ -135,7 +144,10 @@ final class TargetVisionClient {
                     serverModel,promptTokens,completionTokens);
             return new Result(decision,"这张照片暂时没看到"+t+"。",evidence,
                 serverModel,promptTokens,completionTokens);
-        }finally{c.disconnect();}
+        }finally{
+            if(cancel!=null)cancel.detach(c);
+            c.disconnect();
+        }
     }
     private static String safeTarget(String target){
         // Prevent a 30-character target becoming an unwieldy spoken sentence.
