@@ -25,6 +25,12 @@ final class LayoutParsingClient {
 
     static CloudVisionClient.Result recognize(byte[] jpeg,CloudProviderStore.Config choice,
                                               Network network)throws Exception{
+        return recognize(jpeg,choice,network,null);
+    }
+    static CloudVisionClient.Result recognize(byte[] jpeg,CloudProviderStore.Config choice,
+                                              Network network,
+                                              CloudVisionClient.Cancellation cancel)throws Exception{
+        if(cancel!=null)cancel.check();
         if(choice==null||!CloudProviderStore.LAYOUT.equals(choice.protocol))
             throw new IllegalArgumentException("未选择 Layout Parsing 接口");
         if(jpeg==null||jpeg.length<16)
@@ -41,6 +47,7 @@ final class LayoutParsingClient {
         c.setRequestProperty("Authorization","Bearer "+choice.key);
         c.setRequestProperty("Content-Type","application/json");
         c.setDoOutput(true);
+        if(cancel!=null)cancel.attach(c);
         long start=SystemClock.elapsedRealtime(),upload=-1,headers=-1;
         try{
             JSONObject payload=new JSONObject()
@@ -50,6 +57,7 @@ final class LayoutParsingClient {
             try(OutputStream out=c.getOutputStream()){
                 out.write(payload.toString().getBytes(StandardCharsets.UTF_8));
             }
+            if(cancel!=null)cancel.check();
             upload=SystemClock.elapsedRealtime()-start;
             int http=c.getResponseCode();
             headers=SystemClock.elapsedRealtime()-start;
@@ -72,6 +80,7 @@ final class LayoutParsingClient {
                 throw new Exception("Layout Parsing HTTP "+http+"："+reason);
             }
             JSONObject raw=new JSONObject(readLimited(c.getInputStream()));
+            if(cancel!=null)cancel.check();
             JSONObject data=raw.optJSONObject("data");
             JSONObject result=data==null?raw:data;
             String markdown=result.optString("md_results","").trim();
@@ -85,7 +94,10 @@ final class LayoutParsingClient {
                 SystemClock.elapsedRealtime()-start,upload,-1,-1,-1,headers,
                 usage==null?-1:usage.optInt("prompt_tokens",-1),
                 usage==null?-1:usage.optInt("completion_tokens",-1));
-        }finally{c.disconnect();}
+        }finally{
+            if(cancel!=null)cancel.detach(c);
+            c.disconnect();
+        }
     }
 
     private static String readLimited(InputStream stream)throws Exception{
