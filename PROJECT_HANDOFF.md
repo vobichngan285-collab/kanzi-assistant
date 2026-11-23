@@ -1,3 +1,16 @@
+# 2026-11-23｜v1.0.80 手机原生约800万像素单项对照实验：CI完成发布，真机首句延迟待验证
+
+- **用户授权与限制**：在v1.0.79流式上传测试后，用户明确要求“800万像素的实验版再来做测试”并确认“可以开始”。本轮**只降低手机高清拍照像素目标**，不降低手机快速720P、不修改云端像素处理上限、不修改模型、提示词、TTS、USB、C110、HTTP流式上传及连续拍照机制。
+- **唯一原仓/基线**：`vobichngan285-collab/kanzi-assistant`，从v1.0.79正式发布源码 `bf05a9521f6243c33f440c9cc586f6348c9a72cb` 创建 `exp/phone-hd8mp-trial-20261123`，实验版最终HEAD `ac287edbd352dd090e3e56fa7e8248c080bf4fe2`。版本 `versionCode 89`、`versionName 1.0.80-phone-hd8mp-trial`，debug APK包名仍`com.vobich.bluestar.c110plusquick159`，唯一HomeActivity启动入口不变。
+- **最小改动（严格5文件）**：`PhoneStillJpeg.java`将全局唯一用于手机高清原生JPEG选档与实际上传像素上限的`MAX_UPLOAD_PIXELS=12000000L`改为`8000000L`；`InternalCameraController.java`中选择真实Camera2 JPEG尺寸的注释由~12MP改为~8MP，`chooseStillSize`现有选择算法和真实支持尺寸列表**未改**；`cloud-vision-app/app/build.gradle`仅版本号；新增实验说明`cloud-vision-app/docs/PHONE_HD8MP_TRIAL_20261123.md`与独立严格CI workflow `.github/workflows/phone-hd8mp-trial-20261123.yml`。精确diff已由GitHub compare与CI验证，未改`MainActivity`、`CloudVisionClient`、`C110WifiCamera`、`C110FrameReader`、`C110QuickShotController`、`FrameCompressor`、USB/C110原厂协议、模型、TTS及图片上传/压缩算法。
+- **重要物理分辨率逻辑**：800万是**上限和原生JPEG选档目标**，不是强制800万的插值。实际所选尺寸由手机Camera2 `getOutputSizes(ImageFormat.JPEG)`返回的支持档位与算法决定；例如已旧版真机验证的`3712×2088=7,750,656`，可能为最佳档，但须以新日志`camera.raw_width_px/raw_height_px`和`jpeg.width_px/height_px`核实。不要把真正没有变的快照或原生尺寸误称“已真机验证800万”。
+- **CI记录**：第一次workflow run `45204455600` 在新增静态检查脚本中因`photoCloudExecutor`空格不匹配而失败，尚未执行Android编译；只改**CI断言字符串**，原手机高清实现源码不再修改。第二次 run `45204691881` **completed/success**，通过严格5文件范围与800万目标/固定长度流式上传/旧任务取消/手机与C110硬件安全检查、Java回归、原固定UVC补丁、Gradle完整Android arm64编译、APK真实包名/唯一Launcher/LibVLC3.6.5/UVC native/音效/ZIP/SHA256，Artifact上传及Release发布。分支HEAD、CI head SHA、发布tag target均为`ac287edbd352dd090e3e56fa7e8248c080bf4fe2`。
+- **已发布下载**：tag `bluestar-phone-hd8mp-trial-20261123-v0180`，APK `BlueStar_Guide_Phone_HD8MP_1.0.80.apk`（53,534,155 bytes）；直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-phone-hd8mp-trial-20261123-v0180/BlueStar_Guide_Phone_HD8MP_1.0.80.apk ；CI https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45204691881 。
+- **真机待验收**：vivo X200 Pro Android16，固定千问模型/任务、网络和场景，用v1.0.80连续5次高清拍照并比v1.0.79的1200万基线。重点核实`camera.phone_still_jpeg=1`、原始/上传像素、JPEG大小、`camera.phone_still_ms`、`jpeg.encode_ms`、`cloud.first_speakable_ms`、`tts.onstart_ms`、`tts.first_audio_callback_ms`及用户亲耳听到的首句话等待。**TTS回调不是扬声器发声证据**。新旧`cloud.upload_ms`均固定长度模式，仍可能受网络波动影响。记录小字准确率；再验证720P快速、连续新照片取消旧识别、C110原图和USB不回归。若800万无明显首句提速或小字变差，仍留v1.0.79作为回退；安装冲突时不可直接卸载旧版导致Android Keystore密钥丢失。
+- **结论边界**：软件修改、CI和APK发布已完成，**真机800万选档、实际首句提速、听觉质量尚未验证**；不得据纯编译认为效果已经提升。后续500万像素、云端上限、其他优化未获授权，不做。
+
+---
+
 # 2026-11-23｜v1.0.79 图片HTTP固定长度流式上传单项实验：CI成功发布，A/B真机待验证
 
 - **明确授权**：用户看到1200万高清拍照时首句话延迟后，确认**先不改像素**，仅把 `HttpURLConnection` 的大图片JSON上传改为固定长度流式发送，保持原有云端识别、TTS和其他功能完全不变，发测试APK用真实首句延迟对照。并非授权800万像素、参数上限、其他优化。
