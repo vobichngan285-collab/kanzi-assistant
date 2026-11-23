@@ -308,17 +308,17 @@ public final class InternalCameraController {
         throw new IllegalArgumentException("摄像头没有可同时用于预览和OCR的图像尺寸");
     }
 
-    /** Prefer a real ~8MP Camera2 still size; don't upscale preview frames. */
+    /** Choose real Camera2 JPEG size nearest ~12MP; never upscale preview frames. */
     private static Size chooseStillSize(Size[] supported){
         if(supported==null||supported.length==0)return null;
         Size best=null;
         double bestScore=Double.POSITIVE_INFINITY;
-        final double target=8000000.0;
+        final double target=(double)PhoneStillJpeg.MAX_UPLOAD_PIXELS;
         for(Size candidate:supported){
             long pixels=(long)candidate.getWidth()*candidate.getHeight();
             if(pixels<2000000L)continue;
             double ratio=candidate.getWidth()/(double)candidate.getHeight();
-            // Favor physical output nearest 8MP, with a small preference for
+            // Favor native JPEG output nearest 12MP, with a small preference for
             // the same 16:9 field of view as the existing phone preview.
             double score=Math.abs(Math.log(pixels/target))+
                 Math.abs(Math.log(ratio/(16.0/9.0)))*0.15;
