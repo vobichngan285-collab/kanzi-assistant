@@ -94,8 +94,11 @@ final class TargetVisionClient {
         c.setRequestProperty("Content-Type","application/json");
         if(cancel!=null)cancel.attach(c);
         try{
+            byte[] request=body.toString().getBytes(StandardCharsets.UTF_8);
+            // One image request; send the known byte length without an extra HTTP buffer.
+            c.setFixedLengthStreamingMode(request.length);
             try(OutputStream out=c.getOutputStream()){
-                out.write(body.toString().getBytes(StandardCharsets.UTF_8));
+                out.write(request);
             }
             if(cancel!=null)cancel.check();
             int status=c.getResponseCode();
