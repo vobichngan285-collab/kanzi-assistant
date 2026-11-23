@@ -2780,7 +2780,9 @@ public final class MainActivity extends CameraActivity {
         cloudBusy=true;
         setResultStatus("已拍照 · 正在云端识别…");
         if(diagnostics!=null){
-            if(current.remoteJpeg!=null)
+            if(current.phoneStillJpeg)
+                diagnostics.event("camera","phone_still_jpeg",1,"ok");
+            else if(current.remoteJpeg!=null)
                 diagnostics.event("camera","c110_input",current.c110LiveFrame?2:1,"ok");
             else if(usingPhoneCamera)
                 diagnostics.event("camera","fresh_frame_ms",
@@ -2793,8 +2795,11 @@ public final class MainActivity extends CameraActivity {
         final TaskCatalog.Task task=oneShotTask==null?currentTask:oneShotTask;
         // A one-shot voice observation should not be hijacked by an ongoing search.
         final String targetToFind=oneShotTask==null?FindingTargetStore.current(this):"";
-        final boolean c110Source=current.remoteJpeg!=null;
-        final String source=c110Source?
+        final boolean phoneStill=current.phoneStillJpeg;
+        final boolean c110Source=current.remoteJpeg!=null&&!phoneStill;
+        final boolean directJpeg=current.remoteJpeg!=null;
+        final String source=phoneStill?
+            (phoneFrontFacing?"手机前置高清":"手机后置高清"):c110Source?
             (current.c110LiveFrame?"C110实时取帧":"C110高清原图"):(usingPhoneCamera?
             (phoneFrontFacing?"手机前置":"手机后置"):"USB 外接");
         final String policy=imagePolicy;
@@ -2810,11 +2815,13 @@ public final class MainActivity extends CameraActivity {
         if(diagnostics!=null&&TaskCatalog.OCR.equals(task.engine))
             diagnostics.event("ocr","speed_mode",
                 OcrSpeedExperiment.diagnosticValue(thisOcrMode),"ok");
-        final UsbFrameOrientation.Plan usbOrientation=usingPhoneCamera||c110Source?null:
+        final UsbFrameOrientation.Plan usbOrientation=usingPhoneCamera||directJpeg?null:
             UsbFrameOrientation.forSettings(previewRotation,previewMirror,
                 previewVerticalFlip,usbPreviewCorrectMirror);
         final int photoRotation=c110Source?0:
             (usingPhoneCamera?previewRotation:usbOrientation.rotation);
+        final int stillRotation=phoneStill?
+            (phoneOcrRotation+photoRotation+360)%360:0;
         // USB controls are in FINAL display coordinates; preview maps them back
         // to local TextureView axes, NV21/JPEG applies them AFTER rotation.
         final boolean photoMirror=c110Source?false:
@@ -2825,21 +2832,26 @@ public final class MainActivity extends CameraActivity {
         encodingTask=encoder.submit(()->{
             long takenAt=SystemClock.elapsedRealtime();
             try{
-                FrameCompressor.Plan plan=c110Source?null:FrameCompressor.choose(
+                FrameCompressor.Plan plan=directJpeg?null:FrameCompressor.choose(
                     current.pixels,current.width,current.height,policy);
-                FrameCompressor.EncodedJpeg encoded=c110Source?null:FrameCompressor.encodeAdjusted(
+                FrameCompressor.EncodedJpeg encoded=directJpeg?null:FrameCompressor.encodeAdjusted(
                     current.pixels,current.width,current.height,plan.limit,
                     photoRotation,photoMirror,photoFlip,photoZoom);
-                // Preserve the actual C110 JPEG (no redundant screen capture,
-                // NV21 conversion or lossy recompression).
-                byte[] jpeg=c110Source?current.remoteJpeg:encoded.jpeg;
+                // C110 stays byte-for-byte original. Phone still JPEG is
+                // normalized in RAM; never enlarged from the preview stream.
+                PhoneStillJpeg.Result still=phoneStill?PhoneStillJpeg.prepare(
+                    current.remoteJpeg,stillRotation,photoMirror,photoFlip):null;
+                byte[] jpeg=c110Source?current.remoteJpeg:
+                    phoneStill?still.jpeg:encoded.jpeg;
                 long encodingMs=SystemClock.elapsedRealtime()-takenAt;
                 if(token!=requestVersion.get())return;
                 if(diagnostics!=null){
                     diagnostics.event("jpeg","encode_ms",encodingMs,"ok");
                     diagnostics.event("jpeg","bytes",jpeg.length,"ok");
-                    diagnostics.event("jpeg","width_px",c110Source?current.width:encoded.width,"ok");
-                    diagnostics.event("jpeg","height_px",c110Source?current.height:encoded.height,"ok");
+                    diagnostics.event("jpeg","width_px",c110Source?current.width:
+                        phoneStill?still.width:encoded.width,"ok");
+                    diagnostics.event("jpeg","height_px",c110Source?current.height:
+                        phoneStill?still.height:encoded.height,"ok");
                     diagnostics.event("jpeg","rotation_deg",photoRotation,"ok");
                     diagnostics.event("jpeg","mirror_x",photoMirror?1:0,"ok");
                     diagnostics.event("jpeg","flip_y",photoFlip?1:0,"ok");
@@ -2943,7 +2955,7 @@ public final class MainActivity extends CameraActivity {
                     }
                     Log.i(TAG,"Cloud timing: route="+task.engine+" model="+result.model+
                         " capture="+source+" raw="+current.width+"x"+current.height+
-                        " imageLimit="+(c110Source?current.width:plan.limit)+" jpegBytes="+jpeg.length+
+                        " imageLimit="+(directJpeg?current.width:plan.limit)+" jpegBytes="+jpeg.length+
                         " jpegMs="+encodingMs+" uploadMs="+result.uploadMs+
                         " requestMs="+result.networkMs+
                         " firstTextMs="+result.firstTextMs+
