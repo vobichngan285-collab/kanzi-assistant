@@ -81,5 +81,40 @@ final class C110ZoomFrames {
         }
     }
 
+    /** Only post-download and post-zoom-crop cloud JPEG. Original byte[] is untouched. */
+    static JpegResult limitForCloud(byte[] jpeg,int width,int height,int mode)
+            throws IOException {
+        if(jpeg==null||jpeg.length<256||width<2||height<2)
+            throw new IOException("C110上云JPEG无效");
+        double scale=C110PhotoUploadPolicy.scaleFor(width,height,mode);
+        if(scale>=0.999)return new JpegResult(jpeg,width,height);
+        int outW=Math.max(2,(int)Math.round(width*scale));
+        int outH=Math.max(2,(int)Math.round(height*scale));
+        Bitmap source=null,result=null;
+        try{
+            BitmapFactory.Options options=new BitmapFactory.Options();
+            options.inPreferredConfig=Bitmap.Config.ARGB_8888;
+            // 5888x3312 JPEG can be decoded 2x sampled before 2560x1440 export.
+            if(width>=2*outW&&height>=2*outH)options.inSampleSize=2;
+            source=BitmapFactory.decodeByteArray(jpeg,0,jpeg.length,options);
+            if(source==null)throw new IOException("C110 1440P解码失败");
+            if(source.getWidth()<outW||source.getHeight()<outH)
+                throw new IOException("C110 1440P不能插值放大");
+            result=Bitmap.createScaledBitmap(source,outW,outH,true);
+            try(ByteArrayOutputStream out=new ByteArrayOutputStream()){
+                if(!result.compress(Bitmap.CompressFormat.JPEG,90,out))
+                    throw new IOException("C110 1440P编码失败");
+                byte[] bytes=out.toByteArray();
+                if(bytes.length<256)throw new IOException("C110 1440P数据无效");
+                return new JpegResult(bytes,result.getWidth(),result.getHeight());
+            }
+        }catch(RuntimeException error){
+            throw new IOException("C110缩图失败，不改用未缩原图",error);
+        }finally{
+            if(result!=null&&result!=source)result.recycle();
+            if(source!=null)source.recycle();
+        }
+    }
+
     private C110ZoomFrames(){}
 }

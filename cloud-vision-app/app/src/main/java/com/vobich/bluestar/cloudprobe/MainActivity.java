@@ -138,7 +138,8 @@ public final class MainActivity extends CameraActivity {
     private volatile int pendingPhoneFrameToken=-1;
     private volatile int pendingPhoneStillToken=-1;
     private boolean phoneHighRes;
-    private int phoneHdUploadMode=PhoneStillUploadPolicy.ORIGINAL;
+    private int phoneHdUploadMode=PhoneStillUploadPolicy.P1440;
+    private int c110PhotoUploadMode=C110PhotoUploadPolicy.ORIGINAL;
     private long phoneCaptureTapAtMs;
     private RuntimeDiagnostics diagnostics;
     private ModelUsageLedger modelUsage;
@@ -929,6 +930,18 @@ public final class MainActivity extends CameraActivity {
         return phoneHighRes?"高清静态拍照":"快速预览截帧";
     }
     boolean isPhoneHighRes(){return phoneHighRes;}
+    int c110PhotoUploadModeIndex(){return c110PhotoUploadMode;}
+    String c110PhotoUploadDescription(){
+        return c110PhotoUploadMode==C110PhotoUploadPolicy.P1440?
+            "1440P（约370万）":"原图（默认、不限尺寸）";
+    }
+    void setC110PhotoUploadModeFromSettings(int choice){
+        c110PhotoUploadMode=C110PhotoUploadPolicy.normalize(choice);
+        getSharedPreferences(PREFS,MODE_PRIVATE).edit()
+            .putInt(C110PhotoUploadPolicy.PREF,c110PhotoUploadMode).apply();
+        // Only already downloaded C110/C110+ JPEG sent to cloud may shrink.
+        // 1001 shutter, original download, Wi-Fi and RTSP are never changed.
+    }
     int phoneHdUploadModeIndex(){return phoneHdUploadMode;}
     String phoneHdUploadDescription(){
         switch(phoneHdUploadMode){
@@ -1173,7 +1186,9 @@ public final class MainActivity extends CameraActivity {
         phoneFrontFacing=prefs.getBoolean(PREF_FRONT_CAMERA,false);
         phoneHighRes=prefs.getBoolean(PREF_PHONE_HD_STILL,false);
         phoneHdUploadMode=PhoneStillUploadPolicy.normalize(
-            prefs.getInt(PREF_PHONE_HD_UPLOAD_MODE,PhoneStillUploadPolicy.ORIGINAL));
+            prefs.getInt(PREF_PHONE_HD_UPLOAD_MODE,PhoneStillUploadPolicy.P1440));
+        c110PhotoUploadMode=C110PhotoUploadPolicy.normalize(
+            prefs.getInt(C110PhotoUploadPolicy.PREF,C110PhotoUploadPolicy.ORIGINAL));
         previewRotation=prefs.getInt(PREF_PREVIEW_ROTATION,0);
         previewMirror=prefs.getBoolean(PREF_PREVIEW_MIRROR,false);
         previewVerticalFlip=prefs.getBoolean(PREF_PREVIEW_FLIP,false);
@@ -2822,8 +2837,11 @@ public final class MainActivity extends CameraActivity {
                 diagnostics.event("camera","phone_still_jpeg",1,"ok");
                 diagnostics.event("camera","phone_hd_upload_mode",phoneHdUploadMode,"ok");
             }
-            else if(current.remoteJpeg!=null)
+            else if(current.remoteJpeg!=null){
                 diagnostics.event("camera","c110_input",current.c110LiveFrame?2:1,"ok");
+                if(!current.c110LiveFrame)
+                    diagnostics.event("c110","upload_mode",c110PhotoUploadMode,"ok");
+            }
             else if(usingPhoneCamera)
                 diagnostics.event("camera","fresh_frame_ms",
                     Math.max(0,current.atMs-tapAtMs),"ok");
@@ -2833,6 +2851,7 @@ public final class MainActivity extends CameraActivity {
             diagnostics.event("camera","raw_height_px",current.height,"ok");
         }
         final int phoneHdUploadSnapshot=phoneHdUploadMode;
+        final int c110UploadSnapshot=c110PhotoUploadMode;
         final TaskCatalog.Task task=oneShotTask==null?currentTask:oneShotTask;
         // A one-shot voice observation should not be hijacked by an ongoing search.
         final String targetToFind=oneShotTask==null?FindingTargetStore.current(this):"";
@@ -2885,16 +2904,23 @@ public final class MainActivity extends CameraActivity {
                 PhoneStillJpeg.Result still=phoneStill?PhoneStillJpeg.prepare(
                     current.remoteJpeg,stillRotation,photoMirror,photoFlip,
                     phoneHdUploadSnapshot):null;
-                byte[] jpeg=c110Source?current.remoteJpeg:
+                C110ZoomFrames.JpegResult c110Upload=
+                    c110Source&&!current.c110LiveFrame?
+                        C110ZoomFrames.limitForCloud(current.remoteJpeg,
+                            current.width,current.height,c110UploadSnapshot):null;
+                byte[] jpeg=c110Source?
+                    (c110Upload==null?current.remoteJpeg:c110Upload.jpeg):
                     phoneStill?still.jpeg:encoded.jpeg;
                 long encodingMs=SystemClock.elapsedRealtime()-takenAt;
                 if(token!=requestVersion.get())return;
                 if(diagnostics!=null){
                     diagnostics.event("jpeg","encode_ms",encodingMs,"ok");
                     diagnostics.event("jpeg","bytes",jpeg.length,"ok");
-                    diagnostics.event("jpeg","width_px",c110Source?current.width:
+                    diagnostics.event("jpeg","width_px",c110Source?
+                        (c110Upload==null?current.width:c110Upload.width):
                         phoneStill?still.width:encoded.width,"ok");
-                    diagnostics.event("jpeg","height_px",c110Source?current.height:
+                    diagnostics.event("jpeg","height_px",c110Source?
+                        (c110Upload==null?current.height:c110Upload.height):
                         phoneStill?still.height:encoded.height,"ok");
                     diagnostics.event("jpeg","rotation_deg",photoRotation,"ok");
                     diagnostics.event("jpeg","mirror_x",photoMirror?1:0,"ok");

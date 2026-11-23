@@ -482,6 +482,18 @@ final class BlueStarSettingsScreen {
         content.addView(c110LiveStatus,new LinearLayout.LayoutParams(-1,-2));
         updateC110Status(app.lastC110SettingsStatus());
         action("连接相机 Wi-Fi",()->app.connectC110WifiFromSettings());
+        row("运动相机高清上传 · "+app.c110PhotoUploadDescription(),
+            "只控制上传给千问的JPEG；关闭后不再限制原图像素",()->{
+            String[] choices={"原图上传（默认，不限上传尺寸，不重新压缩）",
+                "1440P优化上传（手动开启，约370万像素）"};
+            new BlueStarDialogChoices.AppCompatBuilder(app)
+                .setTitle("运动相机高清上传")
+                .setSingleChoiceItems(choices,app.c110PhotoUploadModeIndex(),(dialog,which)->{
+                    app.setC110PhotoUploadModeFromSettings(which);
+                    dialog.dismiss();
+                    render(history.get(history.size()-1));
+                }).setNegativeButton("取消",null).show();
+        });
         row("机身提示音","开关机与拍照声音",()->{
             new BlueStarDialogChoices.AppCompatBuilder(app).setTitle("C110 机身提示音")
                 .setItems(new String[]{"关闭提示音","恢复提示音"},(dialog,which)->
@@ -539,9 +551,9 @@ final class BlueStarSettingsScreen {
                 }).setNegativeButton("取消",null).show();
         });
         row("手机高清上传分辨率 · "+app.phoneHdUploadDescription(),
-            "真实约800万拍照不变；仅缩放上传图（只对手机高清有效）",()->{
-            String[] choices={"原图约800万（默认）",
-                "1440P（约370万像素）","1080P（约207万像素）"};
+            "真实800万拍照不变；选择1440P后等比缩图上传千问",()->{
+            String[] choices={"原图约800万（可手动选择）",
+                "1440P（约370万像素，默认推荐）","1080P（约207万像素）"};
             new BlueStarDialogChoices.AppCompatBuilder(app)
                 .setTitle("手机高清上传分辨率")
                 .setSingleChoiceItems(choices,app.phoneHdUploadModeIndex(),(dialog,which)->{

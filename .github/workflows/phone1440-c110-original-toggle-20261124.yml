@@ -1,0 +1,204 @@
+name: Blue Star v1.0.83 Restore Phone 8MP 1440P and C110 Original Toggle
+on:
+  push:
+    branches: [ 'exp/phone1440-c110-original-toggle-20261124' ]
+    paths:
+      - 'cloud-vision-app/app/**'
+      - 'cloud-vision-app/docs/PHONE_1440_RESTORE_C110_ORIGINAL_TOGGLE_20261124.md'
+      - '.github/workflows/phone1440-c110-original-toggle-20261124.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  validated-apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify exact 9-file scope and phone 8MP rollback / C110 original restore
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          base='3273c779db21ac2d2647efe335f7bb43385ca843'
+          prefix='cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/'
+          expected={
+            '.github/workflows/phone1440-c110-original-toggle-20261124.yml',
+            'cloud-vision-app/docs/PHONE_1440_RESTORE_C110_ORIGINAL_TOGGLE_20261124.md',
+            'cloud-vision-app/tests/C110PhotoUploadPolicyTest.java',
+            'cloud-vision-app/app/build.gradle',
+            *{prefix+f for f in ['MainActivity.java','BlueStarSettingsScreen.java',
+                'C110FrameReader.java','C110ZoomFrames.java','C110PhotoUploadPolicy.java']},
+          }
+          modified=set(subprocess.check_output(['git','diff','--name-only',base,'HEAD'],text=True).splitlines())
+          assert modified==expected,('Unexpected source changes:',sorted(modified^expected))
+          get=lambda n:Path(prefix+n).read_text()
+          main,ui,reader,zoom,policy=map(get,['MainActivity.java','BlueStarSettingsScreen.java',
+              'C110FrameReader.java','C110ZoomFrames.java','C110PhotoUploadPolicy.java'])
+          cam=get('InternalCameraController.java')
+          phone=get('PhoneStillJpeg.java')
+          sizes=get('PhoneStillUploadPolicy.java')
+          cloud=get('CloudVisionClient.java')
+          gradle=Path('cloud-vision-app/app/build.gradle').read_text()
+          assert not Path(prefix+'PhoneNativeStillPolicy.java').exists(),'3MP policy must be removed'
+          assert not Path('cloud-vision-app/tests/PhoneNativeStillPolicyTest.java').exists(),'3MP tests must be removed'
+          for s in (main,ui,cam):
+              assert 'PhoneNativeStillPolicy' not in s and 'phone_native_mode' not in s
+              assert 'phoneNativeStillMode' not in s and '手机原生拍照像素' not in s
+          assert 'Size jpegSize=chooseStillSize(map.getOutputSizes(ImageFormat.JPEG));' in cam
+          assert 'private static Size chooseStillSize(Size[] supported)' in cam
+          assert 'CameraDevice.TEMPLATE_STILL_CAPTURE' in cam
+          assert 'PhoneStillJpeg.MAX_UPLOAD_PIXELS' in cam
+          assert 'ORIGINAL_MAX_PIXELS=8000000L' in sizes and 'P1440_MAX_PIXELS=2560L*1440L' in sizes
+          assert 'PhoneStillUploadPolicy.P1440' in main
+          assert 'prefs.getInt(PREF_PHONE_HD_UPLOAD_MODE,PhoneStillUploadPolicy.P1440)' in main
+          assert 'phoneStill?PhoneStillJpeg.prepare' in main
+          assert '手机高清上传分辨率' in ui and '1440P（约370万像素，默认推荐）' in ui
+          assert 'C110PhotoUploadPolicy.ORIGINAL' in main and 'C110PhotoUploadPolicy.ORIGINAL' in reader
+          assert 'C110PhotoUploadPolicy.PREF' in main and 'C110PhotoUploadPolicy.PREF' in reader
+          assert 'C110ZoomFrames.limitForCloud' in main and 'C110ZoomFrames.limitForCloud' in reader
+          assert 'if(scale>=0.999)return new JpegResult(jpeg,width,height);' in zoom
+          assert 'options.inSampleSize=2' in zoom
+          assert 'static int normalize(int mode){return mode==P1440?P1440:ORIGINAL;}' in policy
+          assert 'return normalize(mode)==ORIGINAL?1.0:' in policy
+          assert '运动相机高清上传' in ui and '原图上传（默认，不限上传尺寸，不重新压缩）' in ui
+          assert 'c110PhotoUploadModeIndex()' in main and 'c110PhotoUploadDescription()' in main
+          assert 'photoCamera.shootAfterLivePreview(this)' in get('C110CameraActivity.java')
+          assert 'camera.shootAfterLivePreview(owner)' in get('C110QuickShotController.java')
+          assert 'FrameCompressor.choose(' in main
+          assert 'if(!textOnly)connection.setFixedLengthStreamingMode(request.length)' in cloud
+          assert 'static final class Cancellation' in cloud
+          assert 'photoCloudExecutor = Executors.newFixedThreadPool(2)' in main
+          assert 'versionCode 92' in gradle and "versionName '1.0.83-phone1440-c110-original-toggle'" in gradle
+          assert "applicationIdSuffix '.c110plusquick159'" in gradle
+          assert 'org.videolan.android:libvlc-all:3.6.5' in gradle
+          print('PASS: 9-file scope; exact v1.0.81 native camera/phone JPEG and cloud; no 3MP paths.')
+          print('PASS: C110 original is unrestricted and reversible; 1440P only post-download.')
+          PY
+      - name: Run vendor allow-list, task and C110 pure Java regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-tests
+          javac -d /tmp/bluestar-tests "$BASE/CloudProviderPolicy.java" cloud-vision-app/tests/CloudProviderPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudProviderPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/CloudProviderPolicy.java" "$BASE/CloudThinkingPolicy.java" cloud-vision-app/tests/CloudThinkingPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudThinkingPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/VisionModelCatalog.java" "$BASE/OcrModelCatalog.java" cloud-vision-app/tests/CloudServerListTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudServerListTest
+          javac -d /tmp/bluestar-tests "$BASE/VoiceAction.java" cloud-vision-app/tests/VoiceActionSharedTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.VoiceActionSharedTest
+          javac -d /tmp/bluestar-tests "$BASE/ProviderKeyReusePolicy.java" cloud-vision-app/tests/ProviderKeyReusePolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.ProviderKeyReusePolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/TaskOrder.java" cloud-vision-app/tests/TaskOrderTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.TaskOrderTest
+          javac -d /tmp/bluestar-tests "$BASE/FollowupPrompt.java" cloud-vision-app/tests/FollowupPromptTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.FollowupPromptTest
+          javac -d /tmp/bluestar-tests "$BASE/C110ZoomGeometry.java" cloud-vision-app/tests/C110ZoomGeometryTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110ZoomGeometryTest
+          javac -d /tmp/bluestar-tests "$BASE/C110PhotoPolicy.java" cloud-vision-app/tests/C110PhotoPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110PhotoPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/OcrLineChunks.java" "$BASE/OcrSpeedExperiment.java" cloud-vision-app/tests/OcrSpeedExperimentTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.OcrSpeedExperimentTest
+      - name: Run independent pure-Java phone upload-size tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-phone-upload-tests
+          javac -d /tmp/bluestar-phone-upload-tests "$BASE/PhoneStillUploadPolicy.java" cloud-vision-app/tests/PhoneStillUploadPolicyTest.java
+          java -cp /tmp/bluestar-phone-upload-tests com.vobich.bluestar.cloudprobe.PhoneStillUploadPolicyTest
+      - name: Run C110 1440P toggle and original-byte restoration policy tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-c110-upload-toggle-tests
+          javac -d /tmp/bluestar-c110-upload-toggle-tests "$BASE/C110PhotoUploadPolicy.java" cloud-vision-app/tests/C110PhotoUploadPolicyTest.java
+          java -cp /tmp/bluestar-c110-upload-toggle-tests com.vobich.bluestar.cloudprobe.C110PhotoUploadPolicyTest
+      - name: Apply already-proven pinned UVC patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_usbmonitor.py cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 cloud-vision-app/scripts/patch_pinned_uvc.py
+          grep -q BSG_CLOUD_RAW5_GATED cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/jni/UVCCamera/UVCPreview.cpp
+          grep -q BSG_CLOUD_CLOSE_BARRIER cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
+      - name: Generate unchanged Blue Star launcher assets
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          java scripts/GenerateLauncherIcons.java
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            test -s "app/src/main/res/mipmap-$density/ic_launcher.png"
+          done
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile full Android arm64 app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :app:assembleDebug
+      - name: Verify APK actual package, launcher, native libraries, sound and SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_Phone1440_C110_OriginalToggle_1.0.83.apk
+          APK=out/BlueStar_Guide_Phone1440_C110_OriginalToggle_1.0.83.apk
+          test -s "$APK"
+          unzip -tq "$APK" >/dev/null
+          unzip -Z1 "$APK" >out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlc.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlcjni.so' out/entries.txt
+          grep -Fxq 'res/raw/c_metal_clack_ding.mp3' out/entries.txt
+          grep -Fxq 'res/raw/voice_send_whoosh.wav' out/entries.txt
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging "$APK" >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110plusquick159'" out/badging.txt
+          grep -Fq "versionName='1.0.83-phone1440-c110-original-toggle'" out/badging.txt
+          grep -Fq "launchable-activity: name='com.vobich.bluestar.cloudprobe.HomeActivity'" out/badging.txt
+          test "$(grep -c '^launchable-activity:' out/badging.txt)" -eq 1
+          (cd out && sha256sum BlueStar_Guide_Phone1440_C110_OriginalToggle_1.0.83.apk >SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+          BYTES=$(stat -c%s "$APK")
+          echo "New v1.0.83 APK bytes: $BYTES" >> "$GITHUB_STEP_SUMMARY"
+          echo "Baseline v1.0.81 APK bytes: 53534159" >> "$GITHUB_STEP_SUMMARY"
+          echo "Compared to v1.0.81: $((BYTES-53534159)) bytes (negative means smaller)" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_Guide_Phone1440_C110_OriginalToggle_1.0.83
+          path: out/*
+          retention-days: 14
+      - name: Publish ONLY if every test and package verification passed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-phone1440-c110-original-toggle-20261124-v0183
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing release" >&2
+            exit 1
+          fi
+          gh release create "$TAG" out/BlueStar_Guide_Phone1440_C110_OriginalToggle_1.0.83.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Blue Star v1.0.83 Phone 8MP-to-1440P Restore and C110 Original Toggle" \
+            --notes "v1.0.83 STABLE PHONE ROLLBACK: restore exact v1.0.81 Camera2 true 8MP JPEG selection, remove ALL native 3-4MP experiment paths and menu. Phone sends the real 8MP still scaled to 1440P by default on fresh installs; existing persisted phone upload choice remains honored, 8MP and 1080P remain available. C110/C110+ real 1001 and Wi-Fi original JPEG download unchanged; a single Settings > Camera > C110 > Photo cloud upload control offers full-size original (default, no new cap or recompression) and manually enabled 1440P (size reduction only after original JPEG download). Turn off optimization and the next C110 real photo at 1x sends byte-identical original, across Home quickshot, native MainActivity and camera page; existing zoom crop still applies. C110 live PixelCopy, USB, TTS, models, HTTP, SSE, camera hardware, Wi-Fi and LibVLC unchanged. CI checks exact 9-file scope, untouched phone Camera2/CloudVision, no 3MP paths, Java unit tests including C110 restoration, pinned UVC patches, full Android ARM64 compile, APK identity/voice/native assets and SHA256. New C110 toggle still requires on-device accuracy/latency and restoration tests. Do not uninstall old APK; Keystore keys may be lost."
