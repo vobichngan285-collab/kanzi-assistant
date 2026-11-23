@@ -11,7 +11,8 @@ import java.io.ByteArrayOutputStream;
  * Camera2 requests JPEG_ORIENTATION=0; we apply sensor/display orientation here.
  */
 final class PhoneStillJpeg {
-    private static final long MAX_UPLOAD_PIXELS=8000000L;
+    // One source of truth for both native Camera2 still selection and upload cap.
+    static final long MAX_UPLOAD_PIXELS=12000000L;
     private PhoneStillJpeg(){}
 
     static final class Result {
