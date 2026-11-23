@@ -33,6 +33,10 @@ final class C110FrameReader {
     private final Activity activity;
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ExecutorService io=Executors.newSingleThreadExecutor();
+    // Keep a stuck old HTTP response off the image-preparation queue.
+    private final ExecutorService photoCloudIo=Executors.newFixedThreadPool(2);
+    private final Object photoNetworkLock=new Object();
+    private CloudVisionClient.Cancellation activePhotoCloud;
     private final Consumer<String> updates;
     private final AtomicInteger request=new AtomicInteger();
     private TextToSpeech tts;
@@ -190,11 +194,13 @@ final class C110FrameReader {
 
     void tap(View videoRoot,float selectedZoom,boolean portraitCover,
              float viewportAspect){
-        if(closed||busy)return;
-        syncSpeechSettings();
+        if(closed)return;
         final float zoomAtTap=C110ZoomGeometry.clamp(selectedZoom);
         long now=SystemClock.elapsedRealtime();
-        if(now-lastTapMs<850)return;
+        if(now-lastTapMs<350)return;
+        // PixelCopy/native capture must not reuse the previous OCR job.
+        if(busy)cancelRecognition();
+        syncSpeechSettings();
         if(!outputReady){report("C110画面尚未显示，请确认视频预览");return;}
         SurfaceView video=findSurface(videoRoot);
         if(video==null||!video.isAttachedToWindow()||
@@ -336,7 +342,19 @@ final class C110FrameReader {
                 busy=false;report("取得的当前帧无效");}});
             return;
         }
+        final CloudVisionClient.Cancellation cancel=new CloudVisionClient.Cancellation();
+        synchronized(photoNetworkLock){
+            if(closed||id!=request.get())return;
+            activePhotoCloud=cancel;
+            taskFuture=photoCloudIo.submit(()->recognizeJpegNetwork(
+                id,jpeg,started,oneShotTask,cancel));
+        }
+    }
+    private void recognizeJpegNetwork(int id,byte[] jpeg,long started,
+                                     TaskCatalog.Task oneShotTask,
+                                     CloudVisionClient.Cancellation cancel){
         try{
+            cancel.check();
             // The camera AP is local-only; all cloud traffic must explicitly use cellular.
             Network cellular=C110WifiCamera.requireCellular(activity);
             // Share one target between Home quickshot, C110 preview and
@@ -351,7 +369,7 @@ final class C110FrameReader {
                     activity,CloudProviderStore.VISION,visual);
                 RecentPhotoSession.captured(jpeg,cellular,"寻找"+target);
                 TargetVisionClient.Result check=TargetVisionClient.inspect(
-                    jpeg,target,service,cellular);
+                    jpeg,target,service,cellular,cancel);
                 main.post(()->{
                     if(closed||id!=request.get())return;
                     busy=false;
@@ -396,7 +414,7 @@ final class C110FrameReader {
                     int count=spokenParts.getAndIncrement();
                     enqueueSpeech(piece,count==0?TextToSpeech.QUEUE_FLUSH:
                         TextToSpeech.QUEUE_ADD,"c110-"+id+"-"+count);
-                }),speed,cellular);
+                }),speed,cellular,cancel);
             main.post(()->{
                 if(closed||id!=request.get())return;
                 busy=false;
@@ -463,13 +481,23 @@ final class C110FrameReader {
         return null;
     }
 
-    void stop(){
+    /** A new photo can replace the prior OCR without stopping VLC/preview. */
+    void cancelRecognition(){
         request.incrementAndGet();
         clearPendingSpeech();
-        outputReady=false;
+        synchronized(photoNetworkLock){
+            if(activePhotoCloud!=null){
+                activePhotoCloud.cancel();activePhotoCloud=null;
+            }
+            if(taskFuture!=null){taskFuture.cancel(true);taskFuture=null;}
+        }
         busy=false;
-        if(taskFuture!=null){taskFuture.cancel(true);taskFuture=null;}
         if(tts!=null)tts.stop();
+    }
+
+    void stop(){
+        cancelRecognition();
+        outputReady=false;
     }
 
     void shutdown(){
@@ -477,6 +505,7 @@ final class C110FrameReader {
         ++ttsGeneration;
         stop();
         io.shutdownNow();
+        photoCloudIo.shutdownNow();
         if(tts!=null){tts.shutdown();tts=null;}
         ttsReady=false;
     }
