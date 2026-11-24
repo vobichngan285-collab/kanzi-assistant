@@ -324,9 +324,31 @@ final class C110WifiCamera {
         if(!physicalDirectory(dir))throw new IOException("目录不符合监听规则");
         Reply r=get(wifi,dir,MAX_INDEX);
         String body=r.text().toLowerCase(Locale.ROOT);
-        if(r.http!=200||(!body.contains("<html")&&!body.contains("<a ")&&!body.contains("index of")))
+        if(r.http!=200||!physicalIndexBody(body))
             throw new IOException("照片目录未返回有效列表");
         return r;
+    }
+    private static boolean physicalIndexBody(String body){
+        // Generic HTTP-200 error/login pages are not valid empty directories.
+        return body.contains("index of")||body.contains("directory listing")||
+            body.contains("parent directory")||(body.contains("href")&&body.contains("dcim"))||
+            (body.contains("<html")&&body.contains("href")&&body.contains("</a>"));
+    }
+    static void verifyPhysicalCamera(Network wifi)throws IOException{
+        Reply identity=get(wifi,"/?custom=1&cmd=3012",MAX_INDEX);
+        if(identity.http!=200||!Integer.valueOf(0).equals(C110PhotoPolicy.tagInt(identity.text(),"Status"))
+            ||!physicalStandardIdentity(identity.text()))throw new IOException("未确认标准C110");
+    }
+    private static boolean physicalStandardIdentity(String text){
+        Matcher names=Pattern.compile("<String>([^<]{1,128})</String>",Pattern.CASE_INSENSITIVE).matcher(text);
+        boolean standard=false;
+        while(names.find()){
+            String name=names.group(1).toUpperCase(Locale.ROOT);
+            if(name.contains("C110")&&(name.contains("PRO")||name.contains("PLUS")||name.contains("+")))
+                return false;
+            if(name.contains("C110"))standard=true;
+        }
+        return standard;
     }
     static PhysicalSnapshot physicalSnapshot(Network wifi)throws IOException{
         Set<String> paths=new LinkedHashSet<>(),dirs=new LinkedHashSet<>();
@@ -347,14 +369,18 @@ final class C110WifiCamera {
                 }
             }
         }
-        if(dirs.size()==1&&paths.isEmpty()){
-            // The proven firmware exposes /DCIM/PHOTO/ even on some sparse root listings.
-            Reply photo=physicalListing(wifi,"/DCIM/PHOTO/");
-            dirs.add("/DCIM/PHOTO/");
-            for(String path:C110PhotoPolicy.jpegs(photo.text(),"/DCIM/PHOTO/",CAMERA_IP)){
-                String exact=C110DeletePolicy.exactJpegPath(path);
-                if(exact!=null)paths.add(exact);
-            }
+        if(!dirs.contains("/DCIM/PHOTO/")){
+            // Explicitly cover the known PHOTO path even if the root HTML omits it.
+            Reply photo=get(wifi,"/DCIM/PHOTO/",MAX_INDEX);
+            if(photo.http==200){
+                if(!physicalIndexBody(photo.text().toLowerCase(Locale.ROOT)))
+                    throw new IOException("PHOTO目录返回无效列表");
+                dirs.add("/DCIM/PHOTO/");
+                for(String path:C110PhotoPolicy.jpegs(photo.text(),"/DCIM/PHOTO/",CAMERA_IP)){
+                    String exact=C110DeletePolicy.exactJpegPath(path);
+                    if(exact!=null)paths.add(exact);
+                }
+            }else if(photo.http!=404)throw new IOException("PHOTO目录读取失败");
         }
         return new PhysicalSnapshot(paths,dirs);
     }
@@ -373,11 +399,7 @@ final class C110WifiCamera {
     static boolean physicalDelete(Context context,Network wifi,String path,byte[] digest,
                                   java.util.function.BooleanSupplier allowed)throws Exception{
         if(!allowed.getAsBoolean()||C110DeletePolicy.exactJpegPath(path)==null)return false;
-        Reply identity=get(wifi,"/?custom=1&cmd=3012",MAX_INDEX);
-        String info=identity.text().toUpperCase(Locale.ROOT);
-        if(identity.http!=200||!Integer.valueOf(0).equals(C110PhotoPolicy.tagInt(identity.text(),"Status"))
-            ||c110DeviceKind(identity.text())!=1||info.contains("C110+")||info.contains("C110 PLUS")
-            ||info.contains("C110PRO"))return false;
+        verifyPhysicalCamera(wifi);
         Reply capabilities=get(wifi,"/?custom=1&cmd=3002",MAX_INDEX);
         if(capabilities.http!=200||!capabilities.text().contains("<Cmd>4003</Cmd>"))return false;
         String dir=path.substring(0,path.lastIndexOf('/')+1);
