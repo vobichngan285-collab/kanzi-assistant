@@ -4,6 +4,7 @@ on:
     branches: [ 'exp/c110-event-listener-v0198-20261125' ]
     paths:
       - 'cloud-vision-app/app/**'
+      - 'cloud-vision-app/tests/**'
       - 'cloud-vision-app/docs/C110_EVENT_LISTENER_V0198.md'
       - '.github/workflows/c110-event-listener-v0198.yml'
   workflow_dispatch:

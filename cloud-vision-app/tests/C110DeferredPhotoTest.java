@@ -6,28 +6,26 @@ public final class C110DeferredPhotoTest {
     public static void main(String[] args){
         C110PhysicalPolicy policy=new C110PhysicalPolicy();
         C110DeferredPhoto<String> buffer=new C110DeferredPhoto<>();
-        policy.observe(set("old"));policy.observe(set("old"));
-        ok(policy.ready());
-        // Starting ASR clears the previous pending task, not the historical baseline.
-        buffer.offer("old_pending");buffer.clear();
-        ok(policy.ready());
-        C110PhysicalPolicy.Delta first=policy.observe(set("old","first"));
-        ok(first.unique&&"first".equals(first.latest));
-        buffer.offer(first.latest);
-        ok(buffer.takeIfReady(true)==null);
-        C110PhysicalPolicy.Delta second=policy.observe(set("old","first","second"));
-        ok(second.unique&&"second".equals(second.latest));
-        buffer.offer(second.latest);
-        ok(buffer.takeIfReady(true)==null);
-        // Once target has been committed on the main thread, exactly latest dispatches once.
+        policy.arm(set("old"));
+        buffer.offer("old_pending");buffer.clear();ok(policy.ready());
+        ok(policy.begin(3020,19,0)&&policy.finish(3020,20,200)==200);
+        Set<String> first=set("old","first");
+        String a=C110PhysicalPolicy.latest(first,policy.history());
+        ok("first".equals(a));policy.remember(first);
+        buffer.offer(a);ok(buffer.takeIfReady(true)==null);
+        ok(policy.begin(3020,19,1000)&&policy.finish(3020,20,1200)==200);
+        Set<String> second=set("old","first","second");
+        String b=C110PhysicalPolicy.latest(second,policy.history());
+        ok("second".equals(b));policy.remember(second);
+        buffer.offer(b);ok(buffer.takeIfReady(true)==null);
         ok("second".equals(buffer.takeIfReady(false)));
         ok(buffer.takeIfReady(false)==null);
-        ok(policy.observe(set("old","first","second")).latest==null);
-        buffer.offer("third");buffer.clear();policy.reset();
-        ok(buffer.takeIfReady(false)==null&&!policy.ready());
-        ok(policy.observe(set("old","third")).latest==null);
-        ok(policy.observe(set("old","third")).latest==null);
-        ok("fourth".equals(policy.observe(set("old","third","fourth")).latest));
-        System.out.println("PASS voice deferral, latest-wins, preserved baseline and manual reset");
+        ok(C110PhysicalPolicy.latest(second,policy.history())==null);
+        buffer.offer("third");buffer.clear();policy.arm(set("old","third"));
+        ok(buffer.takeIfReady(false)==null&&policy.ready());
+        ok(policy.finish(3020,20,1300)<0);
+        ok(policy.begin(3020,19,1400)&&policy.finish(3020,20,1600)==200);
+        ok("fourth".equals(C110PhysicalPolicy.latest(set("old","third","fourth"),policy.history())));
+        System.out.println("PASS voice deferral, latest-wins, preserved baseline and manual rearm");
     }
 }
