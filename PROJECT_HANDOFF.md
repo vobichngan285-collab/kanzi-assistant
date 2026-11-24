@@ -1,3 +1,11 @@
+# 2026-11-24｜蓝星向导 v1.0.97 首页监听开关与锁屏拍照（已提交，CI进行中，真机待验）
+- 用户授权：删除主页重复连接相机图标，原厂式电量图标进一步放大，电量旁放一个实体监听开关；开启监听默认支持锁屏与切后台，不增加锁屏选项，其他功能保持。
+- 基于v1.0.96发布源码 `01be96716238eacc7008f6a42af3cf08fa049b45`，分支 `exp/c110-lockscreen-listener-v0197-20261124`，提交 `10410e60ca1103ab8799a3ec12a555f45529e525`，versionCode106/versionName1.0.97-lockscreen-listener，关于软件同步。首页移除重复入口、电池36×20→46×25dp、原厂映射/颜色不变；保留原监听间隔和删图设置、复用原ENABLE设置键，移除设置页重复监听开关。
+- 单一用户启动的 connectedDevice 前台服务 C110ListenService 持有原 C110PhysicalWatcher、Context化的原 C110FrameReader/CaptureDingFeedback，开启期间维持CPU partial wakelock及Wi-Fi锁；关闭释放、停止通知可关闭（可见性依赖系统通知权限），不唤醒屏幕、不访问手机摄像头/麦克风、不增加锁屏开关、不在开机自动启动。Home锁屏/外部App不重置基线；蓝星内部非主页Activity可见时暂让出相机和语音，退出后恢复监听。保留Home语音/手动动作门禁、AI寻找、4003删除、原厂电量/轮询与所有原有取图协议。仍依赖原Wi-Fi连接及租约；Home被销毁或系统断网可能需手动重连，深度休眠/vivo省电、第三方TTS和功耗需真机验证。无自动豁免或强行绕过锁屏。
+- [Actions 45431795346](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45431795346) 已启动，完整编译/测试/APK/Release待核实，预期标签 `bluestar-c110-lockscreen-listener-20261124-v0197`。未核实真实资产不提供下载链接。验收：开启并等监听就绪→锁屏1/5/30分钟实体拍照，确认屏幕不亮、取图/朗读/自动删图；切其他App、解锁不重复、关闭无监听；测试AI找目标、手动快照、预览/设置/阅读切换及耗电。详细见 `cloud-vision-app/docs/C110_LOCKSCREEN_LISTENER_V0197.md`。
+
+---
+
 # 2026-11-24｜蓝星向导 v1.0.96 原厂电量档位图标（CI通过、已发布，真机待验）
 - 用户要求精确复现原厂电量档位与黑色横向电池外形，只放大、格子绿黄红，取消百分比及多余提示，已授权修改。直接从文件库恢复 SJCAM X.apk（38261685 bytes，SHA256 `a8ebceff0faa8d5b96b4e5f34bf981c932d39bf5070038555f9169edc3cc9b3b`）及 SJCAM Zone 6.7.3.16（197152487 bytes），实际解析 DEX 指令、resources.arsc 与PNG。用户截图黑色横向电池三白格匹配 SJCAM X 的 ic_battery_3（res/_B.png）；Zone 有不同图标档位，不混用。X `LyCamera.getBatteryStatus` 0xb5908 发3019；`callBackBattery` 0xb5398 映射0满四格、1三格、2两格、3一格、4低电量、5充电；`CameraControlActivity.obServerUI$lambda$2` 0x10cf7c 选择实际图标。原厂默认刷新60000ms，C400例外，不涉及本机C110。精确代码映射不代表真机物理百分比或刷新瞬间一致。
 - 基于v1.0.95发布源码 `dbda953e9880e9882175431902d319e8343c2bab`，分支 `exp/c110-oem-battery-v0196-20261124`，提交 `01be96716238eacc7008f6a42af3cf08fa049b45`，versionCode105、versionName1.0.96-oem-battery。仅 HomeActivity、C110BatteryPolicy、BlueStarReleaseInfo、build.gradle、单测、说明及独立CI共7文件。原创绘制原厂式深色电池外形36x20dp（原21x14），三四格绿、两格黄、一格/低电红、充电闪电；无可见文字，保留无障碍描述，未知为灰色空图标；不打包原厂PNG。仅解析3019 Value枚举，错误未知，不估算百分比；C110HomeStatus/60秒轮询、AI寻找/取图/自动删图/其他功能不改。详情 `cloud-vision-app/docs/C110_OEM_BATTERY_V0196.md`。
