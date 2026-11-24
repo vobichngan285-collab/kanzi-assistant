@@ -58,6 +58,56 @@ final class C110FrameReader {
     private volatile byte[] lastPreviewSubmittedJpeg;
     byte[] lastPreviewSubmittedJpeg(){return lastPreviewSubmittedJpeg;}
     private boolean outputReady;
+    private int labTrackW=-1,labTrackH=-1;
+    private long labCpuBase,labTimeBase;
+    void setQualityTrack(int w,int h){labTrackW=w;labTrackH=h;}
+    void resetQualityCpu(){
+        labCpuBase=android.os.Process.getElapsedCpuTime();
+        labTimeBase=SystemClock.elapsedRealtime();
+    }
+    private long qualityCpuPercent(){
+        long elapsed=SystemClock.elapsedRealtime()-labTimeBase;
+        return elapsed>0?Math.round(100.0*(android.os.Process.getElapsedCpuTime()-labCpuBase)/elapsed):-1;
+    }
+    // Mode B: no screen capture; wait for a fresh callback frame after the tap.
+    void tapNative(C110NativeFrameDecoder decoder){
+        if(closed||decoder==null)return;
+        long now=SystemClock.elapsedRealtime();
+        if(now-lastTapMs<350)return;
+        if(busy)cancelRecognition();
+        syncSpeechSettings();
+        int id=request.incrementAndGet();
+        lastPreviewSubmittedJpeg=null;clearPendingSpeech();lastTapMs=now;busy=true;
+        if(tts!=null)tts.stop();
+        RuntimeDiagnostics diag=new RuntimeDiagnostics(activity);
+        diag.begin("c110_preview_native");
+        diag.event("frame","quality_mode",2,"ok");
+        diag.event("frame","process_cpu_single_core_pct",qualityCpuPercent(),"estimate");
+        report("B：等待下一张真实解码帧…");
+        try{
+            taskFuture=io.submit(()->{
+                C110NativeFrameDecoder.Shot shot=null;
+                try{shot=decoder.take();}catch(RuntimeException|LinkageError ex){}
+                if(shot==null){
+                    if(id==request.get())main.post(()->{
+                        if(closed||id!=request.get())return;
+                        busy=false;diag.event("frame","native_capture",0,"failed");
+                        report("B：未取得新解码帧，没有上传旧图；可切回A");
+                    });
+                    return;
+                }
+                Bitmap bmp=shot.bitmap;
+                if(closed||id!=request.get()){bmp.recycle();return;}
+                diag.event("frame","native_capture",1,"ok");
+                diag.event("frame","decoder_width_px",bmp.getWidth(),"ok");
+                diag.event("frame","decoder_height_px",bmp.getHeight(),"ok");
+                diag.event("frame","decoded_frame_number",shot.frameNumber,"ok");
+                diag.event("frame","fresh_frame_ms",SystemClock.elapsedRealtime()-now,"ok");
+                main.post(()->{if(!closed&&id==request.get()&&frameCaptureFeedback!=null)frameCaptureFeedback.run();});
+                analyzeVisibleFrame(id,bmp,now,diag);
+            });
+        }catch(RuntimeException ex){busy=false;report("B：取帧任务失败");}
+    }
     interface PhotoMetricsListener {
         void onCaptured(int width,int height,long captureMs);
         void onUpload(int width,int height,int jpegBytes);
@@ -236,6 +286,10 @@ final class C110FrameReader {
         if(tts!=null)tts.stop();
         final RuntimeDiagnostics previewDiag=new RuntimeDiagnostics(activity);
         previewDiag.begin("c110_preview");
+        previewDiag.event("frame","quality_mode",1,"ok");
+        previewDiag.event("frame","track_width_px",labTrackW,labTrackW>0?"ok":"unknown");
+        previewDiag.event("frame","track_height_px",labTrackH,labTrackH>0?"ok":"unknown");
+        previewDiag.event("frame","process_cpu_single_core_pct",qualityCpuPercent(),"estimate");
         previewDiag.event("frame","view_width_px",video.getWidth(),"ok");
         previewDiag.event("frame","view_height_px",video.getHeight(),"ok");
         previewDiag.event("frame","surface_width_px",surfaceW,"ok");
