@@ -54,6 +54,9 @@ final class C110FrameReader {
     private long lastTapMs;
     private Future<?> taskFuture;
     private String lastText="";
+    // Retain only the current preview recognition JPEG in RAM for inspection.
+    private volatile byte[] lastPreviewSubmittedJpeg;
+    byte[] lastPreviewSubmittedJpeg(){return lastPreviewSubmittedJpeg;}
     private boolean outputReady;
     interface PhotoMetricsListener {
         void onCaptured(int width,int height,long captureMs);
@@ -207,81 +210,77 @@ final class C110FrameReader {
     void tap(View videoRoot,float selectedZoom,boolean portraitCover,
              float viewportAspect){
         if(closed)return;
-        final float zoomAtTap=C110ZoomGeometry.clamp(selectedZoom);
         long now=SystemClock.elapsedRealtime();
         if(now-lastTapMs<350)return;
-        // PixelCopy/native capture must not reuse the previous OCR job.
         if(busy)cancelRecognition();
         syncSpeechSettings();
         if(!outputReady){report("C110画面尚未显示，请确认视频预览");return;}
         SurfaceView video=findSurface(videoRoot);
-        if(video==null||!video.isAttachedToWindow()||
-            video.getWidth()<2||video.getHeight()<2){
+        if(video==null||!video.isAttachedToWindow()){
             report("C110尚未准备好视频画面");return;
         }
-        Surface surface=video.getHolder().getSurface();
+        final Surface surface=video.getHolder().getSurface();
         if(surface==null||!surface.isValid()){report("视频表面尚未就绪");return;}
-        final int surfaceW=video.getWidth(),surfaceH=video.getHeight();
-        // Match the center-crop/zoom ALREADY visible on screen. Do not copy
-        // a scaled full frame and crop it a second time.
-        final C110ZoomGeometry.Region visible;
-        try{
-            visible=C110ZoomFrames.visiblePreviewRegion(surfaceW,surfaceH,
-                zoomAtTap,portraitCover,viewportAspect);
-        }catch(IllegalArgumentException invalid){
-            report("C110预览裁剪参数无效，不发送错误区域");return;
-        }
-        // Keep the existing absolute memory safety cap, but apply it to
-        // the FINAL visible ROI rather than an unneeded whole frame.
-        if((long)visible.width*visible.height>9_000_000L){
-            report("C110预览可见区域过大，已拒绝分配");return;
-        }
-        final Rect sourceRect=new Rect(visible.left,visible.top,
-            visible.left+visible.width,visible.top+visible.height);
-        if(sourceRect.isEmpty()||sourceRect.left<0||sourceRect.top<0||
-            sourceRect.right>surfaceW||sourceRect.bottom>surfaceH){
-            report("C110裁剪位置超出视频画面，已取消上传");return;
+        // SurfaceHolder reports the actual surface extent, which is distinct
+        // from the Android View size and is NOT asserted to be the RTSP track size.
+        final Rect surfaceFrame=new Rect(video.getHolder().getSurfaceFrame());
+        final int surfaceW=surfaceFrame.width(),surfaceH=surfaceFrame.height();
+        if(surfaceW<2||surfaceH<2||(long)surfaceW*surfaceH>9_000_000L){
+            report("C110视频表面尺寸无效或过大，已取消取帧");return;
         }
         final int id=request.incrementAndGet();
+        lastPreviewSubmittedJpeg=null;
         clearPendingSpeech();
         lastTapMs=now;
         busy=true;
         if(tts!=null)tts.stop();
         final RuntimeDiagnostics previewDiag=new RuntimeDiagnostics(activity);
         previewDiag.begin("c110_preview");
+        previewDiag.event("frame","view_width_px",video.getWidth(),"ok");
+        previewDiag.event("frame","view_height_px",video.getHeight(),"ok");
         previewDiag.event("frame","surface_width_px",surfaceW,"ok");
         previewDiag.event("frame","surface_height_px",surfaceH,"ok");
-        previewDiag.event("frame","crop_left_px",sourceRect.left,"ok");
-        previewDiag.event("frame","crop_top_px",sourceRect.top,"ok");
-        previewDiag.event("frame","visible_width_px",visible.width,"ok");
-        previewDiag.event("frame","visible_height_px",visible.height,"ok");
-        report("正在截取C110当前可见画面…");
+        previewDiag.event("frame","full_surface",1,"ok");
+        previewDiag.event("frame","zoom_x10",Math.round(C110ZoomGeometry.clamp(selectedZoom)*10f),"ok");
+        previewDiag.event("frame","portrait_cover",portraitCover?1:0,"ok");
+        report("正在获取C110完整视频帧…");
+        final Bitmap image;
         try{
-            // PixelCopy accepts a source rectangle in SurfaceView coordinates.
-            // Destination matches it 1:1: NO 2MP downsample, rescale, or
-            // Bitmap.createBitmap subcrop after the video frame is copied.
-            Bitmap image=Bitmap.createBitmap(visible.width,visible.height,
-                                             Bitmap.Config.ARGB_8888);
-            PixelCopy.request(video,sourceRect,image,status->{
-                if(closed||id!=request.get()){
-                    image.recycle();return;
-                }
+            image=Bitmap.createBitmap(surfaceW,surfaceH,Bitmap.Config.ARGB_8888);
+        }catch(RuntimeException failure){
+            busy=false;report("C110视频帧分配失败，已取消");return;
+        }
+        try{
+            // Copy the whole video Surface, NOT the application Window.
+            // No source rectangle, zoom crop, size cap resampling or upscaling.
+            PixelCopy.request(surface,image,status->{
+                if(closed||id!=request.get()){image.recycle();return;}
                 if(status!=PixelCopy.SUCCESS){
                     image.recycle();busy=false;
                     previewDiag.event("frame","pixel_copy_status",status,"failed");
                     report("实时取帧失败（PixelCopy="+status+"），没有使用旧照片");
                     return;
                 }
+                Rect after=video.getHolder().getSurfaceFrame();
+                if(!video.isAttachedToWindow()||!surface.isValid()||
+                        after.width()!=surfaceW||after.height()!=surfaceH){
+                    image.recycle();busy=false;
+                    previewDiag.event("frame","surface_changed",1,"failed");
+                    report("视频表面尺寸已改变，请重新取帧");return;
+                }
                 previewDiag.event("frame","pixel_copy_status",status,"ok");
                 if(frameCaptureFeedback!=null)frameCaptureFeedback.run();
-                report("已获取当前可见画面，正在识别…");
-                taskFuture=io.submit(()->analyzeVisibleFrame(
-                    id,image,now,previewDiag));
+                report("已获取完整视频帧，正在识别…");
+                try{
+                    taskFuture=io.submit(()->analyzeVisibleFrame(id,image,now,previewDiag));
+                }catch(RuntimeException failure){
+                    image.recycle();busy=false;report("C110取帧任务已结束");
+                }
             },main);
-        }catch(RuntimeException ex){
-            busy=false;
+        }catch(RuntimeException failure){
+            image.recycle();busy=false;
             previewDiag.event("frame","pixel_copy_status",-1,"failed");
-            report("取帧失败："+ex.getClass().getSimpleName());
+            report("取帧失败："+failure.getClass().getSimpleName());
         }
     }
 
@@ -291,7 +290,7 @@ final class C110FrameReader {
         final long encodedAt=SystemClock.elapsedRealtime();
         final int jpegW=visible.getWidth(),jpegH=visible.getHeight();
         try{
-            // Single high-quality JPEG encode from the EXACT captured ROI.
+            // Single high-quality JPEG encode from the complete video Surface.
             // JPEG is intrinsically lossy; avoid any OTHER resizing or second
             // encoding before CloudVisionClient consumes these same bytes.
             try(ByteArrayOutputStream bytes=new ByteArrayOutputStream()){
@@ -314,8 +313,12 @@ final class C110FrameReader {
         previewDiag.event("jpeg","width_px",jpegW,"ok");
         previewDiag.event("jpeg","height_px",jpegH,"ok");
         previewDiag.event("jpeg","bytes",jpeg.length,"ok");
-        // Existing network/model/TTS path uses this exact JPEG byte[].
-        recognizeJpeg(id,jpeg,started,null,previewDiag);
+        // The inspector uses the same JPEG bytes passed to the existing recognition path.
+        synchronized(photoNetworkLock){
+            if(closed||id!=request.get())return;
+            lastPreviewSubmittedJpeg=jpeg;
+            recognizeJpeg(id,jpeg,started,null,previewDiag);
+        }
     }
 
     /**
@@ -656,6 +659,7 @@ final class C110FrameReader {
         ++ttsGeneration;
         stop();
         io.shutdownNow();
+        lastPreviewSubmittedJpeg=null;
         photoCloudIo.shutdownNow();
         if(tts!=null){tts.shutdown();tts=null;}
         ttsReady=false;
