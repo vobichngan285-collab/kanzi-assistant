@@ -2,6 +2,7 @@ package com.vobich.bluestar.cloudprobe;
 
 import android.content.Context;
 import android.app.Activity;
+import android.net.Network;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Canvas;
@@ -44,6 +45,11 @@ public final class HomeActivity extends Activity {
     private HomeVoiceAssistant homeVoice;
     private TextView quickStatusView,cameraConnection,cameraBattery;
     private C110HomeStatus cameraStatus;
+    private C110DeviceControls homeLightControls;
+    private Button lightButton;
+    private boolean lightBusy;
+    private Boolean lastLightCommand;
+    private Network lightNetwork;
     private final Handler statusHandler=new Handler(Looper.getMainLooper());
     private final Runnable hideQuickStatus=()->{
         quickStatus="";
@@ -61,8 +67,9 @@ public final class HomeActivity extends Activity {
         cameraWifi=new C110WifiBootstrap(this,this::quickStatusChanged);
         quickShot=new C110QuickShotController(this,this::quickStatusChanged);
         homeVoice=new HomeVoiceAssistant(this,this::quickStatusChanged,this::prepareOtherScreenSpeech,this::voiceOneShotPhoto);
+        homeLightControls=new C110DeviceControls(this,this::quickStatusChanged);
         cameraStatus=new C110HomeStatus(this,
-            ()->quickLaunchPending||(quickShot!=null&&quickShot.isShutterPending()),
+            ()->lightBusy||quickLaunchPending||(quickShot!=null&&quickShot.isShutterPending()),
             this::showCameraStatus);
         root=new FrameLayout(this);
         root.setBackgroundColor(BG);
@@ -153,7 +160,7 @@ public final class HomeActivity extends Activity {
 
         LinearLayout line=new LinearLayout(this);
         line.setGravity(Gravity.CENTER_VERTICAL);
-        cameraConnection=text("Wi-Fi 未连接",16,ACCENT);
+        cameraConnection=text("Wi-Fi 未连接",15,ACCENT);
         line.addView(cameraConnection,new LinearLayout.LayoutParams(0,-2,1f));
         Button connect=new Button(this);
         connect.setText("快速连接");
@@ -161,11 +168,28 @@ public final class HomeActivity extends Activity {
         connect.setTextSize(16);
         connect.setTextColor(WHITE);
         connect.setMinHeight(0);connect.setMinimumHeight(dp(48));
-        connect.setPadding(dp(12),dp(4),dp(12),dp(4));
+        connect.setMinWidth(0);connect.setMinimumWidth(0);
+        connect.setPadding(dp(7),dp(4),dp(7),dp(4));
         connect.setBackground(bg(NAV_ACTIVE,12));
         connect.setContentDescription("快速连接运动相机 Wi-Fi");
         connect.setOnClickListener(v->connectCamera());
         line.addView(connect,new LinearLayout.LayoutParams(-2,-2));
+        lightButton=new Button(this);
+        lightButton.setAllCaps(false);
+        lightButton.setTextSize(16);lightButton.setTextColor(WHITE);
+        lightButton.setMinWidth(0);lightButton.setMinimumWidth(0);
+        lightButton.setMinHeight(0);lightButton.setMinimumHeight(dp(48));
+        lightButton.setPadding(dp(7),dp(4),dp(7),dp(4));
+        lightButton.setBackground(bg(0xFF205582,12));
+        Drawable bulb=new LightIcon();
+        bulb.setBounds(0,0,dp(18),dp(18));
+        lightButton.setCompoundDrawables(bulb,null,null,null);
+        lightButton.setCompoundDrawablePadding(dp(4));
+        lightButton.setOnClickListener(v->tapLight());
+        LinearLayout.LayoutParams lightParams=new LinearLayout.LayoutParams(-2,-2);
+        lightParams.leftMargin=dp(6);
+        line.addView(lightButton,lightParams);
+        updateLightButton();
         card.addView(line,new LinearLayout.LayoutParams(-1,-2));
         quickStatusView=text(quickStatus,15,ACCENT);
         quickStatusView.setVisibility(quickStatus.isEmpty()?View.GONE:View.VISIBLE);
@@ -183,17 +207,84 @@ public final class HomeActivity extends Activity {
         if(!battery.contentEquals(cameraBattery.getText()))cameraBattery.setText(battery);
         String raw=status.battery.raw;
         cameraBattery.setContentDescription("运动相机"+battery+
+            (battery.contains("约")?"，协议参考档位估算，非实测百分比":"")+
             (status.connected&&!raw.isEmpty()?"，设备返回值 "+raw:""));
+        Network connected=C110WifiBootstrap.connected(this);
+        if(!java.util.Objects.equals(lightNetwork,connected)){
+            lightNetwork=connected;lastLightCommand=null;
+        }
+        updateLightButton();
         int batteryColor=ACCENT;
         if(status.connected&&status.battery.available){
-            batteryColor=("2".equals(raw)||"3".equals(raw)||"4".equals(raw))?
-                0xFFFFC278:0xFF55DDA6;
+            boolean low="3".equals(raw)||"4".equals(raw);
+            if(raw.endsWith("%"))try{
+                low=Integer.parseInt(raw.substring(0,raw.length()-1))<=25;
+            }catch(NumberFormatException ignored){}
+            batteryColor=low?0xFFFFC278:0xFF55DDA6;
         }
         cameraBattery.setTextColor(batteryColor);
         Drawable batteryIcon=new BatteryIcon(batteryColor);
         batteryIcon.setBounds(0,0,dp(21),dp(14));
         cameraBattery.setCompoundDrawables(batteryIcon,null,null,null);
         cameraBattery.setCompoundDrawablePadding(dp(5));
+    }
+    private void updateLightButton(){
+        if(lightButton==null)return;
+        String label=lightBusy?"处理中":lastLightCommand==null?"灯光":lastLightCommand?"关灯":"开灯";
+        lightButton.setText(label);
+        lightButton.setContentDescription(lightBusy?"相机灯光命令处理中":
+            lastLightCommand==null?"相机指示灯，选择开启或关闭":
+            label+"，上一次命令已获相机确认");
+        lightButton.setEnabled(!lightBusy);
+    }
+    private void tapLight(){
+        if(lightBusy||!homeResumed||homeLightControls==null)return;
+        Network wifi=C110WifiBootstrap.connected(this);
+        if(wifi==null){quickStatusChanged("请先连接运动相机 Wi-Fi");return;}
+        if(!wifi.equals(lightNetwork)){lightNetwork=wifi;lastLightCommand=null;}
+        if(quickLaunchPending||(quickShot!=null&&quickShot.isShutterPending())){
+            quickStatusChanged("正在拍照，请稍后操作灯光");return;
+        }
+        // No status read-back is available. First use chooses an explicit action;
+        // later taps reverse only the last acknowledged command on this connection.
+        if(lastLightCommand==null){
+            new BlueStarDialogChoices.PlatformBuilder(this).setTitle("相机指示灯")
+                .setItems(new String[]{"开启灯光","关闭灯光"},(dialog,which)->applyLight(which==0))
+                .setNegativeButton("取消",null).show();
+        }else applyLight(!lastLightCommand);
+    }
+    private void applyLight(boolean enabled){
+        if(lightBusy||!homeResumed||homeLightControls==null)return;
+        final Network target=C110WifiBootstrap.connected(this);
+        if(target==null){quickStatusChanged("请先连接运动相机 Wi-Fi");return;}
+        if(quickLaunchPending||(quickShot!=null&&quickShot.isShutterPending())){
+            quickStatusChanged("正在拍照，请稍后操作灯光");return;
+        }
+        lightBusy=true;updateLightButton();
+        homeLightControls.setLightFromHome(enabled,ok->{
+            lightBusy=false;
+            lastLightCommand=ok&&homeResumed&&target.equals(C110WifiBootstrap.connected(this))?enabled:null;
+            lightNetwork=C110WifiBootstrap.connected(this);
+            updateLightButton();
+        });
+    }
+    private static final class LightIcon extends Drawable{
+        private final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
+        @Override public void draw(Canvas c){
+            c.save();c.translate(getBounds().left,getBounds().top);
+            c.scale(getBounds().width()/24f,getBounds().height()/24f);
+            p.setColor(0xFFE7F4FF);p.setStyle(Paint.Style.STROKE);
+            p.setStrokeWidth(1.8f);p.setStrokeCap(Paint.Cap.ROUND);
+            Path bulb=new Path();
+            bulb.moveTo(9,17);bulb.lineTo(9,14);
+            bulb.cubicTo(2,7,7,3,12,3);bulb.cubicTo(17,3,22,7,15,14);
+            bulb.lineTo(15,17);bulb.close();c.drawPath(bulb,p);
+            c.drawLine(9,20,15,20,p);c.drawLine(11,22,13,22,p);
+            c.restore();
+        }
+        @Override public void setAlpha(int alpha){p.setAlpha(alpha);}
+        @Override public void setColorFilter(ColorFilter filter){p.setColorFilter(filter);}
+        @Override public int getOpacity(){return PixelFormat.TRANSLUCENT;}
     }
     private void connectCamera(){
         if(cameraWifi==null)return;
@@ -391,6 +482,7 @@ public final class HomeActivity extends Activity {
     }
     @Override protected void onPause(){
         homeResumed=false;
+        lastLightCommand=null;lightNetwork=null;
         if(cameraStatus!=null)cameraStatus.stop();
         if(homeVoice!=null)homeVoice.onPause();
         if(quickShot!=null)quickShot.onPause();
@@ -399,6 +491,7 @@ public final class HomeActivity extends Activity {
     @Override protected void onDestroy(){
         statusHandler.removeCallbacks(hideQuickStatus);
         if(cameraStatus!=null){cameraStatus.shutdown();cameraStatus=null;}
+        if(homeLightControls!=null){homeLightControls.shutdown();homeLightControls=null;}
         if(homeVoice!=null){homeVoice.shutdown();homeVoice=null;}
         if(quickShot!=null){quickShot.shutdown();quickShot=null;}
         if(cameraWifi!=null){cameraWifi.shutdown();cameraWifi=null;}
