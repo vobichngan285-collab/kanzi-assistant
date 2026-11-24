@@ -1,3 +1,14 @@
+# 2026-11-24｜蓝星向导 v1.0.89 C110 完整视频 Surface 取帧专项；v1.0.88 作废
+
+- **真机反馈与授权**：v1.0.88 窗口截图连续四次 JPEG 均68000字节，用户明确反馈只读出“高清拍照”“查看上传图”等软件控件字样。用户要求作废该版本并以 v1.0.87 重新开发；保留旧发行记录，不删除历史。用户批准先去除预览取帧裁剪和缩图、获取完整视频帧验证正确性。
+- **基线/分支**：从已发布 v1.0.87 commit `6925631076faf82e978dff208fe98817b7842bc9`（非 v1.0.88）派生 `exp/c110-full-surface-v0189-20261124`，最终源码 `58963e56aaf772385979acea9d4a86949200f6e5`；versionCode98、versionName 1.0.89-c110-full-surface，包名不变。
+- **修改**：C110预览使用 SurfaceHolder.getSurfaceFrame() 读取Surface尺寸，区分View尺寸；PixelCopy.request(surface,image,...) 直接复制完整视频Surface，不截Window、不做ROI裁剪、不显式缩放、不改JPEG100单次编码。Surface尺寸不保证是RTSP解码轨道原始尺寸；实际缓冲区与目标尺寸不同时PixelCopy仍可能插值，不能宣称无损原始视频帧。尺寸变化/无效/取图失败即停止，不使用旧图。保留RAM查看识别用JPEG入口（相同byte[]进入原识别通路，不表示服务器实际收到），不另存或二次上传。预览OCR暂不跟随显示变焦/竖屏裁剪；显示变焦及1001高清照片裁剪不变。
+- **范围核实**：GitHub compare仅5文件变化：C110FrameReader.java、C110CameraActivity.java、app/build.gradle、新文档C110_FULL_SURFACE_V0189.md和新workflow。回读核验Reader真实高清识别到shutdown之前的云端/模型/TTS方法完全相同；Wi-Fi、RTSP、LibVLC3.6.5、手机/USB、原厂快门不动。
+- **CI**：[Actions 45337702071](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45337702071)，当前 in_progress/尚无结论；此前5文件范围及完整Surface静态验证步骤已通过，尚未确认完整编译/发布，不得宣称APK可下载。
+- **下一步**：先验完整预览帧的“查看上传图”及同一场景OCR，记录view/surface/JPEG尺寸和full_surface=1；如果仍不正确继续查VLC真实输出，不重复Window截图方案。安装新版必须等CI及Release核验后覆盖，勿卸载旧包。真机验收尚未进行。
+
+---
+
 # 2026-11-24｜蓝星向导v1.0.88：C110真实视频轨道分辨率+屏幕实际合成画面取帧、查看真实上云JPEG；CI通过APK已发布，真机待验
 
 - **授权与症状**：用户真机v1.0.87的c110_preview诊断反复报告`surface_width_px=1260`、`surface_height_px=2590`，`visible_width_px=1260`、`visible_height_px=2590`、`jpeg.bytes≈320–340KB`、`PixelCopy.status=0`，云端网络约0.9秒却仅识别或朗读“西施”两个字；同一用途的手机预览720×1280仍能识别，不能把问题归咎于图像像素总量。源码检查发现v1.0.87错误地将SurfaceView的安卓视图尺寸当作RTSP真实图像尺寸，直接用它运算crop ROI；“复制成功”不能证明收到的真实视频内容和屏幕一致。用户明确批准按方案改代码，并在严格验证后发布APK。
