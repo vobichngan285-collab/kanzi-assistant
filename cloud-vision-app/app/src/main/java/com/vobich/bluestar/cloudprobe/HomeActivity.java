@@ -4,6 +4,17 @@ import android.content.Context;
 import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
+import android.graphics.Canvas;
+import android.graphics.ColorFilter;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.PixelFormat;
+import android.graphics.RectF;
+import android.graphics.drawable.Drawable;
+import android.content.res.ColorStateList;
+import android.graphics.drawable.RippleDrawable;
+import android.os.Handler;
+import android.os.Looper;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.view.Gravity;
@@ -31,7 +42,13 @@ public final class HomeActivity extends Activity {
     private C110QuickShotController quickShot;
     private C110WifiBootstrap cameraWifi;
     private HomeVoiceAssistant homeVoice;
-    private TextView quickStatusView;
+    private TextView quickStatusView,cameraConnection,cameraBattery;
+    private C110HomeStatus cameraStatus;
+    private final Handler statusHandler=new Handler(Looper.getMainLooper());
+    private final Runnable hideQuickStatus=()->{
+        quickStatus="";
+        if(quickStatusView!=null)quickStatusView.setVisibility(View.GONE);
+    };
     private String quickStatus="";
 
     @Override protected void attachBaseContext(Context base){
@@ -44,6 +61,9 @@ public final class HomeActivity extends Activity {
         cameraWifi=new C110WifiBootstrap(this,this::quickStatusChanged);
         quickShot=new C110QuickShotController(this,this::quickStatusChanged);
         homeVoice=new HomeVoiceAssistant(this,this::quickStatusChanged,this::prepareOtherScreenSpeech,this::voiceOneShotPhoto);
+        cameraStatus=new C110HomeStatus(this,
+            ()->quickLaunchPending||(quickShot!=null&&quickShot.isShutterPending()),
+            this::showCameraStatus);
         root=new FrameLayout(this);
         root.setBackgroundColor(BG);
         root.setOnApplyWindowInsetsListener((view,insets)->{
@@ -75,20 +95,21 @@ public final class HomeActivity extends Activity {
         FrameLayout.LayoutParams s=new FrameLayout.LayoutParams(-1,-1);
         s.bottomMargin=dp(76);
         root.addView(scroll,s);
-        TextView heading=text("蓝星向导",27,WHITE);
-        heading.setGravity(Gravity.CENTER);
-        heading.setTypeface(null,android.graphics.Typeface.BOLD);
-        content.addView(heading,new LinearLayout.LayoutParams(-1,dp(74)));
-            option(content,"▣","快捷拍照","手机／运动相机高清拍照",this::quickPhoto);
-            // Home no longer renders a separate Wi-Fi status panel.
-            quickStatusView=null;
-            option(content,"▶","C110+ 实时预览","保留 150ms 播放与竖屏裁切",()->{
-                prepareOtherScreenSpeech();
-                startActivity(new Intent(this,C110CameraActivity.class));
-            });
-            option(content,"▤","朗读任务","选择当前 OCR 或 AI 任务",this::chooseTask);
-            option(content,"▦","阅读模式","进入原来的书页阅读页面",this::openReading);
-            option(content,"⚙","设置","相机、云端AI、语音与任务管理",this::openSettings);
+        // No title bar, banners or experimental features. The camera card
+        // is the only status area; the six original actions are a 3 x 2 grid.
+        addCameraCard(content);
+        LinearLayout first=tileRow(content);
+        tile(first,0,"快捷拍照",this::quickPhoto);
+        tile(first,1,"实时预览",()->{
+            prepareOtherScreenSpeech();
+            startActivity(new Intent(this,C110CameraActivity.class));
+        });
+        tile(first,2,"朗读任务",this::chooseTask);
+        LinearLayout second=tileRow(content);
+        tile(second,3,"阅读模式",this::openReading);
+        tile(second,4,"连接相机",this::connectCamera);
+        tile(second,5,"设置",this::openSettings);
+        if(cameraStatus!=null)showCameraStatus(cameraStatus.state());
         LinearLayout dock=new LinearLayout(this);
         dock.setGravity(Gravity.CENTER);
         dock.setBackground(bg(NAV_BG,23));
@@ -111,29 +132,148 @@ public final class HomeActivity extends Activity {
         button.setBackground(bg(selected?NAV_ACTIVE:NAV_NORMAL,20));
         button.setOnClickListener(v->action.run());return button;
     }
-    private void option(LinearLayout parent,String symbol,String title,
-                        String detail,Runnable action){
-        LinearLayout item=new LinearLayout(this);
-        item.setGravity(Gravity.CENTER_VERTICAL);
-        item.setPadding(dp(10),dp(14),dp(8),dp(14));
-        TextView sign=text(symbol,28,ACCENT);
-        sign.setGravity(Gravity.CENTER);
-        item.addView(sign,new LinearLayout.LayoutParams(dp(45),dp(69)));
-        LinearLayout labels=new LinearLayout(this);
-        labels.setOrientation(LinearLayout.VERTICAL);
-        TextView name=text(title,21,WHITE);
-        name.setTypeface(null,android.graphics.Typeface.BOLD);
-        labels.addView(name);
-        TextView sub=text(detail,13,0xFFC3D7EF);
-        labels.addView(sub);
-        item.addView(labels,new LinearLayout.LayoutParams(0,-2,1f));
-        TextView arrow=text("›",30,WHITE);item.addView(arrow);
-        parent.addView(item,new LinearLayout.LayoutParams(-1,dp(100)));
-        item.setClickable(true);item.setFocusable(true);
-        item.setContentDescription(title+"，"+detail);
-        item.setOnClickListener(v->action.run());
-        View line=new View(this);line.setBackgroundColor(0xFF265077);
-        parent.addView(line,new LinearLayout.LayoutParams(-1,dp(1)));
+    private void addCameraCard(LinearLayout content){
+        LinearLayout card=new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(14),dp(12),dp(14),dp(10));
+        card.setBackground(bg(0xFF142E49,16));
+        LinearLayout.LayoutParams cardParams=new LinearLayout.LayoutParams(-1,-2);
+        cardParams.bottomMargin=dp(26);
+        content.addView(card,cardParams);
+        LinearLayout header=new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title=text("C110 运动相机",20,WHITE);
+        title.setTypeface(null,android.graphics.Typeface.BOLD);
+        header.addView(title,new LinearLayout.LayoutParams(0,-2,1f));
+        cameraBattery=text("电量未知",17,ACCENT);
+        cameraBattery.setGravity(Gravity.END|Gravity.CENTER_VERTICAL);
+        cameraBattery.setPadding(dp(5),0,0,0);
+        header.addView(cameraBattery,new LinearLayout.LayoutParams(-2,-2));
+        card.addView(header,new LinearLayout.LayoutParams(-1,-2));
+
+        LinearLayout line=new LinearLayout(this);
+        line.setGravity(Gravity.CENTER_VERTICAL);
+        cameraConnection=text("Wi-Fi 未连接",16,ACCENT);
+        line.addView(cameraConnection,new LinearLayout.LayoutParams(0,-2,1f));
+        Button connect=new Button(this);
+        connect.setText("快速连接");
+        connect.setAllCaps(false);
+        connect.setTextSize(16);
+        connect.setTextColor(WHITE);
+        connect.setMinHeight(0);connect.setMinimumHeight(dp(48));
+        connect.setPadding(dp(12),dp(4),dp(12),dp(4));
+        connect.setBackground(bg(NAV_ACTIVE,12));
+        connect.setContentDescription("快速连接运动相机 Wi-Fi");
+        connect.setOnClickListener(v->connectCamera());
+        line.addView(connect,new LinearLayout.LayoutParams(-2,-2));
+        card.addView(line,new LinearLayout.LayoutParams(-1,-2));
+        quickStatusView=text(quickStatus,15,ACCENT);
+        quickStatusView.setVisibility(quickStatus.isEmpty()?View.GONE:View.VISIBLE);
+        card.addView(quickStatusView,new LinearLayout.LayoutParams(-1,-2));
+    }
+    private void showCameraStatus(C110HomeStatus.State status){
+        if(cameraConnection==null||cameraBattery==null)return;
+        String connection=status.connected?"Wi-Fi 已连接":"Wi-Fi 未连接";
+        if(!connection.contentEquals(cameraConnection.getText())){
+            cameraConnection.setText(connection);
+            cameraConnection.setTextColor(status.connected?0xFF55DDA6:ACCENT);
+        }
+        String battery=status.connected?
+            (status.reading&&!status.battery.available?"读取电量…":status.battery.label):"电量未知";
+        if(!battery.contentEquals(cameraBattery.getText()))cameraBattery.setText(battery);
+        String raw=status.battery.raw;
+        cameraBattery.setContentDescription("运动相机"+battery+
+            (status.connected&&!raw.isEmpty()?"，设备返回值 "+raw:""));
+        cameraBattery.setTextColor(status.connected&&status.battery.available?0xFF55DDA6:ACCENT);
+    }
+    private void connectCamera(){
+        if(cameraWifi==null)return;
+        if(!C110WifiBootstrap.requestFromCameraPage(this,false))
+            cameraWifi.requestForCameraMode();
+        if(cameraStatus!=null)cameraStatus.refresh();
+    }
+    private LinearLayout tileRow(LinearLayout content){
+        LinearLayout row=new LinearLayout(this);
+        row.setGravity(Gravity.TOP);
+        LinearLayout.LayoutParams params=new LinearLayout.LayoutParams(-1,-2);
+        params.bottomMargin=dp(16);
+        content.addView(row,params);
+        return row;
+    }
+    private void tile(LinearLayout row,int icon,String title,Runnable action){
+        // One real native Button per tile. Its label is a single accessible
+        // click target, not a separately focusable decorative icon.
+        Button button=new Button(this);
+        button.setAllCaps(false);
+        button.setText(title);
+        button.setTextSize(19);
+        button.setTextColor(WHITE);
+        button.setGravity(Gravity.CENTER);
+        button.setMinWidth(0);button.setMinimumWidth(0);
+        button.setMinHeight(0);button.setMinimumHeight(dp(104));
+        button.setPadding(dp(3),dp(9),dp(3),dp(10));
+        button.setBackground(new RippleDrawable(ColorStateList.valueOf(0x3359B5FF),
+            bg(Color.TRANSPARENT,12),bg(Color.WHITE,12)));
+        Drawable glyph=new TileIcon(icon);
+        glyph.setBounds(0,0,dp(50),dp(50));
+        button.setCompoundDrawables(null,glyph,null,null);
+        button.setCompoundDrawablePadding(dp(8));
+        button.setContentDescription(title);
+        button.setOnClickListener(v->action.run());
+        row.addView(button,new LinearLayout.LayoutParams(0,-2,1f));
+    }
+    /** Flat 50dp launcher icon, independent of emoji/fonts and text size. */
+    private static final class TileIcon extends Drawable{
+        final int kind;
+        final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
+        TileIcon(int kind){this.kind=kind;}
+        @Override public void draw(Canvas c){
+            c.save();c.translate(getBounds().left,getBounds().top);
+            c.scale(getBounds().width()/50f,getBounds().height()/50f);
+            p.setStyle(Paint.Style.FILL);p.setColor(0xFF205582);
+            c.drawRoundRect(new RectF(0,0,50,50),12,12,p);
+            p.setColor(0xFFE7F4FF);p.setStyle(Paint.Style.STROKE);
+            p.setStrokeWidth(2.6f);p.setStrokeJoin(Paint.Join.ROUND);
+            p.setStrokeCap(Paint.Cap.ROUND);
+            Path path=new Path();
+            switch(kind){
+                case 0:
+                    path.moveTo(12,19);path.lineTo(19,19);path.lineTo(21,15);
+                    path.lineTo(29,15);path.lineTo(31,19);path.lineTo(38,19);
+                    path.lineTo(38,35);path.lineTo(12,35);path.close();
+                    c.drawPath(path,p);c.drawCircle(25,26.5f,5.5f,p);break;
+                case 1:
+                    c.drawRoundRect(new RectF(11,14,39,36),4,4,p);
+                    path.moveTo(22,19);path.lineTo(31,25);path.lineTo(22,31);
+                    path.close();c.drawPath(path,p);break;
+                case 2:
+                    for(int y=16;y<=34;y+=9){
+                        c.drawCircle(15,y,1,p);c.drawLine(21,y,36,y,p);
+                    }break;
+                case 3:
+                    path.moveTo(25,18);path.cubicTo(19,13,13,15,11,16);
+                    path.lineTo(11,34);path.cubicTo(17,31,21,32,25,36);
+                    path.cubicTo(29,32,33,31,39,34);path.lineTo(39,16);
+                    path.cubicTo(33,14,29,15,25,18);path.close();
+                    c.drawPath(path,p);c.drawLine(25,18,25,36,p);break;
+                case 4:
+                    c.drawArc(new RectF(8,14,42,48),-139,98,false,p);
+                    c.drawArc(new RectF(15,21,35,41),-139,98,false,p);
+                    c.drawArc(new RectF(21,27,29,35),-139,98,false,p);
+                    p.setStyle(Paint.Style.FILL);c.drawCircle(25,35,2,p);break;
+                default:
+                    for(int i=0;i<8;i++){
+                        double angle=i*Math.PI/4;
+                        float dx=(float)Math.cos(angle),dy=(float)Math.sin(angle);
+                        c.drawLine(25+dx*12,25+dy*12,25+dx*16,25+dy*16,p);
+                    }
+                    c.drawCircle(25,25,12,p);c.drawCircle(25,25,5,p);break;
+            }
+            c.restore();
+        }
+        @Override public void setAlpha(int alpha){p.setAlpha(alpha);}
+        @Override public void setColorFilter(ColorFilter filter){p.setColorFilter(filter);}
+        @Override public int getOpacity(){return PixelFormat.TRANSLUCENT;}
     }
     private static boolean isQuickShotIntent(Intent intent){
         return intent!=null&&ACTION_QUICK_SHOT.equals(intent.getAction());
@@ -158,6 +298,8 @@ public final class HomeActivity extends Activity {
     }
     private void quickStatusChanged(String message){
         quickStatus=message==null?"":message;
+        statusHandler.removeCallbacks(hideQuickStatus);
+        if(!quickStatus.isEmpty())statusHandler.postDelayed(hideQuickStatus,8000L);
         if(quickStatusView!=null){
             quickStatusView.setText(quickStatus);
             quickStatusView.setVisibility(quickStatus.isEmpty()?View.GONE:View.VISIBLE);
@@ -199,6 +341,7 @@ public final class HomeActivity extends Activity {
         homeResumed=true;
         if(homeVoice!=null)homeVoice.onResume();
         if(cameraWifi!=null)cameraWifi.startAtLaunch();
+        if(cameraStatus!=null)cameraStatus.start();
         if(root!=null){
             render();
             // Wait until Home is resumed and the real user-requested camera
@@ -221,11 +364,14 @@ public final class HomeActivity extends Activity {
     }
     @Override protected void onPause(){
         homeResumed=false;
+        if(cameraStatus!=null)cameraStatus.stop();
         if(homeVoice!=null)homeVoice.onPause();
         if(quickShot!=null)quickShot.onPause();
         super.onPause();
     }
     @Override protected void onDestroy(){
+        statusHandler.removeCallbacks(hideQuickStatus);
+        if(cameraStatus!=null){cameraStatus.shutdown();cameraStatus=null;}
         if(homeVoice!=null){homeVoice.shutdown();homeVoice=null;}
         if(quickShot!=null){quickShot.shutdown();quickShot=null;}
         if(cameraWifi!=null){cameraWifi.shutdown();cameraWifi=null;}
