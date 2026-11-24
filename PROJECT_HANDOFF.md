@@ -1,10 +1,10 @@
-# 2026-11-24｜蓝星向导 v1.0.90 快捷拍照恢复、预览实验UI清理（CI进行中，真机待验）
+# 2026-11-24｜蓝星向导 v1.0.90 快捷拍照恢复、预览实验UI清理（CI通过、已发布，真机待验）
 - 用户决定暂停C110预览画质研究；保益双击音量快捷拍照失效，截图明确出现旧桥接器Toast“请先安装蓝星向导v1.0.59主程序”。用户授权修复并去掉预览顶部A/B实验选项、右下“查看上传图”，恢复原布局。
 - 发现实际代码缺口：旧独立桥接器显式发送 `com.vobich.bluestar.cloudprobe.action.QUICK_SHOT` 至正式包 `com.vobich.bluestar.c110plusquick159/com.vobich.bluestar.cloudprobe.HomeActivity`；Home Manifest只有MAIN/LAUNCHER filter，未声明QUICK_SHOT。Android 13+对外部Intent检查匹配，可能抛ActivityNotFoundException，符合桥接器错误提示；用户手机是否同时缺正式包尚不确定，不能声称已经真机修复。
 - 正式v1.0.89 `58963e56aaf772385979acea9d4a86949200f6e5` 派生 `exp/quickshot-restore-clean-preview-20261124`，不合入独立画质实验。最终源码 `e1df4221a99fec313eb4db8545cd7e49c6fc5afc`，versionCode99/versionName1.0.90-quickshot-clean-preview，原正式包名及桥接器包名/组件/action不变，保益无需预先重绑或重装桥接器。
 - Manifest增加仅匹配QUICK_SHOT的非Launcher filter；Home的pending request在onResume激活Controller后才消费，onPause清除resumed守卫，避免丢请求；正常打开仍不自动快门。C110CameraActivity删除上传图按钮、弹窗和无用import，底部恢复单一高清拍照按钮；Reader删除仅用于查看上传图的RAM JPEG引用（真实取帧、JPEG100和识别数据不变）。无A/B或原生解码实验代码。保持1001、Wi-Fi、VLC、手机/USB、任务/模型/语音/设置不变。
-- compare严格仅7文件：app/build.gradle、AndroidManifest.xml、HomeActivity.java、C110CameraActivity.java、C110FrameReader.java、docs/QUICKSHOT_CLEAN_PREVIEW_V0190.md、.github/workflows/quickshot-clean-preview-v0190.yml。CI [45344358461](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45344358461) in_progress，新增静态外部action/旧bridge/单Launcher/生命周期门禁及APK实际manifest检查，保留既有回归、完整编译、APK校验。预期标签 `bluestar-quickshot-clean-preview-20261124-v0190`，APK `BlueStar_Guide_QuickShot_Clean_Preview_1.0.90.apk`，未核实发布前不提供可下载链接。
-- 下一步：核验CI+Release同提交及实际APK资产后通知用户；覆盖正式版不卸载、不卸载旧蓝星一键拍照启动器。若只有独立实验版则需安装正式版，必要时重新填正式版API Key；独立实验包不删除。真机普通打开不拍，保益双击应只执行一次1001→OCR→TTS；检查桌面/前台/预览页以及界面无A/B和查看上传图。其他预览画质实验暂缓。
+- compare严格仅7文件：app/build.gradle、AndroidManifest.xml、HomeActivity.java、C110CameraActivity.java、C110FrameReader.java、docs/QUICKSHOT_CLEAN_PREVIEW_V0190.md、.github/workflows/quickshot-clean-preview-v0190.yml。CI [45344358461](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45344358461) completed/success，新增静态外部action/旧bridge/单Launcher/生命周期门禁及APK实际manifest检查，保留既有回归、完整编译、APK校验。预期标签 `bluestar-quickshot-clean-preview-20261124-v0190`，APK `BlueStar_Guide_QuickShot_Clean_Preview_1.0.90.apk`，已核实全部CI步骤通过、Release target与最终源码一致，APK真实资产53550615 bytes，SHA256 `7482011ad0b7dfdf473a1a4685ae215d57ef05498cef39f07b94f10f22c85078`，下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-quickshot-clean-preview-20261124-v0190/BlueStar_Guide_QuickShot_Clean_Preview_1.0.90.apk 。
+- 下一步：CI+Release同提交及实际APK资产已核验；覆盖正式版不卸载、不卸载旧蓝星一键拍照启动器。若只有独立实验版则需安装正式版，必要时重新填正式版API Key；独立实验包不删除。真机普通打开不拍，保益双击应只执行一次1001→OCR→TTS；检查桌面/前台/预览页以及界面无A/B和查看上传图。其他预览画质实验暂缓。
 
 ---
 
