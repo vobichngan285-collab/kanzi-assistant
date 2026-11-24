@@ -47,14 +47,14 @@ final class C110QuickShotController {
         if(physicalReading){physicalReading=false;reader.cancelRecognition();}
     }
     boolean acceptPhysicalPhoto(C110WifiCamera.Photo photo,long queryMs,long downloadMs,
-                                int interval,Runnable onSuccess){
+                                int interval,long voiceWaitMs,Runnable onSuccess){
         if(destroyed||!active||shutterPending)return false;
         // Share the original reader/TTS, including cancellation of previous cloud speech.
         reader.cancelRecognition();
         reader.syncSpeechSettings();
         captureDing.photoSucceeded();
         physicalReading=true;
-        boolean ok=reader.recognizePhysicalJpeg(photo,queryMs,downloadMs,interval,onSuccess);
+        boolean ok=reader.recognizePhysicalJpeg(photo,queryMs,downloadMs,interval,voiceWaitMs,onSuccess);
         if(!ok)physicalReading=false;
         return ok;
     }
