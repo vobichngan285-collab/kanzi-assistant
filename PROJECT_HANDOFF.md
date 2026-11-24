@@ -1,3 +1,11 @@
+# 2026-11-24｜蓝星向导 v1.0.95 完整取图即删除（已提交，CI进行中，真机待验）
+- 用户真机确认 v1.0.94 原实体快门自动删除有效，要求改为所有被蓝星完整获取的 C110 原图都删除，不依赖OCR结果，覆盖手机遥控、预览高清、AI寻找、识别失败与任务取消；用户已授权修改。
+- 基于正式 v1.0.94 `8ca8aa75d007436ecf3a504c49b8567b8a1aa5fd`，独立分支 `exp/acquired-photo-delete-v0195-20261124`，源码提交 `5787c9f294364a5a870603ed1d0707078ef7047c`，后续纯文档 HEAD `dbda953e9880e9882175431902d319e8343c2bab`。versionCode104、versionName1.0.95-acquired-photo-delete、原包名及设置键不变，关于软件与删除确认说明已同步。
+- C110WifiCamera 原生遥控取图和 C110PhysicalWatcher 实体下载成功后统一 enqueueAcquiredDelete；独立串行清理线程，保存精确路径、SHA256、原网络，删除前继续核查开关、同一相机网络、标准C110、4003支持、文件内容，不按识别结果或ASR/取消/新拍照撤销。未获取的旧照片、未下载的连拍照片及实时帧不删；断线、关闭开关或校验/固件失败可能保留。不得宣称每张必删或零网络竞争，预览状态下的删除需真机测试。
+- [Actions 45419073683](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45419073683) 已启动，当前静态检查和既有纯Java回归均通过，完整APK编译、签名、Release仍待核实。仅CI全部通过才允许发布；预期标签 `bluestar-acquired-photo-delete-20261124-v0195`，未核实实际资产前不提供下载链接。下一步核实CI、资产、源码SHA及真机各拍照入口、AI寻找、连拍、失败、开关关闭与历史图保留。
+
+---
+
 # 2026-11-24｜蓝星向导 v1.0.94 实体快门与AI寻找目标衔接修复（CI通过、已发布，真机待验）
 - 用户真机确认v1.0.93实体快门取图速度好，14条200ms档记录，目录通常175–221ms、4320×2432原图146–272ms、编码0–1ms；一轮上传12165ms异常；报告“帮我找厕所”语音确认后实体拍照不响应。源码发现HomeVoiceAssistant借用离页/手动快门的beforeManualAction清空基线，且录音/ASR/TTS isSpeaking均阻塞目录监听，恢复双基线时可能吞新图。寻找目标独立通道旧诊断缺失，不能仅凭缺日志断定全部原因。用户授权修复。
 - 从正式v1.0.93 `e6d905a99035c4fa3f5d34113378a4a9b59a440c` 派生 `exp/physical-ai-handoff-v0194-20261124`，最终源码/CI `8ca8aa75d007436ecf3a504c49b8567b8a1aa5fd`，versionCode103、versionName1.0.94-physical-ai-handoff、原正式包名不变。
