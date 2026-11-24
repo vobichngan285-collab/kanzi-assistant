@@ -184,7 +184,16 @@ public final class HomeActivity extends Activity {
         String raw=status.battery.raw;
         cameraBattery.setContentDescription("运动相机"+battery+
             (status.connected&&!raw.isEmpty()?"，设备返回值 "+raw:""));
-        cameraBattery.setTextColor(status.connected&&status.battery.available?0xFF55DDA6:ACCENT);
+        int batteryColor=ACCENT;
+        if(status.connected&&status.battery.available){
+            batteryColor=("2".equals(raw)||"3".equals(raw)||"4".equals(raw))?
+                0xFFFFC278:0xFF55DDA6;
+        }
+        cameraBattery.setTextColor(batteryColor);
+        Drawable batteryIcon=new BatteryIcon(batteryColor);
+        batteryIcon.setBounds(0,0,dp(21),dp(14));
+        cameraBattery.setCompoundDrawables(batteryIcon,null,null,null);
+        cameraBattery.setCompoundDrawablePadding(dp(5));
     }
     private void connectCamera(){
         if(cameraWifi==null)return;
@@ -221,6 +230,24 @@ public final class HomeActivity extends Activity {
         button.setContentDescription(title);
         button.setOnClickListener(v->action.run());
         row.addView(button,new LinearLayout.LayoutParams(0,-2,1f));
+    }
+    /** Symbol only; do not invent a fill percentage for the protocol's enum. */
+    private static final class BatteryIcon extends Drawable{
+        final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
+        final int color;
+        BatteryIcon(int color){this.color=color;}
+        @Override public void draw(Canvas canvas){
+            canvas.save();
+            canvas.translate(getBounds().left,getBounds().top);
+            canvas.scale(getBounds().width()/21f,getBounds().height()/14f);
+            p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1.6f);p.setColor(color);
+            canvas.drawRoundRect(new RectF(1,2,17,12),2,2,p);
+            p.setStyle(Paint.Style.FILL);canvas.drawRoundRect(new RectF(18,5,20,9),1,1,p);
+            canvas.restore();
+        }
+        @Override public void setAlpha(int alpha){p.setAlpha(alpha);}
+        @Override public void setColorFilter(ColorFilter filter){p.setColorFilter(filter);}
+        @Override public int getOpacity(){return PixelFormat.TRANSLUCENT;}
     }
     /** Flat 50dp launcher icon, independent of emoji/fonts and text size. */
     private static final class TileIcon extends Drawable{
