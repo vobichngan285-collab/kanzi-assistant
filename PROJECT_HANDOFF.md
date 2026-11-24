@@ -1,3 +1,13 @@
+# 2026-11-24｜蓝星向导 v1.0.91 主页六宫格、运动相机Wi-Fi和电量（CI进行中，真机待验）
+- 用户批准参考图的深蓝简洁布局：取消“蓝星向导”标题栏，顶部相机连接/电量状态和快速连接，三列两排图标，原底栏主页/预览/按住AI保持；授权开发并检查其他问题。
+- 正式 v1.0.90 `e1df4221a99fec313eb4db8545cd7e49c6fc5afc` 派生 `exp/home-grid-camera-battery-20261124`，最终源码/CI提交 `7d73c0e9efea5c9ec99913ec14f073d9c8823b64`，versionCode100/name1.0.91-home-camera-status，包 `com.vobich.bluestar.c110plusquick159` 不变。
+- Home顶部无标题，C110状态卡+快速连接；3×2固定图标50dp：快捷拍照/实时预览/朗读任务、阅读模式/连接相机/设置。实际native Button完整点击及无障碍焦点，图标不独立焦点；文字随系统字体缩放、页面可滚动；保留底栏按住AI、原各页面导航、保益QUICK_SHOT action/Manifest/启动器、已验证的单次快门和云/TTS。新连接入口复用Home已有C110WifiBootstrap租约，不另建连接、不强制断开。
+- 电量：Novatek NT96660 Wifi Command Application Note §5.3.19（https://www.mputek.store/filedown/Survey3-WIFI-Manual.pdf），3019无参只读GET。现有相机Network上固定网关192.168.1.254，禁重定向、1200ms连接/读超时、8KiB上限；仅Home前台3秒检查连接变化、60秒读取电量，手动刷新至少间隔10秒、单线程单请求、快捷拍照pending/取图期间不新发、离开停止调度且丢弃过期回执。已发起短查询不阻塞快门/UI。验证Cmd/Status，枚举0–5为公开协议参考档位（标“参考”），仅明确百分号显示百分比，裸值6–100显示读数待确认，错误或断网显示未知，绝不伪造。实际C110固件枚举未真机验证。无新权限/云请求/持久化电量；读屏可读设备回执数值。
+- GitHub compare仅7文件：HomeActivity.java、C110HomeStatus.java、C110BatteryPolicy.java、C110BatteryPolicyTest.java、app/build.gradle、docs/HOME_CAMERA_STATUS_V0191.md、.github/workflows/home-camera-status-v0191.yml。CI [45386721646](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45386721646) 已触发；静态验证六宫格、点击区域、原dock/导航/快捷拍照代码字节不变、只读安全和电量解析单测，保留既有回归及APK清单/库/资源/包名检查。预期Release `bluestar-home-camera-status-20261124-v0191`，资产 `BlueStar_Guide_Home_Camera_Status_1.0.91.apk`；未核实发布前不提供有效下载链接。
+- 下一步：核实CI、Release与提交、APK资产一致；覆盖正式App不卸载且保留保益桥接器。真机验收六宫格、读屏焦点、Wi-Fi连接/断开、电量返回值、普通打开不拍照、保益快捷拍照、底部导航/按住AI、其他相机和语音。画质实验仍暂停。
+
+---
+
 # 2026-11-24｜蓝星向导 v1.0.90 快捷拍照恢复、预览实验UI清理（CI通过、已发布，真机待验）
 - 用户决定暂停C110预览画质研究；保益双击音量快捷拍照失效，截图明确出现旧桥接器Toast“请先安装蓝星向导v1.0.59主程序”。用户授权修复并去掉预览顶部A/B实验选项、右下“查看上传图”，恢复原布局。
 - 发现实际代码缺口：旧独立桥接器显式发送 `com.vobich.bluestar.cloudprobe.action.QUICK_SHOT` 至正式包 `com.vobich.bluestar.c110plusquick159/com.vobich.bluestar.cloudprobe.HomeActivity`；Home Manifest只有MAIN/LAUNCHER filter，未声明QUICK_SHOT。Android 13+对外部Intent检查匹配，可能抛ActivityNotFoundException，符合桥接器错误提示；用户手机是否同时缺正式包尚不确定，不能声称已经真机修复。
