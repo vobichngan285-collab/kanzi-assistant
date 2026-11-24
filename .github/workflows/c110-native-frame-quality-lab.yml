@@ -41,6 +41,7 @@ jobs:
             'cloud-vision-app/app/build.gradle',
             'cloud-vision-app/app/src/main/AndroidManifest.xml',
             'cloud-vision-app/app/src/main/cpp/c110rawframe.c',
+            'cloud-vision-app/app/src/main/cpp/CMakeLists.txt',
             root+'C110NativeFrameDecoder.java',
             root+'C110FrameReader.java',
             root+'C110CameraActivity.java'
@@ -90,19 +91,6 @@ jobs:
           EOF
           cc -std=gnu11 -Wall -Wextra -I"$JAVA_HOME/include" -I"$JAVA_HOME/include/linux" -Icloud-vision-app/app/src/main/cpp /tmp/c110callbacktest.c -ldl -lpthread -o /tmp/c110callbacktest
           /tmp/c110callbacktest
-      - name: Compile ARM64 native memory callback bridge
-        shell: bash
-        run: |
-          set -euo pipefail
-          NDK="$ANDROID_HOME/ndk/28.1.13356709"
-          if [ ! -d "$NDK" ]; then
-            sdkmanager "ndk;28.1.13356709"
-          fi
-          CLANG="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
-          mkdir -p cloud-vision-app/app/src/main/jniLibs/arm64-v8a
-          "$CLANG" -std=gnu11 -Wall -Wextra -Werror -O2 -fPIC -shared \
-            cloud-vision-app/app/src/main/cpp/c110rawframe.c -ldl \
-            -o cloud-vision-app/app/src/main/jniLibs/arm64-v8a/libc110rawframe.so
       - name: Run vendor allow-list, task and C110 pure Java regressions
         shell: bash
         run: |
