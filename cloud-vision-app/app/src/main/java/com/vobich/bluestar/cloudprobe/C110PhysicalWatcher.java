@@ -13,10 +13,14 @@ import java.util.concurrent.Executors;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
-/** Home foreground only. One serial camera I/O lane; no shutter or video command. */
+/** One serial camera I/O lane, owned by the user-started listening service. */
 final class C110PhysicalWatcher {
-    private final Activity owner;
-    private final C110QuickShotController shots;
+    private final Context owner;
+    interface PhotoSink {
+        void cancelPhysicalRecognition();
+        boolean acceptPhysicalPhoto(C110WifiCamera.Photo photo,long queryMs,long downloadMs,int interval,long voiceWaitMs,Runnable onSuccess);
+    }
+    private final PhotoSink shots;
     private final BooleanSupplier manualBusy,voiceBusy;
     private final Runnable yieldVoiceSpeech;
     private final Consumer<String> report;
@@ -47,7 +51,7 @@ final class C110PhysicalWatcher {
             this.readyAt=SystemClock.elapsedRealtime();
         }
     }
-    C110PhysicalWatcher(Activity owner,C110QuickShotController shots,
+    C110PhysicalWatcher(Context owner,PhotoSink shots,
                        BooleanSupplier manualBusy,BooleanSupplier voiceBusy,
                        Runnable yieldVoiceSpeech,Consumer<String> report){
         this.owner=owner;this.shots=shots;this.manualBusy=manualBusy;this.voiceBusy=voiceBusy;

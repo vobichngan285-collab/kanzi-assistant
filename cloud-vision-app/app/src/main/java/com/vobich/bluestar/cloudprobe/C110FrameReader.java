@@ -33,7 +33,7 @@ import java.util.function.Consumer;
  */
 final class C110FrameReader {
     private static final String PREFS="kanzi_settings";
-    private final Activity activity;
+    private final Context activity;
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     // Keep a stuck old HTTP response off the image-preparation queue.
@@ -104,7 +104,7 @@ final class C110FrameReader {
     void setPhotoMetricsListener(PhotoMetricsListener listener){metricsListener=listener;}
     void setFrameCaptureFeedback(Runnable feedback){frameCaptureFeedback=feedback;}
 
-    C110FrameReader(Activity activity,Consumer<String> updates){
+    C110FrameReader(Context activity,Consumer<String> updates){
         this.activity=activity;
         this.updates=updates;
         // The main Blue Star Home remains alive behind MainActivity Settings.

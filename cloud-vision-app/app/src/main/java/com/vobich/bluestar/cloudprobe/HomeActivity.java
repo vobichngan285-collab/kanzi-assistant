@@ -45,7 +45,12 @@ public final class HomeActivity extends Activity {
     private HomeVoiceAssistant homeVoice;
     private TextView quickStatusView,cameraConnection,cameraBattery;
     private C110HomeStatus cameraStatus;
-    private C110PhysicalWatcher physicalWatcher;
+    private android.widget.Switch listenSwitch;
+    private boolean syncingListenSwitch;
+    private android.content.SharedPreferences listenPrefs;
+    private final android.content.SharedPreferences.OnSharedPreferenceChangeListener listenChanged=(p,k)->{
+        if(C110PhysicalPolicy.ENABLE.equals(k))syncListenSwitch();
+    };
     private C110DeviceControls homeLightControls;
     private Button lightButton;
     private boolean lightBusy;
@@ -69,14 +74,11 @@ public final class HomeActivity extends Activity {
         quickShot=new C110QuickShotController(this,this::quickStatusChanged);
         homeVoice=new HomeVoiceAssistant(this,this::quickStatusChanged,this::prepareHomeVoiceSpeech,this::voiceOneShotPhoto);
         homeLightControls=new C110DeviceControls(this,this::quickStatusChanged);
-        physicalWatcher=new C110PhysicalWatcher(this,quickShot,
-            ()->lightBusy||quickLaunchPending||(quickShot!=null&&quickShot.isShutterPending()),
-            ()->homeVoice!=null&&homeVoice.busyForPhysical(),
-            ()->{if(homeVoice!=null)homeVoice.yieldSpeechToPhysicalPhoto();},
-            this::quickStatusChanged);
+        listenPrefs=getSharedPreferences("kanzi_settings",Context.MODE_PRIVATE);
+        listenPrefs.registerOnSharedPreferenceChangeListener(listenChanged);
         cameraStatus=new C110HomeStatus(this,
             ()->lightBusy||quickLaunchPending||(quickShot!=null&&quickShot.isShutterPending())
-                ||(physicalWatcher!=null&&physicalWatcher.cameraIoBusy()),
+                ||C110ListenService.cameraIoBusy(),
             this::showCameraStatus);
         root=new FrameLayout(this);
         root.setBackgroundColor(BG);
@@ -121,8 +123,8 @@ public final class HomeActivity extends Activity {
         tile(first,2,"朗读任务",this::chooseTask);
         LinearLayout second=tileRow(content);
         tile(second,3,"阅读模式",this::openReading);
-        tile(second,4,"连接相机",this::connectCamera);
         tile(second,5,"设置",this::openSettings);
+        second.addView(new View(this),new LinearLayout.LayoutParams(0,1,1f));
         if(cameraStatus!=null)showCameraStatus(cameraStatus.state());
         LinearLayout dock=new LinearLayout(this);
         dock.setGravity(Gravity.CENTER);
@@ -159,6 +161,20 @@ public final class HomeActivity extends Activity {
         TextView title=text("C110 运动相机",20,WHITE);
         title.setTypeface(null,android.graphics.Typeface.BOLD);
         header.addView(title,new LinearLayout.LayoutParams(0,-2,1f));
+        listenSwitch=new android.widget.Switch(this);
+        listenSwitch.setText("监听");
+        listenSwitch.setTextSize(14);
+        listenSwitch.setTextColor(WHITE);
+        listenSwitch.setSwitchPadding(dp(4));
+        listenSwitch.setContentDescription("相机实体快门监听，开启后锁屏也继续朗读");
+        listenSwitch.setChecked(listenPrefs.getBoolean(C110PhysicalPolicy.ENABLE,false));
+        listenSwitch.setOnCheckedChangeListener((button,checked)->{
+            if(syncingListenSwitch)return;
+            listenPrefs.edit().putBoolean(C110PhysicalPolicy.ENABLE,checked).apply();
+            if(checked)C110ListenService.ensureStarted(this);
+            else C110ListenService.stopListening(this);
+        });
+        header.addView(listenSwitch,new LinearLayout.LayoutParams(-2,dp(44)));
         cameraBattery=text("",17,ACCENT);
         cameraBattery.setGravity(Gravity.END|Gravity.CENTER_VERTICAL);
         cameraBattery.setPadding(dp(5),0,0,0);
@@ -218,7 +234,7 @@ public final class HomeActivity extends Activity {
         }
         updateLightButton();
         Drawable batteryIcon=new BatteryIcon(reading);
-        batteryIcon.setBounds(0,0,dp(36),dp(20));
+        batteryIcon.setBounds(0,0,dp(46),dp(25));
         cameraBattery.setCompoundDrawables(batteryIcon,null,null,null);
         cameraBattery.setCompoundDrawablePadding(0);
     }
@@ -254,7 +270,7 @@ public final class HomeActivity extends Activity {
         if(quickLaunchPending||(quickShot!=null&&quickShot.isShutterPending())){
             quickStatusChanged("正在拍照，请稍后操作灯光");return;
         }
-        if(physicalWatcher!=null)physicalWatcher.beforeManualAction();
+        C110ListenService.beforeManualAction();
         lightBusy=true;updateLightButton();
         homeLightControls.setLightFromHome(enabled,ok->{
             lightBusy=false;
@@ -415,7 +431,7 @@ public final class HomeActivity extends Activity {
         Intent launched=getIntent();
         if(isQuickShotIntent(launched))launched.setAction(Intent.ACTION_MAIN);
         // Preserve explicitly requested legacy external one-shot shortcut.
-        if(physicalWatcher!=null)physicalWatcher.beforeManualAction();
+        C110ListenService.beforeManualAction();
         if(quickShot!=null)quickShot.trigger();
     }
     private void quickPhoto(){
@@ -426,7 +442,7 @@ public final class HomeActivity extends Activity {
     }
     /** Explicit voice read/observe changes only the current C110 shot. */
     private void voiceOneShotPhoto(TaskCatalog.Task oneShot){
-        if(physicalWatcher!=null)physicalWatcher.beforeManualAction();
+        C110ListenService.beforeManualAction();
         if(quickShot!=null)quickShot.trigger(oneShot);
     }
     private void quickStatusChanged(String message){
@@ -438,15 +454,30 @@ public final class HomeActivity extends Activity {
             quickStatusView.setVisibility(quickStatus.isEmpty()?View.GONE:View.VISIBLE);
         }
     }
+    private void syncListenSwitch(){
+        if(listenSwitch==null||listenPrefs==null)return;
+        syncingListenSwitch=true;
+        listenSwitch.setChecked(listenPrefs.getBoolean(C110PhysicalPolicy.ENABLE,false));
+        syncingListenSwitch=false;
+    }
+    boolean physicalManualBusy(){
+        return lightBusy||quickLaunchPending||(quickShot!=null&&quickShot.isShutterPending());
+    }
+    boolean physicalVoiceBusy(){return homeVoice!=null&&homeVoice.busyForPhysical();}
+    void yieldForPhysical(){
+        if(homeVoice!=null)homeVoice.yieldSpeechToPhysicalPhoto();
+        if(quickShot!=null){quickShot.cancelRecognitionOnly();quickShot.beforeOpenAnotherScreen();}
+    }
+    void physicalStatus(String message){if(homeResumed)quickStatusChanged(message);}
     private void prepareHomeVoiceSpeech(){
-        if(physicalWatcher!=null)physicalWatcher.beforeVoiceAction();
+        C110ListenService.beforeVoiceAction();
         if(quickShot!=null){
             quickShot.cancelRecognitionOnly();
             quickShot.beforeOpenAnotherScreen();
         }
     }
     private void prepareOtherScreenSpeech(){
-        if(physicalWatcher!=null)physicalWatcher.beforeManualAction();
+        C110ListenService.beforeManualAction();
         if(quickShot!=null)quickShot.beforeOpenAnotherScreen();
     }
     private void openPreview(){
@@ -483,7 +514,8 @@ public final class HomeActivity extends Activity {
         if(homeVoice!=null)homeVoice.onResume();
         if(cameraWifi!=null)cameraWifi.startAtLaunch();
         if(cameraStatus!=null)cameraStatus.start();
-        if(physicalWatcher!=null)physicalWatcher.start();
+        C110ListenService.attachHome(this);
+        if(listenPrefs.getBoolean(C110PhysicalPolicy.ENABLE,false))C110ListenService.ensureStarted(this);
         if(root!=null){
             render();
             // Wait until Home is resumed and the real user-requested camera
@@ -507,7 +539,7 @@ public final class HomeActivity extends Activity {
     @Override protected void onPause(){
         homeResumed=false;
         lastLightCommand=null;lightNetwork=null;
-        if(physicalWatcher!=null)physicalWatcher.stop();
+        // The foreground listener owns its lifecycle; screen lock must not stop it.
         if(cameraStatus!=null)cameraStatus.stop();
         if(homeVoice!=null)homeVoice.onPause();
         if(quickShot!=null)quickShot.onPause();
@@ -515,7 +547,8 @@ public final class HomeActivity extends Activity {
     }
     @Override protected void onDestroy(){
         statusHandler.removeCallbacks(hideQuickStatus);
-        if(physicalWatcher!=null){physicalWatcher.shutdown();physicalWatcher=null;}
+        C110ListenService.detachHome(this);
+        if(listenPrefs!=null)listenPrefs.unregisterOnSharedPreferenceChangeListener(listenChanged);
         if(cameraStatus!=null){cameraStatus.shutdown();cameraStatus=null;}
         if(homeLightControls!=null){homeLightControls.shutdown();homeLightControls=null;}
         if(homeVoice!=null){homeVoice.shutdown();homeVoice=null;}

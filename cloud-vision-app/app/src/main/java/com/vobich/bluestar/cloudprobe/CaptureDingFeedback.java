@@ -26,7 +26,7 @@ final class CaptureDingFeedback {
     private boolean loaded,closed,pending;
     private int sampleId;
 
-    CaptureDingFeedback(Activity owner){
+    CaptureDingFeedback(Context owner){
         context=owner.getApplicationContext();
         try{
             AudioAttributes attributes=new AudioAttributes.Builder()

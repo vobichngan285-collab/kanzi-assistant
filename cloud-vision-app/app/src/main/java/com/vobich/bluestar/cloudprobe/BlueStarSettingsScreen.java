@@ -540,12 +540,7 @@ final class BlueStarSettingsScreen {
     }
     private void physicalSettings(){
         SharedPreferences p=app.getSharedPreferences("kanzi_settings",Context.MODE_PRIVATE);
-        boolean listening=p.getBoolean(C110PhysicalPolicy.ENABLE,false);
         int current=C110PhysicalPolicy.interval(p.getInt(C110PhysicalPolicy.INTERVAL,300));
-        row("实体拍照自动朗读 · "+(listening?"开启":"关闭"),"",()->{
-            p.edit().putBoolean(C110PhysicalPolicy.ENABLE,!listening).apply();
-            render(history.get(history.size()-1));
-        });
         row("监听间隔 · "+current+" 毫秒","",()->{
             int selected=0;
             for(int i=0;i<C110PhysicalPolicy.INTERVALS.length;i++)
@@ -572,7 +567,7 @@ final class BlueStarSettingsScreen {
                     }).setNegativeButton("取消",null).show();
             }
         });
-        note("返回主页并连接相机，显示“监听已就绪”后再按实体快门。本版仅主页亮屏前台监听。");
+        note("在主页开启监听，连接相机后即可使用实体快门；锁屏无需另行设置。");
     }
     private void c110CustomLightDelay(){
         EditText seconds=new EditText(app);
