@@ -1,3 +1,13 @@
+# 2026-11-24｜蓝星向导 v1.0.94 实体快门与AI寻找目标衔接修复（CI进行中，真机待验）
+- 用户真机确认v1.0.93实体快门取图速度好，14条200ms档记录，目录通常175–221ms、4320×2432原图146–272ms、编码0–1ms；一轮上传12165ms异常；报告“帮我找厕所”语音确认后实体拍照不响应。源码发现HomeVoiceAssistant借用离页/手动快门的beforeManualAction清空基线，且录音/ASR/TTS isSpeaking均阻塞目录监听，恢复双基线时可能吞新图。寻找目标独立通道旧诊断缺失，不能仅凭缺日志断定全部原因。用户授权修复。
+- 从正式v1.0.93 `e6d905a99035c4fa3f5d34113378a4a9b59a440c` 派生 `exp/physical-ai-handoff-v0194-20261124`，最终源码/CI `8ca8aa75d007436ecf3a504c49b8567b8a1aa5fd`，versionCode103、versionName1.0.94-physical-ai-handoff、原正式包名不变。
+- Home AI使用独立prepareHomeVoiceSpeech/beforeVoiceAction，取消旧识别/删除候选/待提交旧图，不重置历史集合、不暂停目录查询。单RAM槽C110DeferredPhoto保留最新完整新JPEG；录音/ASR/AI处理期间继续下载，不上传、不朗读，待指令提交/结束后下一轮有效快照交付最新图一次，使用刚保存目标；新图可中断旧AI确认语音，避免第三方TTS isSpeaking无限阻塞。录音pending明确开始/完成/失败/取消，关闭/手动快门/灯光/离页/断线仍重新基线。无锁屏服务。相机协议/轮询间隔/原图/云模型/设置/灯光电量及主页布局保持。
+- 目标视觉通道原请求、保守结果found/possible/not_found及找到清除目标不改；新增可选真实上传耗时、匿名target.route、upload_ms（成功）、network_ms、outcome（1找到/2疑似/0未找到/-1失败取消）、capture.outcome取消、cloud.outcome失败或无文字、c110.voice_wait_ms及TTS onStart。目标失败语音提示并保留寻找目标和原图；自动删除仍仅普通任务非空成功，寻找图不删，录音或AI处理不启动清理，原4003精确文件/SHA256/同会话安全门禁不变。日志不含目标/文字/路径/图片/密钥；TTS onStart非实际出声证明。
+- compare仅12文件：HomeVoiceAssistant、HomeActivity、C110PhysicalWatcher、C110DeferredPhoto、C110QuickShotController、TargetVisionClient、C110FrameReader、BlueStarReleaseInfo、build.gradle、C110DeferredPhotoTest、docs/PHYSICAL_AI_HANDOFF_V0194.md、.github/workflows/physical-ai-handoff-v0194.yml。CI [45414837544](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45414837544) 已启动；静态约束、最新图缓存单测、旧回归、完整APK检查后发布。关于软件已更新本次版本与变更。预期标签 `bluestar-physical-ai-handoff-20261124-v0194`，资产 `BlueStar_Guide_Physical_AI_Handoff_1.0.94.apk`；未核实发布前不得发送有效下载链接。
+- 下一步：核验CI、Release目标和真实APK，覆盖安装保留保益桥接器。关闭自动删除，主页监听就绪，按住AI“帮我找厕所”，分别在确认语音期间及结束后立即拍照，检查目标结果、未找到继续、找到退出、失败有声；测试录音期间连拍/取消录音恢复、保益/灯光/普通拍照、导出匿名诊断。实际设备尚未验收。
+
+---
+
 # 2026-11-24｜蓝星向导 v1.0.93 实体快门自动朗读、可选自动删除、关于软件（CI通过、已发布，真机待验）
 - 用户确认标准C110实体按键在Wi-Fi连接时可拍照且不断开，原厂App能显示缩略图；授权增加可选实体监听、100/200/300/500ms、自动删除识别成功的本次原图、设置底部关于软件，今后每次更新显示对应版本信息。基于正式v1.0.92 `04e3d542900e5ae2c9b2e2169c15cfe2ba95b939` 派生 `exp/physical-shutter-v0193-20261124`，最终源码/CI `e6d905a99035c4fa3f5d34113378a4a9b59a440c`，versionCode102、versionName1.0.93-physical-shutter、原包com.vobich.bluestar.c110plusquick159。
 - 统一设置→相机→C110：监听默认关，默认300ms；删图默认关且开启前明确不可恢复确认。仅主页前台亮屏，3012确认标准机，两次完整DCIM HTML基线不提交历史图；单worker无积压，HTTP结束后按设置间隔，目录异常/变化、重连或手动快门/AI/其他页面重新基线，可能漏读保护旧图。新路径取消前一实体任务，完整JPEG只读下载校验，复用Home同一个QuickShotController/FrameReader、叮、云模型/任务/上传模式/语音，不发送1001/模式/预览命令，不增权限或租约。多图同轮以文件名排序末项为候选（非保证实际时间最新），不删歧义图。退出主页/熄屏暂停，不承诺锁屏。
