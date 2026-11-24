@@ -54,9 +54,6 @@ final class C110FrameReader {
     private long lastTapMs;
     private Future<?> taskFuture;
     private String lastText="";
-    // Retain only the current preview recognition JPEG in RAM for inspection.
-    private volatile byte[] lastPreviewSubmittedJpeg;
-    byte[] lastPreviewSubmittedJpeg(){return lastPreviewSubmittedJpeg;}
     private boolean outputReady;
     interface PhotoMetricsListener {
         void onCaptured(int width,int height,long captureMs);
@@ -229,7 +226,6 @@ final class C110FrameReader {
             report("C110视频表面尺寸无效或过大，已取消取帧");return;
         }
         final int id=request.incrementAndGet();
-        lastPreviewSubmittedJpeg=null;
         clearPendingSpeech();
         lastTapMs=now;
         busy=true;
@@ -313,10 +309,8 @@ final class C110FrameReader {
         previewDiag.event("jpeg","width_px",jpegW,"ok");
         previewDiag.event("jpeg","height_px",jpegH,"ok");
         previewDiag.event("jpeg","bytes",jpeg.length,"ok");
-        // The inspector uses the same JPEG bytes passed to the existing recognition path.
         synchronized(photoNetworkLock){
             if(closed||id!=request.get())return;
-            lastPreviewSubmittedJpeg=jpeg;
             recognizeJpeg(id,jpeg,started,null,previewDiag);
         }
     }
@@ -659,7 +653,6 @@ final class C110FrameReader {
         ++ttsGeneration;
         stop();
         io.shutdownNow();
-        lastPreviewSubmittedJpeg=null;
         photoCloudIo.shutdownNow();
         if(tts!=null){tts.shutdown();tts=null;}
         ttsReady=false;
