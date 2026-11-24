@@ -39,6 +39,13 @@ final class C110QuickShotController {
     private void emit(String message){
         main.post(()->{if(!destroyed)status.accept(message);});
     }
+    void setPhotoMetricsListener(C110FrameReader.PhotoMetricsListener listener){
+        reader.setPhotoMetricsListener(listener);
+    }
+    boolean isShutterPending(){return shutterPending;}
+    void cancelRecognitionOnly(){
+        if(!shutterPending)reader.cancelRecognition();
+    }
     void onResume(){
         active=true;
         // Home has no reason to hold a second third-party TTS session until
@@ -115,7 +122,8 @@ final class C110QuickShotController {
                     emit("已拍照 "+photo.width+"×"+photo.height+"，正在识别朗读…");
                     // Same cloud model/key/task as Home settings; no test
                     // prompts and no re-encoding at native 1x.
-                    if(!reader.recognizeOriginalJpeg(photo.jpeg,photo.width,photo.height,oneShotTask))
+                    if(!reader.recognizeOriginalJpeg(photo.jpeg,photo.width,photo.height,
+                            oneShotTask,photo.totalMs))
                         emit("已拍摄原图，但朗读任务仍忙，请稍后再试");
                 });
             }catch(Exception error){

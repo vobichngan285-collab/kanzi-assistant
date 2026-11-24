@@ -97,6 +97,9 @@ public final class C110CameraActivity extends Activity {
         deviceControls=new C110DeviceControls(this,this::say);
         frameReader=new C110FrameReader(this,this::say);
         captureDing=new CaptureDingFeedback(this);
+        frameReader.setFrameCaptureFeedback(()->{
+            if(captureDing!=null)captureDing.photoSucceeded();
+        });
         FrameLayout root=new FrameLayout(this);
         cameraRoot=root;
         root.setClipChildren(true);

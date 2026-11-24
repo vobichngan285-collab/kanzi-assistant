@@ -10,6 +10,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.TextureView;
 import android.view.View;
@@ -33,7 +34,12 @@ public final class QuickPhotoActivity extends Activity {
     private InternalCameraController phone;
     private C110FrameReader phoneReader;
     private C110QuickShotController c110;
+    private CaptureDingFeedback captureDing;
+    private RuntimeDiagnostics phoneDiag;
     private TextView taskTitle,status;
+    private String photoSource="";
+    private int originalWidth=-1,originalHeight=-1,uploadWidth=-1,uploadHeight=-1;
+    private long captureMs=-1,recognitionMs=-1;
     private boolean active,phoneTaking,closed;
     private int phoneGeneration,phoneRotation;
     private long phoneStartedMs;
@@ -57,6 +63,27 @@ public final class QuickPhotoActivity extends Activity {
         getWindow().setNavigationBarColor(BG);
         phoneReader=new C110FrameReader(this,this::showStatus);
         c110=new C110QuickShotController(this,this::showStatus);
+        captureDing=new CaptureDingFeedback(this);
+        phoneReader.setPhotoMetricsListener(new C110FrameReader.PhotoMetricsListener(){
+            @Override public void onCaptured(int w,int h,long ms){}
+            @Override public void onUpload(int w,int h,int bytes){
+                if("手机高清拍照".equals(photoSource))setUploaded(w,h);
+            }
+            @Override public void onRecognized(long ms){
+                if("手机高清拍照".equals(photoSource))setRecognized(ms);
+            }
+        });
+        c110.setPhotoMetricsListener(new C110FrameReader.PhotoMetricsListener(){
+            @Override public void onCaptured(int w,int h,long ms){
+                if("相机高清拍照".equals(photoSource))setCaptured(w,h,ms);
+            }
+            @Override public void onUpload(int w,int h,int bytes){
+                if("相机高清拍照".equals(photoSource))setUploaded(w,h);
+            }
+            @Override public void onRecognized(long ms){
+                if("相机高清拍照".equals(photoSource))setRecognized(ms);
+            }
+        });
         root=new FrameLayout(this);
         root.setBackgroundColor(BG);
         root.setOnApplyWindowInsetsListener((v,insets)->{
@@ -176,8 +203,50 @@ public final class QuickPhotoActivity extends Activity {
         }
         if(taskTitle!=null)taskTitle.setText(name);
     }
+    private void startMeasurement(String source){
+        photoSource=source;
+        originalWidth=originalHeight=uploadWidth=uploadHeight=-1;
+        captureMs=recognitionMs=-1;
+        renderMeasurement();
+    }
+    private void setCaptured(int width,int height,long durationMs){
+        originalWidth=width;originalHeight=height;captureMs=Math.max(0,durationMs);
+        renderMeasurement();
+    }
+    private void setUploaded(int width,int height){
+        uploadWidth=width;uploadHeight=height;renderMeasurement();
+    }
+    private void setRecognized(long durationMs){
+        recognitionMs=Math.max(0,durationMs);renderMeasurement();
+    }
+    private static String dimension(int width,int height){
+        return width>0&&height>0?width+" × "+height:"待测";
+    }
+    private static String millis(long value){
+        return value>=0?value+" ms":"待测";
+    }
+    private void renderMeasurement(){
+        if(status==null||closed)return;
+        if(photoSource.isEmpty()){status.setText("等待拍照");return;}
+        status.setText(photoSource+"\n"+
+            "实际拍摄："+dimension(originalWidth,originalHeight)+"\n"+
+            "云端上传："+dimension(uploadWidth,uploadHeight)+"\n"+
+            "拍照耗时："+millis(captureMs)+"\n"+
+            "识别耗时："+millis(recognitionMs));
+    }
     private void showStatus(String value){
-        main.post(()->{if(!closed&&status!=null)status.setText(value);});
+        main.post(()->{
+            if(closed||status==null||value==null)return;
+            // The selected task and generic OCR progress are already visible
+            // elsewhere. Only expose actual dimensions/timings and real errors.
+            if(value.contains("失败")||value.contains("超时")||
+                    value.contains("无效")||value.contains("未找到")||
+                    value.contains("尚未")||value.contains("没有")||
+                    value.contains("未连接")||value.contains("请检查")||
+                    value.contains("取消")||value.contains("错误"))
+                status.setText(value);
+            else renderMeasurement();
+        });
     }
     private void releaseSpeech(){
         if(phoneReader!=null)phoneReader.releaseSpeechForOtherScreen();
@@ -185,19 +254,30 @@ public final class QuickPhotoActivity extends Activity {
     }
     private void takeC110(){
         if(!active||phoneTaking){showStatus("手机正在拍照");return;}
+        if(c110!=null&&c110.isShutterPending()){showStatus("相机正在取图");return;}
+        startMeasurement("相机高清拍照");
         if(phoneReader!=null)phoneReader.cancelRecognition();
         if(c110!=null)c110.trigger();
     }
     private void takePhone(){
         if(!active||closed||phoneTaking)return;
+        if(c110!=null&&c110.isShutterPending()){
+            showStatus("相机正在取图，暂不能切换");return;
+        }
         if(!phone.hasPermission()){
             requestPermissions(new String[]{Manifest.permission.CAMERA},REQUEST_PHONE);
             return;
         }
         // New source replaces the previous cloud task only after shutter tap.
-        if(c110!=null)c110.beforeOpenAnotherScreen();
+        if(c110!=null){
+            c110.cancelRecognitionOnly();
+            c110.beforeOpenAnotherScreen();
+        }
         if(phoneReader!=null)phoneReader.cancelRecognition();
-        phoneTaking=true;phoneStartedMs=android.os.SystemClock.elapsedRealtime();
+        startMeasurement("手机高清拍照");
+        phoneDiag=new RuntimeDiagnostics(this);
+        phoneDiag.begin("phone_quick");
+        phoneTaking=true;phoneStartedMs=SystemClock.elapsedRealtime();
         final int token=++phoneGeneration;
         showStatus("正在拍摄手机高清照片…");
         SharedPreferences p=getSharedPreferences(PREFS,MODE_PRIVATE);
@@ -212,7 +292,15 @@ public final class QuickPhotoActivity extends Activity {
         if(token!=phoneGeneration||closed||!phoneTaking)return;
         phoneTaking=false;
         phone.stop(); // Camera2 shuts down immediately after 1 exposure.
-        showStatus("已拍照 · 正在准备识别…");
+        final long shotMs=SystemClock.elapsedRealtime()-phoneStartedMs;
+        setCaptured(w,h,shotMs);
+        if(phoneDiag!=null){
+            phoneDiag.event("camera","raw_width_px",w,"ok");
+            phoneDiag.event("camera","raw_height_px",h,"ok");
+            phoneDiag.event("camera","phone_still_ms",shotMs,"ok");
+        }
+        // One true Camera2 JPEG = one ding, not before the capture succeeded.
+        if(captureDing!=null)captureDing.photoSucceeded();
         final int rotation=phoneRotation;
         SharedPreferences p=getSharedPreferences(PREFS,MODE_PRIVATE);
         final int savedRotation=p.getInt("preview_rotation",0);
@@ -230,7 +318,8 @@ public final class QuickPhotoActivity extends Activity {
                 main.post(()->{
                     if(closed||!active||request!=phoneGeneration)return;
                     if(!phoneReader.recognizePreparedPhoneJpeg(
-                        result.jpeg,result.width,result.height))
+                        result.jpeg,result.width,result.height,
+                        phoneDiag,phoneStartedMs))
                         showStatus("识别任务仍在处理，请再试一次");
                 });
             }catch(Exception error){
@@ -276,6 +365,7 @@ public final class QuickPhotoActivity extends Activity {
         if(phone!=null)phone.stop();
         if(phoneReader!=null)phoneReader.shutdown();
         if(c110!=null)c110.shutdown();
+        if(captureDing!=null){captureDing.shutdown();captureDing=null;}
         imageWorker.shutdownNow();
         super.onDestroy();
     }

@@ -54,6 +54,15 @@ final class C110FrameReader {
     private Future<?> taskFuture;
     private String lastText="";
     private boolean outputReady;
+    interface PhotoMetricsListener {
+        void onCaptured(int width,int height,long captureMs);
+        void onUpload(int width,int height,int jpegBytes);
+        void onRecognized(long networkMs);
+    }
+    private PhotoMetricsListener metricsListener;
+    private Runnable frameCaptureFeedback;
+    void setPhotoMetricsListener(PhotoMetricsListener listener){metricsListener=listener;}
+    void setFrameCaptureFeedback(Runnable feedback){frameCaptureFeedback=feedback;}
 
     C110FrameReader(Activity activity,Consumer<String> updates){
         this.activity=activity;
@@ -237,7 +246,9 @@ final class C110FrameReader {
                     report("实时取帧失败（PixelCopy="+status+"），没有使用旧照片");
                     return;
                 }
-                // PixelCopy returns a current frame; any further network wait is off UI.
+                // Ring once ONLY for a successful, fresh PixelCopy frame;
+                // no beep on unready surface, stale callback or copy failure.
+                if(frameCaptureFeedback!=null)frameCaptureFeedback.run();
                 report("已获取实时画面，正在识别…");
                 taskFuture=io.submit(()->analyze(id,image,now,zoomAtTap,
                                                    portraitCover,viewportAspect));
@@ -298,9 +309,19 @@ final class C110FrameReader {
                                   TaskCatalog.Task oneShotTask){
         return recognizeOriginalJpeg(jpeg,width,height,1f,false,1f,oneShotTask);
     }
+    boolean recognizeOriginalJpeg(byte[] jpeg,int width,int height,
+                                  TaskCatalog.Task oneShotTask,long captureMs){
+        return recognizeOriginalJpeg(jpeg,width,height,1f,false,1f,oneShotTask,captureMs);
+    }
     private boolean recognizeOriginalJpeg(byte[] jpeg,int width,int height,float selectedZoom,
                                   boolean portraitCover,float viewportAspect,
                                   TaskCatalog.Task oneShotTask){
+        return recognizeOriginalJpeg(jpeg,width,height,selectedZoom,portraitCover,
+                                    viewportAspect,oneShotTask,-1L);
+    }
+    private boolean recognizeOriginalJpeg(byte[] jpeg,int width,int height,float selectedZoom,
+                                  boolean portraitCover,float viewportAspect,
+                                  TaskCatalog.Task oneShotTask,long captureMs){
         if(closed||busy)return false;
         syncSpeechSettings();
         if(jpeg==null||jpeg.length<256||width<2||height<2){
@@ -319,6 +340,9 @@ final class C110FrameReader {
                 .getInt(C110PhotoUploadPolicy.PREF,C110PhotoUploadPolicy.ORIGINAL));
         final RuntimeDiagnostics photoDiag=new RuntimeDiagnostics(activity);
         photoDiag.begin("c110_photo");
+        if(captureMs>=0)photoDiag.event("c110","photo_total_ms",captureMs,"ok");
+        if(metricsListener!=null&&captureMs>=0)
+            metricsListener.onCaptured(width,height,captureMs);
         photoDiag.event("c110","upload_mode",uploadMode,"ok");
         photoDiag.event("c110","native_width_px",width,"ok");
         photoDiag.event("c110","native_height_px",height,"ok");
@@ -342,6 +366,13 @@ final class C110FrameReader {
                 photoDiag.event("jpeg","width_px",upload.width,"ok");
                 photoDiag.event("jpeg","height_px",upload.height,"ok");
                 photoDiag.event("jpeg","bytes",upload.jpeg.length,"ok");
+                if(metricsListener!=null){
+                    final int uw=upload.width,uh=upload.height,ub=upload.jpeg.length;
+                    main.post(()->{
+                        if(!closed&&id==request.get()&&metricsListener!=null)
+                            metricsListener.onUpload(uw,uh,ub);
+                    });
+                }
                 recognizeJpeg(id,upload.jpeg,started,oneShotTask,photoDiag);
             }catch(Exception e){
                 main.post(()->{
@@ -359,6 +390,10 @@ final class C110FrameReader {
      * same cloud OCR/vision model and TTS settings as the C110 quick shutter,
      * but the phone may send over validated home Wi-Fi OR cellular. */
     boolean recognizePreparedPhoneJpeg(byte[] jpeg,int width,int height){
+        return recognizePreparedPhoneJpeg(jpeg,width,height,null,SystemClock.elapsedRealtime());
+    }
+    boolean recognizePreparedPhoneJpeg(byte[] jpeg,int width,int height,
+                                      RuntimeDiagnostics diagnostics,long started){
         if(closed||busy)return false;
         if(jpeg==null||jpeg.length<256||width<2||height<2){
             report("手机高清照片无效");return false;
@@ -369,7 +404,13 @@ final class C110FrameReader {
         busy=true;
         if(tts!=null)tts.stop();
         report("已拍照 · 正在识别…");
-        recognizeJpeg(id,jpeg,SystemClock.elapsedRealtime(),null,null,true);
+        if(diagnostics!=null){
+            diagnostics.event("jpeg","width_px",width,"ok");
+            diagnostics.event("jpeg","height_px",height,"ok");
+            diagnostics.event("jpeg","bytes",jpeg.length,"ok");
+        }
+        if(metricsListener!=null)metricsListener.onUpload(width,height,jpeg.length);
+        recognizeJpeg(id,jpeg,started,null,diagnostics,true);
         return true;
     }
 
@@ -487,6 +528,7 @@ final class C110FrameReader {
                 }),speed,cellular,cancel);
             main.post(()->{
                 if(closed||id!=request.get())return;
+                if(metricsListener!=null)metricsListener.onRecognized(result.networkMs);
                 if(photoDiag!=null){
                     photoDiag.event("cloud","upload_ms",result.uploadMs,"ok");
                     photoDiag.event("cloud","network_ms",result.networkMs,"ok");
