@@ -46,7 +46,9 @@ final class HomeVoiceAssistant {
         requestOneShotPhoto=capture;
     }
     boolean busyForPhysical(){
-        return working||recorder.isBusy()||(tts!=null&&tts.isSpeaking());
+        if(working||recorder.isBusy())return true;
+        try{return tts!=null&&tts.isSpeaking();}
+        catch(RuntimeException ignored){return false;}
     }
     void onResume(){active=true;}
     void onPause(){
