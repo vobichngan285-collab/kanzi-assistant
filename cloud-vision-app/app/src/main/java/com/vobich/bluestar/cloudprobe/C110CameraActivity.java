@@ -14,6 +14,9 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.graphics.Color;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.app.AlertDialog;
 import android.net.ConnectivityManager;
 import android.net.LinkProperties;
 import android.net.Network;
@@ -87,6 +90,8 @@ public final class C110CameraActivity extends Activity {
     private SeekBar zoomSeek;
     private float zoom=1f;
     private boolean fullscreen;
+    private int liveVideoWidth=-1,liveVideoHeight=-1;
+    private static final int MAX_INSPECT_JPEG_BYTES=10*1024*1024;
 
     @Override protected void attachBaseContext(Context base) {
         super.attachBaseContext(BlueStarFontScale.wrap(base));
@@ -126,8 +131,11 @@ public final class C110CameraActivity extends Activity {
         View tapSurface=new View(this);
         tapSurface.setFocusable(true);
         tapSurface.setContentDescription("C110实时预览画面，点击立即截取当前帧并识别朗读");
-        tapSurface.setOnClickListener(v->frameReader.tap(video,zoom,fullscreen,
-                                                         c110ViewportAspect()));
+        tapSurface.setOnClickListener(v->{
+            updateCurrentVideoTrack();
+            frameReader.tap(cameraRoot,zoom,fullscreen,c110ViewportAspect(),
+                            liveVideoWidth,liveVideoHeight);
+        });
         root.addView(tapSurface,new FrameLayout.LayoutParams(-1,-1));
 
         LinearLayout titleRow=new LinearLayout(this);
@@ -206,6 +214,12 @@ public final class C110CameraActivity extends Activity {
         photoButton=footerButton("◎  高清拍照",this::captureOriginalPhoto);
         photoButton.setContentDescription("单次C110高清拍照，云端只处理当前变焦区域");
         footer.addView(photoButton,new LinearLayout.LayoutParams(dp(200),dp(63)));
+        Button inspect=footerButton("查看上传图",this::showLastPreviewUpload);
+        inspect.setTextSize(15);
+        inspect.setContentDescription("查看上一次实际发送给云端的C110预览JPEG");
+        LinearLayout.LayoutParams inspectLp=new LinearLayout.LayoutParams(dp(106),dp(63));
+        inspectLp.leftMargin=dp(6);
+        footer.addView(inspect,inspectLp);
         root.addView(footer,new FrameLayout.LayoutParams(-1,dp(77),Gravity.BOTTOM));
 
         // Compact manual slider. At 1x, all cloud paths remain unchanged.
@@ -281,6 +295,50 @@ public final class C110CameraActivity extends Activity {
         zoomValue.setContentDescription(String.format(Locale.CHINA,
             "当前放大%.1f倍，云端仅识别当前对应区域",zoom));
         applyZoomPreview();
+    }
+
+    private void updateCurrentVideoTrack(){
+        MediaPlayer p=player;
+        if(p==null)return;
+        try{
+            Media.VideoTrack track=p.getCurrentVideoTrack();
+            if(track!=null&&track.width>0&&track.height>0){
+                liveVideoWidth=track.width;liveVideoHeight=track.height;
+            }
+        }catch(RuntimeException|LinkageError ignored){
+            // The display remains usable even if this decoder has no metadata.
+            liveVideoWidth=-1;liveVideoHeight=-1;
+        }
+    }
+
+    private void showLastPreviewUpload(){
+        byte[] jpeg=frameReader==null?null:frameReader.lastPreviewSubmittedJpeg();
+        if(jpeg==null||jpeg.length<256){
+            say("暂无C110预览上传图，请点击画面取帧识别一次");return;
+        }
+        if(jpeg.length>MAX_INSPECT_JPEG_BYTES){
+            say("预览JPEG太大，取消查看以保护内存");return;
+        }
+        Bitmap bmp=null;
+        try{bmp=BitmapFactory.decodeByteArray(jpeg,0,jpeg.length);}
+        catch(RuntimeException ignored){}
+        if(bmp==null){say("无法解码预览上传图");return;}
+        final Bitmap visible=bmp;
+        ImageView image=new ImageView(this);
+        image.setBackgroundColor(Color.BLACK);
+        image.setAdjustViewBounds(true);
+        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        image.setMaxHeight(getResources().getDisplayMetrics().heightPixels*3/4);
+        image.setImageBitmap(visible);
+        AlertDialog dialog=new AlertDialog.Builder(this)
+            .setTitle("实际发送给云端的C110预览图片")
+            .setView(image)
+            .setPositiveButton("关闭",null).create();
+        dialog.setOnDismissListener(d->{
+            image.setImageDrawable(null);
+            visible.recycle();
+        });
+        dialog.show();
     }
 
     private void applyZoomPreview(){
@@ -704,9 +762,11 @@ public final class C110CameraActivity extends Activity {
                 switch(event.type){
                     case MediaPlayer.Event.MediaChanged:say("VLC 256 MediaChanged");break;
                     case MediaPlayer.Event.Opening:say("VLC 258 Opening");break;
-                    case MediaPlayer.Event.Playing:say("VLC 260 Playing");break;
+                    case MediaPlayer.Event.Playing:
+                        updateCurrentVideoTrack();say("VLC 260 Playing");break;
                     case MediaPlayer.Event.Vout:
                         if(event.getVoutCount()>0){
+                            updateCurrentVideoTrack();
                             frameReader.setVideoOutputReady(true);
                             say("C110实时画面已就绪，点击画面取帧识别");
                         }
@@ -763,6 +823,7 @@ public final class C110CameraActivity extends Activity {
     private void stop(boolean manual){
         generation++;
         busy=false;started=false;
+        liveVideoWidth=-1;liveVideoHeight=-1;
         deviceControls.onDisconnected();
         if(frameReader!=null)frameReader.stop();
         if(delayedPlay!=null){main.removeCallbacks(delayedPlay);delayedPlay=null;}
