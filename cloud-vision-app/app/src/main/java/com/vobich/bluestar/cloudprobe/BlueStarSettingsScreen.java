@@ -572,7 +572,7 @@ final class BlueStarSettingsScreen {
                     }).setNegativeButton("取消",null).show();
             }
         });
-        note("返回主页、连接相机，听到或看到监听就绪后再按实体快门。本版仅主页亮屏前台监听。");
+        note("返回主页并连接相机，显示“监听已就绪”后再按实体快门。本版仅主页亮屏前台监听。");
     }
     private void c110CustomLightDelay(){
         EditText seconds=new EditText(app);
