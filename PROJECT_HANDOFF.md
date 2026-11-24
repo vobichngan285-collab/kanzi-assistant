@@ -1,10 +1,10 @@
-# 2026-11-24｜蓝星向导 v1.0.92 主页灯光开关及电量百分比（CI进行中，真机待验）
+# 2026-11-24｜蓝星向导 v1.0.92 主页灯光开关及电量百分比（CI通过、已发布，真机待验）
 - 用户批准示意图：保留v1.0.91六宫格与底部导航，仅在相机卡快速连接右侧增加灯光按钮并改善百分比显示；要求检查后发布。截图显示Wi-Fi未连接、电量未知，不能凭图认定3019不支持。
 - 从已发布正式v1.0.91 `7d73c0e9efea5c9ec99913ec14f073d9c8823b64` 派生 `exp/home-light-battery-v0192-20261124`，最终源码/CI `04e3d542900e5ae2c9b2e2169c15cfe2ba95b939`；versionCode101、versionName1.0.92-home-light-battery、原正式包名不变。
 - 电量：原3019只读轮询不变，新增明确BatteryPercent/BatteryPercentage及带%值的真实百分比；裸值0–3按公开SJ5000X参考档位显示约100/75/50/25%（不是C110实测值；参考https://aakaashjois.github.io/SJCAM-SJ5000X-Elite-Commands/），4低、5充电中、其他裸值待确认，断网/失败未知。用户仍需连接真机并比对原厂，读屏明确说明估算及实际回执。
 - 灯光：快速连接右侧小灯泡按钮，首次未知状态选择开启/关闭，收到9038成功回执后同一连接直接反向切换，失败、换网或离开页面清除已知状态。复用3012标准C110确认及9038/0或1；无自动写、无新权限、无新Wi-Fi请求。成功后同步原灯光策略（开启=始终显示、关闭=立即关闭），设置同源；机身写可能持久化，非临时关闭承诺。回执成功非物理状态检测。拍照进行中拒绝灯光操作，灯光处理中防重复且暂停新电量查询。未改变拍照调度。
-- compare仅7文件：HomeActivity.java、C110DeviceControls.java、C110BatteryPolicy.java、C110BatteryPolicyTest.java、app/build.gradle、docs/HOME_LIGHT_BATTERY_V0192.md、.github/workflows/home-light-battery-v0192.yml。CI [45391004192](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45391004192) 已启动，严格范围/原导航及快捷入口不变/灯光安全/电量测试和既有回归，完整APK编译与发布门禁。预期标签 `bluestar-home-light-battery-20261124-v0192`，资产 `BlueStar_Guide_Home_Light_Battery_1.0.92.apk`；未核实发布前不得发送有效下载链接。
-- 下一步：确认CI与Release同提交、资产真实存在，再提供直接下载；覆盖安装保留旧主程序设置及保益桥接器。实测连接后电量、灯光开关物理状态、读屏、保益快捷拍照、预览、高清拍照及TTS。其他功能不动，画质实验继续暂停。
+- compare仅7文件：HomeActivity.java、C110DeviceControls.java、C110BatteryPolicy.java、C110BatteryPolicyTest.java、app/build.gradle、docs/HOME_LIGHT_BATTERY_V0192.md、.github/workflows/home-light-battery-v0192.yml。CI [45391004192](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45391004192) completed/success，严格范围/原导航及快捷入口不变/灯光安全/电量测试和既有回归，完整APK编译与发布门禁。预期标签 `bluestar-home-light-battery-20261124-v0192`，资产 `BlueStar_Guide_Home_Light_Battery_1.0.92.apk`；全部CI步骤已通过，Release target与最终源码一致，APK真实资产53550615 bytes，SHA256 `ff65a486ff85bdd1c2abe629c22c1251bc9a6ac8c2ad1bbca4d0d1d886a243b8`，下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-home-light-battery-20261124-v0192/BlueStar_Guide_Home_Light_Battery_1.0.92.apk 。
+- 下一步：CI与Release同提交、资产真实存在已核验；覆盖安装保留旧主程序设置及保益桥接器。实测连接后电量、灯光开关物理状态、读屏、保益快捷拍照、预览、高清拍照及TTS。其他功能不动，画质实验继续暂停。
 
 ---
 
