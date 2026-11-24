@@ -5,7 +5,6 @@ import android.content.res.Configuration;
 import android.os.Bundle;
 import android.content.Intent;
 import android.view.View;
-import android.widget.ImageView;
 import android.util.TypedValue;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Handler;
@@ -14,9 +13,6 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.graphics.Color;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.app.AlertDialog;
 import android.net.ConnectivityManager;
 import android.net.LinkProperties;
 import android.net.Network;
@@ -90,7 +86,6 @@ public final class C110CameraActivity extends Activity {
     private SeekBar zoomSeek;
     private float zoom=1f;
     private boolean fullscreen;
-    private static final int MAX_INSPECT_JPEG_BYTES=16*1024*1024;
 
     @Override protected void attachBaseContext(Context base) {
         super.attachBaseContext(BlueStarFontScale.wrap(base));
@@ -210,12 +205,6 @@ public final class C110CameraActivity extends Activity {
         photoButton=footerButton("◎  高清拍照",this::captureOriginalPhoto);
         photoButton.setContentDescription("单次C110高清拍照，云端只处理当前变焦区域");
         footer.addView(photoButton,new LinearLayout.LayoutParams(0,dp(63),1f));
-        Button inspect=footerButton("查看上传图",this::showLastPreviewUpload);
-        inspect.setTextSize(15);
-        inspect.setContentDescription("查看最近一次C110实时预览用于云端识别的完整JPEG");
-        LinearLayout.LayoutParams inspectLp=new LinearLayout.LayoutParams(dp(106),dp(63));
-        inspectLp.leftMargin=dp(6);
-        footer.addView(inspect,inspectLp);
         root.addView(footer,new FrameLayout.LayoutParams(-1,dp(77),Gravity.BOTTOM));
 
         // Compact manual slider. At 1x, all cloud paths remain unchanged.
@@ -291,36 +280,6 @@ public final class C110CameraActivity extends Activity {
         zoomValue.setContentDescription(String.format(Locale.CHINA,
             "当前显示放大%.1f倍，预览识别暂取完整视频帧",zoom));
         applyZoomPreview();
-    }
-
-    private void showLastPreviewUpload(){
-        byte[] jpeg=frameReader==null?null:frameReader.lastPreviewSubmittedJpeg();
-        if(jpeg==null||jpeg.length<256){
-            say("暂无C110预览上传图，请点击画面取帧识别一次");return;
-        }
-        if(jpeg.length>MAX_INSPECT_JPEG_BYTES){
-            say("预览JPEG太大，取消查看以保护内存");return;
-        }
-        Bitmap bmp=null;
-        try{bmp=BitmapFactory.decodeByteArray(jpeg,0,jpeg.length);}
-        catch(RuntimeException ignored){}
-        if(bmp==null){say("无法解码预览上传图");return;}
-        final Bitmap visible=bmp;
-        ImageView image=new ImageView(this);
-        image.setBackgroundColor(Color.BLACK);
-        image.setAdjustViewBounds(true);
-        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        image.setMaxHeight(getResources().getDisplayMetrics().heightPixels*3/4);
-        image.setImageBitmap(visible);
-        AlertDialog dialog=new AlertDialog.Builder(this)
-            .setTitle("C110完整视频帧识别用图")
-            .setView(image)
-            .setPositiveButton("关闭",null).create();
-        dialog.setOnDismissListener(d->{
-            image.setImageDrawable(null);
-            visible.recycle();
-        });
-        dialog.show();
     }
 
     private void applyZoomPreview(){
