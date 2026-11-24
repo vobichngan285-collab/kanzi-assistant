@@ -17,7 +17,8 @@ import java.util.function.Consumer;
 final class C110PhysicalWatcher {
     private final Activity owner;
     private final C110QuickShotController shots;
-    private final BooleanSupplier manualBusy;
+    private final BooleanSupplier manualBusy,voiceBusy;
+    private final Runnable yieldVoiceSpeech;
     private final Consumer<String> report;
     private final SharedPreferences prefs;
     private final Handler main=new Handler(Looper.getMainLooper());
@@ -32,7 +33,25 @@ final class C110PhysicalWatcher {
     private long discoveredAt,queryMs;
     private boolean pendingUnique;
     private DeleteJob deleteJob;
+    private final C110DeferredPhoto<ReadyPhoto> deferred=new C110DeferredPhoto<>();
     private final Runnable tick=this::poll;
+    private static final class ReadyPhoto {
+        final Network wifi;
+        final String path;
+        final C110WifiCamera.Photo photo;
+        final byte[] digest;
+        final int generation,serial,interval;
+        final long queryMs,downloadMs,readyAt;
+        final boolean unique,clean;
+        ReadyPhoto(Network wifi,String path,C110WifiCamera.Photo photo,byte[] digest,
+                   int generation,int serial,int interval,long queryMs,long downloadMs,
+                   boolean unique,boolean clean){
+            this.wifi=wifi;this.path=path;this.photo=photo;this.digest=digest;
+            this.generation=generation;this.serial=serial;this.interval=interval;
+            this.queryMs=queryMs;this.downloadMs=downloadMs;
+            this.unique=unique;this.clean=clean;this.readyAt=SystemClock.elapsedRealtime();
+        }
+    }
     private static final class DeleteJob {
         final Network wifi;
         final String path;
@@ -44,8 +63,10 @@ final class C110PhysicalWatcher {
         }
     }
     C110PhysicalWatcher(Activity owner,C110QuickShotController shots,
-                       BooleanSupplier manualBusy,Consumer<String> report){
-        this.owner=owner;this.shots=shots;this.manualBusy=manualBusy;this.report=report;
+                       BooleanSupplier manualBusy,BooleanSupplier voiceBusy,
+                       Runnable yieldVoiceSpeech,Consumer<String> report){
+        this.owner=owner;this.shots=shots;this.manualBusy=manualBusy;this.voiceBusy=voiceBusy;
+        this.yieldVoiceSpeech=yieldVoiceSpeech;this.report=report;
         prefs=owner.getSharedPreferences("kanzi_settings",Context.MODE_PRIVATE);
     }
     private boolean enabled(){return prefs.getBoolean(C110PhysicalPolicy.ENABLE,false);}
@@ -64,7 +85,15 @@ final class C110PhysicalWatcher {
     }
     void shutdown(){stop();closed=true;worker.shutdownNow();}
     boolean cameraIoBusy(){return inFlight;}
-    /** Called before a manual phone-side shutter or a different screen/voice operation. */
+    /** Voice is NOT a camera session change. Keep directory baseline and polling.
+     * Drop a prior task and its cleanup; new photos during ASR are retained. */
+    void beforeVoiceAction(){
+        if(!active)return;
+        serial++;
+        pending=null;deleteJob=null;deferred.clear();
+        shots.cancelPhysicalRecognition();
+    }
+    /** Called before a manual phone-side shutter or a different screen operation. */
     void beforeManualAction(){
         if(!active)return;
         suspended=true;
@@ -74,7 +103,7 @@ final class C110PhysicalWatcher {
     private void invalidate(){
         generation++;serial++;
         policy.reset();directories=null;network=null;
-        pending=null;deleteJob=null;
+        pending=null;deleteJob=null;deferred.clear();
         shots.cancelPhysicalRecognition();
     }
     private void schedule(long delay){
@@ -152,7 +181,7 @@ final class C110PhysicalWatcher {
         if(delta.latest!=null){
             serial++;
             shots.cancelPhysicalRecognition();
-            deleteJob=null;
+            deleteJob=null;deferred.clear();
             pending=delta.latest;
             pendingUnique=delta.unique;
             discoveredAt=SystemClock.elapsedRealtime();
@@ -167,8 +196,11 @@ final class C110PhysicalWatcher {
                 return;
             }
         }
+        // Dispatch only after checking for a newer directory delta in this round.
+        dispatchDeferred();
+        // Keep camera polling during voice work, never delete while recording/ASR.
         // Prefer a newer photo over any old cleanup. Only one pending delete at a time.
-        if(deleteJob!=null){
+        if(deleteJob!=null&&!voiceBusy.getAsBoolean()){
             DeleteJob job=deleteJob;deleteJob=null;
             if(canDelete(job)&&snapshot.paths.contains(job.path)){
                 delete(job,chosenInterval);
@@ -194,16 +226,12 @@ final class C110PhysicalWatcher {
                         inFlight=false;
                         if(stillCurrent(wifi,token)&&photoSerial==serial&&path.equals(pending)){
                             pending=null;
-                            // Only the single unique newly appeared JPEG can be deleted, and only
-                            // if cleanup was enabled at acceptance AND remains enabled on success.
-                            final boolean clean=unique&&deleteEnabled();
-                            boolean accepted=shots.acceptPhysicalPhoto(photo,qms,dms,chosenInterval,()->{
-                                if(clean&&digest!=null&&stillCurrent(wifi,token)&&photoSerial==serial
-                                    &&deleteEnabled()){
-                                    deleteJob=new DeleteJob(wifi,path,digest,token,photoSerial);
-                                }
-                            });
-                            if(!accepted)report.accept("新照片未提交识别，保留相机原图");
+                            // At most one complete JPEG in RAM; no upload or sound during ASR.
+                            deferred.offer(new ReadyPhoto(wifi,path,photo,digest,token,photoSerial,
+                                chosenInterval,qms,dms,unique,unique&&deleteEnabled()));
+                            if(voiceBusy.getAsBoolean())
+                                report.accept("已获取相机新照片，等待AI语音指令完成");
+                            else dispatchDeferred();
                         }
                         schedule(chosenInterval);
                     });
@@ -213,6 +241,23 @@ final class C110PhysicalWatcher {
                 }
             });
         }catch(RuntimeException e){inFlight=false;schedule(chosenInterval);}
+    }
+    private void dispatchDeferred(){
+        ReadyPhoto ready=deferred.takeIfReady(voiceBusy.getAsBoolean());
+        if(ready==null)return;
+        if(!stillCurrent(ready.wifi,ready.generation)||ready.serial!=serial)return;
+        // ASR has committed the new target before opening this gate. A physical
+        // shutter can preempt the old confirmation speech, never the microphone.
+        yieldVoiceSpeech.run();
+        final boolean clean=ready.clean&&ready.unique&&deleteEnabled();
+        boolean accepted=shots.acceptPhysicalPhoto(ready.photo,ready.queryMs,ready.downloadMs,
+            ready.interval,SystemClock.elapsedRealtime()-ready.readyAt,()->{
+                if(clean&&ready.digest!=null&&stillCurrent(ready.wifi,ready.generation)
+                    &&ready.serial==serial&&!voiceBusy.getAsBoolean()&&deleteEnabled()){
+                    deleteJob=new DeleteJob(ready.wifi,ready.path,ready.digest,ready.generation,ready.serial);
+                }
+            });
+        if(!accepted)report.accept("新照片未提交识别，保留相机原图");
     }
     private void delete(DeleteJob job,int chosenInterval){
         try{
