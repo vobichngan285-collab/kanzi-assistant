@@ -3,45 +3,35 @@ package com.vobich.bluestar.cloudprobe;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** Read-only Novatek battery response; the C110 firmware mapping requires device validation. */
+/** SJCAM X LY battery enum from original APK; no estimated percentages. */
 final class C110BatteryPolicy {
     private C110BatteryPolicy(){}
     static final class Reading {
         final String label,raw;
-        final boolean available;
-        Reading(String label,String raw,boolean available){
+        final boolean available,charging;
+        final int bars;
+        Reading(String label,String raw,boolean available,int bars,boolean charging){
             this.label=label;this.raw=raw;this.available=available;
+            this.bars=bars;this.charging=charging;
         }
     }
-    static Reading unknown(){return new Reading("电量未知","",false);}
+    static Reading unknown(){return new Reading("电量未知","",false,-1,false);}
+    // SJCAM X LY camera: 3019 Value 0=FULL,1=THREE_BARS,2=TWO_BARS,
+    // 3=ONE_BAR,4=LOW,5=CHARGING. No percent inference.
     static Reading parse(String xml){
         if(xml==null||xml.length()>8192||!xml.contains("<Function>")||
                 !xml.contains("</Function>"))return unknown();
         if(!"3019".equals(tag(xml,"Cmd"))||!"0".equals(tag(xml,"Status")))return unknown();
-        // An explicitly named percent field is unambiguous even without '%'.
-        String explicit=tag(xml,"BatteryPercent");
-        if(explicit==null)explicit=tag(xml,"BatteryPercentage");
-        if(explicit!=null){
-            if(!explicit.matches("[0-9]{1,3}%?"))return unknown();
-            int pct=Integer.parseInt(explicit.replace("%",""));
-            return pct<=100?new Reading("电量 "+pct+"%",pct+"%",true):unknown();
-        }
         String raw=tag(xml,"Value");
-        if(raw==null||!raw.matches("[0-9]{1,3}%?"))return unknown();
-        boolean percent=raw.endsWith("%");
-        int n=Integer.parseInt(percent?raw.substring(0,raw.length()-1):raw);
-        // Real percentages require an explicit unit or named percent field.
-        if(percent)return n<=100?new Reading("电量 "+n+"%",raw,true):unknown();
-        // Published SJ5000X reference mapping, not a measured C110 percentage.
-        // Always mark these coarse estimates as approximate; never convert 4/5.
-        switch(n){
-            case 0:return new Reading("电量约100%",raw,true);
-            case 1:return new Reading("电量约75%",raw,true);
-            case 2:return new Reading("电量约50%",raw,true);
-            case 3:return new Reading("电量约25%",raw,true);
-            case 4:return new Reading("电量低",raw,true);
-            case 5:return new Reading("充电中",raw,true);
-            default:return new Reading("读数 "+n+"（待确认）",raw,false);
+        if(raw==null)return unknown();
+        switch(raw){
+            case "0":return new Reading("电量四格",raw,true,4,false);
+            case "1":return new Reading("电量三格",raw,true,3,false);
+            case "2":return new Reading("电量两格",raw,true,2,false);
+            case "3":return new Reading("电量一格",raw,true,1,false);
+            case "4":return new Reading("电量低",raw,true,0,false);
+            case "5":return new Reading("充电中",raw,true,-1,true);
+            default:return unknown();
         }
     }
     private static String tag(String xml,String name){

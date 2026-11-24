@@ -159,7 +159,7 @@ public final class HomeActivity extends Activity {
         TextView title=text("C110 运动相机",20,WHITE);
         title.setTypeface(null,android.graphics.Typeface.BOLD);
         header.addView(title,new LinearLayout.LayoutParams(0,-2,1f));
-        cameraBattery=text("电量未知",17,ACCENT);
+        cameraBattery=text("",17,ACCENT);
         cameraBattery.setGravity(Gravity.END|Gravity.CENTER_VERTICAL);
         cameraBattery.setPadding(dp(5),0,0,0);
         header.addView(cameraBattery,new LinearLayout.LayoutParams(-2,-2));
@@ -209,31 +209,18 @@ public final class HomeActivity extends Activity {
             cameraConnection.setText(connection);
             cameraConnection.setTextColor(status.connected?0xFF55DDA6:ACCENT);
         }
-        String battery=status.connected?
-            (status.reading&&!status.battery.available?"读取电量…":status.battery.label):"电量未知";
-        if(!battery.contentEquals(cameraBattery.getText()))cameraBattery.setText(battery);
-        String raw=status.battery.raw;
-        cameraBattery.setContentDescription("运动相机"+battery+
-            (battery.contains("约")?"，协议参考档位估算，非实测百分比":"")+
-            (status.connected&&!raw.isEmpty()?"，设备返回值 "+raw:""));
+        C110BatteryPolicy.Reading reading=status.connected?status.battery:C110BatteryPolicy.unknown();
+        cameraBattery.setContentDescription("运动相机"+(status.connected&&status.reading&&!reading.available?
+            "正在读取电量":reading.label));
         Network connected=C110WifiBootstrap.connected(this);
         if(!java.util.Objects.equals(lightNetwork,connected)){
             lightNetwork=connected;lastLightCommand=null;
         }
         updateLightButton();
-        int batteryColor=ACCENT;
-        if(status.connected&&status.battery.available){
-            boolean low="3".equals(raw)||"4".equals(raw);
-            if(raw.endsWith("%"))try{
-                low=Integer.parseInt(raw.substring(0,raw.length()-1))<=25;
-            }catch(NumberFormatException ignored){}
-            batteryColor=low?0xFFFFC278:0xFF55DDA6;
-        }
-        cameraBattery.setTextColor(batteryColor);
-        Drawable batteryIcon=new BatteryIcon(batteryColor);
-        batteryIcon.setBounds(0,0,dp(21),dp(14));
+        Drawable batteryIcon=new BatteryIcon(reading);
+        batteryIcon.setBounds(0,0,dp(36),dp(20));
         cameraBattery.setCompoundDrawables(batteryIcon,null,null,null);
-        cameraBattery.setCompoundDrawablePadding(dp(5));
+        cameraBattery.setCompoundDrawablePadding(0);
     }
     private void updateLightButton(){
         if(lightButton==null)return;
@@ -330,18 +317,36 @@ public final class HomeActivity extends Activity {
         button.setOnClickListener(v->action.run());
         row.addView(button,new LinearLayout.LayoutParams(0,-2,1f));
     }
-    /** Symbol only; do not invent a fill percentage for the protocol's enum. */
+    /** SJCAM X silhouette and bar count; only the bars have the requested color. */
     private static final class BatteryIcon extends Drawable{
         final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
-        final int color;
-        BatteryIcon(int color){this.color=color;}
+        final C110BatteryPolicy.Reading reading;
+        BatteryIcon(C110BatteryPolicy.Reading reading){this.reading=reading;}
         @Override public void draw(Canvas canvas){
             canvas.save();
             canvas.translate(getBounds().left,getBounds().top);
-            canvas.scale(getBounds().width()/21f,getBounds().height()/14f);
-            p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(1.6f);p.setColor(color);
-            canvas.drawRoundRect(new RectF(1,2,17,12),2,2,p);
-            p.setStyle(Paint.Style.FILL);canvas.drawRoundRect(new RectF(18,5,20,9),1,1,p);
+            canvas.scale(getBounds().width()/66f,getBounds().height()/36f);
+            p.setStyle(Paint.Style.FILL);p.setColor(0xFF333333);
+            canvas.drawRoundRect(new RectF(0,0,60,36),5,5,p);
+            canvas.drawRoundRect(new RectF(58,12,66,24),2,2,p);
+            if(!reading.available){
+                p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(2);p.setColor(0xFFB9C4D0);
+                canvas.drawRoundRect(new RectF(1,1,59,35),5,5,p);
+            }else if(reading.charging){
+                p.setColor(0xFF55DDA6);
+                Path bolt=new Path();bolt.moveTo(23,7);bolt.lineTo(45,20);
+                bolt.lineTo(29,20);bolt.lineTo(32,29);bolt.lineTo(12,16);
+                bolt.lineTo(27,16);bolt.close();canvas.drawPath(bolt,p);
+            }else if(reading.bars==0){
+                p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(3);p.setColor(0xFFFF5252);
+                canvas.drawRoundRect(new RectF(7,7,53,29),2,2,p);
+            }else{
+                p.setColor(reading.bars>=3?0xFF55DDA6:reading.bars==2?0xFFFFCB42:0xFFFF5252);
+                for(int i=0;i<reading.bars;i++){
+                    float x=13+i*9;
+                    canvas.drawRoundRect(new RectF(x,10,x+6,26),3,3,p);
+                }
+            }
             canvas.restore();
         }
         @Override public void setAlpha(int alpha){p.setAlpha(alpha);}
