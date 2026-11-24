@@ -198,6 +198,47 @@ final class C110DeviceControls {
         saveLightDelay(seconds);
     }
 
+    /**
+     * Explicit Home switch only. No automatic write when Home opens.
+     * Reuse the established identity check and 9038 allow-list.
+     * Keep Settings policy in sync only after the camera acknowledges success.
+     */
+    void setLightFromHome(boolean enabled,Consumer<Boolean> completion){
+        if(!attachVerifiedSettingsWifi()){
+            completion.accept(false);return;
+        }
+        clearTimer();
+        final Network wifi=cameraWifi;
+        final int ticket=sequence;
+        try{
+            worker.execute(()->{
+                boolean ok=false;
+                try{
+                    if(ticket==sequence&&wifi.equals(C110WifiBootstrap.connected(activity))){
+                        verifyStandardCamera(wifi);
+                        if(ticket==sequence&&wifi.equals(C110WifiBootstrap.connected(activity)))
+                            ok=responseStatus(request(wifi,9038,enabled?1:0))==0;
+                    }
+                }catch(Exception ignored){}
+                final boolean acknowledged=ok;
+                main.post(()->{
+                    if(closed||ticket!=sequence)return;
+                    boolean same=wifi.equals(C110WifiBootstrap.connected(activity));
+                    if(acknowledged&&same){
+                        preferences().edit().putInt(LIGHT_SECONDS,enabled?-1:0).apply();
+                        report(enabled?"亮灯指令成功":"熄灯指令成功");
+                        completion.accept(true);
+                    }else{
+                        report("灯光命令未确认，请检查相机连接");
+                        completion.accept(false);
+                    }
+                });
+            });
+        }catch(RuntimeException ex){
+            report("灯光命令未发送");completion.accept(false);
+        }
+    }
+
     private void manualCommand(int cmd,int par){
         Network wifi=cameraWifi;
         if(closed||wifi==null){
