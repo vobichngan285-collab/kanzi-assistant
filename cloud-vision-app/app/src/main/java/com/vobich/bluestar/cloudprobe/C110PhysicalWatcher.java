@@ -108,12 +108,14 @@ final class C110PhysicalWatcher {
         if(inFlight){schedule(interval());return;}
         final int token=generation;
         final int chosenInterval=interval();
+        final boolean verifyIdentity=directories==null;
         inFlight=true;
         // No queued requests: the next round begins only after this one finishes.
         try{
             worker.execute(()->{
                 long start=SystemClock.elapsedRealtime();
                 try{
+                    if(verifyIdentity)C110WifiCamera.verifyPhysicalCamera(wifi);
                     C110WifiCamera.PhysicalSnapshot snapshot=C110WifiCamera.physicalSnapshot(wifi);
                     long ms=SystemClock.elapsedRealtime()-start;
                     main.post(()->handleSnapshot(wifi,token,chosenInterval,snapshot,ms));
