@@ -34,7 +34,7 @@ final class TargetVisionClient {
 
     static Result inspect(byte[] jpeg,String target,String key,String visualModel,
                           Network cloudNetwork) throws Exception {
-        return inspectInternal(jpeg,target,key,visualModel,cloudNetwork,null,null);
+        return inspectInternal(jpeg,target,key,visualModel,cloudNetwork,null,null,null);
     }
     static Result inspect(byte[] jpeg,String target,CloudProviderStore.Config chosen,
                           Network cloudNetwork)throws Exception{
@@ -42,11 +42,16 @@ final class TargetVisionClient {
     }
     static Result inspect(byte[] jpeg,String target,CloudProviderStore.Config chosen,
                           Network cloudNetwork,CloudVisionClient.Cancellation cancel)throws Exception{
-        return inspectInternal(jpeg,target,chosen.key,chosen.model,cloudNetwork,chosen,cancel);
+        return inspect(jpeg,target,chosen,cloudNetwork,cancel,null);
+    }
+    static Result inspect(byte[] jpeg,String target,CloudProviderStore.Config chosen,
+                          Network cloudNetwork,CloudVisionClient.Cancellation cancel,
+                          java.util.function.LongConsumer uploadMetrics)throws Exception{
+        return inspectInternal(jpeg,target,chosen.key,chosen.model,cloudNetwork,chosen,cancel,uploadMetrics);
     }
     private static Result inspectInternal(byte[] jpeg,String target,String key,String visualModel,
                           Network cloudNetwork,CloudProviderStore.Config config,
-                          CloudVisionClient.Cancellation cancel)throws Exception{
+                          CloudVisionClient.Cancellation cancel,java.util.function.LongConsumer uploadMetrics)throws Exception{
         if(cancel!=null)cancel.check();
         if(jpeg==null||jpeg.length<200)throw new Exception("没有有效的照片");
         if(target==null||target.trim().isEmpty())throw new Exception("没有寻找目标");
@@ -97,9 +102,11 @@ final class TargetVisionClient {
             byte[] request=body.toString().getBytes(StandardCharsets.UTF_8);
             // One image request; send the known byte length without an extra HTTP buffer.
             c.setFixedLengthStreamingMode(request.length);
+            long uploadAt=android.os.SystemClock.elapsedRealtime();
             try(OutputStream out=c.getOutputStream()){
                 out.write(request);
             }
+            if(uploadMetrics!=null)uploadMetrics.accept(android.os.SystemClock.elapsedRealtime()-uploadAt);
             if(cancel!=null)cancel.check();
             int status=c.getResponseCode();
             if(status<200||status>=300)
