@@ -32,7 +32,7 @@ final class C110HomeStatus {
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private boolean active,closed,inFlight;
     private Network network;
-    private long nextReadAt;
+    private long nextReadAt,lastReadAt=-60000;
     private int generation;
     private C110BatteryPolicy.Reading battery=C110BatteryPolicy.unknown();
     private State state=new State(false,false,battery);
@@ -56,7 +56,7 @@ final class C110HomeStatus {
     void shutdown(){stop();closed=true;io.shutdownNow();}
     void refresh(){
         if(!active||closed)return;
-        nextReadAt=0;
+        if(SystemClock.elapsedRealtime()-lastReadAt>=10000)nextReadAt=0;
         main.removeCallbacks(tick);main.post(tick);
     }
     private Network connected(){
@@ -79,7 +79,7 @@ final class C110HomeStatus {
         if(network!=null&&!inFlight&&!shotBusy.getAsBoolean()&&now>=nextReadAt){
             final Network target=network;
             final int ticket=generation;
-            inFlight=true;nextReadAt=now+BATTERY_MS;
+            inFlight=true;lastReadAt=now;nextReadAt=now+BATTERY_MS;
             publish(true);
             try{
                 io.execute(()->{
@@ -120,6 +120,6 @@ final class C110HomeStatus {
                 return C110BatteryPolicy.parse(out.toString(StandardCharsets.UTF_8.name()));
             }
         }catch(Exception e){return C110BatteryPolicy.unknown();}
-        finally{if(conn!=null)conn.disconnect();}
+        finally{if(conn!=null)try{conn.disconnect();}catch(RuntimeException ignored){}}
     }
 }
