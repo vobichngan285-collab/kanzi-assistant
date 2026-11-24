@@ -4,7 +4,7 @@
 - **基线/分支**：从已发布 v1.0.87 commit `6925631076faf82e978dff208fe98817b7842bc9`（非 v1.0.88）派生 `exp/c110-full-surface-v0189-20261124`，最终源码 `58963e56aaf772385979acea9d4a86949200f6e5`；versionCode98、versionName 1.0.89-c110-full-surface，包名不变。
 - **修改**：C110预览使用 SurfaceHolder.getSurfaceFrame() 读取Surface尺寸，区分View尺寸；PixelCopy.request(surface,image,...) 直接复制完整视频Surface，不截Window、不做ROI裁剪、不显式缩放、不改JPEG100单次编码。Surface尺寸不保证是RTSP解码轨道原始尺寸；实际缓冲区与目标尺寸不同时PixelCopy仍可能插值，不能宣称无损原始视频帧。尺寸变化/无效/取图失败即停止，不使用旧图。保留RAM查看识别用JPEG入口（相同byte[]进入原识别通路，不表示服务器实际收到），不另存或二次上传。预览OCR暂不跟随显示变焦/竖屏裁剪；显示变焦及1001高清照片裁剪不变。
 - **范围核实**：GitHub compare仅5文件变化：C110FrameReader.java、C110CameraActivity.java、app/build.gradle、新文档C110_FULL_SURFACE_V0189.md和新workflow。回读核验Reader真实高清识别到shutdown之前的云端/模型/TTS方法完全相同；Wi-Fi、RTSP、LibVLC3.6.5、手机/USB、原厂快门不动。
-- **CI**：[Actions 45337702071](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45337702071)，当前 in_progress/尚无结论；此前5文件范围及完整Surface静态验证步骤已通过，尚未确认完整编译/发布，不得宣称APK可下载。
+- **CI**：[Actions 45337702071](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45337702071)，completed/success，全部静态检查、Java回归、ARM64 Gradle构建、APK结构/包名/原生库/音效及SHA256检查、Artifact及Release发布均通过。Release target与源码提交一致：`58963e56aaf772385979acea9d4a86949200f6e5`。APK 53550575 bytes，SHA256 `749c7b0e791294d38d356a319b6eb1c3b079781fdb9e445d0139d6bd4fb6d858`。已验证下载链接 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-full-surface-20261124-v0189/BlueStar_Guide_C110_Full_Surface_1.0.89.apk 。真机识别效果仍待验证。
 - **下一步**：先验完整预览帧的“查看上传图”及同一场景OCR，记录view/surface/JPEG尺寸和full_surface=1；如果仍不正确继续查VLC真实输出，不重复Window截图方案。安装新版必须等CI及Release核验后覆盖，勿卸载旧包。真机验收尚未进行。
 
 ---
