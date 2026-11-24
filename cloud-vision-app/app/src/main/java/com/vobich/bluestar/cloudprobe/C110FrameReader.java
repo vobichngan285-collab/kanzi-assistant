@@ -60,6 +60,7 @@ final class C110FrameReader {
     private int physicalSuccessId=-1;
     private long physicalQueryMs=-1,physicalDownloadMs=-1;
     private int physicalIntervalMs;
+    private long physicalVoiceWaitMs;
     private RuntimeDiagnostics physicalSpeechDiag;
     private int physicalSpeechId=-1;
     private long physicalSpeechStarted;
@@ -74,9 +75,10 @@ final class C110FrameReader {
             SystemClock.elapsedRealtime()-physicalSpeechStarted,"ok");
     }
     boolean recognizePhysicalJpeg(C110WifiCamera.Photo photo,long queryMs,long downloadMs,
-                                  int intervalMs,Runnable onSuccess){
+                                  int intervalMs,long voiceWaitMs,Runnable onSuccess){
         if(closed||busy)return false;
         physicalQueryMs=queryMs;physicalDownloadMs=downloadMs;physicalIntervalMs=intervalMs;
+        physicalVoiceWaitMs=voiceWaitMs;
         try{
             boolean accepted=recognizeOriginalJpeg(photo.jpeg,photo.width,photo.height,
                 (TaskCatalog.Task)null,photo.totalMs);
@@ -84,7 +86,7 @@ final class C110FrameReader {
                 physicalSuccessId=request.get();physicalSuccess=onSuccess;
             }
             return accepted;
-        }finally{physicalQueryMs=-1;physicalDownloadMs=-1;physicalIntervalMs=0;}
+        }finally{physicalQueryMs=-1;physicalDownloadMs=-1;physicalIntervalMs=0;physicalVoiceWaitMs=0;}
     }
     private void notifyPhysicalSuccess(int id){
         if(id!=physicalSuccessId||physicalSuccess==null)return;
@@ -416,10 +418,11 @@ final class C110FrameReader {
         photoDiag.begin(physicalQueryMs>=0?"c110_physical":"c110_photo");
         if(physicalQueryMs>=0){
             physicalSpeechDiag=photoDiag;physicalSpeechId=id;physicalSpeechLogged=false;
-            physicalSpeechStarted=started-Math.max(0,captureMs);
+            physicalSpeechStarted=started-Math.max(0,captureMs)-Math.max(0,physicalVoiceWaitMs);
             photoDiag.event("c110","poll_interval_ms",physicalIntervalMs,"ok");
             photoDiag.event("c110","directory_query_ms",physicalQueryMs,"ok");
             photoDiag.event("c110","jpeg_download_ms",physicalDownloadMs,"ok");
+            photoDiag.event("c110","voice_wait_ms",physicalVoiceWaitMs,"ok");
         }
         if(captureMs>=0)photoDiag.event("c110","photo_total_ms",captureMs,"ok");
         if(metricsListener!=null&&captureMs>=0)
@@ -544,6 +547,12 @@ final class C110FrameReader {
                                      TaskCatalog.Task oneShotTask,
                                      CloudVisionClient.Cancellation cancel,
                                      RuntimeDiagnostics photoDiag,boolean phoneSource){
+        // Snapshot the target at this request's network dispatch, after the AI command gate.
+        final String target=oneShotTask==null?FindingTargetStore.current(activity):"";
+        final long targetAt=SystemClock.elapsedRealtime();
+        if(!target.isEmpty()&&photoDiag!=null)main.post(()->{
+            if(!closed&&id==request.get())photoDiag.event("target","route",1,"ok");
+        });
         try{
             cancel.check();
             // C110 stays explicitly cellular; phone can use validated Wi-Fi.
@@ -551,8 +560,6 @@ final class C110FrameReader {
                 C110WifiCamera.requireCellular(activity);
             // Share one target between Home quickshot, C110 preview and
             // MainActivity. Explicit voice read/observe applies to one shot.
-            final String target=oneShotTask==null?
-                FindingTargetStore.current(activity):"";
             SharedPreferences prefs=activity.getSharedPreferences(PREFS,Context.MODE_PRIVATE);
             if(!target.isEmpty()){
                 String visual=VisionModelCatalog.normalize(prefs.getString(
@@ -560,14 +567,23 @@ final class C110FrameReader {
                 CloudProviderStore.Config service=CloudProviderStore.resolve(
                     activity,CloudProviderStore.VISION,visual);
                 RecentPhotoSession.captured(jpeg,cellular,"寻找"+target);
+                final java.util.concurrent.atomic.AtomicLong uploadMs=new java.util.concurrent.atomic.AtomicLong(-1);
                 TargetVisionClient.Result check=TargetVisionClient.inspect(
-                    jpeg,target,service,cellular,cancel);
+                    jpeg,target,service,cellular,cancel,uploadMs::set);
+                final long targetMs=SystemClock.elapsedRealtime()-targetAt;
                 main.post(()->{
                     if(closed||id!=request.get())return;
                     busy=false;
                     if(!target.equals(FindingTargetStore.current(activity))){
+                        if(photoDiag!=null)photoDiag.event("target","outcome",-1,"cancelled");
                         report("寻找目标已更改，本次旧照片结果已取消");
                         return;
+                    }
+                    if(photoDiag!=null){
+                        if(uploadMs.get()>=0)photoDiag.event("target","upload_ms",uploadMs.get(),"ok");
+                        photoDiag.event("target","network_ms",targetMs,"ok");
+                        photoDiag.event("target","outcome",check.confirmed()?1:"possible".equals(check.decision)?2:0,"ok");
+                        photoDiag.event("capture","total_ms",SystemClock.elapsedRealtime()-started,"ok");
                     }
                     lastText=check.message;
                     RecentPhotoSession.analyzed(jpeg,check.message);
@@ -632,6 +648,7 @@ final class C110FrameReader {
         }catch(OcrResponseGate.NoReadableTextException noText){
             main.post(()->{
                 if(closed||id!=request.get())return;
+                if(photoDiag!=null)photoDiag.event("cloud","outcome",0,"no_text");
                 busy=false;report("当前画面未识别到文字");
                 speak("当前画面未识别到文字，请调整角度后再试。");
             });
@@ -640,6 +657,16 @@ final class C110FrameReader {
             main.post(()->{
                 if(closed||id!=request.get())return;
                 busy=false;report("取帧已完成，但识别失败："+message);
+                if(!target.isEmpty()){
+                    if(photoDiag!=null){
+                        photoDiag.event("target","network_ms",SystemClock.elapsedRealtime()-targetAt,"failed");
+                        photoDiag.event("target","outcome",-1,"failed");
+                    }
+                    if(target.equals(FindingTargetStore.current(activity)))
+                        speak("寻找目标失败，请检查网络和视觉模型设置，再拍一张。");
+                }else if(photoDiag!=null){
+                    photoDiag.event("cloud","outcome",-1,"failed");
+                }
             });
         }
     }
@@ -686,6 +713,8 @@ final class C110FrameReader {
 
     /** A new photo can replace the prior OCR without stopping VLC/preview. */
     void cancelRecognition(){
+        if(busy&&physicalSpeechDiag!=null&&physicalSpeechId==request.get())
+            physicalSpeechDiag.event("capture","outcome",-1,"cancelled");
         physicalSuccess=null;physicalSuccessId=-1;
         physicalSpeechDiag=null;physicalSpeechId=-1;physicalSpeechLogged=false;
         request.incrementAndGet();
