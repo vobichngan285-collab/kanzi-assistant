@@ -60,6 +60,19 @@ final class C110FrameReader {
     private int physicalSuccessId=-1;
     private long physicalQueryMs=-1,physicalDownloadMs=-1;
     private int physicalIntervalMs;
+    private RuntimeDiagnostics physicalSpeechDiag;
+    private int physicalSpeechId=-1;
+    private long physicalSpeechStarted;
+    private boolean physicalSpeechLogged;
+    private void recordPhysicalSpeechStart(String utterance){
+        if(physicalSpeechDiag==null||physicalSpeechLogged||physicalSpeechId!=request.get())return;
+        int id=physicalSpeechId;
+        if(utterance==null||!(utterance.startsWith("c110-"+id+"-")||
+            utterance.equals("c110-final-"+id)||utterance.equals("c110-delayed-"+id)))return;
+        physicalSpeechLogged=true;
+        physicalSpeechDiag.event("tts","on_start_ms",
+            SystemClock.elapsedRealtime()-physicalSpeechStarted,"ok");
+    }
     boolean recognizePhysicalJpeg(C110WifiCamera.Photo photo,long queryMs,long downloadMs,
                                   int intervalMs,Runnable onSuccess){
         if(closed||busy)return false;
@@ -166,6 +179,15 @@ final class C110FrameReader {
             }catch(RuntimeException error){
                 report("语音语言设置失败："+error.getClass().getSimpleName());
             }
+            try{
+                tts.setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener(){
+                    @Override public void onStart(String utteranceId){
+                        main.post(()->recordPhysicalSpeechStart(utteranceId));
+                    }
+                    @Override public void onDone(String utteranceId){}
+                    @Override public void onError(String utteranceId){}
+                });
+            }catch(RuntimeException ignored){}
             try{tts.setSpeechRate(activeTtsRate);}
             catch(RuntimeException error){
                 report("所选引擎无法设置语速："+error.getClass().getSimpleName());
@@ -393,6 +415,8 @@ final class C110FrameReader {
         final RuntimeDiagnostics photoDiag=new RuntimeDiagnostics(activity);
         photoDiag.begin(physicalQueryMs>=0?"c110_physical":"c110_photo");
         if(physicalQueryMs>=0){
+            physicalSpeechDiag=photoDiag;physicalSpeechId=id;physicalSpeechLogged=false;
+            physicalSpeechStarted=started-Math.max(0,captureMs);
             photoDiag.event("c110","poll_interval_ms",physicalIntervalMs,"ok");
             photoDiag.event("c110","directory_query_ms",physicalQueryMs,"ok");
             photoDiag.event("c110","jpeg_download_ms",physicalDownloadMs,"ok");
@@ -663,6 +687,7 @@ final class C110FrameReader {
     /** A new photo can replace the prior OCR without stopping VLC/preview. */
     void cancelRecognition(){
         physicalSuccess=null;physicalSuccessId=-1;
+        physicalSpeechDiag=null;physicalSpeechId=-1;physicalSpeechLogged=false;
         request.incrementAndGet();
         clearPendingSpeech();
         synchronized(photoNetworkLock){
