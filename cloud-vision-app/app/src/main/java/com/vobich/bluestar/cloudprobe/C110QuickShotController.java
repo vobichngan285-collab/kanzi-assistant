@@ -27,7 +27,7 @@ final class C110QuickShotController {
     private final CaptureDingFeedback captureDing;
     private C110WifiBootstrap bootstrap;
     private Runnable waiting;
-    private boolean active,destroyed,shutterPending;
+    private boolean active,destroyed,shutterPending,physicalReading;
     private int generation;
     private long waitingSince;
 
@@ -43,6 +43,21 @@ final class C110QuickShotController {
         reader.setPhotoMetricsListener(listener);
     }
     boolean isShutterPending(){return shutterPending;}
+    void cancelPhysicalRecognition(){
+        if(physicalReading){physicalReading=false;reader.cancelRecognition();}
+    }
+    boolean acceptPhysicalPhoto(C110WifiCamera.Photo photo,long queryMs,long downloadMs,
+                                int interval,Runnable onSuccess){
+        if(destroyed||!active||shutterPending)return false;
+        // Share the original reader/TTS, including cancellation of previous cloud speech.
+        reader.cancelRecognition();
+        reader.syncSpeechSettings();
+        captureDing.photoSucceeded();
+        physicalReading=true;
+        boolean ok=reader.recognizePhysicalJpeg(photo,queryMs,downloadMs,interval,onSuccess);
+        if(!ok)physicalReading=false;
+        return ok;
+    }
     void cancelRecognitionOnly(){
         if(!shutterPending)reader.cancelRecognition();
     }
@@ -74,6 +89,7 @@ final class C110QuickShotController {
             emit("C110+快门或取图尚未完成，请稍后拍照");
             return;
         }
+        if(physicalReading)cancelPhysicalRecognition();
         if(reader.isBusy())reader.cancelRecognition();
         final int token=++generation;
         shutterPending=true;
