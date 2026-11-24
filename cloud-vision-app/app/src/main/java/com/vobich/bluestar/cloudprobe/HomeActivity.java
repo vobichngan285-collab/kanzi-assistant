@@ -45,6 +45,7 @@ public final class HomeActivity extends Activity {
     private HomeVoiceAssistant homeVoice;
     private TextView quickStatusView,cameraConnection,cameraBattery;
     private C110HomeStatus cameraStatus;
+    private C110PhysicalWatcher physicalWatcher;
     private C110DeviceControls homeLightControls;
     private Button lightButton;
     private boolean lightBusy;
@@ -68,8 +69,12 @@ public final class HomeActivity extends Activity {
         quickShot=new C110QuickShotController(this,this::quickStatusChanged);
         homeVoice=new HomeVoiceAssistant(this,this::quickStatusChanged,this::prepareOtherScreenSpeech,this::voiceOneShotPhoto);
         homeLightControls=new C110DeviceControls(this,this::quickStatusChanged);
+        physicalWatcher=new C110PhysicalWatcher(this,quickShot,
+            ()->lightBusy||quickLaunchPending||(quickShot!=null&&quickShot.isShutterPending())
+                ||(homeVoice!=null&&homeVoice.busyForPhysical()),this::quickStatusChanged);
         cameraStatus=new C110HomeStatus(this,
-            ()->lightBusy||quickLaunchPending||(quickShot!=null&&quickShot.isShutterPending()),
+            ()->lightBusy||quickLaunchPending||(quickShot!=null&&quickShot.isShutterPending())
+                ||(physicalWatcher!=null&&physicalWatcher.cameraIoBusy()),
             this::showCameraStatus);
         root=new FrameLayout(this);
         root.setBackgroundColor(BG);
@@ -260,6 +265,7 @@ public final class HomeActivity extends Activity {
         if(quickLaunchPending||(quickShot!=null&&quickShot.isShutterPending())){
             quickStatusChanged("正在拍照，请稍后操作灯光");return;
         }
+        if(physicalWatcher!=null)physicalWatcher.beforeManualAction();
         lightBusy=true;updateLightButton();
         homeLightControls.setLightFromHome(enabled,ok->{
             lightBusy=false;
@@ -402,6 +408,7 @@ public final class HomeActivity extends Activity {
         Intent launched=getIntent();
         if(isQuickShotIntent(launched))launched.setAction(Intent.ACTION_MAIN);
         // Preserve explicitly requested legacy external one-shot shortcut.
+        if(physicalWatcher!=null)physicalWatcher.beforeManualAction();
         if(quickShot!=null)quickShot.trigger();
     }
     private void quickPhoto(){
@@ -412,6 +419,7 @@ public final class HomeActivity extends Activity {
     }
     /** Explicit voice read/observe changes only the current C110 shot. */
     private void voiceOneShotPhoto(TaskCatalog.Task oneShot){
+        if(physicalWatcher!=null)physicalWatcher.beforeManualAction();
         if(quickShot!=null)quickShot.trigger(oneShot);
     }
     private void quickStatusChanged(String message){
@@ -424,6 +432,7 @@ public final class HomeActivity extends Activity {
         }
     }
     private void prepareOtherScreenSpeech(){
+        if(physicalWatcher!=null)physicalWatcher.beforeManualAction();
         if(quickShot!=null)quickShot.beforeOpenAnotherScreen();
     }
     private void openPreview(){
@@ -460,6 +469,7 @@ public final class HomeActivity extends Activity {
         if(homeVoice!=null)homeVoice.onResume();
         if(cameraWifi!=null)cameraWifi.startAtLaunch();
         if(cameraStatus!=null)cameraStatus.start();
+        if(physicalWatcher!=null)physicalWatcher.start();
         if(root!=null){
             render();
             // Wait until Home is resumed and the real user-requested camera
@@ -483,6 +493,7 @@ public final class HomeActivity extends Activity {
     @Override protected void onPause(){
         homeResumed=false;
         lastLightCommand=null;lightNetwork=null;
+        if(physicalWatcher!=null)physicalWatcher.stop();
         if(cameraStatus!=null)cameraStatus.stop();
         if(homeVoice!=null)homeVoice.onPause();
         if(quickShot!=null)quickShot.onPause();
@@ -490,6 +501,7 @@ public final class HomeActivity extends Activity {
     }
     @Override protected void onDestroy(){
         statusHandler.removeCallbacks(hideQuickStatus);
+        if(physicalWatcher!=null){physicalWatcher.shutdown();physicalWatcher=null;}
         if(cameraStatus!=null){cameraStatus.shutdown();cameraStatus=null;}
         if(homeLightControls!=null){homeLightControls.shutdown();homeLightControls=null;}
         if(homeVoice!=null){homeVoice.shutdown();homeVoice=null;}
