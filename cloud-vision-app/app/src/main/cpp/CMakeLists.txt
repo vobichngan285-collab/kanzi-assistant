@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(c110rawframe LANGUAGES C)
+add_library(c110rawframe SHARED c110rawframe.c)
+target_compile_features(c110rawframe PRIVATE c_std_11)
+target_compile_options(c110rawframe PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(c110rawframe PRIVATE dl)
