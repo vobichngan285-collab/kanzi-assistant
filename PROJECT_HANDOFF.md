@@ -1,3 +1,12 @@
+# 2026-11-24｜C110 原始解码帧画质专项独立实验 0.1.0（CI进行中，真机未验）
+- 用户实测 v1.0.89 12次 c110_preview：1260×2590完整Surface，JPEG 293005–354898 bytes、编码17–24ms、云端首字799–1194ms。大字准确率明显优于小字，仍不满足；怀疑有效视频细节不足，不能仅凭JPEG像素数确认真实视频分辨率。用户授权独立A/B实验，不修改正式版。
+- 从已发布 v1.0.89 `58963e56aaf772385979acea9d4a86949200f6e5` 派生 `exp/c110-native-frame-quality-lab-20261124`，源码/CI提交 `1d628067bb3ca0d50fef079229f31727c666b713`。compare核实仅8文件。独立包 `com.vobich.bluestar.c110qualitylab`、名称蓝星画质实验，正式版保留，实验需手动配置相同API key/模型/任务/语音。
+- A保留完整视频Surface PixelCopy，加尽力读取轨道宽高、进程单核CPU估计；B同一RTSP与LibVLC3.6.5，JNI调用 libvlc_video_set_callbacks/format_callbacks 原生RGBA内存输出、软件解码，点击后等待下一解码帧至多2秒，不经过Android Surface，不裁剪缩放、不回退旧图，同一JPEG100和现有云/TTS管线。A/B顺序释放播放器，不同时开两路视频；B无实时显示，先在A固定取景，切换B后约5秒点黑屏取帧，查看上传图；记录实际回调尺寸、帧编号、耗时、JPEG字节及OCR。B是否有真实帧仍待真机验证；CPU为进程均值、两模式渲染路径不同，不能直接比较纯解码性能。
+- CI [45339429855](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45339429855) in_progress；工作流新增host回调格式/行距/新帧复制单测、ARM64 JNI桥编译、APK libvlc符号/包名/库验证，保留既有回归。预期Release标签 `bluestar-c110-native-frame-quality-lab-20261124-v010`，资产 `BlueStar_C110_Native_Frame_Quality_Lab_0.1.0.apk`，**未核实成功前不得发送可用下载链接**。详细步骤见实验分支 cloud-vision-app/docs/C110_NATIVE_FRAME_QUALITY_LAB.md。
+- 下一步：验证CI与Release资产提交一致，真机同一小字/距离/光线、同模型A/B各5次。若B无回调、色彩异常、或两路同样模糊，继续按证据研究相机实际RTSP SPS和画质控制，不改正式版，不再反复放大截图。
+
+---
+
 # 2026-11-24｜蓝星向导 v1.0.89 C110 完整视频 Surface 取帧专项；v1.0.88 作废
 
 - **真机反馈与授权**：v1.0.88 窗口截图连续四次 JPEG 均68000字节，用户明确反馈只读出“高清拍照”“查看上传图”等软件控件字样。用户要求作废该版本并以 v1.0.87 重新开发；保留旧发行记录，不删除历史。用户批准先去除预览取帧裁剪和缩图、获取完整视频帧验证正确性。
