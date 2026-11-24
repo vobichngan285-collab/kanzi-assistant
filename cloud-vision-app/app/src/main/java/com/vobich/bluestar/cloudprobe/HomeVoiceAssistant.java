@@ -34,7 +34,7 @@ final class HomeVoiceAssistant {
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final ArrayList<String> turns=new ArrayList<>();
     private TextToSpeech tts;
-    private boolean ttsReady,active,working;
+    private boolean ttsReady,active,working,voiceInputPending;
     private String pendingSpeech="",ttsPackage="";
     private float ttsRate=1f;
     private int generation,ttsGeneration;
@@ -45,18 +45,19 @@ final class HomeVoiceAssistant {
         activity=a;status=onStatus;releasePhotoSpeech=beforeTalk;
         requestOneShotPhoto=capture;
     }
+    /** Only recording/ASR/question processing blocks photo dispatch, never directory watching.
+     * The next requested photo may replace AI confirmation speech. No indefinite TTS busy lock. */
     boolean busyForPhysical(){
-        if(working||recorder.isBusy())return true;
-        try{return tts!=null&&tts.isSpeaking();}
-        catch(RuntimeException ignored){return false;}
+        return voiceInputPending||working||recorder.isBusy();
     }
+    void yieldSpeechToPhysicalPhoto(){releaseSpeech();}
     void onResume(){active=true;}
     void onPause(){
         active=false;
         generation++;
         recorder.cancel();
         gesture.interrupt();
-        working=false;
+        working=false;voiceInputPending=false;
         releaseSpeech();
     }
     void shutdown(){
@@ -78,7 +79,7 @@ final class HomeVoiceAssistant {
             case MotionEvent.ACTION_UP:
                 VoicePressState.Decision decision=gesture.up();
                 if(decision==VoicePressState.Decision.CANCEL){
-                    recorder.cancel();announce("已取消录音");
+                    voiceInputPending=false;recorder.cancel();announce("已取消录音");
                 }else if(decision==VoicePressState.Decision.SEND){
                     recorder.finish();announce("正在识别语音…");
                 }
@@ -86,14 +87,14 @@ final class HomeVoiceAssistant {
             case MotionEvent.ACTION_POINTER_DOWN:
             case MotionEvent.ACTION_CANCEL:
                 if(gesture.interrupt()==VoicePressState.Decision.CANCEL){
-                    recorder.cancel();announce("已取消录音");
+                    voiceInputPending=false;recorder.cancel();announce("已取消录音");
                 }
                 return true;
             default:return true;
         }
     }
     private boolean begin(View button){
-        if(!active||working||recorder.isBusy()){
+        if(!active||voiceInputPending||working||recorder.isBusy()){
             announce("AI正在处理或录音，请稍后");return false;
         }
         if(activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO)
@@ -103,8 +104,9 @@ final class HomeVoiceAssistant {
             announce("请允许麦克风权限，然后重新按住AI");return false;
         }
         releasePhotoSpeech.run();
-        if(tts!=null)try{tts.stop();}catch(RuntimeException ignored){}
+        releaseSpeech();
         final int ticket=++generation;
+        voiceInputPending=true;
         boolean ok=recorder.begin(activity,new VoiceRecorder.Listener(){
             @Override public void onReady(String source){
                 main.post(()->{if(active&&ticket==generation)announce("正在录音，松开发送");});
@@ -112,20 +114,21 @@ final class HomeVoiceAssistant {
             @Override public void onFinished(byte[] wav,int duration,int peak,int rms,String source){
                 main.post(()->{
                     if(!active||ticket!=generation)return;
-                    working=true;
+                    voiceInputPending=false;working=true;
                     announce("语音已采集，正在提问…");
                     playSendSound();
                     worker.execute(()->requestAI(ticket,wav));
                 });
             }
             @Override public void onFailure(String message){
-                main.post(()->{if(active&&ticket==generation)announce("录音失败："+message);});
+                main.post(()->{if(active&&ticket==generation){voiceInputPending=false;announce("录音失败："+message);}});
             }
         });
         if(ok){
             button.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
             announce("按住说话，松开发送");
         }
+        if(!ok)voiceInputPending=false;
         return ok;
     }
     private void requestAI(int ticket,byte[] wav){
@@ -162,8 +165,10 @@ final class HomeVoiceAssistant {
                         FindingTargetStore.set(activity,command.target);
                         turns.clear();
                         announce("已开始寻找："+command.target+" · 拍照后自动检查");
+                        boolean physical=activity.getSharedPreferences("kanzi_settings",Context.MODE_PRIVATE)
+                            .getBoolean(C110PhysicalPolicy.ENABLE,false);
                         speak("好的，正在帮你找"+command.target+
-                            "。请用主页快捷拍照或进入预览拍照，我会逐张检查。");
+                            (physical?"。请按相机快门拍照。":"。请用主页快捷拍照或进入预览拍照。"));
                     }
                 });
                 return;
