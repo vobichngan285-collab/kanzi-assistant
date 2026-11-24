@@ -1,0 +1,222 @@
+name: Blue Star v1.0.93 Physical Shutter
+on:
+  push:
+    branches: [ 'exp/physical-shutter-v0193-20261124' ]
+    paths:
+      - 'cloud-vision-app/app/**'
+      - 'cloud-vision-app/docs/PHYSICAL_SHUTTER_V0193.md'
+      - '.github/workflows/physical-shutter-v0193.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  validated-apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify physical listener and precise deletion scope, version and preserved Home
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess,re
+          base='04e3d542900e5ae2c9b2e2169c15cfe2ba95b939'
+          root='cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/'
+          expected={
+            '.github/workflows/physical-shutter-v0193.yml',
+            'cloud-vision-app/docs/PHYSICAL_SHUTTER_V0193.md',
+            'cloud-vision-app/app/build.gradle',
+            'cloud-vision-app/tests/C110PhysicalPolicyTest.java',
+            *[root+n+'.java' for n in [
+              'C110DeletePolicy','C110PhysicalPolicy','C110PhysicalWatcher','C110WifiCamera',
+              'C110FrameReader','C110QuickShotController','HomeVoiceAssistant','HomeActivity',
+              'BlueStarSettingsScreen','BlueStarReleaseInfo']]
+          }
+          actual=set(subprocess.check_output(['git','diff','--name-only',base,'HEAD'],text=True).splitlines())
+          assert actual==expected,actual^expected
+          read=lambda n:Path(root+n+'.java').read_text()
+          prev=lambda n:subprocess.check_output(['git','show',base+':'+root+n+'.java'],text=True)
+          home,watch,cam,reader,shots,settings=(read(n) for n in ['HomeActivity','C110PhysicalWatcher','C110WifiCamera','C110FrameReader','C110QuickShotController','BlueStarSettingsScreen'])
+          # Layout and all old manual photo and preview HTTP paths unchanged.
+          def section(src,a,b):return src.split(a,1)[1].split(b,1)[0]
+          assert section(home,'    private void render(){','    private void addCameraCard(')==section(prev('HomeActivity'),'    private void render(){','    private void addCameraCard(')
+          physical=section(cam,'    /** Physical shutter:', '    private static Set<String> list(')
+          assert cam.replace('    /** Physical shutter:'+physical,'')==prev('C110WifiCamera')
+          assert 'cmd=1001' not in physical and 'cmd=3001' not in physical and 'cmd=2015' not in physical
+          assert 'cmd=1001' not in watch and 'requestNetwork(' not in watch
+          assert 'Executors.newSingleThreadExecutor()' in watch and 'if(inFlight)' in watch
+          assert 'physicalWatcher.beforeManualAction();' in home and 'physicalWatcher.stop();' in home
+          assert 'shots.cancelPhysicalRecognition();' in watch
+          assert 'unique&&deleteEnabled()' in watch and 'photoSerial==serial' in watch
+          assert 'getBoolean(C110PhysicalPolicy.DELETE,false)' in watch and 'getBoolean(C110PhysicalPolicy.ENABLE,false)' in watch
+          assert 'deleteJob=new DeleteJob' in watch and 'physicalDelete(owner,job.wifi,job.path,job.digest' in watch
+          assert 'verifyPhysicalCamera(wifi);' in physical and '<Cmd>4003</Cmd>' in physical
+          assert 'MessageDigest.isEqual(digest,physicalDigest(check.jpeg))' in physical
+          assert 'if(!allowed.getAsBoolean()||!wifi.equals(C110WifiBootstrap.connected(context)))return false;' in physical
+          assert physical.count('C110DeletePolicy.oneFileDeleteEndpoint(path)')==1
+          assert 'if(!filtered(lastText,task).isEmpty())notifyPhysicalSuccess(id);' in reader
+          assert 'physicalSuccess=null;physicalSuccessId=-1;' in reader
+          assert 'reader.recognizePhysicalJpeg(photo,queryMs,downloadMs,interval,onSuccess)' in shots
+          assert 'camera.shootAfterLivePreview(owner)' in shots
+          assert 'row("关于软件 · "+installedVersion()' in settings
+          assert 'info.versionName' in settings and 'info.getLongVersionCode()' in settings
+          assert 'BlueStarReleaseInfo.CHANGES' in settings and '删除不可恢复' in settings
+          gradle=Path('cloud-vision-app/app/build.gradle').read_text()
+          version=re.search(r"versionName '([^']+)'",gradle).group(1)
+          assert version=='1.0.93-physical-shutter' and 'versionCode 102' in gradle
+          assert 'VERSION="'+version+'"' in read('BlueStarReleaseInfo')
+          assert "applicationIdSuffix '.c110plusquick159'" in gradle
+          print('PASS exact scope, no new shutter in watcher, success-bound exact deletion, original camera paths, release notes')
+          PY
+      - name: Test physical shutter baseline, deduplication and exact OEM deletion policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-physical-tests
+          javac -d /tmp/bluestar-physical-tests "$BASE/C110PhotoPolicy.java" "$BASE/C110DeletePolicy.java" "$BASE/C110PhysicalPolicy.java" cloud-vision-app/tests/C110PhysicalPolicyTest.java
+          java -cp /tmp/bluestar-physical-tests com.vobich.bluestar.cloudprobe.C110PhysicalPolicyTest
+      - name: Test camera battery response parsing without fabricated percentages
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-battery-tests
+          javac -d /tmp/bluestar-battery-tests "$BASE/C110BatteryPolicy.java" cloud-vision-app/tests/C110BatteryPolicyTest.java
+          java -cp /tmp/bluestar-battery-tests com.vobich.bluestar.cloudprobe.C110BatteryPolicyTest
+      - name: Run vendor allow-list, task and C110 pure Java regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-tests
+          javac -d /tmp/bluestar-tests "$BASE/CloudProviderPolicy.java" cloud-vision-app/tests/CloudProviderPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudProviderPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/CloudProviderPolicy.java" "$BASE/CloudThinkingPolicy.java" cloud-vision-app/tests/CloudThinkingPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudThinkingPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/VisionModelCatalog.java" "$BASE/OcrModelCatalog.java" cloud-vision-app/tests/CloudServerListTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudServerListTest
+          javac -d /tmp/bluestar-tests "$BASE/VoiceAction.java" cloud-vision-app/tests/VoiceActionSharedTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.VoiceActionSharedTest
+          javac -d /tmp/bluestar-tests "$BASE/ProviderKeyReusePolicy.java" cloud-vision-app/tests/ProviderKeyReusePolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.ProviderKeyReusePolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/TaskOrder.java" cloud-vision-app/tests/TaskOrderTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.TaskOrderTest
+          javac -d /tmp/bluestar-tests "$BASE/FollowupPrompt.java" cloud-vision-app/tests/FollowupPromptTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.FollowupPromptTest
+          javac -d /tmp/bluestar-tests "$BASE/C110ZoomGeometry.java" cloud-vision-app/tests/C110ZoomGeometryTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110ZoomGeometryTest
+          javac -d /tmp/bluestar-tests "$BASE/C110PhotoPolicy.java" cloud-vision-app/tests/C110PhotoPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110PhotoPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/OcrLineChunks.java" "$BASE/OcrSpeedExperiment.java" cloud-vision-app/tests/OcrSpeedExperimentTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.OcrSpeedExperimentTest
+      - name: Run independent pure-Java phone upload-size tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-phone-upload-tests
+          javac -d /tmp/bluestar-phone-upload-tests "$BASE/PhoneStillUploadPolicy.java" cloud-vision-app/tests/PhoneStillUploadPolicyTest.java
+          java -cp /tmp/bluestar-phone-upload-tests com.vobich.bluestar.cloudprobe.PhoneStillUploadPolicyTest
+      - name: Run C110 1440P toggle and original-byte restoration policy tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-c110-upload-toggle-tests
+          javac -d /tmp/bluestar-c110-upload-toggle-tests "$BASE/C110PhotoUploadPolicy.java" cloud-vision-app/tests/C110PhotoUploadPolicyTest.java
+          java -cp /tmp/bluestar-c110-upload-toggle-tests com.vobich.bluestar.cloudprobe.C110PhotoUploadPolicyTest
+      - name: Pure-Java first pairing and auto-reconnect regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-wifi-pair
+          javac -d /tmp/bluestar-wifi-pair "$BASE/C110WifiPairingPolicy.java" cloud-vision-app/tests/C110WifiPairingPolicyTest.java
+          java -cp /tmp/bluestar-wifi-pair com.vobich.bluestar.cloudprobe.C110WifiPairingPolicyTest
+      - name: Apply already-proven pinned UVC patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_usbmonitor.py cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 cloud-vision-app/scripts/patch_pinned_uvc.py
+          grep -q BSG_CLOUD_RAW5_GATED cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/jni/UVCCamera/UVCPreview.cpp
+          grep -q BSG_CLOUD_CLOSE_BARRIER cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
+      - name: Generate unchanged Blue Star launcher assets
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          java scripts/GenerateLauncherIcons.java
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            test -s "app/src/main/res/mipmap-$density/ic_launcher.png"
+          done
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile full Android arm64 app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :app:assembleDebug
+      - name: Verify APK actual package, launcher, native libraries, sound and SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_Physical_Shutter_1.0.93.apk
+          APK=out/BlueStar_Guide_Physical_Shutter_1.0.93.apk
+          test -s "$APK"
+          unzip -tq "$APK" >/dev/null
+          unzip -Z1 "$APK" >out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlc.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlcjni.so' out/entries.txt
+          grep -Fxq 'res/raw/c_metal_clack_ding.mp3' out/entries.txt
+          grep -Fxq 'res/raw/voice_send_whoosh.wav' out/entries.txt
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging "$APK" >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110plusquick159'" out/badging.txt
+          grep -Fq "versionName='1.0.93-physical-shutter'" out/badging.txt
+          grep -Fq "launchable-activity: name='com.vobich.bluestar.cloudprobe.HomeActivity'" out/badging.txt
+          test "$(grep -c '^launchable-activity:' out/badging.txt)" -eq 1
+          "$AAPT" dump xmltree "$APK" AndroidManifest.xml >out/manifest-tree.txt
+          grep -Fq 'com.vobich.bluestar.cloudprobe.action.QUICK_SHOT' out/manifest-tree.txt
+          ! grep -Fxq 'lib/arm64-v8a/libc110rawframe.so' out/entries.txt
+          (cd out && sha256sum BlueStar_Guide_Physical_Shutter_1.0.93.apk >SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+          BYTES=$(stat -c%s "$APK")
+          echo "v1.0.93 APK bytes: $BYTES" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_Guide_Physical_Shutter_1.0.93
+          path: out/*
+          retention-days: 14
+      - name: Publish ONLY if every test and package verification passed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-physical-shutter-20261124-v0193
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing release" >&2
+            exit 1
+          fi
+          gh release create "$TAG" out/BlueStar_Guide_Physical_Shutter_1.0.93.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Blue Star v1.0.93 Physical Shutter" \
+            --notes "Production v1.0.93. Foreground physical-shutter auto read, 100/200/300/500ms selection, optional confirmed exact single-JPEG auto cleanup OFF by default, About page with installed version and release notes. Hardware deletion and listener require real device validation. Keep production package and bridge; cover install."
