@@ -67,11 +67,13 @@ public final class HomeActivity extends Activity {
         // The ONE network lease belongs to Home, not transient Settings/VLC.
         cameraWifi=new C110WifiBootstrap(this,this::quickStatusChanged);
         quickShot=new C110QuickShotController(this,this::quickStatusChanged);
-        homeVoice=new HomeVoiceAssistant(this,this::quickStatusChanged,this::prepareOtherScreenSpeech,this::voiceOneShotPhoto);
+        homeVoice=new HomeVoiceAssistant(this,this::quickStatusChanged,this::prepareHomeVoiceSpeech,this::voiceOneShotPhoto);
         homeLightControls=new C110DeviceControls(this,this::quickStatusChanged);
         physicalWatcher=new C110PhysicalWatcher(this,quickShot,
-            ()->lightBusy||quickLaunchPending||(quickShot!=null&&quickShot.isShutterPending())
-                ||(homeVoice!=null&&homeVoice.busyForPhysical()),this::quickStatusChanged);
+            ()->lightBusy||quickLaunchPending||(quickShot!=null&&quickShot.isShutterPending()),
+            ()->homeVoice!=null&&homeVoice.busyForPhysical(),
+            ()->{if(homeVoice!=null)homeVoice.yieldSpeechToPhysicalPhoto();},
+            this::quickStatusChanged);
         cameraStatus=new C110HomeStatus(this,
             ()->lightBusy||quickLaunchPending||(quickShot!=null&&quickShot.isShutterPending())
                 ||(physicalWatcher!=null&&physicalWatcher.cameraIoBusy()),
@@ -429,6 +431,13 @@ public final class HomeActivity extends Activity {
         if(quickStatusView!=null){
             quickStatusView.setText(quickStatus);
             quickStatusView.setVisibility(quickStatus.isEmpty()?View.GONE:View.VISIBLE);
+        }
+    }
+    private void prepareHomeVoiceSpeech(){
+        if(physicalWatcher!=null)physicalWatcher.beforeVoiceAction();
+        if(quickShot!=null){
+            quickShot.cancelRecognitionOnly();
+            quickShot.beforeOpenAnotherScreen();
         }
     }
     private void prepareOtherScreenSpeech(){
