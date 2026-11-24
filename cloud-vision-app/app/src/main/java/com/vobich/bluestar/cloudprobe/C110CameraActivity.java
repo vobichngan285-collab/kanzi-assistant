@@ -14,6 +14,9 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.graphics.Color;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.app.AlertDialog;
 import android.net.ConnectivityManager;
 import android.net.LinkProperties;
 import android.net.Network;
@@ -87,6 +90,7 @@ public final class C110CameraActivity extends Activity {
     private SeekBar zoomSeek;
     private float zoom=1f;
     private boolean fullscreen;
+    private static final int MAX_INSPECT_JPEG_BYTES=16*1024*1024;
 
     @Override protected void attachBaseContext(Context base) {
         super.attachBaseContext(BlueStarFontScale.wrap(base));
@@ -205,7 +209,13 @@ public final class C110CameraActivity extends Activity {
         footer.setBackgroundColor(Color.TRANSPARENT);
         photoButton=footerButton("◎  高清拍照",this::captureOriginalPhoto);
         photoButton.setContentDescription("单次C110高清拍照，云端只处理当前变焦区域");
-        footer.addView(photoButton,new LinearLayout.LayoutParams(dp(200),dp(63)));
+        footer.addView(photoButton,new LinearLayout.LayoutParams(0,dp(63),1f));
+        Button inspect=footerButton("查看上传图",this::showLastPreviewUpload);
+        inspect.setTextSize(15);
+        inspect.setContentDescription("查看最近一次C110实时预览用于云端识别的完整JPEG");
+        LinearLayout.LayoutParams inspectLp=new LinearLayout.LayoutParams(dp(106),dp(63));
+        inspectLp.leftMargin=dp(6);
+        footer.addView(inspect,inspectLp);
         root.addView(footer,new FrameLayout.LayoutParams(-1,dp(77),Gravity.BOTTOM));
 
         // Compact manual slider. At 1x, all cloud paths remain unchanged.
@@ -219,7 +229,7 @@ public final class C110CameraActivity extends Activity {
         zoomValue.setTextColor(Color.WHITE);
         zoomValue.setTextSize(15);
         zoomValue.setText("1.0×");
-        zoomValue.setContentDescription("当前OCR取景放大倍率1倍");
+        zoomValue.setContentDescription("当前预览显示放大倍率1倍");
         zoomSeek=new SeekBar(this);
         zoomSeek.setMax(30);
         zoomSeek.setProgress(0);
@@ -251,7 +261,7 @@ public final class C110CameraActivity extends Activity {
         root.addOnLayoutChangeListener((v,left,top,right,bottom,oldL,oldT,oldR,oldB)->{
             if(fullscreen)applyVideoViewport();
         });
-        say("C110正在初始化预览；滑动放大后OCR只读对应区域；点击画面取帧，长按状态复制诊断");
+        say("C110正在初始化预览；预览识别暂取完整视频帧；点击画面取帧，长按状态复制诊断");
         // Proven OEM start sequence remains unchanged below; the request waits for Wi-Fi first.
         main.post(this::connectAndBeginWhenReady);
     }
@@ -279,15 +289,45 @@ public final class C110CameraActivity extends Activity {
         zoomSeek.setProgress(Math.round((zoom-1f)*10f));
         zoomValue.setText(String.format(Locale.CHINA,"%.1f×",zoom));
         zoomValue.setContentDescription(String.format(Locale.CHINA,
-            "当前放大%.1f倍，云端仅识别当前对应区域",zoom));
+            "当前显示放大%.1f倍，预览识别暂取完整视频帧",zoom));
         applyZoomPreview();
+    }
+
+    private void showLastPreviewUpload(){
+        byte[] jpeg=frameReader==null?null:frameReader.lastPreviewSubmittedJpeg();
+        if(jpeg==null||jpeg.length<256){
+            say("暂无C110预览上传图，请点击画面取帧识别一次");return;
+        }
+        if(jpeg.length>MAX_INSPECT_JPEG_BYTES){
+            say("预览JPEG太大，取消查看以保护内存");return;
+        }
+        Bitmap bmp=null;
+        try{bmp=BitmapFactory.decodeByteArray(jpeg,0,jpeg.length);}
+        catch(RuntimeException ignored){}
+        if(bmp==null){say("无法解码预览上传图");return;}
+        final Bitmap visible=bmp;
+        ImageView image=new ImageView(this);
+        image.setBackgroundColor(Color.BLACK);
+        image.setAdjustViewBounds(true);
+        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        image.setMaxHeight(getResources().getDisplayMetrics().heightPixels*3/4);
+        image.setImageBitmap(visible);
+        AlertDialog dialog=new AlertDialog.Builder(this)
+            .setTitle("C110完整视频帧识别用图")
+            .setView(image)
+            .setPositiveButton("关闭",null).create();
+        dialog.setOnDismissListener(d->{
+            image.setImageDrawable(null);
+            visible.recycle();
+        });
+        dialog.show();
     }
 
     private void applyZoomPreview(){
         if(video==null)return;
         // Android scales the existing VLCVideoLayout, NOT the decoder/RTSP stream.
-        // PixelCopy reads the underlying unscaled Surface. C110FrameReader
-        // now requests just this screen-visible ROI directly, preserving pixels.
+        // Diagnostic revision: preview recognition reads the whole video Surface.
+        // Display zoom and the native 1001 photo crop remain unchanged.
         FrameLayout.LayoutParams layout=(FrameLayout.LayoutParams)video.getLayoutParams();
         float coverScale=1f;
         if(fullscreen&&cameraRoot!=null&&layout.width>1&&layout.height>1){
