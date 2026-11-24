@@ -1,0 +1,212 @@
+name: Blue Star v1.0.88 C110 Window Visible Upload Inspection
+on:
+  push:
+    branches: [ 'exp/c110-window-visible-preview-v0188-20261124' ]
+    paths:
+      - 'cloud-vision-app/app/**'
+      - 'cloud-vision-app/docs/C110_WINDOW_VISIBLE_V0188.md'
+      - '.github/workflows/c110-window-visible-v0188.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  validated-apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify 5-file v1.0.88 scope, live VLC track, screen-composited PixelCopy and exact JPEG inspection
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          base='6925631076faf82e978dff208fe98817b7842bc9'
+          root='cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/'
+          expected={
+            '.github/workflows/c110-window-visible-v0188.yml',
+            'cloud-vision-app/docs/C110_WINDOW_VISIBLE_V0188.md',
+            'cloud-vision-app/app/build.gradle',
+            root+'C110FrameReader.java',
+            root+'C110CameraActivity.java'
+          }
+          changed=set(subprocess.check_output(
+              ['git','diff','--name-only',base,'HEAD'],text=True).splitlines())
+          assert changed==expected,('Unexpected changed files',sorted(changed^expected))
+          read=lambda n:Path(root+n).read_text()
+          camera,reader=read('C110CameraActivity.java'),read('C110FrameReader.java')
+          gradle=Path('cloud-vision-app/app/build.gradle').read_text()
+          # Screen capture is a window-surface copy of the visible, fully
+          # transformed VLC View. Underlying VideoTrack dimensions not
+          # mistakenly treated as 1260x2590 drawable coordinates.
+          assert 'p.getCurrentVideoTrack()' in camera
+          assert 'liveVideoWidth=track.width;liveVideoHeight=track.height;' in camera
+          assert 'frameReader.tap(cameraRoot,zoom,fullscreen,c110ViewportAspect(),' in camera
+          assert 'liveVideoWidth,liveVideoHeight)' in camera
+          assert 'PixelCopy.request(activity.getWindow(),rect,image,result->' in reader
+          assert 'videoRoot.getLocationInWindow(point)' in reader
+          assert 'rect.left+=videoRoot.getPaddingLeft()' in reader
+          assert 'rect.top+=videoRoot.getPaddingTop()' in reader
+          assert 'Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888)' in reader
+          assert 'PixelCopy.request(video,sourceRect' not in reader
+          assert 'C110ZoomFrames.visiblePreviewRegion(surfaceW,surfaceH,' not in reader
+          assert 'frameCaptureFeedback.run();' in reader
+          assert 'visible.compress(Bitmap.CompressFormat.JPEG,100,bytes)' in reader
+          assert 'lastPreviewSubmittedJpeg=jpeg;' in reader
+          assert 'recognizeJpeg(id,jpeg,started,null,previewDiag)' in reader
+          for s in ['"track_width_px"','"track_height_px"','"window_left_px"',
+                    '"window_top_px"','"visible_width_px"','"visible_height_px"',
+                    '"pixel_copy_status"']:
+              assert s in reader,s
+          assert 'Button inspect=footerButton("查看上传图",this::showLastPreviewUpload);' in camera
+          assert 'frameReader.lastPreviewSubmittedJpeg()' in camera
+          assert 'BitmapFactory.decodeByteArray(jpeg,0,jpeg.length)' in camera
+          assert 'visible.recycle()' in camera
+          assert "versionCode 97" in gradle
+          assert "versionName '1.0.88-c110-window-visible'" in gradle
+          assert "applicationIdSuffix '.c110plusquick159'" in gradle
+          assert 'org.videolan.android:libvlc-all:3.6.5' in gradle
+          # Preserve preexisting OEM commands, voice, diagnostics, Wifi.
+          assert 'C110WifiCamera.requireCellular(activity)' in reader
+          assert 'CloudVisionClient.recognize(jpeg,service,task,' in reader
+          assert 'player.attachViews(video,null,false,false)' in camera
+          assert 'captureOriginalPhoto()' in camera
+          assert 'new CaptureDingFeedback(this)' in camera
+          print('PASS window-composited preview and native VLC track metadata')
+          print('PASS exact submitted JPEG visual inspection on-device, no second upload')
+          print('PASS unchanged LibVLC 3.6.5/OEM1001/Wi-Fi/cloud/TTS legacy paths')
+          PY
+      - name: Run vendor allow-list, task and C110 pure Java regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-tests
+          javac -d /tmp/bluestar-tests "$BASE/CloudProviderPolicy.java" cloud-vision-app/tests/CloudProviderPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudProviderPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/CloudProviderPolicy.java" "$BASE/CloudThinkingPolicy.java" cloud-vision-app/tests/CloudThinkingPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudThinkingPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/VisionModelCatalog.java" "$BASE/OcrModelCatalog.java" cloud-vision-app/tests/CloudServerListTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudServerListTest
+          javac -d /tmp/bluestar-tests "$BASE/VoiceAction.java" cloud-vision-app/tests/VoiceActionSharedTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.VoiceActionSharedTest
+          javac -d /tmp/bluestar-tests "$BASE/ProviderKeyReusePolicy.java" cloud-vision-app/tests/ProviderKeyReusePolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.ProviderKeyReusePolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/TaskOrder.java" cloud-vision-app/tests/TaskOrderTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.TaskOrderTest
+          javac -d /tmp/bluestar-tests "$BASE/FollowupPrompt.java" cloud-vision-app/tests/FollowupPromptTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.FollowupPromptTest
+          javac -d /tmp/bluestar-tests "$BASE/C110ZoomGeometry.java" cloud-vision-app/tests/C110ZoomGeometryTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110ZoomGeometryTest
+          javac -d /tmp/bluestar-tests "$BASE/C110PhotoPolicy.java" cloud-vision-app/tests/C110PhotoPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110PhotoPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/OcrLineChunks.java" "$BASE/OcrSpeedExperiment.java" cloud-vision-app/tests/OcrSpeedExperimentTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.OcrSpeedExperimentTest
+      - name: Run independent pure-Java phone upload-size tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-phone-upload-tests
+          javac -d /tmp/bluestar-phone-upload-tests "$BASE/PhoneStillUploadPolicy.java" cloud-vision-app/tests/PhoneStillUploadPolicyTest.java
+          java -cp /tmp/bluestar-phone-upload-tests com.vobich.bluestar.cloudprobe.PhoneStillUploadPolicyTest
+      - name: Run C110 1440P toggle and original-byte restoration policy tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-c110-upload-toggle-tests
+          javac -d /tmp/bluestar-c110-upload-toggle-tests "$BASE/C110PhotoUploadPolicy.java" cloud-vision-app/tests/C110PhotoUploadPolicyTest.java
+          java -cp /tmp/bluestar-c110-upload-toggle-tests com.vobich.bluestar.cloudprobe.C110PhotoUploadPolicyTest
+      - name: Pure-Java first pairing and auto-reconnect regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-wifi-pair
+          javac -d /tmp/bluestar-wifi-pair "$BASE/C110WifiPairingPolicy.java" cloud-vision-app/tests/C110WifiPairingPolicyTest.java
+          java -cp /tmp/bluestar-wifi-pair com.vobich.bluestar.cloudprobe.C110WifiPairingPolicyTest
+      - name: Apply already-proven pinned UVC patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_usbmonitor.py cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 cloud-vision-app/scripts/patch_pinned_uvc.py
+          grep -q BSG_CLOUD_RAW5_GATED cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/jni/UVCCamera/UVCPreview.cpp
+          grep -q BSG_CLOUD_CLOSE_BARRIER cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
+      - name: Generate unchanged Blue Star launcher assets
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          java scripts/GenerateLauncherIcons.java
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            test -s "app/src/main/res/mipmap-$density/ic_launcher.png"
+          done
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile full Android arm64 app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :app:assembleDebug
+      - name: Verify APK actual package, launcher, native libraries, sound and SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_C110_Window_Preview_1.0.88.apk
+          APK=out/BlueStar_Guide_C110_Window_Preview_1.0.88.apk
+          test -s "$APK"
+          unzip -tq "$APK" >/dev/null
+          unzip -Z1 "$APK" >out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlc.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlcjni.so' out/entries.txt
+          grep -Fxq 'res/raw/c_metal_clack_ding.mp3' out/entries.txt
+          grep -Fxq 'res/raw/voice_send_whoosh.wav' out/entries.txt
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging "$APK" >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110plusquick159'" out/badging.txt
+          grep -Fq "versionName='1.0.88-c110-window-visible'" out/badging.txt
+          grep -Fq "launchable-activity: name='com.vobich.bluestar.cloudprobe.HomeActivity'" out/badging.txt
+          test "$(grep -c '^launchable-activity:' out/badging.txt)" -eq 1
+          (cd out && sha256sum BlueStar_Guide_C110_Window_Preview_1.0.88.apk >SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+          BYTES=$(stat -c%s "$APK")
+          echo "New v1.0.88 APK bytes: $BYTES" >> "$GITHUB_STEP_SUMMARY"
+          echo "Baseline v1.0.87 APK bytes: 53550579" >> "$GITHUB_STEP_SUMMARY"
+          echo "Compared to v1.0.87: $((BYTES-53550579)) bytes (negative means smaller)" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_Guide_C110_Window_Preview_1.0.88
+          path: out/*
+          retention-days: 14
+      - name: Publish ONLY if every test and package verification passed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-c110-window-visible-20261124-v0188
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing release" >&2
+            exit 1
+          fi
+          gh release create "$TAG" out/BlueStar_Guide_C110_Window_Preview_1.0.88.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Blue Star v1.0.88 C110 Screen-visible Preview and Submitted JPEG Inspector" \
+            --notes "v1.0.88 C110 preview: V1.0.87 repeatedly reported portrait SurfaceView 1260x2590 and cloud only reading two words. This revision records the actual VLC MediaPlayer current video-track width/height, without falsely equating a View dimension with source video pixels. Capture final rendered visible video by Window PixelCopy into same-size bitmap (after VLC transforms/zoom/crop), JPEG quality 100 once and forward exact byte[] to original cloud model/TTS. Add one unobtrusive '查看上传图' footer button to display the most recently submitted C110 preview JPEG in memory only; no duplicate upload or gallery save. Visible window capture can include UI overlay controls; inspect the actual uploaded JPEG to verify this limitation and visual accuracy on device before claiming success. Capture diagnostics log video track size, window origin/visible ROI, JPEG dimensions/bytes and cloud timings. C110 Wi-Fi/LibVLC3.6.5/OEM 1001 shutter, phone/USB, voice/model selection, zoom control, capture ding and package ID unchanged. Exact five-file diff, Java regressions, full ARM64 Gradle build, APK metadata/native libraries/ding assets/SHA256 verified. Cover-install v1.0.87 rather than uninstall to retain keys and paired Wi-Fi. Full real device visual QA still required."
