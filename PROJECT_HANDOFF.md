@@ -1,3 +1,10 @@
+# 2026-11-24｜蓝星向导 v1.0.96 原厂电量档位图标（已提交，构建待核实，真机待验）
+- 用户要求精确复现原厂电量档位与黑色横向电池外形，只放大、格子绿黄红，取消百分比及多余提示，已授权修改。直接从文件库恢复 SJCAM X.apk（38261685 bytes，SHA256 `a8ebceff0faa8d5b96b4e5f34bf981c932d39bf5070038555f9169edc3cc9b3b`）及 SJCAM Zone 6.7.3.16（197152487 bytes），实际解析 DEX 指令、resources.arsc 与PNG。用户截图黑色横向电池三白格匹配 SJCAM X 的 ic_battery_3（res/_B.png）；Zone 有不同图标档位，不混用。X `LyCamera.getBatteryStatus` 0xb5908 发3019；`callBackBattery` 0xb5398 映射0满四格、1三格、2两格、3一格、4低电量、5充电；`CameraControlActivity.obServerUI$lambda$2` 0x10cf7c 选择实际图标。原厂默认刷新60000ms，C400例外，不涉及本机C110。精确代码映射不代表真机物理百分比或刷新瞬间一致。
+- 基于v1.0.95发布源码 `dbda953e9880e9882175431902d319e8343c2bab`，分支 `exp/c110-oem-battery-v0196-20261124`，提交 `01be96716238eacc7008f6a42af3cf08fa049b45`，versionCode105、versionName1.0.96-oem-battery。仅 HomeActivity、C110BatteryPolicy、BlueStarReleaseInfo、build.gradle、单测、说明及独立CI共7文件。原创绘制原厂式深色电池外形36x20dp（原21x14），三四格绿、两格黄、一格/低电红、充电闪电；无可见文字，保留无障碍描述，未知为灰色空图标；不打包原厂PNG。仅解析3019 Value枚举，错误未知，不估算百分比；C110HomeStatus/60秒轮询、AI寻找/取图/自动删图/其他功能不改。详情 `cloud-vision-app/docs/C110_OEM_BATTERY_V0196.md`。
+- CI配置已随分支提交，当前尚未核实完整构建与Release，预期标签 `bluestar-c110-oem-battery-20261124-v0196`。下一步核实实际CI/资产、覆盖安装和逐档位对照原厂截图。未验真机前不宣称100%实际显示一致。
+
+---
+
 # 2026-11-24｜蓝星向导 v1.0.95 完整取图即删除（CI通过、已发布，真机待验）
 - 用户真机确认 v1.0.94 原实体快门自动删除有效，要求改为所有被蓝星完整获取的 C110 原图都删除，不依赖OCR结果，覆盖手机遥控、预览高清、AI寻找、识别失败与任务取消；用户已授权修改。
 - 基于正式 v1.0.94 `8ca8aa75d007436ecf3a504c49b8567b8a1aa5fd`，独立分支 `exp/acquired-photo-delete-v0195-20261124`，源码提交 `5787c9f294364a5a870603ed1d0707078ef7047c`，后续纯文档 HEAD `dbda953e9880e9882175431902d319e8343c2bab`。versionCode104、versionName1.0.95-acquired-photo-delete、原包名及设置键不变，关于软件与删除确认说明已同步。
