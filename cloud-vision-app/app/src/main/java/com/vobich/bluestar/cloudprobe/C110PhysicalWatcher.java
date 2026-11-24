@@ -31,35 +31,20 @@ final class C110PhysicalWatcher {
     private Set<String> directories;
     private String pending;
     private long discoveredAt,queryMs;
-    private boolean pendingUnique;
-    private DeleteJob deleteJob;
     private final C110DeferredPhoto<ReadyPhoto> deferred=new C110DeferredPhoto<>();
     private final Runnable tick=this::poll;
     private static final class ReadyPhoto {
         final Network wifi;
         final String path;
         final C110WifiCamera.Photo photo;
-        final byte[] digest;
         final int generation,serial,interval;
         final long queryMs,downloadMs,readyAt;
-        final boolean unique,clean;
-        ReadyPhoto(Network wifi,String path,C110WifiCamera.Photo photo,byte[] digest,
-                   int generation,int serial,int interval,long queryMs,long downloadMs,
-                   boolean unique,boolean clean){
-            this.wifi=wifi;this.path=path;this.photo=photo;this.digest=digest;
+        ReadyPhoto(Network wifi,String path,C110WifiCamera.Photo photo,
+                   int generation,int serial,int interval,long queryMs,long downloadMs){
+            this.wifi=wifi;this.path=path;this.photo=photo;
             this.generation=generation;this.serial=serial;this.interval=interval;
             this.queryMs=queryMs;this.downloadMs=downloadMs;
-            this.unique=unique;this.clean=clean;this.readyAt=SystemClock.elapsedRealtime();
-        }
-    }
-    private static final class DeleteJob {
-        final Network wifi;
-        final String path;
-        final byte[] digest;
-        final int generation,serial;
-        DeleteJob(Network wifi,String path,byte[] digest,int generation,int serial){
-            this.wifi=wifi;this.path=path;this.digest=digest;
-            this.generation=generation;this.serial=serial;
+            this.readyAt=SystemClock.elapsedRealtime();
         }
     }
     C110PhysicalWatcher(Activity owner,C110QuickShotController shots,
@@ -70,7 +55,6 @@ final class C110PhysicalWatcher {
         prefs=owner.getSharedPreferences("kanzi_settings",Context.MODE_PRIVATE);
     }
     private boolean enabled(){return prefs.getBoolean(C110PhysicalPolicy.ENABLE,false);}
-    private boolean deleteEnabled(){return prefs.getBoolean(C110PhysicalPolicy.DELETE,false);}
     private int interval(){return C110PhysicalPolicy.interval(
         prefs.getInt(C110PhysicalPolicy.INTERVAL,300));}
     void start(){
@@ -86,11 +70,11 @@ final class C110PhysicalWatcher {
     void shutdown(){stop();closed=true;worker.shutdownNow();}
     boolean cameraIoBusy(){return inFlight;}
     /** Voice is NOT a camera session change. Keep directory baseline and polling.
-     * Drop a prior task and its cleanup; new photos during ASR are retained. */
+     * Drop a prior recognition task; already acquired photo cleanup remains independent. */
     void beforeVoiceAction(){
         if(!active)return;
         serial++;
-        pending=null;deleteJob=null;deferred.clear();
+        pending=null;deferred.clear();
         shots.cancelPhysicalRecognition();
     }
     /** Called before a manual phone-side shutter or a different screen operation. */
@@ -103,7 +87,7 @@ final class C110PhysicalWatcher {
     private void invalidate(){
         generation++;serial++;
         policy.reset();directories=null;network=null;
-        pending=null;deleteJob=null;deferred.clear();
+        pending=null;deferred.clear();
         shots.cancelPhysicalRecognition();
     }
     private void schedule(long delay){
@@ -112,11 +96,6 @@ final class C110PhysicalWatcher {
     }
     private boolean current(int token){
         return active&&!closed&&!suspended&&generation==token&&enabled();
-    }
-    private boolean canDelete(DeleteJob job){
-        return current(job.generation)&&serial==job.serial&&deleteEnabled()
-            &&!Thread.currentThread().isInterrupted()
-            &&job.wifi.equals(C110WifiBootstrap.connected(owner));
     }
     private void poll(){
         if(!active||closed)return;
@@ -181,9 +160,8 @@ final class C110PhysicalWatcher {
         if(delta.latest!=null){
             serial++;
             shots.cancelPhysicalRecognition();
-            deleteJob=null;deferred.clear();
+            deferred.clear();
             pending=delta.latest;
-            pendingUnique=delta.unique;
             discoveredAt=SystemClock.elapsedRealtime();
             queryMs=ms;
         }
@@ -198,22 +176,12 @@ final class C110PhysicalWatcher {
         }
         // Dispatch only after checking for a newer directory delta in this round.
         dispatchDeferred();
-        // Keep camera polling during voice work, never delete while recording/ASR.
-        // Prefer a newer photo over any old cleanup. Only one pending delete at a time.
-        if(deleteJob!=null&&!voiceBusy.getAsBoolean()){
-            DeleteJob job=deleteJob;deleteJob=null;
-            if(canDelete(job)&&snapshot.paths.contains(job.path)){
-                delete(job,chosenInterval);
-                return;
-            }
-        }
         inFlight=false;
         schedule(chosenInterval);
     }
     private void download(Network wifi,int token,int chosenInterval){
         final String path=pending;
         final int photoSerial=serial;
-        final boolean unique=pendingUnique;
         final long first=discoveredAt,qms=queryMs;
         try{
             worker.execute(()->{
@@ -221,14 +189,17 @@ final class C110PhysicalWatcher {
                 try{
                     C110WifiCamera.Photo photo=C110WifiCamera.physicalDownload(owner,wifi,path,first);
                     long dms=SystemClock.elapsedRealtime()-start;
-                    byte[] digest=unique?C110WifiCamera.physicalDigest(photo.jpeg):null;
+                    // Even a superseded photo was fully acquired: cleanup is not tied to recognition.
+                    C110WifiCamera.enqueueAcquiredDelete(owner,wifi,path,photo,gone->main.post(()->{
+                        if(current(token)&&wifi.equals(network)&&gone)policy.deleted(path);
+                    }));
                     main.post(()->{
                         inFlight=false;
                         if(stillCurrent(wifi,token)&&photoSerial==serial&&path.equals(pending)){
                             pending=null;
                             // At most one complete JPEG in RAM; no upload or sound during ASR.
-                            deferred.offer(new ReadyPhoto(wifi,path,photo,digest,token,photoSerial,
-                                chosenInterval,qms,dms,unique,unique&&deleteEnabled()));
+                            deferred.offer(new ReadyPhoto(wifi,path,photo,token,photoSerial,
+                                chosenInterval,qms,dms));
                             if(voiceBusy.getAsBoolean())
                                 report.accept("已获取相机新照片，等待AI语音指令完成");
                             else dispatchDeferred();
@@ -249,36 +220,8 @@ final class C110PhysicalWatcher {
         // ASR has committed the new target before opening this gate. A physical
         // shutter can preempt the old confirmation speech, never the microphone.
         yieldVoiceSpeech.run();
-        final boolean clean=ready.clean&&ready.unique&&deleteEnabled();
         boolean accepted=shots.acceptPhysicalPhoto(ready.photo,ready.queryMs,ready.downloadMs,
-            ready.interval,SystemClock.elapsedRealtime()-ready.readyAt,()->{
-                if(clean&&ready.digest!=null&&stillCurrent(ready.wifi,ready.generation)
-                    &&ready.serial==serial&&!voiceBusy.getAsBoolean()&&deleteEnabled()){
-                    deleteJob=new DeleteJob(ready.wifi,ready.path,ready.digest,ready.generation,ready.serial);
-                }
-            });
-        if(!accepted)report.accept("新照片未提交识别，保留相机原图");
-    }
-    private void delete(DeleteJob job,int chosenInterval){
-        try{
-            worker.execute(()->{
-                boolean gone=false;
-                try{
-                    gone=C110WifiCamera.physicalDelete(owner,job.wifi,job.path,job.digest,
-                        ()->canDelete(job));
-                }catch(Exception ignored){}
-                final boolean verified=gone;
-                main.post(()->{
-                    inFlight=false;
-                    if(current(job.generation)&&serial==job.serial){
-                        if(verified){
-                            policy.deleted(job.path);
-                            report.accept("本次识别原图已从相机内存卡删除");
-                        }else report.accept("未确认单张删图成功，不再重试");
-                    }
-                    schedule(chosenInterval);
-                });
-            });
-        }catch(RuntimeException e){inFlight=false;schedule(chosenInterval);}
+            ready.interval,SystemClock.elapsedRealtime()-ready.readyAt,null);
+        if(!accepted)report.accept("新照片未提交识别");
     }
 }

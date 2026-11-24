@@ -565,7 +565,7 @@ final class BlueStarSettingsScreen {
                 render(history.get(history.size()-1));
             }else{
                 new BlueStarDialogChoices.AppCompatBuilder(app).setTitle("开启自动删除相机原图？")
-                    .setMessage("删除不可恢复。仅实体监听发现的单张新照片在完整下载、云端识别成功且文件复核一致后尝试删除。原厂单张删除指令仍需真机验证；请先使用不重要的照片测试。识别失败、取消或文件归属不明确时保留原图。")
+                    .setMessage("删除不可恢复。实体快门、手机遥控和预览高清拍照的相机原图，只要被蓝星完整获取，就尝试删除，不等待识别结果。AI寻找、识别失败或取消也会删除。未获取的历史照片不删除；断线、文件复核失败时保留。")
                     .setPositiveButton("开启",(dialog,which)->{
                         p.edit().putBoolean(C110PhysicalPolicy.DELETE,true).apply();
                         render(history.get(history.size()-1));

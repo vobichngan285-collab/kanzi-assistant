@@ -31,12 +31,14 @@ import java.util.regex.Pattern;
  *
  * No process binding: ONLY local camera HTTP uses the Wi-Fi Network object.
  * A separate cellular Network must be chosen for paid cloud requests.
- * Does not write to the camera SD card except the one user-triggered photo;
- * no delete, firmware changes, media-mode changes or live-preview command.
+ * Optional cleanup removes only the complete JPEG acquired by a Blue Star capture.
+ * No bulk delete or firmware change.
  */
 final class C110WifiCamera {
     static final String CAMERA_IP="192.168.1.254";
     private static final int MAX_INDEX=1024*1024, MAX_JPEG=32*1024*1024;
+    private static final java.util.concurrent.ExecutorService CLEANUP=
+        java.util.concurrent.Executors.newSingleThreadExecutor();
     private Network heldNetwork;
     private boolean photoModeReady;
 
@@ -237,11 +239,13 @@ final class C110WifiCamera {
                     long fetchStart=SystemClock.elapsedRealtime();
                     Photo ready=download(wifi,candidate,modeMs,shutter.ms,
                         firstSeen-shutterAt,begin,cm);
-                    return new Photo(ready.jpeg,ready.width,ready.height,
+                    Photo acquired=new Photo(ready.jpeg,ready.width,ready.height,
                         modeMs,shutter.ms,firstSeen-shutterAt,
                         SystemClock.elapsedRealtime()-fetchStart,
                         SystemClock.elapsedRealtime()-begin,
                         cm.getNetworkCapabilities(wifi)!=null,candidate,strictOneFileDelta);
+                    enqueueAcquiredDelete(context,wifi,candidate,acquired,null);
+                    return acquired;
                 }catch(IOException stillWriting){
                     // The HTML file may appear before the SD write has finished.
                     // Only retry read-only JPEG fetch; NEVER retry the shutter.
@@ -394,7 +398,29 @@ final class C110WifiCamera {
         try{return java.security.MessageDigest.getInstance("SHA-256").digest(bytes);}
         catch(java.security.NoSuchAlgorithmException impossible){throw new IllegalStateException(impossible);}
     }
-    /** Exact single new JPEG only, after successful OCR, with same-network and session guard.
+    /** Complete capture only; independent of cloud result, task and Activity lifetime.
+     * Store only the exact path and digest in the serial cleanup lane. */
+    static void enqueueAcquiredDelete(Context context,Network wifi,String path,Photo photo,
+                                      java.util.function.Consumer<Boolean> result){
+        Context app=context.getApplicationContext();
+        if(!autoDeleteEnabled(app)||photo==null||wifi==null||
+            C110DeletePolicy.exactJpegPath(path)==null)return;
+        byte[] digest=physicalDigest(photo.jpeg);
+        CLEANUP.execute(()->{
+            boolean gone=false;
+            try{
+                gone=physicalDelete(app,wifi,path,digest,()->autoDeleteEnabled(app)
+                    &&wifi.equals(C110WifiBootstrap.connected(app)));
+            }catch(Exception ignored){}
+            android.util.Log.i("BlueStarC110","acquired_delete="+(gone?1:0));
+            if(result!=null)result.accept(gone);
+        });
+    }
+    private static boolean autoDeleteEnabled(Context context){
+        return context.getSharedPreferences("kanzi_settings",Context.MODE_PRIVATE)
+            .getBoolean(C110PhysicalPolicy.DELETE,false);
+    }
+    /** Exact single acquired JPEG only, with same-network and preference guard.
      * Verify contents again immediately before the only write; never retry a delete. */
     static boolean physicalDelete(Context context,Network wifi,String path,byte[] digest,
                                   java.util.function.BooleanSupplier allowed)throws Exception{
