@@ -312,6 +312,99 @@ final class C110WifiCamera {
         }finally{if(con!=null)con.disconnect();}
     }
 
+    /** Physical shutter: only read complete directory snapshots. Never calls 1001 or changes mode. */
+    static final class PhysicalSnapshot {
+        final Set<String> paths,dirs;
+        PhysicalSnapshot(Set<String> paths,Set<String> dirs){this.paths=paths;this.dirs=dirs;}
+    }
+    private static boolean physicalDirectory(String dir){
+        return dir!=null&&dir.matches("/DCIM/(?:[A-Za-z0-9_-]+/){0,4}");
+    }
+    private static Reply physicalListing(Network wifi,String dir)throws IOException{
+        if(!physicalDirectory(dir))throw new IOException("目录不符合监听规则");
+        Reply r=get(wifi,dir,MAX_INDEX);
+        String body=r.text().toLowerCase(Locale.ROOT);
+        if(r.http!=200||(!body.contains("<html")&&!body.contains("<a ")&&!body.contains("index of")))
+            throw new IOException("照片目录未返回有效列表");
+        return r;
+    }
+    static PhysicalSnapshot physicalSnapshot(Network wifi)throws IOException{
+        Set<String> paths=new LinkedHashSet<>(),dirs=new LinkedHashSet<>();
+        dirs.add("/DCIM/");
+        ArrayList<String> todo=new ArrayList<>(dirs);
+        for(int i=0;i<todo.size();i++){
+            String dir=todo.get(i);
+            Reply r=physicalListing(wifi,dir);
+            for(String path:C110PhotoPolicy.jpegs(r.text(),dir,CAMERA_IP)){
+                String exact=C110DeletePolicy.exactJpegPath(path);
+                if(exact!=null)paths.add(exact);
+            }
+            for(String child:C110PhotoPolicy.dirs(r.text(),dir,CAMERA_IP)){
+                if(!physicalDirectory(child)||!child.startsWith(dir)||child.equals(dir))continue;
+                if(dirs.add(child)){
+                    if(dirs.size()>12)throw new IOException("照片目录过多，未建立完整基线");
+                    todo.add(child);
+                }
+            }
+        }
+        if(dirs.size()==1&&paths.isEmpty()){
+            // The proven firmware exposes /DCIM/PHOTO/ even on some sparse root listings.
+            Reply photo=physicalListing(wifi,"/DCIM/PHOTO/");
+            dirs.add("/DCIM/PHOTO/");
+            for(String path:C110PhotoPolicy.jpegs(photo.text(),"/DCIM/PHOTO/",CAMERA_IP)){
+                String exact=C110DeletePolicy.exactJpegPath(path);
+                if(exact!=null)paths.add(exact);
+            }
+        }
+        return new PhysicalSnapshot(paths,dirs);
+    }
+    static Photo physicalDownload(Context context,Network wifi,String path,long discovered)throws IOException{
+        if(C110DeletePolicy.exactJpegPath(path)==null)throw new IOException("无效照片路径");
+        ConnectivityManager cm=(ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if(cm==null||cm.getNetworkCapabilities(wifi)==null)throw new IOException("相机已断开");
+        return download(wifi,path,0,0,0,discovered,cm);
+    }
+    static byte[] physicalDigest(byte[] bytes){
+        try{return java.security.MessageDigest.getInstance("SHA-256").digest(bytes);}
+        catch(java.security.NoSuchAlgorithmException impossible){throw new IllegalStateException(impossible);}
+    }
+    /** Exact single new JPEG only, after successful OCR, with same-network and session guard.
+     * Verify contents again immediately before the only write; never retry a delete. */
+    static boolean physicalDelete(Context context,Network wifi,String path,byte[] digest,
+                                  java.util.function.BooleanSupplier allowed)throws Exception{
+        if(!allowed.getAsBoolean()||C110DeletePolicy.exactJpegPath(path)==null)return false;
+        Reply identity=get(wifi,"/?custom=1&cmd=3012",MAX_INDEX);
+        String info=identity.text().toUpperCase(Locale.ROOT);
+        if(identity.http!=200||!Integer.valueOf(0).equals(C110PhotoPolicy.tagInt(identity.text(),"Status"))
+            ||c110DeviceKind(identity.text())!=1||info.contains("C110+")||info.contains("C110 PLUS")
+            ||info.contains("C110PRO"))return false;
+        Reply capabilities=get(wifi,"/?custom=1&cmd=3002",MAX_INDEX);
+        if(capabilities.http!=200||!capabilities.text().contains("<Cmd>4003</Cmd>"))return false;
+        String dir=path.substring(0,path.lastIndexOf('/')+1);
+        if(!C110PhotoPolicy.jpegs(physicalListing(wifi,dir).text(),dir,CAMERA_IP).contains(path))return false;
+        Photo check=physicalDownload(context,wifi,path,SystemClock.elapsedRealtime());
+        if(!java.security.MessageDigest.isEqual(digest,physicalDigest(check.jpeg)))return false;
+        if(!allowed.getAsBoolean()||!wifi.equals(C110WifiBootstrap.connected(context)))return false;
+        // Strict endpoint built only from exact validated path. No bulk, no format, no retry.
+        HttpURLConnection conn=null;
+        try{
+            conn=(HttpURLConnection)wifi.openConnection(new URL("http",CAMERA_IP,80,
+                C110DeletePolicy.oneFileDeleteEndpoint(path)));
+            conn.setRequestMethod("GET");conn.setConnectTimeout(2800);conn.setReadTimeout(3500);
+            conn.setUseCaches(false);conn.setInstanceFollowRedirects(false);
+            if(conn.getResponseCode()!=200)return false;
+            try(InputStream in=conn.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
+                byte[] b=new byte[1024];int n;
+                while((n=in.read(b))!=-1){
+                    if(out.size()+n>16384)return false;
+                    out.write(b,0,n);
+                }
+                if(!Integer.valueOf(0).equals(C110PhotoPolicy.tagInt(out.toString("UTF-8"),"Status")))return false;
+            }
+        }finally{if(conn!=null)conn.disconnect();}
+        return !C110PhotoPolicy.jpegs(physicalListing(wifi,dir).text(),dir,CAMERA_IP).contains(path);
+    }
+
     private static Set<String> list(Network wifi) throws IOException {
         LinkedHashSet<String> found=new LinkedHashSet<>();
         // 3015 returned 0 candidates on actual C110 firmware; directory HTML is proven.
