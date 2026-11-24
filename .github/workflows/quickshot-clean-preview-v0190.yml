@@ -1,0 +1,217 @@
+name: Blue Star v1.0.90 Quick Shot Restore Clean Preview
+on:
+  push:
+    branches: [ 'exp/quickshot-restore-clean-preview-20261124' ]
+    paths:
+      - 'cloud-vision-app/app/**'
+      - 'cloud-vision-app/docs/QUICKSHOT_CLEAN_PREVIEW_V0190.md'
+      - '.github/workflows/quickshot-clean-preview-v0190.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  validated-apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify exact scope and Android external quick-shot contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import subprocess
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          base='58963e56aaf772385979acea9d4a86949200f6e5'
+          root='cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/'
+          expected={
+            '.github/workflows/quickshot-clean-preview-v0190.yml',
+            'cloud-vision-app/docs/QUICKSHOT_CLEAN_PREVIEW_V0190.md',
+            'cloud-vision-app/app/build.gradle',
+            'cloud-vision-app/app/src/main/AndroidManifest.xml',
+            root+'HomeActivity.java',
+            root+'C110FrameReader.java',
+            root+'C110CameraActivity.java'
+          }
+          changed=set(subprocess.check_output(['git','diff','--name-only',base,'HEAD'],text=True).splitlines())
+          assert changed==expected,changed^expected
+          read=lambda n:Path(root+n).read_text()
+          prev=lambda n:subprocess.check_output(['git','show',base+':'+root+n],text=True)
+          ns='{http://schemas.android.com/apk/res/android}'
+          manifest=ET.parse('cloud-vision-app/app/src/main/AndroidManifest.xml').getroot()
+          home=next(a for a in manifest.findall('./application/activity') if a.get(ns+'name')=='.HomeActivity')
+          assert home.get(ns+'exported')=='true'
+          action='com.vobich.bluestar.cloudprobe.action.QUICK_SHOT'
+          filters=home.findall('intent-filter')
+          assert len(filters)==2
+          shot=next(f for f in filters if any(a.get(ns+'name')==action for a in f.findall('action')))
+          assert len(shot.findall('action'))==1 and not shot.findall('category')
+          launchers=[f for f in manifest.findall('./application/activity/intent-filter') if any(c.get(ns+'name')=='android.intent.category.LAUNCHER' for c in f.findall('category'))]
+          assert len(launchers)==1 and launchers[0] in filters
+          bridge=Path('cloud-vision-app/boyuebridge/src/main/java/com/vobich/bluestar/boyuebridge/LaunchActivity.java').read_text()
+          assert action in bridge and 'com.vobich.bluestar.c110plusquick159' in bridge and 'com.vobich.bluestar.cloudprobe.HomeActivity' in bridge
+          assert 'shot.setComponent(new ComponentName(TARGET_PACKAGE,TARGET_ACTIVITY))' in bridge
+          h=read('HomeActivity.java')
+          assert action in h and '!homeResumed' in h
+          assert h.index('quickShot.onResume();')<h.index('homeResumed=true;')
+          assert h.index('homeResumed=false;')<h.index('quickShot.onPause();')
+          consume=h.split('private void consumeQuickLaunch(){',1)[1].split('private void quickPhoto(){',1)[0]
+          assert consume.count('quickShot.trigger();')==1 and consume.index('quickLaunchPending=false;')<consume.index('quickShot.trigger();')
+          assert 'quickLaunchPending=isQuickShotIntent(getIntent());' in h
+          assert 'ACTION_QUICK_SHOT.equals(intent.getAction())' in h
+          assert 'startActivity(new Intent(this,QuickPhotoActivity.class))' in h
+          camera,reader=read('C110CameraActivity.java'),read('C110FrameReader.java')
+          for name in ['查看上传图','showLastPreviewUpload','rawQualityMode','tapNative','qualityModeButton','C110NativeFrameDecoder']:
+              assert name not in camera
+          assert not Path(root+'C110NativeFrameDecoder.java').exists()
+          assert 'lastPreviewSubmittedJpeg' not in reader
+          assert 'footer.addView(photoButton,new LinearLayout.LayoutParams(0,dp(63),1f));' in camera
+          assert 'frameReader.tap(video,zoom,fullscreen,' in camera
+          assert 'PixelCopy.request(surface,image,status->' in reader
+          assert 'visible.compress(Bitmap.CompressFormat.JPEG,100,bytes)' in reader
+          assert 'recognizeJpeg(id,jpeg,started,null,previewDiag)' in reader
+          oldreader=prev('C110FrameReader.java')
+          begin='    boolean recognizeOriginalJpeg(byte[] jpeg,int width,int height){'
+          end='    void shutdown(){'
+          assert oldreader.split(begin,1)[1].split(end,1)[0]==reader.split(begin,1)[1].split(end,1)[0]
+          gradle=Path('cloud-vision-app/app/build.gradle').read_text()
+          assert "versionCode 99" in gradle and "versionName '1.0.90-quickshot-clean-preview'" in gradle
+          assert "applicationIdSuffix '.c110plusquick159'" in gradle
+          assert 'org.videolan.android:libvlc-all:3.6.5' in gradle
+          print('PASS external action/explicit component, one launcher, resumed consumption, preview cleanup, unchanged native photo')
+          PY
+      - name: Run vendor allow-list, task and C110 pure Java regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-tests
+          javac -d /tmp/bluestar-tests "$BASE/CloudProviderPolicy.java" cloud-vision-app/tests/CloudProviderPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudProviderPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/CloudProviderPolicy.java" "$BASE/CloudThinkingPolicy.java" cloud-vision-app/tests/CloudThinkingPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudThinkingPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/VisionModelCatalog.java" "$BASE/OcrModelCatalog.java" cloud-vision-app/tests/CloudServerListTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudServerListTest
+          javac -d /tmp/bluestar-tests "$BASE/VoiceAction.java" cloud-vision-app/tests/VoiceActionSharedTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.VoiceActionSharedTest
+          javac -d /tmp/bluestar-tests "$BASE/ProviderKeyReusePolicy.java" cloud-vision-app/tests/ProviderKeyReusePolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.ProviderKeyReusePolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/TaskOrder.java" cloud-vision-app/tests/TaskOrderTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.TaskOrderTest
+          javac -d /tmp/bluestar-tests "$BASE/FollowupPrompt.java" cloud-vision-app/tests/FollowupPromptTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.FollowupPromptTest
+          javac -d /tmp/bluestar-tests "$BASE/C110ZoomGeometry.java" cloud-vision-app/tests/C110ZoomGeometryTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110ZoomGeometryTest
+          javac -d /tmp/bluestar-tests "$BASE/C110PhotoPolicy.java" cloud-vision-app/tests/C110PhotoPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110PhotoPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/OcrLineChunks.java" "$BASE/OcrSpeedExperiment.java" cloud-vision-app/tests/OcrSpeedExperimentTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.OcrSpeedExperimentTest
+      - name: Run independent pure-Java phone upload-size tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-phone-upload-tests
+          javac -d /tmp/bluestar-phone-upload-tests "$BASE/PhoneStillUploadPolicy.java" cloud-vision-app/tests/PhoneStillUploadPolicyTest.java
+          java -cp /tmp/bluestar-phone-upload-tests com.vobich.bluestar.cloudprobe.PhoneStillUploadPolicyTest
+      - name: Run C110 1440P toggle and original-byte restoration policy tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-c110-upload-toggle-tests
+          javac -d /tmp/bluestar-c110-upload-toggle-tests "$BASE/C110PhotoUploadPolicy.java" cloud-vision-app/tests/C110PhotoUploadPolicyTest.java
+          java -cp /tmp/bluestar-c110-upload-toggle-tests com.vobich.bluestar.cloudprobe.C110PhotoUploadPolicyTest
+      - name: Pure-Java first pairing and auto-reconnect regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-wifi-pair
+          javac -d /tmp/bluestar-wifi-pair "$BASE/C110WifiPairingPolicy.java" cloud-vision-app/tests/C110WifiPairingPolicyTest.java
+          java -cp /tmp/bluestar-wifi-pair com.vobich.bluestar.cloudprobe.C110WifiPairingPolicyTest
+      - name: Apply already-proven pinned UVC patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_usbmonitor.py cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 cloud-vision-app/scripts/patch_pinned_uvc.py
+          grep -q BSG_CLOUD_RAW5_GATED cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/jni/UVCCamera/UVCPreview.cpp
+          grep -q BSG_CLOUD_CLOSE_BARRIER cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
+      - name: Generate unchanged Blue Star launcher assets
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          java scripts/GenerateLauncherIcons.java
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            test -s "app/src/main/res/mipmap-$density/ic_launcher.png"
+          done
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile full Android arm64 app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :app:assembleDebug
+      - name: Verify APK actual package, launcher, native libraries, sound and SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_QuickShot_Clean_Preview_1.0.90.apk
+          APK=out/BlueStar_Guide_QuickShot_Clean_Preview_1.0.90.apk
+          test -s "$APK"
+          unzip -tq "$APK" >/dev/null
+          unzip -Z1 "$APK" >out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlc.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlcjni.so' out/entries.txt
+          grep -Fxq 'res/raw/c_metal_clack_ding.mp3' out/entries.txt
+          grep -Fxq 'res/raw/voice_send_whoosh.wav' out/entries.txt
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging "$APK" >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110plusquick159'" out/badging.txt
+          grep -Fq "versionName='1.0.90-quickshot-clean-preview'" out/badging.txt
+          grep -Fq "launchable-activity: name='com.vobich.bluestar.cloudprobe.HomeActivity'" out/badging.txt
+          test "$(grep -c '^launchable-activity:' out/badging.txt)" -eq 1
+          "$AAPT" dump xmltree "$APK" AndroidManifest.xml >out/manifest-tree.txt
+          grep -Fq 'com.vobich.bluestar.cloudprobe.action.QUICK_SHOT' out/manifest-tree.txt
+          ! grep -Fxq 'lib/arm64-v8a/libc110rawframe.so' out/entries.txt
+          (cd out && sha256sum BlueStar_Guide_QuickShot_Clean_Preview_1.0.90.apk >SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+          BYTES=$(stat -c%s "$APK")
+          echo "v1.0.90 APK bytes: $BYTES" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_Guide_QuickShot_Clean_Preview_1.0.90
+          path: out/*
+          retention-days: 14
+      - name: Publish ONLY if every test and package verification passed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-quickshot-clean-preview-20261124-v0190
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing release" >&2
+            exit 1
+          fi
+          gh release create "$TAG" out/BlueStar_Guide_QuickShot_Clean_Preview_1.0.90.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Blue Star v1.0.90 Quick Shot Restore Clean Preview" \
+            --notes "v1.0.90 based on production v1.0.89, not the independent quality lab. Declare the existing explicit shortcut action, consume only when resumed, retain old Boyue bridge/package. Remove A/B experiment UI and image inspector; keep production Surface capture and single HD photo button. Install over the original production app without uninstalling it. Real-device shortcut verification required."
