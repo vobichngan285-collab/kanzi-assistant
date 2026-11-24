@@ -45,6 +45,9 @@ final class HomeVoiceAssistant {
         activity=a;status=onStatus;releasePhotoSpeech=beforeTalk;
         requestOneShotPhoto=capture;
     }
+    boolean busyForPhysical(){
+        return working||recorder.isBusy()||(tts!=null&&tts.isSpeaking());
+    }
     void onResume(){active=true;}
     void onPause(){
         active=false;
