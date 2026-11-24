@@ -20,6 +20,16 @@ final class C110ZoomFrames {
         }
     }
 
+    /** Exact source coordinates of the CURRENT preview visible area.
+     *  The same central zoom/portrait cover as VLC's UI-only scale is applied
+     *  BEFORE PixelCopy. No intermediate downscaled full-screen bitmap. */
+    static C110ZoomGeometry.Region visiblePreviewRegion(int sourceWidth,int sourceHeight,
+                           float zoom,boolean portraitCover,float viewportAspect){
+        return portraitCover?
+            C110ZoomGeometry.centeredCover(sourceWidth,sourceHeight,zoom,viewportAspect):
+            C110ZoomGeometry.centered(sourceWidth,sourceHeight,zoom);
+    }
+
     static Bitmap cropPreviewBitmap(Bitmap original,float zoom){
         return cropPreviewBitmap(original,zoom,false,1f);
     }
@@ -28,10 +38,8 @@ final class C110ZoomFrames {
                                     boolean portraitCover,float viewportAspect){
         if(original==null||original.isRecycled())
             throw new IllegalArgumentException("C110 live bitmap missing");
-        C110ZoomGeometry.Region region=portraitCover?
-            C110ZoomGeometry.centeredCover(original.getWidth(),original.getHeight(),
-                                            zoom,viewportAspect):
-            C110ZoomGeometry.centered(original.getWidth(),original.getHeight(),zoom);
+        C110ZoomGeometry.Region region=visiblePreviewRegion(
+            original.getWidth(),original.getHeight(),zoom,portraitCover,viewportAspect);
         if(region.full(original.getWidth(),original.getHeight()))return original;
         return Bitmap.createBitmap(original,
             region.left,region.top,region.width,region.height);

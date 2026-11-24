@@ -286,8 +286,8 @@ public final class C110CameraActivity extends Activity {
     private void applyZoomPreview(){
         if(video==null)return;
         // Android scales the existing VLCVideoLayout, NOT the decoder/RTSP stream.
-        // PixelCopy reads the underlying unscaled Surface, so C110FrameReader
-        // applies the EXACT same center fraction before cloud upload.
+        // PixelCopy reads the underlying unscaled Surface. C110FrameReader
+        // now requests just this screen-visible ROI directly, preserving pixels.
         FrameLayout.LayoutParams layout=(FrameLayout.LayoutParams)video.getLayoutParams();
         float coverScale=1f;
         if(fullscreen&&cameraRoot!=null&&layout.width>1&&layout.height>1){

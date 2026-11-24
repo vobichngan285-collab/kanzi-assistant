@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.net.Network;
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
@@ -220,71 +221,101 @@ final class C110FrameReader {
         }
         Surface surface=video.getHolder().getSurface();
         if(surface==null||!surface.isValid()){report("视频表面尚未就绪");return;}
-        int width=video.getWidth(),height=video.getHeight();
-        // PixelCopy can downsample from a SurfaceView. Tall high-DPI phones
-        // must not allocate a huge bitmap just to read the 2K C110 stream.
-        if(portraitCover&&(long)width*height>2_073_600L){
-            double scale=Math.sqrt(2_073_600d/((double)width*height));
-            width=Math.max(2,(int)Math.floor(width*scale));
-            height=Math.max(2,(int)Math.floor(height*scale));
+        final int surfaceW=video.getWidth(),surfaceH=video.getHeight();
+        // Match the center-crop/zoom ALREADY visible on screen. Do not copy
+        // a scaled full frame and crop it a second time.
+        final C110ZoomGeometry.Region visible;
+        try{
+            visible=C110ZoomFrames.visiblePreviewRegion(surfaceW,surfaceH,
+                zoomAtTap,portraitCover,viewportAspect);
+        }catch(IllegalArgumentException invalid){
+            report("C110预览裁剪参数无效，不发送错误区域");return;
         }
-        if((long)width*height>9_000_000L){report("视频画幅过大，已拒绝拷贝");return;}
+        // Keep the existing absolute memory safety cap, but apply it to
+        // the FINAL visible ROI rather than an unneeded whole frame.
+        if((long)visible.width*visible.height>9_000_000L){
+            report("C110预览可见区域过大，已拒绝分配");return;
+        }
+        final Rect sourceRect=new Rect(visible.left,visible.top,
+            visible.left+visible.width,visible.top+visible.height);
+        if(sourceRect.isEmpty()||sourceRect.left<0||sourceRect.top<0||
+            sourceRect.right>surfaceW||sourceRect.bottom>surfaceH){
+            report("C110裁剪位置超出视频画面，已取消上传");return;
+        }
         final int id=request.incrementAndGet();
         clearPendingSpeech();
         lastTapMs=now;
         busy=true;
         if(tts!=null)tts.stop();
-        report("正在取C110当前画面…");
+        final RuntimeDiagnostics previewDiag=new RuntimeDiagnostics(activity);
+        previewDiag.begin("c110_preview");
+        previewDiag.event("frame","surface_width_px",surfaceW,"ok");
+        previewDiag.event("frame","surface_height_px",surfaceH,"ok");
+        previewDiag.event("frame","crop_left_px",sourceRect.left,"ok");
+        previewDiag.event("frame","crop_top_px",sourceRect.top,"ok");
+        previewDiag.event("frame","visible_width_px",visible.width,"ok");
+        previewDiag.event("frame","visible_height_px",visible.height,"ok");
+        report("正在截取C110当前可见画面…");
         try{
-            Bitmap image=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888);
-            PixelCopy.request(video,image,status->{
+            // PixelCopy accepts a source rectangle in SurfaceView coordinates.
+            // Destination matches it 1:1: NO 2MP downsample, rescale, or
+            // Bitmap.createBitmap subcrop after the video frame is copied.
+            Bitmap image=Bitmap.createBitmap(visible.width,visible.height,
+                                             Bitmap.Config.ARGB_8888);
+            PixelCopy.request(video,sourceRect,image,status->{
                 if(closed||id!=request.get()){
                     image.recycle();return;
                 }
                 if(status!=PixelCopy.SUCCESS){
                     image.recycle();busy=false;
+                    previewDiag.event("frame","pixel_copy_status",status,"failed");
                     report("实时取帧失败（PixelCopy="+status+"），没有使用旧照片");
                     return;
                 }
-                // Ring once ONLY for a successful, fresh PixelCopy frame;
-                // no beep on unready surface, stale callback or copy failure.
+                previewDiag.event("frame","pixel_copy_status",status,"ok");
                 if(frameCaptureFeedback!=null)frameCaptureFeedback.run();
-                report("已获取实时画面，正在识别…");
-                taskFuture=io.submit(()->analyze(id,image,now,zoomAtTap,
-                                                   portraitCover,viewportAspect));
+                report("已获取当前可见画面，正在识别…");
+                taskFuture=io.submit(()->analyzeVisibleFrame(
+                    id,image,now,previewDiag));
             },main);
         }catch(RuntimeException ex){
-            busy=false;report("取帧失败："+ex.getClass().getSimpleName());
+            busy=false;
+            previewDiag.event("frame","pixel_copy_status",-1,"failed");
+            report("取帧失败："+ex.getClass().getSimpleName());
         }
     }
 
-    private void analyze(int id,Bitmap fresh,long started,float zoomAtTap,
-                         boolean portraitCover,float viewportAspect){
+    private void analyzeVisibleFrame(int id,Bitmap visible,long started,
+                                     RuntimeDiagnostics previewDiag){
         byte[] jpeg;
-        Bitmap region=null;
+        final long encodedAt=SystemClock.elapsedRealtime();
+        final int jpegW=visible.getWidth(),jpegH=visible.getHeight();
         try{
-            region=C110ZoomFrames.cropPreviewBitmap(fresh,zoomAtTap,
-                                                    portraitCover,viewportAspect);
-            if(zoomAtTap>1.001f||portraitCover)
-                report("视频OCR实际裁剪："+fresh.getWidth()+"×"+fresh.getHeight()+
-                    " → "+region.getWidth()+"×"+region.getHeight()+
-                    "，倍率"+String.format(Locale.ROOT,"%.1f",zoomAtTap)+"倍");
+            // Single high-quality JPEG encode from the EXACT captured ROI.
+            // JPEG is intrinsically lossy; avoid any OTHER resizing or second
+            // encoding before CloudVisionClient consumes these same bytes.
             try(ByteArrayOutputStream bytes=new ByteArrayOutputStream()){
-                if(!region.compress(Bitmap.CompressFormat.JPEG,90,bytes))
+                if(!visible.compress(Bitmap.CompressFormat.JPEG,100,bytes))
                     throw new IllegalStateException("JPEG编码失败");
                 jpeg=bytes.toByteArray();
             }
+            if(jpeg.length<256)throw new IllegalStateException("JPEG数据无效");
         }catch(Exception ex){
             if(id==request.get())main.post(()->{
                 if(id!=request.get()||closed)return;
-                busy=false;report("实时取景区域编码失败："+ex.getClass().getSimpleName());
+                busy=false;report("C110预览JPEG编码失败："+ex.getClass().getSimpleName());
             });
             return;
         }finally{
-            if(region!=null&&region!=fresh&&!region.isRecycled())region.recycle();
-            fresh.recycle();
+            visible.recycle();
         }
-        recognizeJpeg(id,jpeg,started,null);
+        if(closed||id!=request.get())return;
+        previewDiag.event("jpeg","encode_ms",SystemClock.elapsedRealtime()-encodedAt,"ok");
+        previewDiag.event("jpeg","width_px",jpegW,"ok");
+        previewDiag.event("jpeg","height_px",jpegH,"ok");
+        previewDiag.event("jpeg","bytes",jpeg.length,"ok");
+        // Existing network/model/TTS path uses this exact JPEG byte[].
+        recognizeJpeg(id,jpeg,started,null,previewDiag);
     }
 
     /**

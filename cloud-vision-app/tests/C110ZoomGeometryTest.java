@@ -63,6 +63,28 @@ public final class C110ZoomGeometryTest {
         try{C110ZoomGeometry.centeredCover(1920,1080,1f,Float.NaN);}
         catch(IllegalArgumentException expected){rejected=true;}
         eq(rejected,"invalid viewport aspect must reject rather than mis-map OCR");
+        // v1.0.87 PixelCopy uses THIS exact sourceRect as its bitmap size.
+        // No 2MP intermediary resize; source ROI and output have equal pixels.
+        float[] zooms={1f,2f,4f};
+        float[] views={9f/16f,16f/9f,1f,2f};
+        int[][] frameSizes={{1920,1080},{2560,1440},{3840,2160}};
+        for(int[] size:frameSizes)for(float z:zooms)for(float aspect:views){
+            C110ZoomGeometry.Region roi=
+                C110ZoomGeometry.centeredCover(size[0],size[1],z,aspect);
+            eq(roi.left>=0&&roi.top>=0,"ROI nonnegative coordinates");
+            eq(roi.width>=2&&roi.height>=2,"ROI has valid pixel dimensions");
+            eq(roi.left+roi.width<=size[0]&&roi.top+roi.height<=size[1],
+                "ROI within real source borders");
+            eq((long)roi.width*roi.height<=(long)size[0]*size[1],
+                "ROI cannot increase the number of source pixels");
+            if(z==1f&&Math.abs(aspect-(16f/9f))<.01f)
+                eq(roi.full(size[0],size[1]),"1x full landscape no crop");
+        }
+        eq(C110ZoomGeometry.centeredCover(1920,1080,2f,9f/16f).width==304,
+            "2x portrait sourceRect width matches current VLC centerCrop geometry");
+        eq(C110ZoomGeometry.centered(1920,1080,4f).height==270,
+            "4x full landscape sourceRect exactly 1/4 linear dimensions");
+        System.out.println("PASS C110 visible ROI geometry 1x/2x/4x no extra scaling");
         System.out.println("PASS C110+ portrait cover maps live/native OCR to visible region");
     }
 }
