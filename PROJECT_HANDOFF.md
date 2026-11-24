@@ -1,8 +1,8 @@
-# 2026-11-25｜C110 只接收拍照事件独立实验 v0.1.0（已提交，构建待核实，真机待验）
+# 2026-11-25｜C110 只接收拍照事件独立实验 v0.1.0（CI通过、已发布，真机待验）
 - 用户真机反馈 v1.0.97 锁屏初期拍照朗读正常，随后 Wi-Fi/3012与目录查询失败；C110无明显发热，灯光和按键一度无响应，同时长按Wi-Fi键及电源键后恢复。原因未证实，不再强化轮询或保活。用户要求下一个正式版本完全移除自动删图（尚未实施），批准先研究原厂通知并做独立只接收实验。
 - 本轮重新打开两份原厂APK，实际解析classes5.dex：SJCAM X LyCamera构造0xb520c引用3333，SocketHelper.connection 0xac714建立TCP，readWork 0xac9d0识别3020/2020，onReadData$lambda$0 0xb6090处理3020；Zone LYCamera.startSocketHelper 0x18d554固定192.168.1.254:3333，readWork 0x213148、onReadData 0x18ca00、LyDataPack.getStatus 0x18a20c。原厂存在事件通道，但实体快门是否触发尚未真机证实，3020/status3、4按候选记录；X有sendPing路径，不发送任何应用层数据的实验若无事件不代表不支持。
 - 基于v1.0.97源码10410e60ca1103ab8799a3ec12a555f45529e525，独立分支 exp/c110-passive-event-probe-20261125，提交68a560ac5e7542e5cc67facfdb316c497fe2daf5。仅新增c110-event-probe独立Gradle项目及CI，applicationId com.vobich.bluestar.c110eventprobe，版本0.1.0。不改正式版。手动连相机系统Wi-Fi，唯一网关匹配，用户启动一次TCP连接，无应用层发送/HTTP/SD查询/下载/删除/自动重连，最多120秒及131072字符，离开界面或锁屏关闭；数值日志与手动拍摄标记。初次实验仅亮屏，先关闭正式蓝星监听和自动删图、原厂App；相机异常立即停止。详见c110-event-probe/README.md。
-- 构建及发布待核实，预计标签 c110-passive-event-probe-20261125-v010。未核实资产前不提供下载。验收：连接成功静置10秒，实体快门3次（每次间隔10秒），复制日志确认事件时间/状态；如无事件先排查会话初始化及固件支持，不擅自增加命令。禁止将CI成功当作真机成功。
+- Actions 45439941495 completed/success，独立性检查、事件拆包测试、APK编译签名及包名验证、发布通过。Release target 68a560ac5e7542e5cc67facfdb316c497fe2daf5，资产14805 bytes，SHA256 57776f2b134f5e3bcca9e594340d1f0c0aeda31c7b9a2567d906489e27b6ef0b，直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/c110-passive-event-probe-20261125-v010/C110_Passive_Event_Probe_0.1.0.apk。验收：连接成功静置10秒，实体快门3次（每次间隔10秒），复制日志确认事件时间/状态；如无事件先排查会话初始化及固件支持，不擅自增加命令。禁止将CI成功当作真机成功。
 
 ---
 
