@@ -65,6 +65,34 @@ public final class C110CameraActivity extends Activity {
     private LibVLC vlc;
     private MediaPlayer player;
     private Media media;
+    private boolean rawQualityMode;
+    private C110NativeFrameDecoder rawDecoder;
+    private Button qualityModeButton;
+    private void toggleQualityMode(){
+        if(photoBusy||busy||frameReader.isBusy()){say("当前任务进行中，请结束后切换实验路线");return;}
+        stop(false);
+        rawQualityMode=!rawQualityMode;
+        qualityModeButton.setText(rawQualityMode?"B 原始解码帧 · 切回A":"A Surface取图 · 切换B");
+        qualityModeButton.setContentDescription(rawQualityMode?"B模式不显示实时视频，点击画面取新帧，点此切回A":"A模式正常视频显示，点此切换B原始解码帧");
+        connectAndBeginWhenReady();
+    }
+    private void tapQualityFrame(){
+        if(rawQualityMode){
+            if(rawDecoder==null){say("B原生解码尚未启动");return;}
+            frameReader.tapNative(rawDecoder);
+            return;
+        }
+        int w=-1,h=-1;
+        try{
+            Object track=player.getClass().getMethod("getCurrentVideoTrack").invoke(player);
+            if(track!=null){
+                w=track.getClass().getField("width").getInt(track);
+                h=track.getClass().getField("height").getInt(track);
+            }
+        }catch(Exception ignored){}
+        frameReader.setQualityTrack(w,h);
+        frameReader.tap(video,zoom,fullscreen,c110ViewportAspect());
+    }
     private Network originalNetwork,cameraNetwork;
     private boolean changedBinding,busy,started;
     private volatile int generation;
@@ -130,8 +158,7 @@ public final class C110CameraActivity extends Activity {
         View tapSurface=new View(this);
         tapSurface.setFocusable(true);
         tapSurface.setContentDescription("C110实时预览画面，点击立即截取当前帧并识别朗读");
-        tapSurface.setOnClickListener(v->frameReader.tap(video,zoom,fullscreen,
-                                                         c110ViewportAspect()));
+        tapSurface.setOnClickListener(v->tapQualityFrame());
         root.addView(tapSurface,new FrameLayout.LayoutParams(-1,-1));
 
         LinearLayout titleRow=new LinearLayout(this);
@@ -217,6 +244,11 @@ public final class C110CameraActivity extends Activity {
         inspectLp.leftMargin=dp(6);
         footer.addView(inspect,inspectLp);
         root.addView(footer,new FrameLayout.LayoutParams(-1,dp(77),Gravity.BOTTOM));
+        qualityModeButton=footerButton("A Surface取图 · 切换B",this::toggleQualityMode);
+        qualityModeButton.setTextSize(15);
+        FrameLayout.LayoutParams labModeLp=new FrameLayout.LayoutParams(-1,dp(48),Gravity.TOP);
+        labModeLp.leftMargin=dp(8);labModeLp.rightMargin=dp(8);
+        root.addView(qualityModeButton,labModeLp);
 
         // Compact manual slider. At 1x, all cloud paths remain unchanged.
         zoomControls=new LinearLayout(this);
@@ -735,6 +767,16 @@ public final class C110CameraActivity extends Activity {
             options.add("--live-caching=150");
             options.add("--no-audio");
             vlc=new LibVLC(getApplicationContext(),options);
+            frameReader.resetQualityCpu();
+            if(rawQualityMode){
+                // Only one stream/player at a time; A was fully stopped.
+                // Initialize Android VLC environment using the proven Java binding.
+                rawDecoder=new C110NativeFrameDecoder();
+                busy=false;started=true;
+                deviceControls.onCameraConnected(wifi);
+                say("B原生解码启动请求成功；画面不实时显示，点击画面取新帧");
+                return;
+            }
             player=new MediaPlayer(vlc);
             // OEM uses LibVLC + VLCVideoLayout without our extra Surface gate.
             player.attachViews(video,null,false,false);
@@ -806,6 +848,8 @@ public final class C110CameraActivity extends Activity {
         deviceControls.onDisconnected();
         if(frameReader!=null)frameReader.stop();
         if(delayedPlay!=null){main.removeCallbacks(delayedPlay);delayedPlay=null;}
+        C110NativeFrameDecoder raw=rawDecoder;rawDecoder=null;
+        if(raw!=null)try{raw.close();}catch(RuntimeException|LinkageError ignored){}
         MediaPlayer p=player;player=null;
         if(p!=null){
             try{p.setEventListener(null);p.stop();p.detachViews();p.release();}
