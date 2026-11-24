@@ -1,0 +1,214 @@
+name: Blue Star v1.0.98 Event Listener
+on:
+  push:
+    branches: [ 'exp/c110-event-listener-v0198-20261125' ]
+    paths:
+      - 'cloud-vision-app/app/**'
+      - 'cloud-vision-app/docs/C110_EVENT_LISTENER_V0198.md'
+      - '.github/workflows/c110-event-listener-v0198.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  validated-apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify event-only acquisition and removal of camera deletion
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          base='10410e60ca1103ab8799a3ec12a555f45529e525'
+          root='cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/'
+          read=lambda n:Path(root+n+'.java').read_text()
+          prev=lambda n:subprocess.check_output(['git','show',base+':'+root+n+'.java'],text=True)
+          for n in ['HomeActivity','C110BatteryPolicy','C110HomeStatus','C110QuickShotController','C110CameraActivity','MainActivity','HomeVoiceAssistant','C110WifiBootstrap','TargetVisionClient','C110DeferredPhoto','CaptureDingFeedback']:
+              assert read(n)==prev(n),n
+          w=read('C110PhysicalWatcher')
+          assert 'getSocketFactory().createSocket()' in w and '3333' in w and 'getInputStream()' in w
+          assert 'getOutputStream' not in w and 'C110PhysicalPolicy.INTERVAL' not in w
+          assert w.count('physicalSnapshot(')==2 and 'for(int attempt=0;attempt<3' in w
+          monitor=w[w.index('private void monitorLocalState'):w.index('private void open(')]
+          assert 'physicalSnapshot' not in monitor and 'physicalDownload' not in monitor
+          assert 's.policy.finish(cmd,status,now)' in w and 's.queued=new Shot' in w
+          assert 'deferred.takeIfReady(voiceBusy.getAsBoolean())' in w
+          assert 'prefs.edit().putBoolean(C110PhysicalPolicy.ENABLE,false)' in w
+          assert not Path(root+'C110DeletePolicy.java').exists()
+          for p in Path(root).glob('*.java'):
+              t=p.read_text()
+              for forbidden in ['enqueueAcquiredDelete','physicalDelete(', 'oneFileDeleteEndpoint','cmd=4003','c110_physical_delete','C110DeletePolicy','C110PhysicalPolicy.INTERVAL','C110PhysicalPolicy.DELETE']:
+                  assert forbidden not in t,(p,forbidden)
+          assert '监听间隔 ·' not in read('BlueStarSettingsScreen')
+          assert '自动删除相机原图' not in read('BlueStarSettingsScreen')
+          assert 'event_capture_ms' in read('C110FrameReader')
+          assert 'versionCode 107' in Path('cloud-vision-app/app/build.gradle').read_text()
+          print('PASS passive event gate, bounded fetch, no deletion, unchanged other features')
+          PY
+      - name: Test voice gate and latest physical JPEG handoff without losing baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-voice-handoff
+          javac -d /tmp/bluestar-voice-handoff "$BASE/C110PhysicalPolicy.java" "$BASE/C110DeferredPhoto.java" cloud-vision-app/tests/C110DeferredPhotoTest.java
+          java -cp /tmp/bluestar-voice-handoff com.vobich.bluestar.cloudprobe.C110DeferredPhotoTest
+      - name: Test physical event gate, deduplication and read-only JPEG path
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-physical-tests
+          javac -d /tmp/bluestar-physical-tests "$BASE/C110PhotoPolicy.java" "$BASE/C110JpegPath.java" "$BASE/C110PhysicalPolicy.java" cloud-vision-app/tests/C110PhysicalPolicyTest.java
+          java -cp /tmp/bluestar-physical-tests com.vobich.bluestar.cloudprobe.C110PhysicalPolicyTest
+          javac -d /tmp/bluestar-physical-tests "$BASE/C110EventDecoder.java" cloud-vision-app/tests/C110EventDecoderTest.java
+          java -cp /tmp/bluestar-physical-tests com.vobich.bluestar.cloudprobe.C110EventDecoderTest
+      - name: Test camera battery response parsing without fabricated percentages
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-battery-tests
+          javac -d /tmp/bluestar-battery-tests "$BASE/C110BatteryPolicy.java" cloud-vision-app/tests/C110BatteryPolicyTest.java
+          java -cp /tmp/bluestar-battery-tests com.vobich.bluestar.cloudprobe.C110BatteryPolicyTest
+      - name: Run vendor allow-list, task and C110 pure Java regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-tests
+          javac -d /tmp/bluestar-tests "$BASE/CloudProviderPolicy.java" cloud-vision-app/tests/CloudProviderPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudProviderPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/CloudProviderPolicy.java" "$BASE/CloudThinkingPolicy.java" cloud-vision-app/tests/CloudThinkingPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudThinkingPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/VisionModelCatalog.java" "$BASE/OcrModelCatalog.java" cloud-vision-app/tests/CloudServerListTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudServerListTest
+          javac -d /tmp/bluestar-tests "$BASE/VoiceAction.java" cloud-vision-app/tests/VoiceActionSharedTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.VoiceActionSharedTest
+          javac -d /tmp/bluestar-tests "$BASE/ProviderKeyReusePolicy.java" cloud-vision-app/tests/ProviderKeyReusePolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.ProviderKeyReusePolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/TaskOrder.java" cloud-vision-app/tests/TaskOrderTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.TaskOrderTest
+          javac -d /tmp/bluestar-tests "$BASE/FollowupPrompt.java" cloud-vision-app/tests/FollowupPromptTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.FollowupPromptTest
+          javac -d /tmp/bluestar-tests "$BASE/C110ZoomGeometry.java" cloud-vision-app/tests/C110ZoomGeometryTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110ZoomGeometryTest
+          javac -d /tmp/bluestar-tests "$BASE/C110PhotoPolicy.java" cloud-vision-app/tests/C110PhotoPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110PhotoPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/OcrLineChunks.java" "$BASE/OcrSpeedExperiment.java" cloud-vision-app/tests/OcrSpeedExperimentTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.OcrSpeedExperimentTest
+      - name: Run independent pure-Java phone upload-size tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-phone-upload-tests
+          javac -d /tmp/bluestar-phone-upload-tests "$BASE/PhoneStillUploadPolicy.java" cloud-vision-app/tests/PhoneStillUploadPolicyTest.java
+          java -cp /tmp/bluestar-phone-upload-tests com.vobich.bluestar.cloudprobe.PhoneStillUploadPolicyTest
+      - name: Run C110 1440P toggle and original-byte restoration policy tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-c110-upload-toggle-tests
+          javac -d /tmp/bluestar-c110-upload-toggle-tests "$BASE/C110PhotoUploadPolicy.java" cloud-vision-app/tests/C110PhotoUploadPolicyTest.java
+          java -cp /tmp/bluestar-c110-upload-toggle-tests com.vobich.bluestar.cloudprobe.C110PhotoUploadPolicyTest
+      - name: Pure-Java first pairing and auto-reconnect regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-wifi-pair
+          javac -d /tmp/bluestar-wifi-pair "$BASE/C110WifiPairingPolicy.java" cloud-vision-app/tests/C110WifiPairingPolicyTest.java
+          java -cp /tmp/bluestar-wifi-pair com.vobich.bluestar.cloudprobe.C110WifiPairingPolicyTest
+      - name: Apply already-proven pinned UVC patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_usbmonitor.py cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 cloud-vision-app/scripts/patch_pinned_uvc.py
+          grep -q BSG_CLOUD_RAW5_GATED cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/jni/UVCCamera/UVCPreview.cpp
+          grep -q BSG_CLOUD_CLOSE_BARRIER cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
+      - name: Generate unchanged Blue Star launcher assets
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          java scripts/GenerateLauncherIcons.java
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            test -s "app/src/main/res/mipmap-$density/ic_launcher.png"
+          done
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile full Android arm64 app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :app:assembleDebug
+      - name: Verify APK actual package, launcher, native libraries, sound and SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_Event_Listener_1.0.98.apk
+          APK=out/BlueStar_Guide_Event_Listener_1.0.98.apk
+          test -s "$APK"
+          unzip -tq "$APK" >/dev/null
+          unzip -Z1 "$APK" >out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlc.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlcjni.so' out/entries.txt
+          grep -Fxq 'res/raw/c_metal_clack_ding.mp3' out/entries.txt
+          grep -Fxq 'res/raw/voice_send_whoosh.wav' out/entries.txt
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          "$APKSIGNER" verify --verbose "$APK"
+          "$AAPT" dump badging "$APK" >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110plusquick159'" out/badging.txt
+          grep -Fq "versionName='1.0.98-event-listener'" out/badging.txt
+          grep -Fq "launchable-activity: name='com.vobich.bluestar.cloudprobe.HomeActivity'" out/badging.txt
+          test "$(grep -c '^launchable-activity:' out/badging.txt)" -eq 1
+          "$AAPT" dump xmltree "$APK" AndroidManifest.xml >out/manifest-tree.txt
+          grep -Fq 'com.vobich.bluestar.cloudprobe.action.QUICK_SHOT' out/manifest-tree.txt
+          grep -Fq 'C110ListenService' out/manifest-tree.txt
+          grep -Fq 'android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE' out/manifest-tree.txt
+          ! grep -Fxq 'lib/arm64-v8a/libc110rawframe.so' out/entries.txt
+          (cd out && sha256sum BlueStar_Guide_Event_Listener_1.0.98.apk >SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+          BYTES=$(stat -c%s "$APK")
+          echo "v1.0.98 APK bytes: $BYTES" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_Guide_Event_Listener_1.0.98
+          path: out/*
+          retention-days: 14
+      - name: Publish ONLY if every test and package verification passed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-c110-event-listener-20261125-v0198
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing release" >&2
+            exit 1
+          fi
+          gh release create "$TAG" out/BlueStar_Guide_Event_Listener_1.0.98.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Blue Star v1.0.98 Event Listener" \
+            --notes "v1.0.98: passive C110 3020 19/20 events, no idle SD polling, no automatic deletion, bounded read-only acquisition. Real device validation required."

@@ -520,7 +520,6 @@ final class BlueStarSettingsScreen {
                     render(history.get(history.size()-1));
                 }).setNegativeButton("取消",null).show();
         });
-        physicalSettings();
         row("机身提示音","开关机与拍照声音",()->{
             new BlueStarDialogChoices.AppCompatBuilder(app).setTitle("C110 机身提示音")
                 .setItems(new String[]{"关闭提示音","恢复提示音"},(dialog,which)->
@@ -537,37 +536,6 @@ final class BlueStarSettingsScreen {
                         new int[]{0,-1,15,30,60}[which]);
                 }).setNegativeButton("取消",null).show();
         });
-    }
-    private void physicalSettings(){
-        SharedPreferences p=app.getSharedPreferences("kanzi_settings",Context.MODE_PRIVATE);
-        int current=C110PhysicalPolicy.interval(p.getInt(C110PhysicalPolicy.INTERVAL,300));
-        row("监听间隔 · "+current+" 毫秒","",()->{
-            int selected=0;
-            for(int i=0;i<C110PhysicalPolicy.INTERVALS.length;i++)
-                if(C110PhysicalPolicy.INTERVALS[i]==current)selected=i;
-            new BlueStarDialogChoices.AppCompatBuilder(app).setTitle("实体拍照监听间隔")
-                .setSingleChoiceItems(new String[]{"100 毫秒","200 毫秒","300 毫秒（默认）","500 毫秒"},
-                    selected,(dialog,which)->{
-                        p.edit().putInt(C110PhysicalPolicy.INTERVAL,
-                            C110PhysicalPolicy.INTERVALS[which]).apply();
-                        dialog.dismiss();render(history.get(history.size()-1));
-                    }).setNegativeButton("取消",null).show();
-        });
-        boolean cleanup=p.getBoolean(C110PhysicalPolicy.DELETE,false);
-        row("自动删除相机原图 · "+(cleanup?"开启":"关闭"),"",()->{
-            if(cleanup){
-                p.edit().putBoolean(C110PhysicalPolicy.DELETE,false).apply();
-                render(history.get(history.size()-1));
-            }else{
-                new BlueStarDialogChoices.AppCompatBuilder(app).setTitle("开启自动删除相机原图？")
-                    .setMessage("删除不可恢复。实体快门、手机遥控和预览高清拍照的相机原图，只要被蓝星完整获取，就尝试删除，不等待识别结果。AI寻找、识别失败或取消也会删除。未获取的历史照片不删除；断线、文件复核失败时保留。")
-                    .setPositiveButton("开启",(dialog,which)->{
-                        p.edit().putBoolean(C110PhysicalPolicy.DELETE,true).apply();
-                        render(history.get(history.size()-1));
-                    }).setNegativeButton("取消",null).show();
-            }
-        });
-        note("在主页开启监听，连接相机后即可使用实体快门；锁屏无需另行设置。");
     }
     private void c110CustomLightDelay(){
         EditText seconds=new EditText(app);

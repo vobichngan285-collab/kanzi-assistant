@@ -59,7 +59,7 @@ final class C110FrameReader {
     private Runnable physicalSuccess;
     private int physicalSuccessId=-1;
     private long physicalQueryMs=-1,physicalDownloadMs=-1;
-    private int physicalIntervalMs;
+    private int physicalEventGapMs;
     private long physicalVoiceWaitMs;
     private RuntimeDiagnostics physicalSpeechDiag;
     private int physicalSpeechId=-1;
@@ -75,9 +75,9 @@ final class C110FrameReader {
             SystemClock.elapsedRealtime()-physicalSpeechStarted,"ok");
     }
     boolean recognizePhysicalJpeg(C110WifiCamera.Photo photo,long queryMs,long downloadMs,
-                                  int intervalMs,long voiceWaitMs,Runnable onSuccess){
+                                  int eventGapMs,long voiceWaitMs,Runnable onSuccess){
         if(closed||busy)return false;
-        physicalQueryMs=queryMs;physicalDownloadMs=downloadMs;physicalIntervalMs=intervalMs;
+        physicalQueryMs=queryMs;physicalDownloadMs=downloadMs;physicalEventGapMs=eventGapMs;
         physicalVoiceWaitMs=voiceWaitMs;
         try{
             boolean accepted=recognizeOriginalJpeg(photo.jpeg,photo.width,photo.height,
@@ -86,7 +86,7 @@ final class C110FrameReader {
                 physicalSuccessId=request.get();physicalSuccess=onSuccess;
             }
             return accepted;
-        }finally{physicalQueryMs=-1;physicalDownloadMs=-1;physicalIntervalMs=0;physicalVoiceWaitMs=0;}
+        }finally{physicalQueryMs=-1;physicalDownloadMs=-1;physicalEventGapMs=0;physicalVoiceWaitMs=0;}
     }
     private void notifyPhysicalSuccess(int id){
         if(id!=physicalSuccessId||physicalSuccess==null)return;
@@ -419,7 +419,7 @@ final class C110FrameReader {
         if(physicalQueryMs>=0){
             physicalSpeechDiag=photoDiag;physicalSpeechId=id;physicalSpeechLogged=false;
             physicalSpeechStarted=started-Math.max(0,captureMs)-Math.max(0,physicalVoiceWaitMs);
-            photoDiag.event("c110","poll_interval_ms",physicalIntervalMs,"ok");
+            photoDiag.event("c110","event_capture_ms",physicalEventGapMs,"ok");
             photoDiag.event("c110","directory_query_ms",physicalQueryMs,"ok");
             photoDiag.event("c110","jpeg_download_ms",physicalDownloadMs,"ok");
             photoDiag.event("c110","voice_wait_ms",physicalVoiceWaitMs,"ok");

@@ -31,14 +31,11 @@ import java.util.regex.Pattern;
  *
  * No process binding: ONLY local camera HTTP uses the Wi-Fi Network object.
  * A separate cellular Network must be chosen for paid cloud requests.
- * Optional cleanup removes only the complete JPEG acquired by a Blue Star capture.
- * No bulk delete or firmware change.
+ * All camera photos remain on the camera; no deletion or firmware change.
  */
 final class C110WifiCamera {
     static final String CAMERA_IP="192.168.1.254";
     private static final int MAX_INDEX=1024*1024, MAX_JPEG=32*1024*1024;
-    private static final java.util.concurrent.ExecutorService CLEANUP=
-        java.util.concurrent.Executors.newSingleThreadExecutor();
     private Network heldNetwork;
     private boolean photoModeReady;
 
@@ -244,7 +241,7 @@ final class C110WifiCamera {
                         SystemClock.elapsedRealtime()-fetchStart,
                         SystemClock.elapsedRealtime()-begin,
                         cm.getNetworkCapabilities(wifi)!=null,candidate,strictOneFileDelta);
-                    enqueueAcquiredDelete(context,wifi,candidate,acquired,null);
+
                     return acquired;
                 }catch(IOException stillWriting){
                     // The HTML file may appear before the SD write has finished.
@@ -362,7 +359,7 @@ final class C110WifiCamera {
             String dir=todo.get(i);
             Reply r=physicalListing(wifi,dir);
             for(String path:C110PhotoPolicy.jpegs(r.text(),dir,CAMERA_IP)){
-                String exact=C110DeletePolicy.exactJpegPath(path);
+                String exact=C110JpegPath.exactJpegPath(path);
                 if(exact!=null)paths.add(exact);
             }
             for(String child:C110PhotoPolicy.dirs(r.text(),dir,CAMERA_IP)){
@@ -381,7 +378,7 @@ final class C110WifiCamera {
                     throw new IOException("PHOTO目录返回无效列表");
                 dirs.add("/DCIM/PHOTO/");
                 for(String path:C110PhotoPolicy.jpegs(photo.text(),"/DCIM/PHOTO/",CAMERA_IP)){
-                    String exact=C110DeletePolicy.exactJpegPath(path);
+                    String exact=C110JpegPath.exactJpegPath(path);
                     if(exact!=null)paths.add(exact);
                 }
             }else if(photo.http!=404)throw new IOException("PHOTO目录读取失败");
@@ -389,70 +386,11 @@ final class C110WifiCamera {
         return new PhysicalSnapshot(paths,dirs);
     }
     static Photo physicalDownload(Context context,Network wifi,String path,long discovered)throws IOException{
-        if(C110DeletePolicy.exactJpegPath(path)==null)throw new IOException("无效照片路径");
+        if(C110JpegPath.exactJpegPath(path)==null)throw new IOException("无效照片路径");
         ConnectivityManager cm=(ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);
         if(cm==null||cm.getNetworkCapabilities(wifi)==null)throw new IOException("相机已断开");
         return download(wifi,path,0,0,0,discovered,cm);
     }
-    static byte[] physicalDigest(byte[] bytes){
-        try{return java.security.MessageDigest.getInstance("SHA-256").digest(bytes);}
-        catch(java.security.NoSuchAlgorithmException impossible){throw new IllegalStateException(impossible);}
-    }
-    /** Complete capture only; independent of cloud result, task and Activity lifetime.
-     * Store only the exact path and digest in the serial cleanup lane. */
-    static void enqueueAcquiredDelete(Context context,Network wifi,String path,Photo photo,
-                                      java.util.function.Consumer<Boolean> result){
-        Context app=context.getApplicationContext();
-        if(!autoDeleteEnabled(app)||photo==null||wifi==null||
-            C110DeletePolicy.exactJpegPath(path)==null)return;
-        byte[] digest=physicalDigest(photo.jpeg);
-        CLEANUP.execute(()->{
-            boolean gone=false;
-            try{
-                gone=physicalDelete(app,wifi,path,digest,()->autoDeleteEnabled(app)
-                    &&wifi.equals(C110WifiBootstrap.connected(app)));
-            }catch(Exception ignored){}
-            android.util.Log.i("BlueStarC110","acquired_delete="+(gone?1:0));
-            if(result!=null)result.accept(gone);
-        });
-    }
-    private static boolean autoDeleteEnabled(Context context){
-        return context.getSharedPreferences("kanzi_settings",Context.MODE_PRIVATE)
-            .getBoolean(C110PhysicalPolicy.DELETE,false);
-    }
-    /** Exact single acquired JPEG only, with same-network and preference guard.
-     * Verify contents again immediately before the only write; never retry a delete. */
-    static boolean physicalDelete(Context context,Network wifi,String path,byte[] digest,
-                                  java.util.function.BooleanSupplier allowed)throws Exception{
-        if(!allowed.getAsBoolean()||C110DeletePolicy.exactJpegPath(path)==null)return false;
-        verifyPhysicalCamera(wifi);
-        Reply capabilities=get(wifi,"/?custom=1&cmd=3002",MAX_INDEX);
-        if(capabilities.http!=200||!capabilities.text().contains("<Cmd>4003</Cmd>"))return false;
-        String dir=path.substring(0,path.lastIndexOf('/')+1);
-        if(!C110PhotoPolicy.jpegs(physicalListing(wifi,dir).text(),dir,CAMERA_IP).contains(path))return false;
-        Photo check=physicalDownload(context,wifi,path,SystemClock.elapsedRealtime());
-        if(!java.security.MessageDigest.isEqual(digest,physicalDigest(check.jpeg)))return false;
-        if(!allowed.getAsBoolean()||!wifi.equals(C110WifiBootstrap.connected(context)))return false;
-        // Strict endpoint built only from exact validated path. No bulk, no format, no retry.
-        HttpURLConnection conn=null;
-        try{
-            conn=(HttpURLConnection)wifi.openConnection(new URL("http",CAMERA_IP,80,
-                C110DeletePolicy.oneFileDeleteEndpoint(path)));
-            conn.setRequestMethod("GET");conn.setConnectTimeout(2800);conn.setReadTimeout(3500);
-            conn.setUseCaches(false);conn.setInstanceFollowRedirects(false);
-            if(conn.getResponseCode()!=200)return false;
-            try(InputStream in=conn.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
-                byte[] b=new byte[1024];int n;
-                while((n=in.read(b))!=-1){
-                    if(out.size()+n>16384)return false;
-                    out.write(b,0,n);
-                }
-                if(!Integer.valueOf(0).equals(C110PhotoPolicy.tagInt(out.toString("UTF-8"),"Status")))return false;
-            }
-        }finally{if(conn!=null)conn.disconnect();}
-        return !C110PhotoPolicy.jpegs(physicalListing(wifi,dir).text(),dir,CAMERA_IP).contains(path);
-    }
-
     private static Set<String> list(Network wifi) throws IOException {
         LinkedHashSet<String> found=new LinkedHashSet<>();
         // 3015 returned 0 candidates on actual C110 firmware; directory HTML is proven.

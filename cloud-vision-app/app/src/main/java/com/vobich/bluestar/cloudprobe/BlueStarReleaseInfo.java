@@ -1,14 +1,12 @@
 package com.vobich.bluestar.cloudprobe;
-
-/** Update DATE and CHANGES on EVERY release. Version itself is read from installed package. */
 final class BlueStarReleaseInfo {
     private BlueStarReleaseInfo(){}
-    static final String DATE="2026-11-24";
-    static final String VERSION="1.0.97-lockscreen-listener";
+    static final String DATE="2026-11-25";
+    static final String VERSION="1.0.98-event-listener";
     static final String[] CHANGES={
-        "首页移除重复连接相机入口，原厂电量图标进一步放大。",
-        "首页电量旁增加实体快门监听开关，开启即支持锁屏及后台。",
-        "使用单一前台连接设备服务，关闭监听释放后台资源。",
-        "保留原厂电量档位、自动删图、AI寻找与其他功能；锁屏效果待真机验证。"
+        "实体拍照改用C110主动通知，停止空闲SD卡轮询。",
+        "移除监听间隔与自动删图功能，原图保留在相机。",
+        "保留锁屏朗读；异常时停止监听，避免反复请求相机。",
+        "保留原厂电量、手动拍照、原图上传、AI寻找与语音设置。"
     };
 }

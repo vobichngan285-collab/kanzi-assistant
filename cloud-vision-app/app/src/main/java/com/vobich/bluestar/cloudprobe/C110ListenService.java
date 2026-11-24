@@ -121,11 +121,11 @@ public final class C110ListenService extends Service implements Application.Acti
             ding=new CaptureDingFeedback(this);
             watcher=new C110PhysicalWatcher(this,new C110PhysicalWatcher.PhotoSink(){
                 @Override public void cancelPhysicalRecognition(){reader.cancelRecognition();}
-                @Override public boolean acceptPhysicalPhoto(C110WifiCamera.Photo photo,long q,long d,int interval,long voiceWait,Runnable done){
+                @Override public boolean acceptPhysicalPhoto(C110WifiCamera.Photo photo,long q,long d,int eventGap,long voiceWait,Runnable done){
                     reader.cancelRecognition();
                     reader.syncSpeechSettings();
                     ding.photoSucceeded();
-                    return reader.recognizePhysicalJpeg(photo,q,d,interval,voiceWait,done);
+                    return reader.recognizePhysicalJpeg(photo,q,d,eventGap,voiceWait,done);
                 }
             },this::manualBusy,this::voiceBusy,this::yieldSpeech,this::report);
             getApplication().registerActivityLifecycleCallbacks(this);
