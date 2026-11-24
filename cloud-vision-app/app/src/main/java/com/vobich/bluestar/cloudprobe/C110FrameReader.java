@@ -54,6 +54,30 @@ final class C110FrameReader {
     private long lastTapMs;
     private Future<?> taskFuture;
     private String lastText="";
+    // Request-scoped, success-only callback for the physical shutter watcher.
+    // No callback on error, cancellation, empty OCR, or target-search result.
+    private Runnable physicalSuccess;
+    private int physicalSuccessId=-1;
+    private long physicalQueryMs=-1,physicalDownloadMs=-1;
+    private int physicalIntervalMs;
+    boolean recognizePhysicalJpeg(C110WifiCamera.Photo photo,long queryMs,long downloadMs,
+                                  int intervalMs,Runnable onSuccess){
+        if(closed||busy)return false;
+        physicalQueryMs=queryMs;physicalDownloadMs=downloadMs;physicalIntervalMs=intervalMs;
+        try{
+            boolean accepted=recognizeOriginalJpeg(photo.jpeg,photo.width,photo.height,
+                (TaskCatalog.Task)null,photo.totalMs);
+            if(accepted){
+                physicalSuccessId=request.get();physicalSuccess=onSuccess;
+            }
+            return accepted;
+        }finally{physicalQueryMs=-1;physicalDownloadMs=-1;physicalIntervalMs=0;}
+    }
+    private void notifyPhysicalSuccess(int id){
+        if(id!=physicalSuccessId||physicalSuccess==null)return;
+        Runnable done=physicalSuccess;physicalSuccess=null;physicalSuccessId=-1;
+        done.run();
+    }
     private boolean outputReady;
     interface PhotoMetricsListener {
         void onCaptured(int width,int height,long captureMs);
@@ -367,7 +391,12 @@ final class C110FrameReader {
             activity.getSharedPreferences(PREFS,Context.MODE_PRIVATE)
                 .getInt(C110PhotoUploadPolicy.PREF,C110PhotoUploadPolicy.ORIGINAL));
         final RuntimeDiagnostics photoDiag=new RuntimeDiagnostics(activity);
-        photoDiag.begin("c110_photo");
+        photoDiag.begin(physicalQueryMs>=0?"c110_physical":"c110_photo");
+        if(physicalQueryMs>=0){
+            photoDiag.event("c110","poll_interval_ms",physicalIntervalMs,"ok");
+            photoDiag.event("c110","directory_query_ms",physicalQueryMs,"ok");
+            photoDiag.event("c110","jpeg_download_ms",physicalDownloadMs,"ok");
+        }
         if(captureMs>=0)photoDiag.event("c110","photo_total_ms",captureMs,"ok");
         if(metricsListener!=null&&captureMs>=0)
             metricsListener.onCaptured(width,height,captureMs);
@@ -573,6 +602,8 @@ final class C110FrameReader {
                 // already stream parts, so do not repeat the entire response.
                 if(spokenParts.get()==0||(ocr&&!OcrSpeedExperiment.earlySpeak(speed)))
                     speak(filtered(lastText,task));
+                // A completed non-empty successful result only, never partial streaming text.
+                if(!filtered(lastText,task).isEmpty())notifyPhysicalSuccess(id);
             });
         }catch(OcrResponseGate.NoReadableTextException noText){
             main.post(()->{
@@ -631,6 +662,7 @@ final class C110FrameReader {
 
     /** A new photo can replace the prior OCR without stopping VLC/preview. */
     void cancelRecognition(){
+        physicalSuccess=null;physicalSuccessId=-1;
         request.incrementAndGet();
         clearPendingSpeech();
         synchronized(photoNetworkLock){
