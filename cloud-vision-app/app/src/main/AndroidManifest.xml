@@ -29,6 +29,12 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- The installed Boyue bridge uses an explicit component and this
+                 action. Android 13+ checks external intents against filters.
+                 No LAUNCHER category here: ordinary Home remains the only icon. -->
+            <intent-filter>
+                <action android:name="com.vobich.bluestar.cloudprobe.action.QUICK_SHOT"/>
+            </intent-filter>
         </activity>
         <activity android:name=".QuickPhotoActivity"
             android:screenOrientation="portrait"
