@@ -72,7 +72,8 @@ public final class C110CameraActivity extends Activity {
         if(photoBusy||busy||frameReader.isBusy()){say("当前任务进行中，请结束后切换实验路线");return;}
         stop(false);
         rawQualityMode=!rawQualityMode;
-        qualityModeButton.setText(rawQualityMode?"B 原始解码帧 · 切回A":"A Surface取图 · 切换B");
+        video.setVisibility(rawQualityMode?View.INVISIBLE:View.VISIBLE);
+        qualityModeButton.setText(rawQualityMode?"B 解码帧（点黑屏取图）· 切回A":"A Surface取图 · 切换B");
         qualityModeButton.setContentDescription(rawQualityMode?"B模式不显示实时视频，点击画面取新帧，点此切回A":"A模式正常视频显示，点此切换B原始解码帧");
         connectAndBeginWhenReady();
     }
