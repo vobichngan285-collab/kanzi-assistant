@@ -1,0 +1,215 @@
+name: Blue Star v1.0.91 Home Camera Status
+on:
+  push:
+    branches: [ 'exp/home-grid-camera-battery-20261124' ]
+    paths:
+      - 'cloud-vision-app/app/**'
+      - 'cloud-vision-app/docs/HOME_CAMERA_STATUS_V0191.md'
+      - '.github/workflows/home-camera-status-v0191.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  validated-apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify approved Home layout, camera status safety and unchanged shortcut
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import xml.etree.ElementTree as ET
+          base='e1df4221a99fec313eb4db8545cd7e49c6fc5afc'
+          root='cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/'
+          expected={
+            '.github/workflows/home-camera-status-v0191.yml',
+            'cloud-vision-app/docs/HOME_CAMERA_STATUS_V0191.md',
+            'cloud-vision-app/app/build.gradle',
+            'cloud-vision-app/tests/C110BatteryPolicyTest.java',
+            root+'HomeActivity.java',
+            root+'C110BatteryPolicy.java',
+            root+'C110HomeStatus.java'
+          }
+          changed=set(subprocess.check_output(['git','diff','--name-only',base,'HEAD'],text=True).splitlines())
+          assert changed==expected,changed^expected
+          read=lambda n:Path(root+n).read_text()
+          prev=lambda n:subprocess.check_output(['git','show',base+':'+root+n],text=True)
+          home,status,battery=read('HomeActivity.java'),read('C110HomeStatus.java'),read('C110BatteryPolicy.java')
+          assert 'text("蓝星向导"' not in home
+          for row,idx,label in [('first',0,'快捷拍照'),('first',1,'实时预览'),('first',2,'朗读任务'),('second',3,'阅读模式'),('second',4,'连接相机'),('second',5,'设置')]:
+              assert f'tile({row},{idx},"{label}"' in home
+          assert home.count('=tileRow(content);')==2
+          assert 'glyph.setBounds(0,0,dp(50),dp(50));' in home
+          assert 'button.setContentDescription(title);' in home
+          assert 'button.setMinimumHeight(dp(104));' in home and 'ScrollView scroll=' in home
+          assert 'addCameraCard(content);' in home and 'connect.setText("快速连接")' in home
+          assert 'C110WifiBootstrap.requestFromCameraPage(this,false)' in home
+          assert home.count('new C110WifiBootstrap(')==1
+          assert 'quickShot.isShutterPending()' in home and 'cameraStatus.stop()' in home and 'cameraStatus.shutdown()' in home
+          # Keep actual dock, one-shot contract and navigation code byte-identical.
+          before=prev('HomeActivity.java')
+          def section(src,a,b): return src.split(a,1)[1].split(b,1)[0]
+          for a,b in [('        LinearLayout dock=', '    private Button nav('),('    private static boolean isQuickShotIntent(', '    private void quickStatusChanged('),('    private void prepareOtherScreenSpeech(', '    @Override protected void onResume(){'),('    @Override protected void onNewIntent(', '    @Override protected void onPause(){'),('    @Override public void onRequestPermissionsResult(', 'END_SENTINEL')]:
+              assert section(before,a,b)==section(home,a,b),(a,b)
+          assert 'http://192.168.1.254/?custom=1&cmd=3019' in status
+          assert status.count('http://')==1 and 'setRequestMethod("GET")' in status
+          assert 'setInstanceFollowRedirects(false)' in status and 'network.openConnection' in status
+          assert 'BATTERY_MS=60000' in status and 'CHECK_MS=3000' in status
+          assert 'network!=null&&!inFlight&&!shotBusy.getAsBoolean()' in status
+          assert 'ticket!=generation' in status and 'target.equals(connected())' in status
+          assert 'setConnectTimeout(1200)' in status and 'setReadTimeout(1200)' in status
+          assert 'out.size()+n>8192' in status
+          assert 'bindProcessToNetwork' not in status and 'requestNetwork(' not in status
+          assert 'raw.endsWith("%")' in battery and '待确认' in battery and '电量未知' in battery
+          gradle=Path('cloud-vision-app/app/build.gradle').read_text()
+          assert "versionCode 100" in gradle and "versionName '1.0.91-home-camera-status'" in gradle
+          assert "applicationIdSuffix '.c110plusquick159'" in gradle
+          assert 'org.videolan.android:libvlc-all:3.6.5' in gradle
+          print('PASS exact 7-file scope, accessible six-tile layout, unchanged dock/shortcut, bounded read-only status')
+          PY
+      - name: Test camera battery response parsing without fabricated percentages
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-battery-tests
+          javac -d /tmp/bluestar-battery-tests "$BASE/C110BatteryPolicy.java" cloud-vision-app/tests/C110BatteryPolicyTest.java
+          java -cp /tmp/bluestar-battery-tests com.vobich.bluestar.cloudprobe.C110BatteryPolicyTest
+      - name: Run vendor allow-list, task and C110 pure Java regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-tests
+          javac -d /tmp/bluestar-tests "$BASE/CloudProviderPolicy.java" cloud-vision-app/tests/CloudProviderPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudProviderPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/CloudProviderPolicy.java" "$BASE/CloudThinkingPolicy.java" cloud-vision-app/tests/CloudThinkingPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudThinkingPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/VisionModelCatalog.java" "$BASE/OcrModelCatalog.java" cloud-vision-app/tests/CloudServerListTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudServerListTest
+          javac -d /tmp/bluestar-tests "$BASE/VoiceAction.java" cloud-vision-app/tests/VoiceActionSharedTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.VoiceActionSharedTest
+          javac -d /tmp/bluestar-tests "$BASE/ProviderKeyReusePolicy.java" cloud-vision-app/tests/ProviderKeyReusePolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.ProviderKeyReusePolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/TaskOrder.java" cloud-vision-app/tests/TaskOrderTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.TaskOrderTest
+          javac -d /tmp/bluestar-tests "$BASE/FollowupPrompt.java" cloud-vision-app/tests/FollowupPromptTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.FollowupPromptTest
+          javac -d /tmp/bluestar-tests "$BASE/C110ZoomGeometry.java" cloud-vision-app/tests/C110ZoomGeometryTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110ZoomGeometryTest
+          javac -d /tmp/bluestar-tests "$BASE/C110PhotoPolicy.java" cloud-vision-app/tests/C110PhotoPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110PhotoPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/OcrLineChunks.java" "$BASE/OcrSpeedExperiment.java" cloud-vision-app/tests/OcrSpeedExperimentTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.OcrSpeedExperimentTest
+      - name: Run independent pure-Java phone upload-size tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-phone-upload-tests
+          javac -d /tmp/bluestar-phone-upload-tests "$BASE/PhoneStillUploadPolicy.java" cloud-vision-app/tests/PhoneStillUploadPolicyTest.java
+          java -cp /tmp/bluestar-phone-upload-tests com.vobich.bluestar.cloudprobe.PhoneStillUploadPolicyTest
+      - name: Run C110 1440P toggle and original-byte restoration policy tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-c110-upload-toggle-tests
+          javac -d /tmp/bluestar-c110-upload-toggle-tests "$BASE/C110PhotoUploadPolicy.java" cloud-vision-app/tests/C110PhotoUploadPolicyTest.java
+          java -cp /tmp/bluestar-c110-upload-toggle-tests com.vobich.bluestar.cloudprobe.C110PhotoUploadPolicyTest
+      - name: Pure-Java first pairing and auto-reconnect regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-wifi-pair
+          javac -d /tmp/bluestar-wifi-pair "$BASE/C110WifiPairingPolicy.java" cloud-vision-app/tests/C110WifiPairingPolicyTest.java
+          java -cp /tmp/bluestar-wifi-pair com.vobich.bluestar.cloudprobe.C110WifiPairingPolicyTest
+      - name: Apply already-proven pinned UVC patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_usbmonitor.py cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 cloud-vision-app/scripts/patch_pinned_uvc.py
+          grep -q BSG_CLOUD_RAW5_GATED cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/jni/UVCCamera/UVCPreview.cpp
+          grep -q BSG_CLOUD_CLOSE_BARRIER cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
+      - name: Generate unchanged Blue Star launcher assets
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          java scripts/GenerateLauncherIcons.java
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            test -s "app/src/main/res/mipmap-$density/ic_launcher.png"
+          done
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile full Android arm64 app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :app:assembleDebug
+      - name: Verify APK actual package, launcher, native libraries, sound and SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_Home_Camera_Status_1.0.91.apk
+          APK=out/BlueStar_Guide_Home_Camera_Status_1.0.91.apk
+          test -s "$APK"
+          unzip -tq "$APK" >/dev/null
+          unzip -Z1 "$APK" >out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlc.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlcjni.so' out/entries.txt
+          grep -Fxq 'res/raw/c_metal_clack_ding.mp3' out/entries.txt
+          grep -Fxq 'res/raw/voice_send_whoosh.wav' out/entries.txt
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging "$APK" >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110plusquick159'" out/badging.txt
+          grep -Fq "versionName='1.0.91-home-camera-status'" out/badging.txt
+          grep -Fq "launchable-activity: name='com.vobich.bluestar.cloudprobe.HomeActivity'" out/badging.txt
+          test "$(grep -c '^launchable-activity:' out/badging.txt)" -eq 1
+          "$AAPT" dump xmltree "$APK" AndroidManifest.xml >out/manifest-tree.txt
+          grep -Fq 'com.vobich.bluestar.cloudprobe.action.QUICK_SHOT' out/manifest-tree.txt
+          ! grep -Fxq 'lib/arm64-v8a/libc110rawframe.so' out/entries.txt
+          (cd out && sha256sum BlueStar_Guide_Home_Camera_Status_1.0.91.apk >SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+          BYTES=$(stat -c%s "$APK")
+          echo "v1.0.91 APK bytes: $BYTES" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_Guide_Home_Camera_Status_1.0.91
+          path: out/*
+          retention-days: 14
+      - name: Publish ONLY if every test and package verification passed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-home-camera-status-20261124-v0191
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing release" >&2
+            exit 1
+          fi
+          gh release create "$TAG" out/BlueStar_Guide_Home_Camera_Status_1.0.91.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Blue Star v1.0.91 Home Camera Status" \
+            --notes "Based on production v1.0.90. Approved six-tile Home, no header, camera Wi-Fi and read-only battery status, unchanged bottom dock and Boyue action. Battery enum is reference-only until tested on actual firmware; no invented percentages. Cover install original production package; do not uninstall bridge."
