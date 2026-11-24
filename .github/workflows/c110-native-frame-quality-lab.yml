@@ -1,0 +1,231 @@
+name: Blue Star C110 Native Frame Quality Lab 0.1.0
+on:
+  push:
+    branches: [ 'exp/c110-native-frame-quality-lab-20261124' ]
+    paths:
+      - 'cloud-vision-app/app/**'
+      - 'cloud-vision-app/docs/C110_NATIVE_FRAME_QUALITY_LAB.md'
+      - '.github/workflows/c110-native-frame-quality-lab.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  validated-apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify scope and callback experiment invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          base='58963e56aaf772385979acea9d4a86949200f6e5'
+          root='cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/'
+          expected={
+            '.github/workflows/c110-native-frame-quality-lab.yml',
+            'cloud-vision-app/docs/C110_NATIVE_FRAME_QUALITY_LAB.md',
+            'cloud-vision-app/app/build.gradle',
+            'cloud-vision-app/app/src/main/AndroidManifest.xml',
+            'cloud-vision-app/app/src/main/cpp/c110rawframe.c',
+            root+'C110NativeFrameDecoder.java',
+            root+'C110FrameReader.java',
+            root+'C110CameraActivity.java'
+          }
+          actual=set(subprocess.check_output(['git','diff','--name-only',base,'HEAD'],text=True).splitlines())
+          assert actual==expected,(actual^expected)
+          read=lambda n:Path(root+n).read_text()
+          camera,reader,native=read('C110CameraActivity.java'),read('C110FrameReader.java'),read('C110NativeFrameDecoder.java')
+          prev=lambda n:subprocess.check_output(['git','show',base+':'+root+n],text=True)
+          oldreader=prev('C110FrameReader.java')
+          assert oldreader[oldreader.index('    private void analyzeVisibleFrame'):]==reader[reader.index('    private void analyzeVisibleFrame'):]
+          assert 'PixelCopy.request(surface,image,status->' in reader
+          assert 'analyzeVisibleFrame(id,bmp,now,diag)' in reader
+          assert 'decoder.take()' in reader and 'native_capture' in reader
+          assert 'raw.close()' in camera and 'player.attachViews(video,null,false,false)' in camera
+          assert 'video.setVisibility(rawQualityMode?View.INVISIBLE:View.VISIBLE)' in camera
+          c=Path('cloud-vision-app/app/src/main/cpp/c110rawframe.c').read_text()
+          for symbol in ['libvlc_video_set_callbacks','libvlc_video_set_format_callbacks','pthread_cond_timedwait','memcpy(chroma,"RGBA",4)']:
+              assert symbol in c
+          assert 'PixelCopy' not in native and 'SurfaceView' not in native
+          print('PASS exact scope, unchanged cloud/TTS/photo pipeline, distinct A and B')
+          PY
+      - name: Test callback format and fresh frame copy on host
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat >/tmp/c110callbacktest.c <<'EOF'
+          #include <assert.h>
+          #include "c110rawframe.c"
+          int main(void){
+            Decoder d={0};pthread_mutex_init(&d.mu,NULL);pthread_cond_init(&d.cv,NULL);
+            void *opaque=&d; char chroma[4];unsigned w=3,h=2,pitch=0,lines=0;
+            assert(format(&opaque,chroma,&w,&h,&pitch,&lines)==1);
+            assert(w==3&&h==2&&pitch==32&&lines==32&&!memcmp(chroma,"RGBA",4));
+            void*planes[1];lock_frame(&d,planes);
+            memset(planes[0],0,(size_t)pitch*lines);
+            memset(d.pixels,7,12);memset(d.pixels+pitch,11,12);
+            unlock_frame(&d,&d,(void*const*)planes);
+            assert(d.frames==1&&!d.shot);
+            d.wanted=1;unlock_frame(&d,&d,(void*const*)planes);
+            assert(d.ready&&d.shot_frames==2&&d.shot_w==3&&d.shot_h==2);
+            assert(d.shot[0]==7&&d.shot[11]==7&&d.shot[12]==11&&d.shot[23]==11);
+            free(d.shot);cleanup(&d);
+            pthread_cond_destroy(&d.cv);pthread_mutex_destroy(&d.mu);
+            return 0;
+          }
+          EOF
+          cc -std=gnu11 -Wall -Wextra -I"$JAVA_HOME/include" -I"$JAVA_HOME/include/linux" -Icloud-vision-app/app/src/main/cpp /tmp/c110callbacktest.c -ldl -lpthread -o /tmp/c110callbacktest
+          /tmp/c110callbacktest
+      - name: Compile ARM64 native memory callback bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK="$ANDROID_HOME/ndk/28.1.13356709"
+          if [ ! -d "$NDK" ]; then
+            sdkmanager "ndk;28.1.13356709"
+          fi
+          CLANG="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
+          mkdir -p cloud-vision-app/app/src/main/jniLibs/arm64-v8a
+          "$CLANG" -std=gnu11 -Wall -Wextra -Werror -O2 -fPIC -shared \
+            cloud-vision-app/app/src/main/cpp/c110rawframe.c -ldl \
+            -o cloud-vision-app/app/src/main/jniLibs/arm64-v8a/libc110rawframe.so
+      - name: Run vendor allow-list, task and C110 pure Java regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-tests
+          javac -d /tmp/bluestar-tests "$BASE/CloudProviderPolicy.java" cloud-vision-app/tests/CloudProviderPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudProviderPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/CloudProviderPolicy.java" "$BASE/CloudThinkingPolicy.java" cloud-vision-app/tests/CloudThinkingPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudThinkingPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/VisionModelCatalog.java" "$BASE/OcrModelCatalog.java" cloud-vision-app/tests/CloudServerListTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.CloudServerListTest
+          javac -d /tmp/bluestar-tests "$BASE/VoiceAction.java" cloud-vision-app/tests/VoiceActionSharedTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.VoiceActionSharedTest
+          javac -d /tmp/bluestar-tests "$BASE/ProviderKeyReusePolicy.java" cloud-vision-app/tests/ProviderKeyReusePolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.ProviderKeyReusePolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/TaskOrder.java" cloud-vision-app/tests/TaskOrderTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.TaskOrderTest
+          javac -d /tmp/bluestar-tests "$BASE/FollowupPrompt.java" cloud-vision-app/tests/FollowupPromptTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.FollowupPromptTest
+          javac -d /tmp/bluestar-tests "$BASE/C110ZoomGeometry.java" cloud-vision-app/tests/C110ZoomGeometryTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110ZoomGeometryTest
+          javac -d /tmp/bluestar-tests "$BASE/C110PhotoPolicy.java" cloud-vision-app/tests/C110PhotoPolicyTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.C110PhotoPolicyTest
+          javac -d /tmp/bluestar-tests "$BASE/OcrLineChunks.java" "$BASE/OcrSpeedExperiment.java" cloud-vision-app/tests/OcrSpeedExperimentTest.java
+          java -cp /tmp/bluestar-tests com.vobich.bluestar.cloudprobe.OcrSpeedExperimentTest
+      - name: Run independent pure-Java phone upload-size tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-phone-upload-tests
+          javac -d /tmp/bluestar-phone-upload-tests "$BASE/PhoneStillUploadPolicy.java" cloud-vision-app/tests/PhoneStillUploadPolicyTest.java
+          java -cp /tmp/bluestar-phone-upload-tests com.vobich.bluestar.cloudprobe.PhoneStillUploadPolicyTest
+      - name: Run C110 1440P toggle and original-byte restoration policy tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-c110-upload-toggle-tests
+          javac -d /tmp/bluestar-c110-upload-toggle-tests "$BASE/C110PhotoUploadPolicy.java" cloud-vision-app/tests/C110PhotoUploadPolicyTest.java
+          java -cp /tmp/bluestar-c110-upload-toggle-tests com.vobich.bluestar.cloudprobe.C110PhotoUploadPolicyTest
+      - name: Pure-Java first pairing and auto-reconnect regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/bluestar-wifi-pair
+          javac -d /tmp/bluestar-wifi-pair "$BASE/C110WifiPairingPolicy.java" cloud-vision-app/tests/C110WifiPairingPolicyTest.java
+          java -cp /tmp/bluestar-wifi-pair com.vobich.bluestar.cloudprobe.C110WifiPairingPolicyTest
+      - name: Apply already-proven pinned UVC patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_usbmonitor.py cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 cloud-vision-app/scripts/patch_pinned_uvc.py
+          grep -q BSG_CLOUD_RAW5_GATED cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/jni/UVCCamera/UVCPreview.cpp
+          grep -q BSG_CLOUD_CLOSE_BARRIER cloud-vision-app/third_party/AndroidUSBCamera/libausbc/src/main/java/com/jiangdg/ausbc/camera/CameraUVC.kt
+      - name: Generate unchanged Blue Star launcher assets
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          java scripts/GenerateLauncherIcons.java
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            test -s "app/src/main/res/mipmap-$density/ic_launcher.png"
+          done
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Compile full Android arm64 app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :app:assembleDebug
+      - name: Verify APK actual package, launcher, native libraries, sound and SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_C110_Native_Frame_Quality_Lab_0.1.0.apk
+          APK=out/BlueStar_C110_Native_Frame_Quality_Lab_0.1.0.apk
+          test -s "$APK"
+          unzip -tq "$APK" >/dev/null
+          unzip -Z1 "$APK" >out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlc.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libvlcjni.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libc110rawframe.so' out/entries.txt
+          unzip -p "$APK" lib/arm64-v8a/libvlc.so >/tmp/quality-libvlc.so
+          readelf --wide --dyn-syms /tmp/quality-libvlc.so >/tmp/quality-symbols.txt
+          for symbol in libvlc_new libvlc_media_player_new libvlc_video_set_callbacks libvlc_video_set_format_callbacks libvlc_media_new_location libvlc_media_player_stop; do
+            grep -Eq "[[:space:]]${symbol}(@@[^[:space:]]+)?$" /tmp/quality-symbols.txt
+          done
+          grep -Fxq 'res/raw/c_metal_clack_ding.mp3' out/entries.txt
+          grep -Fxq 'res/raw/voice_send_whoosh.wav' out/entries.txt
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging "$APK" >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.c110qualitylab'" out/badging.txt
+          grep -Fq "versionName='0.1.0-c110-quality-lab'" out/badging.txt
+          grep -Fq "launchable-activity: name='com.vobich.bluestar.cloudprobe.HomeActivity'" out/badging.txt
+          test "$(grep -c '^launchable-activity:' out/badging.txt)" -eq 1
+          (cd out && sha256sum BlueStar_C110_Native_Frame_Quality_Lab_0.1.0.apk >SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+          BYTES=$(stat -c%s "$APK")
+          echo "Quality lab APK bytes: $BYTES" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_C110_Native_Frame_Quality_Lab_0.1.0
+          path: out/*
+          retention-days: 14
+      - name: Publish ONLY if every test and package verification passed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-c110-native-frame-quality-lab-20261124-v010
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing release" >&2
+            exit 1
+          fi
+          gh release create "$TAG" out/BlueStar_C110_Native_Frame_Quality_Lab_0.1.0.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Blue Star C110 Native Frame Quality Lab 0.1.0" \
+            --notes "Independent A/B lab from v1.0.89. A: existing Surface capture. B: native LibVLC RGBA callback memory capture after tap, software decode, no live display in B. One stream at a time. Separate package, configure same cloud settings manually. Real-device validation required; production app remains installed."
