@@ -134,6 +134,7 @@ final class BlueStarSettingsScreen {
             case "key":heading="API Key";break;
             case "result":heading="上次识别结果";break;
             case "diagnostics":heading="运行诊断";break;
+            case "about":heading="关于软件";break;
             default:heading="蓝星向导 · 设置";
         }
         TextView title=text(heading,25,TEXT,true);
@@ -192,6 +193,7 @@ final class BlueStarSettingsScreen {
         else if(p.name.equals("key"))apiKey();
         else if(p.name.equals("result"))result();
         else if(p.name.equals("diagnostics"))diagnostics();
+        else if(p.name.equals("about"))about();
     }
     private Button button(String value,int color){
         Button b=new Button(app);
@@ -318,6 +320,25 @@ final class BlueStarSettingsScreen {
         row("任务管理","文字识别任务与自定义提示词",()->navigate("tasks",""));
         row("高级与诊断","上次识别、匿名日志和故障排查",
             ()->navigate("advanced",""));
+        row("关于软件 · "+installedVersion(),"",()->navigate("about",""));
+    }
+    private String installedVersion(){
+        try{
+            android.content.pm.PackageInfo info=app.getPackageManager().getPackageInfo(app.getPackageName(),0);
+            return info.versionName==null?"未知":info.versionName;
+        }catch(Exception error){return "未知";}
+    }
+    private void about(){
+        heading("蓝星向导");
+        note("当前版本："+installedVersion());
+        try{
+            android.content.pm.PackageInfo info=app.getPackageManager().getPackageInfo(app.getPackageName(),0);
+            long code=android.os.Build.VERSION.SDK_INT>=28?info.getLongVersionCode():info.versionCode;
+            note("内部版本号："+code);
+        }catch(Exception ignored){}
+        note("更新日期："+BlueStarReleaseInfo.DATE);
+        heading("本次更新");
+        for(String item:BlueStarReleaseInfo.CHANGES)note(item);
     }
     private void advanced(){
         row("上次识别结果","查看文字并再次朗读",()->navigate("result",""));
@@ -499,6 +520,7 @@ final class BlueStarSettingsScreen {
                     render(history.get(history.size()-1));
                 }).setNegativeButton("取消",null).show();
         });
+        physicalSettings();
         row("机身提示音","开关机与拍照声音",()->{
             new BlueStarDialogChoices.AppCompatBuilder(app).setTitle("C110 机身提示音")
                 .setItems(new String[]{"关闭提示音","恢复提示音"},(dialog,which)->
@@ -515,6 +537,42 @@ final class BlueStarSettingsScreen {
                         new int[]{0,-1,15,30,60}[which]);
                 }).setNegativeButton("取消",null).show();
         });
+    }
+    private void physicalSettings(){
+        SharedPreferences p=app.getSharedPreferences("kanzi_settings",Context.MODE_PRIVATE);
+        boolean listening=p.getBoolean(C110PhysicalPolicy.ENABLE,false);
+        int current=C110PhysicalPolicy.interval(p.getInt(C110PhysicalPolicy.INTERVAL,300));
+        row("实体拍照自动朗读 · "+(listening?"开启":"关闭"),"",()->{
+            p.edit().putBoolean(C110PhysicalPolicy.ENABLE,!listening).apply();
+            render(history.get(history.size()-1));
+        });
+        row("监听间隔 · "+current+" 毫秒","",()->{
+            int selected=0;
+            for(int i=0;i<C110PhysicalPolicy.INTERVALS.length;i++)
+                if(C110PhysicalPolicy.INTERVALS[i]==current)selected=i;
+            new BlueStarDialogChoices.AppCompatBuilder(app).setTitle("实体拍照监听间隔")
+                .setSingleChoiceItems(new String[]{"100 毫秒","200 毫秒","300 毫秒（默认）","500 毫秒"},
+                    selected,(dialog,which)->{
+                        p.edit().putInt(C110PhysicalPolicy.INTERVAL,
+                            C110PhysicalPolicy.INTERVALS[which]).apply();
+                        dialog.dismiss();render(history.get(history.size()-1));
+                    }).setNegativeButton("取消",null).show();
+        });
+        boolean cleanup=p.getBoolean(C110PhysicalPolicy.DELETE,false);
+        row("自动删除相机原图 · "+(cleanup?"开启":"关闭"),"",()->{
+            if(cleanup){
+                p.edit().putBoolean(C110PhysicalPolicy.DELETE,false).apply();
+                render(history.get(history.size()-1));
+            }else{
+                new BlueStarDialogChoices.AppCompatBuilder(app).setTitle("开启自动删除相机原图？")
+                    .setMessage("删除不可恢复。仅实体监听发现的单张新照片在完整下载、云端识别成功且文件复核一致后尝试删除。原厂单张删除指令仍需真机验证；请先使用不重要的照片测试。识别失败、取消或文件归属不明确时保留原图。")
+                    .setPositiveButton("开启",(dialog,which)->{
+                        p.edit().putBoolean(C110PhysicalPolicy.DELETE,true).apply();
+                        render(history.get(history.size()-1));
+                    }).setNegativeButton("取消",null).show();
+            }
+        });
+        note("返回主页、连接相机，听到或看到监听就绪后再按实体快门。本版仅主页亮屏前台监听。");
     }
     private void c110CustomLightDelay(){
         EditText seconds=new EditText(app);
