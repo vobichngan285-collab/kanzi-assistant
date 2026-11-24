@@ -22,7 +22,7 @@ public final class HomeActivity extends Activity {
     // Ordinary ACTION_MAIN launching Blue Star never fires the shutter.
     static final String ACTION_QUICK_SHOT=
         "com.vobich.bluestar.cloudprobe.action.QUICK_SHOT";
-    private boolean quickLaunchPending;
+    private boolean quickLaunchPending,homeResumed;
     // Use the original Blue Star palette already present in LargeSettingsScreen
     // and MainActivity, not the yellow/black reference application's colors.
     private static final int BG=0xFF091B32,ACCENT=0xFFB9DCF8,WHITE=0xFFF3F8FF;
@@ -139,7 +139,7 @@ public final class HomeActivity extends Activity {
         return intent!=null&&ACTION_QUICK_SHOT.equals(intent.getAction());
     }
     private void consumeQuickLaunch(){
-        if(!quickLaunchPending||quickShot==null||isFinishing())return;
+        if(!quickLaunchPending||!homeResumed||quickShot==null||isFinishing())return;
         quickLaunchPending=false; // consume before any async Wi-Fi dialog/onResume
         Intent launched=getIntent();
         if(isQuickShotIntent(launched))launched.setAction(Intent.ACTION_MAIN);
@@ -196,6 +196,7 @@ public final class HomeActivity extends Activity {
     @Override protected void onResume(){
         super.onResume();
         if(quickShot!=null)quickShot.onResume();
+        homeResumed=true;
         if(homeVoice!=null)homeVoice.onResume();
         if(cameraWifi!=null)cameraWifi.startAtLaunch();
         if(root!=null){
@@ -219,6 +220,7 @@ public final class HomeActivity extends Activity {
             root.post(this::consumeQuickLaunch);
     }
     @Override protected void onPause(){
+        homeResumed=false;
         if(homeVoice!=null)homeVoice.onPause();
         if(quickShot!=null)quickShot.onPause();
         super.onPause();
