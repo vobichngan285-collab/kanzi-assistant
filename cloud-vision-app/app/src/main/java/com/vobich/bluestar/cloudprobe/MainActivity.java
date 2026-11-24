@@ -580,14 +580,20 @@ public final class MainActivity extends CameraActivity {
             largeSettings.updateC110Status(settingsC110Status);
     }
     void connectC110WifiFromSettings(){
-        if(C110WifiBootstrap.connected(this)!=null){
-            setC110SettingsStatus("C110 Wi-Fi已验证连接，可直接设置机身");
-            return;
+        String remembered=C110WifiBootstrap.savedSsid(this);
+        if(remembered.isEmpty()){
+            chooseC110WifiFromSettings();return;
         }
-        setC110SettingsStatus("正在申请连接C110相机Wi-Fi；按系统提示确认");
-        if(!C110WifiBootstrap.requestFromCameraPage(this,false)&&
-                c110WifiBootstrap!=null)
-            c110WifiBootstrap.requestForCameraMode();
+        new BlueStarDialogChoices.AppCompatBuilder(this)
+            .setTitle("连接运动相机 Wi-Fi")
+            .setItems(new String[]{"连接已记住的相机："+remembered,"重新搜索相机 Wi-Fi"},
+                (dialog,which)->{
+                    if(which==1){chooseC110WifiFromSettings();return;}
+                    setC110SettingsStatus("正在连接已记住的相机："+remembered);
+                    if(!C110WifiBootstrap.requestFromCameraPage(this,false)&&
+                            c110WifiBootstrap!=null)
+                        c110WifiBootstrap.requestForCameraMode();
+                }).setNegativeButton("取消",null).show();
     }
     void chooseC110WifiFromSettings(){
         setC110SettingsStatus("正在扫描附近Wi-Fi，请选择真实运动相机热点");

@@ -6,8 +6,8 @@ android {
         applicationId 'com.vobich.bluestar'
         minSdk 26
         targetSdk 35
-        versionCode 93
-        versionName '1.0.84-c110-wifi-pair-auto'
+        versionCode 94
+        versionName '1.0.85-quick-photo-two-sources'
         ndk { abiFilters 'arm64-v8a' }
     }
     buildTypes {

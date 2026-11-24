@@ -79,16 +79,9 @@ public final class HomeActivity extends Activity {
         heading.setGravity(Gravity.CENTER);
         heading.setTypeface(null,android.graphics.Typeface.BOLD);
         content.addView(heading,new LinearLayout.LayoutParams(-1,dp(74)));
-            option(content,"▣","快捷拍照","C110+ 原厂高清快门 → OCR → 朗读",this::quickPhoto);
-            String cameraSsid=C110WifiBootstrap.savedSsid(this);
-            option(content,"⌁","运动相机 Wi-Fi",
-                cameraSsid.isEmpty()?"首次搜索并选择相机热点，验证成功后记住":
-                    "已记住 "+cameraSsid+" · 点击立即连接",
-                ()->{if(cameraWifi!=null)cameraWifi.requestForCameraMode();});
-            quickStatusView=text(quickStatus,15,0xFFC3D7EF);
-            quickStatusView.setPadding(dp(12),dp(5),dp(12),dp(8));
-            quickStatusView.setVisibility(quickStatus.isEmpty()?View.GONE:View.VISIBLE);
-            content.addView(quickStatusView,new LinearLayout.LayoutParams(-1,-2));
+            option(content,"▣","快捷拍照","手机／运动相机高清拍照",this::quickPhoto);
+            // Home no longer renders a separate Wi-Fi status panel.
+            quickStatusView=null;
             option(content,"▶","C110+ 实时预览","保留 150ms 播放与竖屏裁切",()->{
                 prepareOtherScreenSpeech();
                 startActivity(new Intent(this,C110CameraActivity.class));
@@ -150,12 +143,14 @@ public final class HomeActivity extends Activity {
         quickLaunchPending=false; // consume before any async Wi-Fi dialog/onResume
         Intent launched=getIntent();
         if(isQuickShotIntent(launched))launched.setAction(Intent.ACTION_MAIN);
-        quickPhoto();
+        // Preserve explicitly requested legacy external one-shot shortcut.
+        if(quickShot!=null)quickShot.trigger();
     }
     private void quickPhoto(){
-        // No Activity, dialog, camera preview, or experiment screen: the
-        // native photo + existing OCR/TTS starts on THIS homepage.
-        if(quickShot!=null)quickShot.trigger();
+        // Only a user tap opens the dedicated two-source Quick Photo panel.
+        // No camera opens or shutter fires until its source button is tapped.
+        prepareOtherScreenSpeech();
+        startActivity(new Intent(this,QuickPhotoActivity.class));
     }
     /** Explicit voice read/observe changes only the current C110 shot. */
     private void voiceOneShotPhoto(TaskCatalog.Task oneShot){

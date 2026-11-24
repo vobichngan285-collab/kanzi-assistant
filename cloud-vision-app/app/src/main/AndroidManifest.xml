@@ -30,6 +30,9 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <activity android:name=".QuickPhotoActivity"
+            android:screenOrientation="portrait"
+            android:exported="false"/>
         <!-- Dedicated opaque 4-column task page; no second launcher icon. -->
         <activity android:name=".TaskDesktopActivity"
             android:screenOrientation="portrait"

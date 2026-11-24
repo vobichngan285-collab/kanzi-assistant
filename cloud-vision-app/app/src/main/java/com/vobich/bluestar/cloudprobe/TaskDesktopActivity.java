@@ -84,7 +84,7 @@ public final class TaskDesktopActivity extends Activity {
         TextView back=text("‹ 返回",20,FOREGROUND);
         back.setGravity(Gravity.CENTER_VERTICAL);
         back.setPadding(dp(4),0,dp(8),0);
-        back.setContentDescription("返回主页");
+        back.setContentDescription("返回上一页");
         back.setClickable(true);back.setFocusable(true);
         back.setOnClickListener(v->finish());
         FrameLayout.LayoutParams backLp=new FrameLayout.LayoutParams(dp(108),-1,Gravity.LEFT);

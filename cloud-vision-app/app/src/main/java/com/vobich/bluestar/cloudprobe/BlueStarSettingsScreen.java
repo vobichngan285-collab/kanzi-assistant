@@ -481,8 +481,7 @@ final class BlueStarSettingsScreen {
         c110LiveStatus.setPadding(dp(12),dp(2),dp(12),dp(12));
         content.addView(c110LiveStatus,new LinearLayout.LayoutParams(-1,-2));
         updateC110Status(app.lastC110SettingsStatus());
-        action("立即连接相机 Wi-Fi",()->app.connectC110WifiFromSettings());
-        action("搜索 / 更换运动相机",()->app.chooseC110WifiFromSettings());
+        action("连接相机 Wi-Fi",()->app.connectC110WifiFromSettings());
         row("下次打开自动连接 · "+(app.c110AutoConnectEnabled()?"开启":"关闭"),
             "只在成功验证并记住相机后生效；每次启动尝试一次",()->{
                 app.setC110AutoConnectEnabled(!app.c110AutoConnectEnabled());

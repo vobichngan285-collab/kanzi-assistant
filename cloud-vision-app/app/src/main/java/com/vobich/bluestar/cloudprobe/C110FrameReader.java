@@ -5,6 +5,8 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.net.Network;
+import android.net.ConnectivityManager;
+import android.net.NetworkCapabilities;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -352,11 +354,56 @@ final class C110FrameReader {
         return true;
     }
 
+    /** Photo-only path. Phone JPEG has already passed through the existing
+     * PhoneStillJpeg.prepare rotation/mirror/upload-size policy. This uses the
+     * same cloud OCR/vision model and TTS settings as the C110 quick shutter,
+     * but the phone may send over validated home Wi-Fi OR cellular. */
+    boolean recognizePreparedPhoneJpeg(byte[] jpeg,int width,int height){
+        if(closed||busy)return false;
+        if(jpeg==null||jpeg.length<256||width<2||height<2){
+            report("手机高清照片无效");return false;
+        }
+        syncSpeechSettings();
+        final int id=request.incrementAndGet();
+        clearPendingSpeech();
+        busy=true;
+        if(tts!=null)tts.stop();
+        report("已拍照 · 正在识别…");
+        recognizeJpeg(id,jpeg,SystemClock.elapsedRealtime(),null,null,true);
+        return true;
+    }
+
+    /** Never route phone cloud data over the local-only camera hotspot. */
+    private Network phoneInternetNetwork(){
+        ConnectivityManager cm=(ConnectivityManager)
+            activity.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if(cm==null)throw new IllegalStateException("网络服务未就绪");
+        for(Network n:cm.getAllNetworks()){
+            NetworkCapabilities caps=cm.getNetworkCapabilities(n);
+            if(caps==null||!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                ||!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED))continue;
+            if(C110WifiBootstrap.connected(activity)!=null&&
+               n.equals(C110WifiBootstrap.connected(activity)))continue;
+            if(caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI))return n;
+        }
+        for(Network n:cm.getAllNetworks()){
+            NetworkCapabilities caps=cm.getNetworkCapabilities(n);
+            if(caps!=null&&caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+                &&caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                &&caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED))return n;
+        }
+        throw new IllegalStateException("未找到可上网的Wi-Fi或移动网络");
+    }
+
     private void recognizeJpeg(int id,byte[] jpeg,long started,TaskCatalog.Task oneShotTask){
-        recognizeJpeg(id,jpeg,started,oneShotTask,null);
+        recognizeJpeg(id,jpeg,started,oneShotTask,null,false);
     }
     private void recognizeJpeg(int id,byte[] jpeg,long started,TaskCatalog.Task oneShotTask,
                                RuntimeDiagnostics photoDiag){
+        recognizeJpeg(id,jpeg,started,oneShotTask,photoDiag,false);
+    }
+    private void recognizeJpeg(int id,byte[] jpeg,long started,TaskCatalog.Task oneShotTask,
+                               RuntimeDiagnostics photoDiag,boolean phoneSource){
         if(closed||id!=request.get())return;
         if(jpeg.length<256){
             main.post(()->{if(id==request.get()&&!closed){
@@ -368,17 +415,18 @@ final class C110FrameReader {
             if(closed||id!=request.get())return;
             activePhotoCloud=cancel;
             taskFuture=photoCloudIo.submit(()->recognizeJpegNetwork(
-                id,jpeg,started,oneShotTask,cancel,photoDiag));
+                id,jpeg,started,oneShotTask,cancel,photoDiag,phoneSource));
         }
     }
     private void recognizeJpegNetwork(int id,byte[] jpeg,long started,
                                      TaskCatalog.Task oneShotTask,
                                      CloudVisionClient.Cancellation cancel,
-                                     RuntimeDiagnostics photoDiag){
+                                     RuntimeDiagnostics photoDiag,boolean phoneSource){
         try{
             cancel.check();
-            // The camera AP is local-only; all cloud traffic must explicitly use cellular.
-            Network cellular=C110WifiCamera.requireCellular(activity);
+            // C110 stays explicitly cellular; phone can use validated Wi-Fi.
+            Network cellular=phoneSource?phoneInternetNetwork():
+                C110WifiCamera.requireCellular(activity);
             // Share one target between Home quickshot, C110 preview and
             // MainActivity. Explicit voice read/observe applies to one shot.
             final String target=oneShotTask==null?
