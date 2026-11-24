@@ -1,0 +1,7 @@
+# v1.0.89 C110 full video Surface diagnostic
+- User rejected v1.0.88 because window capture read app buttons instead of the camera. Treat v1.0.88 as obsolete for testing; preserve its history.
+- Start directly from released v1.0.87 6925631076faf82e978dff208fe98817b7842bc9, not v1.0.88.
+- For preview recognition only, use SurfaceHolder.getSurfaceFrame dimensions and PixelCopy.request(Surface, Bitmap, ...), complete surface, no source rectangle, no explicit resize, no manual zoom/cover crop. Surface dimensions are not necessarily native RTSP track dimensions; PixelCopy may scale if the actual buffer differs. Fail if surface is invalid, dimensions change, or capture fails; never fall back to window/old image. JPEG quality 100 once.
+- Display zoom and true hardware 1001 photo crop remain unchanged. Preview recognition temporarily ignores display zoom/portrait crop in order to isolate image-source correctness. Inspect the exact JPEG sent to the recognition path in RAM; not proof of server receipt. No additional upload or storage.
+- Keep OEM RTSP/Wi-Fi, LibVLC 3.6.5, hardware shutter, phone/USB, models, audio, and package ID unchanged. v1.0.89 versionCode 98.
+- Device acceptance: tap video at 1x, point at text, inspect the actual recognition image, check surface vs view and JPEG dimensions, test OCR. If wrong, investigate VLC video output/buffer; do not infer native track size or assume a success callback means correct content.
