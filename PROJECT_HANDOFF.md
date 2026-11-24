@@ -1,3 +1,16 @@
+# 2026-11-24｜蓝星向导v1.0.88：C110真实视频轨道分辨率+屏幕实际合成画面取帧、查看真实上云JPEG；CI通过APK已发布，真机待验
+
+- **授权与症状**：用户真机v1.0.87的c110_preview诊断反复报告`surface_width_px=1260`、`surface_height_px=2590`，`visible_width_px=1260`、`visible_height_px=2590`、`jpeg.bytes≈320–340KB`、`PixelCopy.status=0`，云端网络约0.9秒却仅识别或朗读“西施”两个字；同一用途的手机预览720×1280仍能识别，不能把问题归咎于图像像素总量。源码检查发现v1.0.87错误地将SurfaceView的安卓视图尺寸当作RTSP真实图像尺寸，直接用它运算crop ROI；“复制成功”不能证明收到的真实视频内容和屏幕一致。用户明确批准按方案改代码，并在严格验证后发布APK。
+- **版本/基线/分支**：基于已发布v1.0.87提交`6925631076faf82e978dff208fe98817b7842bc9`派生`exp/c110-window-visible-preview-v0188-20261124`，功能提交`fb1759f408da9d92952a819687605d8b1f341351`，最终编译发布提交`b31cd1c0b43119c761f0e05aa8333695ff54d781`，CI/release target/分支HEAD三方回查一致；版本versionCode97、versionName `1.0.88-c110-window-visible`，包名`com.vobich.bluestar.c110plusquick159`原样。
+- **实际修改**：`C110CameraActivity`使用`MediaPlayer.getCurrentVideoTrack()`取得VLC解码视频轨道宽高，读不到记-1，不用旧版Surface UI尺寸假冒原视频；按真实`cameraRoot`屏幕内容区从`getLocationInWindow`及padding计算窗口矩形，`C110FrameReader`改用`PixelCopy.request(activity.getWindow(),rect,bitmap,...)`获取经过VLC/View缩放和竖屏显示变换的**最终窗口可见画面**，不再对1260×2590之类安卓SurfaceView尺寸推算16:9源裁剪。目标Bitmap与窗口矩形宽高1:1，不额外缩小或重复裁剪；单次JPEG quality100后由原`recognizeJpeg`将**相同byte[]**交给云端任务/朗读管线。注：**窗口截图确实可能包含底部高清拍照/缩放条等UI遮盖，这是本版明示的限制，不能冒称纯视频像素无损；也不解决相机RTSP有损视频自身画质**。
+- **图片核验入口**：C110预览页底部现有“高清拍照”按钮右边增加**“查看上传图”**；`C110FrameReader.lastPreviewSubmittedJpeg`仅保留本次运行的最后一张C110预览实际上传JPEG在RAM，点击只在本地Dialog展示、不重复上传、不写存储、不保存相册；关闭视图回收Bitmap，结束Reader清除引用。可直接直观核查文字是否完整、是否黑屏/拉伸、是否存在遮挡。
+- **诊断**：c110_preview新增`frame.track_width_px/track_height_px`,`frame.window_left_px/window_top_px`,`frame.visible_width_px/height_px`；原`jpeg.width_px/height_px/bytes`,`cloud.upload_ms/network_ms`及隐私最近50次/7天、最多24事件仍保留。真实视频轨道缺失时数值-1，不假设1920×1080。
+- **保护的成功功能**：与v1.0.87相比仅5文件改动：`C110CameraActivity.java`、`C110FrameReader.java`、`cloud-vision-app/app/build.gradle`及新`cloud-vision-app/docs/C110_WINDOW_VISIBLE_V0188.md`和`.github/workflows/c110-window-visible-v0188.yml`。不动C110原厂3012→3016→3001/1→2015/1 RTSP/WiFi及LibVLC3.6.5, 1001高清、前版金属叮音、手机/USB预览、云端模型/任务/TTS、视频缩放UI和原发行包名。
+- **CI/Release已验证**：Actions`45336091896` **completed/success**，源码5文件白名单、VLC实际轨道查询、Window PixelCopy精确矩形1:1、JPEG一次编码和内存核验入口、供应商/模型/任务/摄像头放大几何/WiFi及USB回归、原UVC固定补丁、ARM64完整Gradle、APK启动/原生VLC/UVC库/音效资源/SHA256和GitHub release均完成成功。GitHub prerelease tag`bluestar-c110-window-visible-20261124-v0188`，APK`BlueStar_Guide_C110_Window_Preview_1.0.88.apk`，53,550,571字节，官方直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-c110-window-visible-20261124-v0188/BlueStar_Guide_C110_Window_Preview_1.0.88.apk ；CI https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45336091896 。
+- **真机验收重点**：直接覆盖v1.0.87不要卸载（保留API密钥/C110 Wi-Fi），点击C110实时预览任意画面识别后点“查看上传图”，观察真实图片是不是当前屏幕可见文字、有无黑边/方向错误/UI按钮盖住字，再导出c110_preview诊断（尤其track_width_px/height_px与jpeg.width_px/height_px），核实C110识别率。不要再让用户重复手机vs相机对照实验；先看实际上传图片。CI编译成功不能证明用户手机VLC窗口截图的正确性和识别率。
+ 
+---
+
 # 2026-11-24｜蓝星向导 v1.0.87：C110预览“所见即所得”PixelCopy直接截可见区域，CI通过、APK已发布，真机识别率待验
 
 - **用户授权/目的**：用户已确认手机预览准确但C110运动相机预览屏幕快捷取帧识别差；不再重复做“手机/C110对照”已经验证过的实验。目标：**屏幕看到什么（包括1～4倍放大与竖屏铺满），就截相同可见区域给云端，不在中间额外损失有效像素**；用户明确允许在已讨论的最小范围修改，要求逐项逻辑检查、构建通过才发布。
