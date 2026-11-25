@@ -1,3 +1,9 @@
+# 最新｜560修复后真实OCR突破（2026-11-26）
+- CI45718390348 completed/success，job139570213658，artifact15072025114。复现112组权重精确反量化；Linux服务器CPU完整LiteRT-LM端到端OCR，1512x1512合成中文菜单及公告，原厂280预处理768x768/2304 patches，未修和修复560预处理1104x1104/4761 patches（超出280容量；560签名存在，按v0.18.1实际patch选择算法使用560容量）。原厂菜单CER0、公告0.04255319，耗时10.445/10.161秒；未修560 CER0.97222222/0.91489362，耗时26.532/25.414秒；修复560两图CER均0（忽略非字母数字字符与空白），耗时26.994/26.188秒。菜单商品与全部价格及合计、公告号码均正确。两张合成图仅证明本次识别恢复，不代表一般图片准确率100%，也不是手机速度。实际有效patch数4761，不宣称每次恰好输出560个有效视觉token。
+- 诊断分支exp/gemma4-vision-numerics-20261126 HEAD 370b9733120822186e84648168c619780b3d8cac；修复encoder SHA256 6b8caf8e6d95837eb8f0d82ae9aefbe88313e0bb8b23be253822adcfda85dd92。正式APP与已发布APK不变；560 GPU兼容性、手机速度与实际复杂价格表仍未验收。下一步针对560加速和独立实验APK验证，不重做280。报告 https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45718390348/artifacts/15072025114
+
+---
+
 # 最新｜560真实图片识别测试（运行中，尚未验收）
 - CI45717784389 completed/failure，job139568197319：112组逐通道修正及560特征数值复验通过；Python litert-lm==0.18.1 Engine没有max_vision_tokens_per_image显式参数，脚本在真实图像推理前主动拒绝执行。三组均无OCR结果，不是560模型识别失败。报告artifact15070397638。
 - 原独立诊断分支exp/gemma4-vision-numerics-20261126 HEAD 370b9733120822186e84648168c619780b3d8cac，修正test_corrected_ocr.py：使用0.18.1支持的接口，按实际图像patch数和模型metadata自动选签名；用1512x1512中文价格表及公告合成图，限定max_output_tokens=256，记录实际输出/CER/耗时；自动选择不能只凭ModelInfo当成560签名已证实，需结合运行日志。未改权重、正式APP或发布APK。
