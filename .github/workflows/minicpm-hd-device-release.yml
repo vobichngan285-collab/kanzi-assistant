@@ -1,0 +1,104 @@
+name: Publish verified MiniCPM v0.1.12 device files
+on:
+  push:
+    branches: [exp/minicpm-hd-vision-20261125]
+    paths: ['.github/workflows/minicpm-hd-device-release.yml']
+  workflow_dispatch:
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arm: detail448
+            artifact: 15022053436
+            archive_sha: b1b7c1ab27237acd7d89d94227236c4e02c55f772e78c3c395c4cded21f31f3e
+            model_sha: 0d705d8bba51bae8e10c6bfdfc727a1fcc154dd703d9d2f36e9e8bfadc19ee63
+            model_bytes: 1997042272
+          - arm: hd896
+            artifact: 15021983283
+            archive_sha: bd9e47348c1b51d6f919d7ef172a2b0e5c3a7a55d484755a9ede7abef52e6177
+            model_sha: 27a64f0adf35ce708fe6766d1b733feab649b89db074d9b916fbba8f9620ebbb
+            model_bytes: 2287366752
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ARM: ${{ matrix.arm }}
+      ARTIFACT_ID: ${{ matrix.artifact }}
+      ARCHIVE_SHA: ${{ matrix.archive_sha }}
+      MODEL_SHA: ${{ matrix.model_sha }}
+      MODEL_BYTES: ${{ matrix.model_bytes }}
+      SOURCE_COMMIT: 01a01cb8340e02b4c28df84455dc28ec554a342e
+      SOURCE_RUN: 45614328658
+    steps:
+      - name: Retrieve exact validated artifact and verify its checksum
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN" --jq '.head_sha + " " + .conclusion' | grep -Fx "$SOURCE_COMMIT success"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID" --jq '.name + " " + (.expired|tostring)' | grep -Fx "bluestar-$ARM-device false"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" > original.zip
+          echo "$ARCHIVE_SHA  original.zip" | sha256sum -c -
+          unzip -Z1 original.zip | tee archive-list.txt
+          mkdir verified
+          unzip -j original.zip "BlueStar-$ARM-0.1.12.apk" "BlueStar-$ARM.litertlm" SHA256SUMS.txt README.md bundle.json smoke.json -d verified
+          rm original.zip
+          cd verified
+          sha256sum -c SHA256SUMS.txt
+          echo "$MODEL_SHA  BlueStar-$ARM.litertlm" | sha256sum -c -
+          test "$(stat -c %s BlueStar-$ARM.litertlm)" = "$MODEL_BYTES"
+          python -c 'import json; assert json.load(open("bundle.json"))["status"]=="pass"; assert json.load(open("smoke.json"))["status"]=="pass"'
+          BT=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          "$BT/apksigner" verify --verbose --print-certs "BlueStar-$ARM-0.1.12.apk"
+          "$BT/aapt" dump badging "BlueStar-$ARM-0.1.12.apk" > badging.txt
+          grep -F "package: name='com.vobich.bluestar.npulab.$ARM' versionCode='9' versionName='0.1.12'" badging.txt
+          ! grep -F "uses-permission: name='android.permission.INTERNET'" badging.txt
+      - name: Prepare independent APK and model downloads
+        run: |
+          set -euo pipefail
+          cd verified
+          MODEL="BlueStar-$ARM.litertlm"
+          LIMIT=2147483648
+          mkdir -p ../release
+          cp "BlueStar-$ARM-0.1.12.apk" README.md bundle.json smoke.json SHA256SUMS.txt ../release/
+          if [ "$(stat -c %s "$MODEL")" -lt "$LIMIT" ]; then
+            mv "$MODEL" ../release/
+            echo "直接下载 .litertlm 模型文件，然后导入配套 APP。" > ../release/model-install.txt
+          else
+            # Release assets must be smaller than 2 GiB. Compress only the
+            # model; never alter its verified bytes. Retain the existing CI
+            # archive as fallback if a single compressed asset is too large.
+            python -c 'import sys,zipfile; p=sys.argv[1]; z=zipfile.ZipFile("../release/"+p+".zip","w",compression=zipfile.ZIP_DEFLATED,compresslevel=1,allowZip64=True); z.write(p,p); z.close()' "$MODEL"
+            if [ "$(stat -c %s "../release/$MODEL.zip")" -lt "$LIMIT" ]; then
+              python -c 'import sys,zipfile,hashlib; p=sys.argv[1]; h=hashlib.sha256(); z=zipfile.ZipFile("../release/"+p+".zip"); f=z.open(p); [h.update(b) for b in iter(lambda:f.read(8*1024*1024),b"")]; assert h.hexdigest()==sys.argv[2]' "$MODEL" "$MODEL_SHA"
+              echo "下载模型 ZIP 后解压出 .litertlm，再导入配套 APP。APK 单独下载，无需解压。" > ../release/model-install.txt
+            else
+              rm "../release/$MODEL.zip"
+              printf '模型超过 GitHub Release 单文件 2 GiB 限制；模型仍可从已验证的构建产物下载：https://github.com/%s/actions/runs/%s/artifacts/%s\n' "$GITHUB_REPOSITORY" "$SOURCE_RUN" "$ARTIFACT_ID" > ../release/model-install.txt
+            fi
+          fi
+          cd ../release
+          sha256sum *.apk *.litertlm* 2>/dev/null > RELEASE-SHA256SUMS.txt || test -s RELEASE-SHA256SUMS.txt
+          ls -lh
+      - name: Publish prerelease with exact validated files
+        run: |
+          set -euo pipefail
+          TAG="bluestar-hd-lab-$ARM-v0112-20261125"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release already exists; refusing overwrite"; exit 1
+          fi
+          {
+            printf '独立蓝星 OCR v0.1.12 真机实验版：%s，256视觉Token，FP16视觉权重。\n\n' "$ARM"
+            cat release/model-install.txt
+            printf '\n模型 SHA256：%s；字节数：%s。\n\n' "$MODEL_SHA" "$MODEL_BYTES"
+            printf '安装对应APK，再导入对应模型。不会覆盖旧版或正式版。已通过服务器端OCR、模型封装及APK签名验证；手机性能尚待真机测试。\n\n来源：GitHub Actions %s / artifact %s。\n' "$SOURCE_RUN" "$ARTIFACT_ID"
+          } > notes.md
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$SOURCE_COMMIT" --title "BlueStar OCR $ARM v0.1.12" --notes-file notes.md --draft --prerelease
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" release/*
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets > remote-assets.json
+          python -c 'import json,pathlib; a={x["name"]:x["size"] for x in json.load(open("remote-assets.json"))["assets"]}; assert a=={p.name:p.stat().st_size for p in pathlib.Path("release").iterdir() if p.is_file()},a'
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,isDraft,assets
