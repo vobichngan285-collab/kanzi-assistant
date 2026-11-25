@@ -1,0 +1,88 @@
+name: Blue Star offline model lab
+on:
+  push:
+    branches: [exp/minicpm-offline-lab-20261125]
+    paths: ['offline-ai-lab/**', '.github/workflows/minicpm-offline-lab.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: mlguyYT/MiniCPM-V-Apps
+          ref: 7f2bac650137230539784b794205470077915df7
+          path: upstream-lab
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Verify pinned upstream and prepare independent lab
+        run: |
+          set -euo pipefail
+          test "$(git -C upstream-lab rev-parse HEAD)" = 7f2bac650137230539784b794205470077915df7
+          test "$(git -C upstream-lab/llama.cpp-omni rev-parse HEAD)" = a5624430e61f44b4842246b15a352740218a3d49
+          python3 offline-ai-lab/prepare.py upstream-lab
+          git -C upstream-lab diff --check
+      - name: Install pinned Android toolchain
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-36.1' 'build-tools;36.0.0' 'ndk;27.0.12077973' 'cmake;4.1.2'
+      - name: Compile and run local unit tests
+        working-directory: upstream-lab/MiniCPM-V-demo-Android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --max-workers=2 :app:testDebugUnitTest :app:assembleDebug
+      - name: Verify APK identity, signature, native runtime and model metadata
+        run: |
+          set -euo pipefail
+          APK=upstream-lab/MiniCPM-V-demo-Android/app/build/outputs/apk/debug/app-debug.apk
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/apksigner" verify --verbose "$APK"
+          "$BT/aapt" dump badging "$APK" | tee badging.txt
+          grep -F "package: name='com.vobich.bluestar.offlinelab' versionCode='1' versionName='0.1.0'" badging.txt
+          grep -F "launchable-activity: name='com.example.minicpm_v_demo.LabActivity'" badging.txt
+          python3 - "$APK" <<'PY'
+          import sys,zipfile,json
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              names=set(z.namelist())
+              for n in ['libminicpm_v_demo.so','libmtmd.so','libllama.so','libllama-common.so','libggml.so','libggml-cpu.so','libggml-base.so','libomp.so','libggml-cpu-v86.so']:
+                  assert 'lib/arm64-v8a/'+n in names,n
+              assert not any(n.endswith(('.gguf','.bin','.onnx')) for n in names if n.startswith('assets/'))
+              data=json.loads(z.read('assets/lab_models.json'))
+              assert [len(m['files']) for m in data['models']]==[2,43]
+              assert len({m['id'] for m in data['models']})==2
+          PY
+          mkdir -p lab-release
+          cp "$APK" lab-release/BlueStar_Offline_AI_Lab_0.1.0.apk
+          (cd lab-release && sha256sum *.apk > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: offline-ai-lab
+          path: lab-release/
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: offline-ai-lab
+          path: lab-release
+      - name: Publish verified experimental APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          (cd lab-release && sha256sum -c SHA256SUMS.txt)
+          gh release create bluestar-offline-ai-lab-v010-20261125 lab-release/* --target "$GITHUB_SHA" --title "蓝星离线AI实验室 v0.1.0" --notes "Independent 4.7 1B and experimental 35B Android CPU lab. Build and package checks only; real-device vision inference is not yet verified. OCR 1.0 layout pipeline not included. Models downloaded separately." --prerelease
