@@ -1,0 +1,50 @@
+name: Blue Star MT6991 compiler diagnostics
+on:
+  push:
+    branches: [exp/minicpm-npu-direct-20261125]
+    paths: ['npu-diagnostics/**', '.github/workflows/minicpm-npu-diagnostics.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  npu_aot:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install official unpack and MediaTek compiler tooling
+        run: |
+          set -euo pipefail
+          mkdir -p npu-report
+          python -m venv unpack-env
+          unpack-env/bin/pip install litert-lm==0.20.0
+          unpack-env/bin/pip freeze | tee npu-report/unpack-packages.txt
+          unpack-env/bin/litert-lm unpack --help
+          python -m venv aot-env
+          aot-env/bin/pip install ai-edge-litert-nightly==2.5.0.dev20261123 ai-edge-litert-sdk-mediatek-nightly==2.5.0.dev20261123
+          aot-env/bin/pip freeze | tee npu-report/aot-packages.txt
+      - name: Fetch and verify existing community int8 vision bundle
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 4 --retry-all-errors --connect-timeout 30 --max-time 1800 --output vision.litertlm https://huggingface.co/litert-community/MiniCPM-V-4.7-1B/resolve/main/MiniCPM-V-4.7-1B-VL_int8vis.litertlm
+          echo '20c73b5a1e48a315974cff1853535ff5d017100b6420d5ef221b9dd1b955dd7c  vision.litertlm' | sha256sum -c -
+          unpack-env/bin/litert-lm unpack vision.litertlm --output-dir unpacked
+          test -s unpacked/model.toml
+          find unpacked -type f -printf '%f %s\n' | tee npu-report/sections.txt
+      - name: Capture compiler error and compare official reference graph
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --connect-timeout 30 --max-time 120 --output control.tflite https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite
+          sha256sum control.tflite | tee npu-report/control-sha256.txt
+          aot-env/bin/python npu-diagnostics/run.py 2>&1 | tee npu-report/diagnostics.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mt6991-compiler-diagnostics
+          path: npu-report/
+          if-no-files-found: warn
