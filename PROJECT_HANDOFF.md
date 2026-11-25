@@ -1,3 +1,8 @@
+# 最新｜修复逐层检测CI触发条件
+- 上一修复提交3bff27575e483967fca7841a8f62ad4d0ab780b5未触发CI，实际workflow paths只包含原compare_vision.py与workflow本身，遗漏compare_vision_layers.py。已在原独立分支提交f3d71f0764a2484ba14056c68568a11adf04d5af，补齐路径并锁定上轮实际成功安装的ai-edge-litert 2.4.0、tflite 2.18.0、numpy 2.5.5。未修改APP或模型。新运行需查询实际Actions，暂无数值报告。
+
+---
+
 # 最新｜逐层检测脚本修复（2026-11-26）
 - CI45687221749 completed/failure，job139462893705：原厂与转换模型下载及结构解析成功，匹配42个投影检查点、32个候选残差；在写临时探针FlatBuffer时，复用脚本定义的struct字典覆盖Python struct模块，触发AttributeError: 'dict' object has no attribute 'pack'，尚未执行中间张量数值对比。不是模型推理失败。
 - 首组结构：原厂第一个FC为input_projection且直接接images、有bias，另有两个[768,10240]位置投影FC；转换版第一个FC接tfl.mul835且无独立bias，位置投影实现不同；仅为结构线索，不能判定错误。原厂QKV为INT8，转换为FLOAT32。
