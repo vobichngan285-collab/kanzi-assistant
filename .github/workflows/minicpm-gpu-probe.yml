@@ -1,0 +1,93 @@
+name: MiniCPM vision GPU feasibility probe
+on:
+  push:
+    branches: [exp/minicpm-offline-lab-20261125]
+    paths: ['gpu-vision-probe/**', '.github/workflows/minicpm-gpu-probe.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: mlguyYT/llama.cpp-omni
+          ref: a5624430e61f44b4842246b15a352740218a3d49
+          path: engine
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: KhronosGroup/Vulkan-Headers
+          ref: 9a0f3099c8a9607a7c0f3127d8abfdc19a93e8c5
+          path: vk-headers
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: KhronosGroup/SPIRV-Headers
+          ref: 01e0577914a75a2569c846778c2f93aa8e6feddd
+          path: spirv-headers
+          persist-credentials: false
+      - name: Install build tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ninja-build glslc
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'ndk;27.0.12077973' 'cmake;4.1.2'
+          glslc --version
+      - name: Configure pinned engine and single-slice test
+        run: |
+          set -euo pipefail
+          test "$(git -C engine rev-parse HEAD)" = a5624430e61f44b4842246b15a352740218a3d49
+          test "$(git -C vk-headers rev-parse HEAD)" = 9a0f3099c8a9607a7c0f3127d8abfdc19a93e8c5
+          test "$(git -C spirv-headers rev-parse HEAD)" = 01e0577914a75a2569c846778c2f93aa8e6feddd
+          python3 gpu-vision-probe/prepare.py engine
+          CM="$ANDROID_HOME/cmake/4.1.2/bin/cmake"
+          NDK="$ANDROID_HOME/ndk/27.0.12077973"
+          VKLIB="$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/28/libvulkan.so"
+          test -f "$VKLIB"
+          "$CM" -S spirv-headers -B spirv-build -G Ninja -DSPIRV_HEADERS_ENABLE_TESTS=OFF -DSPIRV_HEADERS_ENABLE_INSTALL=ON -DCMAKE_INSTALL_PREFIX="$PWD/spirv-install"
+          "$CM" --install spirv-build
+          "$CM" -S engine -B engine-build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28 -DANDROID_STL=c++_shared \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON \
+            -DCMAKE_CXX_FLAGS="-I$PWD/vk-headers/include -I$PWD/spirv-headers/include" \
+            -DVulkan_INCLUDE_DIR="$PWD/vk-headers/include" -DVulkan_LIBRARY="$VKLIB" \
+            -DVulkan_GLSLC_EXECUTABLE="$(command -v glslc)" \
+            -DSPIRV-Headers_DIR="$PWD/spirv-install/share/cmake/SPIRV-Headers" \
+            -DGGML_VULKAN=ON -DGGML_BACKEND_DL=OFF -DGGML_NATIVE=OFF \
+            -DGGML_OPENMP=OFF -DGGML_CPU_ARM_ARCH=armv8.6-a+dotprod+i8mm+fp16+bf16 \
+            -DLLAMA_CURL=OFF -DLLAMA_OPENSSL=OFF -DLLAMA_BUILD_COMMON=ON \
+            -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=OFF -DLLAMA_BUILD_TOOLS=ON
+      - name: Compile Android vision CLI with Vulkan backend
+        run: |
+          set -euo pipefail
+          export CMAKE_BUILD_PARALLEL_LEVEL=2
+          "$ANDROID_HOME/cmake/4.1.2/bin/cmake" --build engine-build --target llama-mtmd-cli -j2
+      - name: Verify executable and backend
+        run: |
+          set -euo pipefail
+          mkdir -p probe-output
+          cp -L engine-build/bin/llama-mtmd-cli probe-output/
+          find engine-build/bin -maxdepth 1 \( -name 'lib*.so' -o -name 'lib*.so.*' \) -exec cp -L '{}' probe-output/ \;
+          cp "$ANDROID_HOME/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" probe-output/
+          test -s probe-output/libggml-vulkan.so
+          test -s probe-output/libmtmd.so
+          readelf -h probe-output/llama-mtmd-cli | grep -F AArch64
+          readelf -d probe-output/libggml-vulkan.so | grep -F libvulkan.so
+          cp gpu-vision-probe/README.md probe-output/
+          (cd probe-output && sha256sum llama-mtmd-cli lib*.so* > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: minicpm-android-vulkan-native-probe
+          path: probe-output/
+          retention-days: 14
