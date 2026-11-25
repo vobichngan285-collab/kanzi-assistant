@@ -21,11 +21,14 @@ for label,proj in [("f16",root/"mmproj-model-f16.gguf"),("q8",root/"mmproj-model
         run=subprocess.run(cmd,capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=600)
         text=run.stdout+"\n"+run.stderr
         (out/f"{label}-{name}.txt").write_text(text)
-        encoded=[int(x) for x in re.findall(r"slice encoded in (\d+) ms",text)]
+        encoded=[int(x) for x in re.findall(r"LAB_VISION_ENCODE_MS=(\d+)",run.stderr)]
         row={"variant":label,"sample":name,"exit_code":run.returncode,"host_total_s":round(time.monotonic()-start,3),"vision_encode_ms":encoded,"expected_numeric_text":expected,"expected_digits_present":expected in run.stdout}
         rows.append(row)
         (out/"host_results.json").write_text(json.dumps(rows,ensure_ascii=False,indent=2))
-        print(row)
-        assert run.returncode==0 and encoded,"native inference or image encoding failed; inspect raw log"
+        print(row,flush=True)
+        print("Synthetic OCR stdout:",repr(run.stdout[-2000:]),flush=True)
+        if run.returncode!=0 or len(encoded)!=1:
+            print("Missing single image timing or inference error; raw log retained",flush=True)
+assert len(rows)==4 and all(r["exit_code"]==0 and len(r["vision_encode_ms"])==1 for r in rows), "one or more inference/timing checks failed; inspect raw logs"
 # Numeric match is deliberately not a CI gate; bad OCR remains visible in the
 # report and prevents claiming quality acceptance. Human must review full text.

@@ -33,6 +33,7 @@ jobs:
           python -m pip install 'numpy==1.26.4' 'Pillow==11.3.0' 'tqdm==4.67.1' 'sentencepiece==0.2.1' 'pyyaml==6.0.2'
           python -m py_compile vision-q8-probe/*.py
           python gpu-vision-probe/prepare.py upstream-lab/llama.cpp-omni
+          python vision-q8-probe/prepare_timing.py upstream-lab/llama.cpp-omni
           git -C upstream-lab/llama.cpp-omni diff --check
       - name: Download original verified weights and quantize vision matrices
         run: |
