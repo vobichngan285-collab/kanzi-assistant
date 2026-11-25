@@ -1,3 +1,11 @@
+# 最新｜Gemma 高视觉预算双路线（已提交，校验中）
+- v0.1.0真机MT6991原厂原图3072×4096 3.28MB/280：冷load25530ms、conversation4072、inference_first2546；两次热first1867/1851ms、total7662/7565ms、TTS入队1948/1937ms；1024长边768×1024热first1627ms（prepare231,inference1389）、total6765ms，部分中文改善但仍错漏；512用户称很差。尚无原图文字GT，不宣称CER。用户授权突破280并行两路线，正式蓝星及成功280版本不改。
+- 第三方PenraApp/penra-models revision e7947bb3f9a2960713df011ebca32aedc0f271bb，penra-e2b-1120.litertlm 1708468392 bytes，SHA256 4f52793970e74cae45b971e447cd5834dac6b9a70b687a5fe0f968c6e1c26b9e。链接 https://huggingface.co/PenraApp/penra-models/resolve/e7947bb3f9a2960713df011ebca32aedc0f271bb/penra-e2b-1120.litertlm 。真实下载与SHA在CI45667256562 job139392647154通过，但官方Python LiteRT-LM 0.18.1 ModelInfo实际输出 llm True vision True max 280 signatures [1120] min_runtime None，故断言失败，阻止发布。不是单纯APP下拉限制。第三方量化/词表可能不同，准确率差异不能全归因于视觉预算。
+- 独立分支exp/gemma4-high-vision-20261126 初始2387ffe9405b77c3b8b7deed15a21113f3b4f55d，最新44dfd3718c5e7e6fe4f02b15133cb76b7380ffd5。独立包com.vobich.bluestar.gemmalab.highbudget v0.1.1，原厂v0.1.0共存。最新CI先下载原文件验SHA，解析容器及TFLite encoder/adapter签名和形状，要求1120真实存在；解析protobuf仅在Gemma4 max_num_patches=2520且pooling默认/3时，等长改10080、验证其他protobuf字段相同及官方ModelInfo max1120/signatures含1120；生成精确offset/前后字节/全新SHA的patch.properties供APK打包；APP导入原文件后仅在私有临时副本修正且验证完整新SHA，原文件与280版本不改。若校验失败不构建/发布。此修正尚未实际验证。保留原GPU/GPU、context4000、原图输入、TTS、常驻与日志。仅显示实际支持档位，不假造560。新CI尚未查询到run。
+- 独立官方路线exp/gemma4-official-export-20261126 HEAD57529081e903534a6dac27513763453c5d956ee5；CI45667440751 in_progress。LiteRT Torch固定046b0e55333f20adbedff78c43b468005a78118b，Google官方移动QAT checkpoint google/gemma-4-E2B-it-qat-mobile-transformers 固定dd693ff40353f057ca5f07e945ad867f4afbf2ec，官方export Python API请求280/560/1120、无额外文字PTQ、视觉动态wi8、4096 cache、图文模式。不是原厂部署语言字节完全一致的承诺。标准CPU runner资源、nightly依赖、转换及runtime兼容性均未验证。仅metadata通过才上传CI artifact，尚未产生模型或安装包。待检查两CI，若成功再真机，失败查具体日志，不回退已验证280版。
+
+---
+
 # 最新｜Gemma 原图实验 v0.1.0 已发布
 - CI45664351739 build/publish均success；单元测试、APK签名、独立包身份、ARM64原生库、无INTERNET权限检查通过。Release bluestar-gemma-v010-original-image-20261126 非草稿，target 97378223766d45c9f855ba863335fd12d5808a7c，APK 18203584 bytes，SHA256 af889a24b7b1e4b9ea8b5eab0589a8fb13f4ebefbb43d676910f64a14e3a6952，已核实uploaded。
 - 下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-gemma-v010-original-image-20261126/BlueStar_Gemma_Lab_0.1.0.apk
