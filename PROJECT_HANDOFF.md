@@ -24,6 +24,8 @@
 
 - v0.1.5 CI45590730234 failure，Kotlin编译LabService的Message.obtain与LiteRT-LM Message名称冲突。无需再次授权已修复b337fc02094f8c07b7d79257eb1e371474288de0，显式import android.os.Message；v0.1.6最终修正版CI45591118120 https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45591118120 in_progress，前一v0.1.6构建45590953688未包含该修复。只交付经核实的最终修正版，未确认发布。
 
+- 最终v0.1.6 CI45591118120 completed/success，job139125274646构建、单测、验证、artifact、Release均成功。前两轮45590730234、45590953688因Message冲突失败，最终b337fc02094f8c07b7d79257eb1e371474288de0修复成功。Release tag bluestar-npu-lab-v016-20261125，目标b337fc02094f8c07b7d79257eb1e371474288de0，APK BlueStar_GPU_NPU_Lab_0.1.6.apk，18474951 bytes，SHA256 83de3904e094f117635438f6a61547b87bf2d1ee9c315f300c168973dab6e0b4。直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-npu-lab-v016-20261125/BlueStar_GPU_NPU_Lab_0.1.6.apk 。包com.vobich.bluestar.npulab.speed，独立安装，保留原模型下载文件重新导入，不必重新下载；若原文件删除，旧app私有模型不能保证直接访问。推荐内置图CPU/GPU自动对比后NPU，发送数值日志。GPU/NPU真实硬件参与及速度、超时隔离行为尚待真机，正式蓝星未修改。用户授权全流程已执行至发布，无中间再次确认。
+
 ---
 
 # 2026-11-25｜视觉编码器Q8量化与MT6991 NPU研究（Host实验通过，真机及NPU未验证）
