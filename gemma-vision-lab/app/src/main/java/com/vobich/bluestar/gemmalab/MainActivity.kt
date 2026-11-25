@@ -82,9 +82,8 @@ class MainActivity:Activity(){
   root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(12),dp(12),dp(24))}
   setContentView(ScrollView(this).apply{addView(root)})
   label("蓝星 Gemma 560 实验室 0.1.2",24f);label("Gemma 4 E2B · LiteRT-LM 0.18.1 · 离线")
-  status=label("请导入实验专用560模型")
-  button("打开560模型下载页",{try{startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-gemma-v012-560-20261126")))}catch(t:Throwable){status.text="无法打开浏览器"}})
-  button("导入 .litertlm 模型",{pick(11,"*/*")})
+  status=label("请导入已下载的原厂280模型")
+  button("导入原厂模型（本地生成560）",{pick(11,"*/*")})
   label("推理后端（视觉 / 语言）");backend=spinner(listOf("GPU / GPU（默认）","GPU / CPU","CPU / CPU"))
   label("视觉 Token（模型实际支持）");budget=spinner(listOf("导入后显示"))
   label("同图输入对照（保持比例、不裁剪）");mode=spinner(listOf("原图原字节（默认）","长边1024 PNG","长边512 PNG"))
@@ -122,21 +121,20 @@ class MainActivity:Activity(){
   if(resultCode!=RESULT_OK)return
   val uri=data?.data?:return
   if(requestCode==11){
-   lock(true);hasChat=false;options=emptyList();status.text="复制并校验模型..."
+   lock(true);hasChat=false;options=emptyList();status.text="校验原厂模型并本地组装560..."
    worker.execute{
     val temp=File(filesDir,"import.tmp")
     try{
-     release();val digest=MessageDigest.getInstance("SHA-256");var total=0L;var last=0L
-     contentResolver.openInputStream(uri)!!.use{input->temp.outputStream().buffered().use{out->
-      val b=ByteArray(1024*1024)
-      while(true){val n=input.read(b);if(n<0)break;total+=n;require(total<=modelSize){"文件大小不匹配"};digest.update(b,0,n);out.write(b,0,n)
-       if(total-last>=64L*1024*1024){last=total;val percent=total*100/modelSize;ui{status.text="导入 "+percent+"%"}}
-      }
-     }}
-     val sha=digest.digest().joinToString(""){"%02x".format(it.toInt() and 255)}
-     require(total==modelSize&&sha==modelSha){"非本实验验证的560版本：bytes="+total+" sha="+sha}
-     stamp.delete();if(model.exists())check(model.delete());check(temp.renameTo(model));stamp.writeText(sha)
-     ui{note("model_verified bytes="+total+" sha="+sha)};metadata()
+     release()
+     require(filesDir.usableSpace>modelSize+128L*1024*1024){"可用存储不足，需约"+((modelSize+128L*1024*1024)/1024/1024)+"MB"}
+     contentResolver.openInputStream(uri)!!.buffered().use{input->
+      ModelPatch.apply(input,temp,verifiedModel,{name->assets.open(name)}){done,total->ui{status.text="本地组装 "+(done*100/total)+"%"}}
+     }
+     ModelInfo.from(temp.absolutePath).use{m->
+      require(m is ModelInfo.Llm&&m.maxVisionTokenBudget()==560&&Policy.budgets(m.visionSignatureSelection(),560).containsAll(listOf(280,560))){"组装模型签名错误"}
+     }
+     stamp.delete();if(model.exists())check(model.delete());check(temp.renameTo(model));stamp.writeText(modelSha)
+     ui{note("model_verified source=official_280 local_patch=true bytes="+modelSize+" sha="+modelSha)};metadata()
     }catch(t:Throwable){ui{status.text="导入失败: "+t.message;note(status.text.toString());lock(false)}}finally{temp.delete()}
    }
   }else if(requestCode==12){

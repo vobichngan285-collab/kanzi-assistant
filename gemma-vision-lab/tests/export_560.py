@@ -44,28 +44,69 @@ for cls,name,adapter in [(vision_exportable.LiteRTExportableModuleForGemma4Visio
     assert (work/(name+".tflite")).stat().st_size>0
     print("exported",name,flush=True)
 del src
-# Unpack and repack with official builder. Verify all non-vision section bytes below.
-unpacked=Path("unpacked");unpacked.mkdir()
-toml=Path(builder.unpack(str(base),str(unpacked)))
-sections=tomllib.loads(toml.read_text())["section"]
-changes=[]
-for section in sections:
-    typ=section.get("model_type","").removeprefix("tf_lite_")
-    p=unpacked/section["data_path"]
-    if typ in ("vision_encoder","vision_adapter"):
-        assert section["section_type"]=="TFLiteModel",section
-        shutil.copyfile(work/(("encoder" if typ=="vision_encoder" else "adapter")+".tflite"),p)
-        changes.append(typ)
-    elif section["section_type"]=="LlmMetadata":
-        m=llm_metadata_pb2.LlmMetadata()
-        text_format.Parse(p.read_text(),m)
-        g=m.llm_model_type.gemma4
-        assert g.max_num_patches==2520 and g.pooling_kernel_size in (0,3)
-        g.max_num_patches=5040
-        p.write_text(text_format.MessageToString(m))
-assert sorted(changes)==["vision_adapter","vision_encoder"],changes
+# Build an exact section-copy plan. Do not decode/recompress the tokenizer or
+# touch any language/embedding/audio section. Preserve original header metadata.
+import flatbuffers, struct
+from litert_lm_builder import litertlm_core as core
+schema=peek.schema
+raw_header=peek.read_litertlm_header(str(base),sys.stdout)
+header=schema.LiteRTLMMetaDataT.InitFromObj(raw_header)
+section_info=raw_header.SectionMetadata()
+patch=Path("patch-assets");patch.mkdir()
+rows=[]
+changed=[]
+with base.open("rb") as f:
+    for i,obj in enumerate(header.sectionMetadata.objects):
+        s=section_info.Objects(i)
+        typ=peek.get_model_type(s) or ""
+        start,end=s.BeginOffset(),s.EndOffset()
+        assert 0<=start<end<=base.stat().st_size
+        asset=None
+        if s.DataType()==schema.AnySectionDataType.TFLiteModel and typ in ("tf_lite_vision_encoder","tf_lite_vision_adapter"):
+            name="encoder" if typ.endswith("encoder") else "adapter"
+            asset=name+".tflite"
+            shutil.copyfile(work/asset,patch/asset)
+            changed.append(typ)
+        elif s.DataType()==schema.AnySectionDataType.LlmMetadataProto:
+            f.seek(start)
+            m=llm_metadata_pb2.LlmMetadata.FromString(f.read(end-start))
+            g=m.llm_model_type.gemma4
+            assert g.max_num_patches==2520 and g.pooling_kernel_size in (0,3)
+            g.max_num_patches=5040
+            asset="metadata.bin"
+            (patch/asset).write_bytes(m.SerializeToString())
+            changed.append("metadata")
+        rows.append(dict(source=start,n=(patch/asset).stat().st_size if asset else end-start,asset=asset))
+assert sorted(changed)==["metadata","tf_lite_vision_adapter","tf_lite_vision_encoder"],changed
+assert all(rows[i]["source"]<rows[i+1]["source"] for i in range(len(rows)-1))
+def serialize():
+    fb=flatbuffers.Builder(core.BLOCK_SIZE)
+    fb.Finish(header.Pack(fb))
+    return bytes(fb.Output())
+def align(n):return (n+core.BLOCK_SIZE-1)//core.BLOCK_SIZE*core.BLOCK_SIZE
+initial=serialize()
+offset=align(core.HEADER_BEGIN_BYTE_OFFSET+len(initial))
+for row,obj in zip(rows,header.sectionMetadata.objects):
+    row["dest"]=offset
+    obj.beginOffset=offset;obj.endOffset=offset+row["n"]
+    offset=align(obj.endOffset)
+final=serialize()
+assert len(final)==len(initial)
+with base.open("rb") as f: prefix=bytearray(f.read(core.HEADER_BEGIN_BYTE_OFFSET))
+struct.pack_into("<Q",prefix,core.HEADER_END_LOCATION_BYTE_OFFSET,core.HEADER_BEGIN_BYTE_OFFSET+len(final))
+(patch/"header.bin").write_bytes(prefix+final)
+rows.insert(0,dict(source=-1,dest=0,n=len(prefix)+len(final),asset="header.bin"))
 out=Path("Gemma_E2B_560.litertlm")
-builder.pack(str(toml),str(out))
+with base.open("rb") as f,out.open("wb") as o:
+    for row in rows:
+        o.seek(row["dest"])
+        if row["asset"]:
+            with (patch/row["asset"]).open("rb") as inp: shutil.copyfileobj(inp,o,1024*1024)
+        else:
+            f.seek(row["source"]);n=row["n"]
+            while n:
+                block=f.read(min(n,1024*1024));assert block;o.write(block);n-=len(block)
+    assert o.tell()==rows[-1]["dest"]+rows[-1]["n"]
 def scan(path):
     h=peek.read_litertlm_header(str(path),sys.stdout).SectionMetadata()
     result=[];metas=[];graphs={}
@@ -94,9 +135,29 @@ oldmeta[0].llm_model_type.gemma4.max_num_patches=5040
 assert oldmeta==newmeta,"Unexpected metadata change"
 assert any(5040 in s for s in graphs["tf_lite_vision_encoder"]["vision_560"])
 assert any(560 in s for s in graphs["tf_lite_vision_adapter"]["vision_adapter_560"])
-with litert_lm.ModelInfo(out) as m:
+with litert_lm.ModelInfo(str(out)) as m:
     assert m.max_vision_token_budget==560 and {280,560}.issubset(m.vision_signature_selection or [])
     print("verified",m.max_vision_token_budget,m.vision_signature_selection,flush=True)
 print("identical non-vision sections",len(old),flush=True)
 print("graphs",graphs,flush=True)
-Path("model.properties").write_text("size="+str(out.stat().st_size)+"\nsha256="+digest(out)+"\n")
+props=["source_size="+str(base.stat().st_size),"source_sha256="+digest(base),"size="+str(out.stat().st_size),"sha256="+digest(out),"count="+str(len(rows))]
+for i,row in enumerate(rows):
+    props.extend([f"{i}.source={row['source'] if not row['asset'] else -1}",f"{i}.dest={row['dest']}",f"{i}.size={row['n']}",f"{i}.asset={row['asset'] or ''}"])
+(patch/"model.properties").write_text("\n".join(props)+"\n")
+# Independently reconstruct from exactly the packaged assets + original file.
+replay=Path("replay.litertlm")
+with base.open("rb") as f,replay.open("wb") as o:
+    for row in rows:
+        o.seek(row["dest"])
+        if row["asset"]:
+            with (patch/row["asset"]).open("rb") as inp: shutil.copyfileobj(inp,o,1024*1024)
+        else:
+            f.seek(row["source"]);n=row["n"]
+            while n:
+                block=f.read(min(n,1024*1024));assert block;o.write(block);n-=len(block)
+assert digest(replay)==digest(out)
+replay.unlink()
+total=sum(x.stat().st_size for x in patch.iterdir())
+print("incremental_asset_bytes",total,flush=True)
+assert total<1_000_000_000,"Incremental assets too large for single APK"
+

@@ -1,2 +1,2 @@
-# 蓝星 Gemma 560 实验 v0.1.2
-独立包 com.vobich.bluestar.gemmalab.vision560，不改280/1120旧包和正式软件。仅转换谷歌官方移动QAT checkpoint的视觉编码器和适配器为280/560签名，复用原厂Gallery部署文件其他全部section，以逐section SHA验证；元数据只改max_num_patches=5040。用官方LiteRT-LM 0.18.1 ModelInfo验证560，未成功则不构建和发布APK。官方导出采用V2 meta流式加载绕过之前全模型from_pretrained PLE尺寸冲突，不忽略权重不匹配，不允许随机权重。新视觉量化和图结构可能不同于旧原厂视觉；实际推理尚需真机验证。原图/1024/512、GPU/GPU、TTS、同模型280/560对照保留；不加入YOLO。模型下载为对应GitHub Actions run的gemma560-model artifact，解压后导入Gemma_E2B_560.litertlm。原始280文件不可作为560导入。模型体积和耗时待验证。
+# 蓝星 Gemma 560 实验 v0.1.2（增量内置）
+仅需下载APK。导入先前下载的原厂2.59GB模型（固定SHA 181938105e0eefd105961417e8da75903eacda102c4fce9ce90f50b97139a63c），APP内置官方视觉编码器/适配器、元数据及新文件头，流式复制原始不变section，本地生成560私有副本，不修改原文件。校验完整源/目标SHA与真实280/560签名。需要额外本地空间存放新副本；APK实际体积待转换。服务器先验证非视觉section字节一致、protobuf只改max_num_patches、560形状及ModelInfo、增量重组输出SHA一致，随后才构建、签名并验证APK内置资产。原厂280/第三方1120/正式蓝星不变，不加YOLO。此前V2转换缺少TensorFlow支持；本轮显式安装tf-nightly-cpu并预检V2能力。仅视觉重新导出，不承诺视觉量化与原厂280一致，实际推理待真机。
