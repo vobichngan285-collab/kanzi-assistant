@@ -8,6 +8,8 @@
 
 - 第二轮45555596729：官方依赖源成功，Gradle编译及单元测试全部通过（BUILD SUCCESSFUL 47任务）；APK有效签名，但实际证书303c5e918da1fda0a88f1fe23f6c7a0858253f0706e01dcfb5a68a1f3fa5e6dd与预设证书不同，末道验证正确拦截，未发布。修复提交 4fa2875c7ef526f9786ef16049e87f8be9faa0a5，显式绑定Gradle debug signer到RUNNER_TEMP内预比较密钥绝对路径，保留签名严格比对，不改识别逻辑；第三轮 Actions 45562187102 in_progress。实时预览搜寻只讨论未授权实现。
 
+- 第三轮45562187102 completed/success，全部编译/单元测试/APK包名签名原生库及与v0.1.0模型元数据一致性验证通过，发布已核实，target 4fa2875c7ef526f9786ef16049e87f8be9faa0a5；APK 22553126 bytes，SHA256 a4fc1eb09fa32cd0d494b8a1ea9530fe6664ea4f4b2aff794c83393a87d93c82。实际包名com.vobich.bluestar.offlinelab.speed，side_by_side，签名394024578471e7252c417a63c767c85cb1bdf9742bbf65d409a71f474b3b96af，与旧版不同；旧版不可卸载，附ADB迁移脚本（未真机验证）或用户自行下载。APK https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-offline-ai-lab-v011-20261125/BlueStar_Offline_AI_Lab_0.1.1.apk 。先进行1B切片、分辨率真机对照；未实现实时预览搜寻；正式版不变。
+
 ---
 
 # 2026-11-25｜蓝星离线AI实验室 v0.1.0（独立实验，CI通过已发布，真机待验）
