@@ -1,3 +1,10 @@
+# 最新｜已证实视觉FC权重漏反量化；精确修复对照运行中
+- CI45716914147 completed/success，job139565208504。三方权重审计报告artifact15069498897。前两层14个Q/K/V/O、MLP gate/up/down INT8权重：抽样原厂raw、HF QAT raw、转换FP32值完全一致(relative L2=0)，HF逐通道乘实际scale后的抽样与原厂反量化完全一致(relative L2=0)。第0层Q/K/V/O范数比517.34/508.91/511.48/513.26；gate/up/down 512.76/512.89/1025.12。第2层QKV仅原厂/转换两方raw抽样一致，HF未下载该层对应权重，不能当三方验证。第一图像投影非量化且输出此前已接近。明确转换FC常量为未反量化整数值；仍需实测正确尺度是否充分恢复整图特征，以及排除图内补偿和激活量化差异。
+- 按用户一次性完成的授权，独立诊断分支exp/gemma4-vision-numerics-20261126 HEAD 7ac8ca822b03b6f49fc5ed3c1524ac19c5730999，新增test_scale_correction.py及调整独立workflow。仅对临时encoder副本按全量INT8内容SHA256+shape匹配原厂280的112个独立FC权重，要求转换280/560各完整匹配且无未匹配整数权重；严格使用原厂真实量化轴、scale、zero point写入FP32，不用固定512比例。复验3种280输入的最终特征及mask，560仅有限性检查。保留原文件、正式APP和已发布APK，不将未经验证的临时模型发布。CI45717336793已核实in_progress，尚无修复后数值或安装包。
+- https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45717336793
+
+---
+
 # 最新｜Gemma 量化权重三方数值审计（已启动）
 - CI45716236089逐层检测completed/success，43个FC检查点及32个候选残差，原厂与转换图各自插桩前后features完全一致、mask一致。首图像投影余弦0.9999997602，相对L2 0.000692702；第一组注意力输出投影候选相对L2 326.57。MLP两门控权重范数约512倍差异，后续多组INT8/FP32投影亦有数百倍尺度差异；原厂首个候选残差相对L2 0.14439，最后一个候选残差1.18763。基于结构匹配和抽样，不能将差异直接等同于漏乘某个固定系数，或断言最早出错的具体算子。
 - 核查固定官方LiteRT Torch源码046b0e55333f20adbedff78c43b468005a78118b中core/quantization_layer/gemma_quant.py：Gemma子字节权重使用offset binary，INT8转换为有符号int8，显式使用weight_scale反量化，支持分块或逐输出通道；export_lib._convert_and_export_module使用量化准备与weights loader。源码预期不代表当前导出实测正确。
