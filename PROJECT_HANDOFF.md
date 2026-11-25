@@ -1,3 +1,11 @@
+# 最新｜Gemma 量化权重三方数值审计（已启动）
+- CI45716236089逐层检测completed/success，43个FC检查点及32个候选残差，原厂与转换图各自插桩前后features完全一致、mask一致。首图像投影余弦0.9999997602，相对L2 0.000692702；第一组注意力输出投影候选相对L2 326.57。MLP两门控权重范数约512倍差异，后续多组INT8/FP32投影亦有数百倍尺度差异；原厂首个候选残差相对L2 0.14439，最后一个候选残差1.18763。基于结构匹配和抽样，不能将差异直接等同于漏乘某个固定系数，或断言最早出错的具体算子。
+- 核查固定官方LiteRT Torch源码046b0e55333f20adbedff78c43b468005a78118b中core/quantization_layer/gemma_quant.py：Gemma子字节权重使用offset binary，INT8转换为有符号int8，显式使用weight_scale反量化，支持分块或逐输出通道；export_lib._convert_and_export_module使用量化准备与weights loader。源码预期不代表当前导出实测正确。
+- 用户授权仅排查量化与权重尺度。原独立分支exp/gemma4-vision-numerics-20261126 HEAD f9fa70c1ad07b67ed2e64814b2f6ea640b1b196c，新增compare_vision_scales.py及调整诊断workflow；沿用已校验原厂280及转换280/560产物，读取原厂FlatBuffer真实量化轴/scale/zero point及常量，匹配前三组FC投影，下载固定官方QAT checkpoint dd693ff40353f057ca5f07e945ad867f4afbf2ec的视觉权重及weight_scale，按真实shape和官方解包规则对比原始整数、反量化浮点与部署常量，记录范数比、余弦、相对L2及候选匹配；若找不到checkpoint匹配不能视为通过。只读实验，无模型重导、无APK、不改正式APP。CI45716914147已核实in_progress，尚无真实报告，不预判根因。
+- https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45716914147
+
+---
+
 # 最新｜修复逐层检测CI触发条件
 - 上一修复提交3bff27575e483967fca7841a8f62ad4d0ab780b5未触发CI，实际workflow paths只包含原compare_vision.py与workflow本身，遗漏compare_vision_layers.py。已在原独立分支提交f3d71f0764a2484ba14056c68568a11adf04d5af，补齐路径并锁定上轮实际成功安装的ai-edge-litert 2.4.0、tflite 2.18.0、numpy 2.5.5。未修改APP或模型。新运行需查询实际Actions，暂无数值报告。
 
