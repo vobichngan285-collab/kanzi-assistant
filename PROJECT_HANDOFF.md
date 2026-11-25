@@ -1,3 +1,10 @@
+# 最新｜v0.1.3 MT6991真机日志：视觉GPU阻塞、CPU视觉延迟过高
+- 用户真机Android16 SDK36，MT6991，导入校验成功，完整模型3034159952字节 SHA256 fb4159987f3cd30aba817ded3b83a04c81a4a09991d88fafee31d1325490c2f8，max_visual=560、options=280,560。CPU/CPU冷3072x4096：load3055ms、首字30082ms、inference_first25953ms、total37536ms，prefill182.47tok/s、decode21.09tok/s；CPU/CPU热844x928：load0、首字26752ms、inference_first26716ms、total31640ms，prefill163.20tok/s、decode20.45tok/s。CPU视觉/GPU语言冷同尺寸844x928：load29300ms、首字57614ms、inference_first26290ms、total61971ms，prefill428.79tok/s、decode20.82tok/s。GPU语言热态未测；视觉CPU是首字瓶颈，不能凭不同冷/热条件断言GPU语言更慢。用户未提供实际识别文本，手机准确率尚待核对。
+- GPU视觉/CPU语言、GPU视觉/GPU语言均在createConversation失败：vision_litert_compiled_model_executor.cc:313 -> litert_compiled_model.h:1961 Some ops are not accelerated，要求CPU accelerator。查官方固定v0.18.1源码，VisionEncoder::Initialize GPU分支仅SetHardwareAccelerators(kGpu)，adapter GPU分支也未显式配置混合后端。下一步独立实验可针对encoder允许kGpu|kCpu并配置CPU options，验证真实GPU分区/CPU回退与正确性、速度；不能仅将语言GPU或改UI标签当作视觉加速。官方源构建指南支持Bazel Android arm64 JNI；需同版本匹配原AAR和GPU库，未实际构建或测试混合后端。保留精确560权重和正式APP；若混合后端仍慢，进一步恢复原厂量化/composite结构，避免无依据改变权重或降低Token。
+- 本次仅记录真机反馈及源码核查，未提交新APK。
+
+---
+
 # 最新｜560修复实验 v0.1.3 已发布，待真机验证
 - 已通过Release API核实 tag bluestar-gemma-v013-560-corrected-20261126 非草稿，APK BlueStar_Gemma_560_Corrected_0.1.3.apk 已上传，693122351字节，README与SHA256SUMS亦已上传。下载：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-gemma-v013-560-corrected-20261126/BlueStar_Gemma_560_Corrected_0.1.3.apk
 - 独立安装包，导入原厂280文件生成修复560，先用默认CPU/CPU验证复杂价格表，然后同图同预算切换CPU视觉/GPU语言做冷热速度对照；GPU视觉两档仅供兼容性实验。服务端识别、构建与签名已验证，手机性能与GPU尚未验收。正式APP不变。
