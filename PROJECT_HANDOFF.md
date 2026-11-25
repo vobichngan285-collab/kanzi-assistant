@@ -26,6 +26,8 @@
 
 - 最终v0.1.6 CI45591118120 completed/success，job139125274646构建、单测、验证、artifact、Release均成功。前两轮45590730234、45590953688因Message冲突失败，最终b337fc02094f8c07b7d79257eb1e371474288de0修复成功。Release tag bluestar-npu-lab-v016-20261125，目标b337fc02094f8c07b7d79257eb1e371474288de0，APK BlueStar_GPU_NPU_Lab_0.1.6.apk，18474951 bytes，SHA256 83de3904e094f117635438f6a61547b87bf2d1ee9c315f300c168973dab6e0b4。直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-npu-lab-v016-20261125/BlueStar_GPU_NPU_Lab_0.1.6.apk 。包com.vobich.bluestar.npulab.speed，独立安装，保留原模型下载文件重新导入，不必重新下载；若原文件删除，旧app私有模型不能保证直接访问。推荐内置图CPU/GPU自动对比后NPU，发送数值日志。GPU/NPU真实硬件参与及速度、超时隔离行为尚待真机，正式蓝星未修改。用户授权全流程已执行至发布，无中间再次确认。
 
+- 用户v0.1.6 MT6991真机完整自动对比（确认未整体卡住），同一image_sha099d308e01e3、模型1698202736 bytes，三种完成模式每轮chars12/chunks10/thought_chunks0/CER0、prefill98/decode11，硬件实际执行均unverified。CPU6 load18571ms，session6416/1/1，first3148/2764/1454ms，total3438/3033/1724ms，process CPU10136/9622/7722ms，PSS2406677/2581164/2580836KiB；GPU视觉+CPU6 load20918ms，session13431/1/2，first3891/1808/1688ms，total4245/2086/1971ms，process CPU8440/5055/4961ms，PSS2883721/2880023/2879855KiB；GPU全面load超时120135ms，未进入识别，成功隔离终止并进入NPU（不等同确定永久不支持）；NPU视觉+CPU6 load32733ms，session5393/3/1，first17226/5000/6452ms，total17602/5305/7054ms，CPU11364/9600/9553ms，PSS2805410/2763286/2517138KiB，正常mode_complete。第2/3轮平均首字CPU2109/GPU1748/NPU5726ms，GPU比本批CPU少17.12%，暖完整CPU2378.5/GPU2028.5/NPU6179.5ms，暖CPU累计8672/GPU5008/NPU9576.5ms，GPU少42.25%，但同图v0.1.4 CPU暖首字1448.5ms更快，v0.1.6 CPU第3轮1454ms也比GPU两次快，顺序/热状态/系统负载/进程架构/缓存差异未控，不能定论GPU更快或更省电。下一步建议CPU与GPU视觉同图多轮交错/独立重复、温度和PSS与累计CPU诊断、真实密集图CER、模型常驻；NPU与GPU全面暂不作为默认，先不改APK。真实加速器执行和覆盖未证实。
+
 ---
 
 # 2026-11-25｜视觉编码器Q8量化与MT6991 NPU研究（Host实验通过，真机及NPU未验证）
