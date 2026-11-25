@@ -59,16 +59,19 @@ for label,budget in (("original",280),("unfixed",560),("corrected",560)):
         with litert_lm.ModelInfo(str(target)) as info:
             print("model_info",label,info.max_vision_token_budget,info.vision_signature_selection,flush=True)
             assert info.max_vision_token_budget==budget
-        assert "max_vision_tokens_per_image" in inspect.signature(litert_lm.Engine).parameters,"Cannot explicitly select budget"
+        # v0.18.1 Python does not expose explicit budget; runtime uses image patch count and model metadata.
+        # A 1512x1512 input exceeds 280 token capacity. Log selected signature if native runtime reports it.
+        budget_kwargs={"max_vision_tokens_per_image":budget} if "max_vision_tokens_per_image" in inspect.signature(litert_lm.Engine).parameters else {}
+        print("budget_selection",label,"explicit" if budget_kwargs else "auto_from_image_and_metadata",flush=True)
         t=time.monotonic()
-        with litert_lm.Engine(str(target.resolve()),backend=litert_lm.Backend.CPU(),vision_backend=litert_lm.Backend.CPU(),max_num_tokens=2048,max_vision_tokens_per_image=budget) as engine:
+        with litert_lm.Engine(str(target.resolve()),backend=litert_lm.Backend.CPU(),vision_backend=litert_lm.Backend.CPU(),max_num_tokens=2048,max_num_images=1,**budget_kwargs) as engine:
             print("engine_ready",label,round(time.monotonic()-t,3),flush=True)
             for name,lines in examples:
                 with engine.create_conversation() as conv:
                     message={"role":"user","content":[{"type":"image","path":str((out/(name+".png")).resolve())},{"type":"text","text":"逐行准确抄录图片中的全部文字和数字。只输出原文，不解释，不猜测。"}]}
-                    t=time.monotonic();res=conv.send_message(message);elapsed=time.monotonic()-t
+                    t=time.monotonic();res=conv.send_message(message,max_output_tokens=256);elapsed=time.monotonic()-t
                     content=extract(res)
-                    row={"model":label,"budget":budget,"case":name,"expected":"\n".join(lines),"output":content,"cer":cer("".join(lines),content),"seconds":elapsed}
+                    row={"model":label,"max_budget":budget,"selection":"explicit" if budget_kwargs else "auto","case":name,"expected":"\n".join(lines),"output":content,"cer":cer("".join(lines),content),"seconds":elapsed}
                     records.append(row);print("ocr_result",json.dumps(row,ensure_ascii=False),flush=True)
     except Exception as exc:
         records.append({"model":label,"error":repr(exc)});print("ocr_unavailable",label,repr(exc),flush=True)
