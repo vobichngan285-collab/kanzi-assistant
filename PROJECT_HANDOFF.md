@@ -20,6 +20,8 @@
 
 - 用户确认v0.1.4请求NPU加载后未闪退，未回传完整识别结果；批准一次性增加GPU视觉、GPU全面及NPU卡顿诊断直至APK。已核查固定LiteRT-LM v0.18.1 vision executor 的GPU分支为kGpu，NPU为kNpu|kCpu，保留原运行库版本与原SHA模型。提交1e87fdbe59c5f4a5af525a41f33c28b63c0f5d5a：仅改独立litert-npu-lab及其workflow，v0.1.5四模式（CPU6/GPU视觉+CPU6/GPU全面/NPU视觉+CPU6），同图、每组3轮、greedy、关闭思考；新增LabService :inference 隔离进程、LabController主进程看门狗，按连接/加载/创建会话/发送/首字/关闭阶段记录数值日志与10s心跳，超时或手动停止终止推理进程，退出确认后下组，否则停止批次；CPU累计时间与PSS辅助，硬件执行未验证。旧版debug签名不可保证覆盖，独立包com.vobich.bluestar.npulab.speed，版本Code2，原始LiteRT文件重新导入，无需重新下载；保留旧APK/正式版。CI自动测试、构建、签名、arm64三库、隔离进程声明及无INTERNET校验后发布，tag bluestar-npu-lab-v015-20261125。CI 45590730234 in_progress https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45590730234。APK尚未核实发布，GPU/NPU速度与超时行为仍需真机测试。
 
+- 发布前复核发现模式切换500ms间隔可能使看门狗停止调度，已修正提交01140fa2bf6d35d8757170a9152c700a70292843，明确使用android.os.Process，版本递增v0.1.6 versionCode3，独立包仍com.vobich.bluestar.npulab.speed，最终tag bluestar-npu-lab-v016-20261125。CI45590953688 https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45590953688 已启动；v0.1.5是中间构建不建议使用，即使CI发布也仅交付v0.1.6或后续修正版。模型、原签名保护、正式版均不变。尚未验证最终构建及真机。
+
 ---
 
 # 2026-11-25｜视觉编码器Q8量化与MT6991 NPU研究（Host实验通过，真机及NPU未验证）
