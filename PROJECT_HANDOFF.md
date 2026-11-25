@@ -4,6 +4,7 @@
 - 原仓库内独立分支 exp/minicpm-hd-vision-20261125 从稳定ec03ee861d8de36c5782adc789307f0b8fa41532建立，提交2edd3e68ba9950745d4b35dc95ae76726a7560b4，compare核实仅新增hd-vision-probe/probe.py、README.md及独立workflow三文件。固定上游转换源码a395b4967fa9e879a5de548d83399b4be2487b1e及原作者shipping recipe的HF源revision984a89aafcd5160164f4f0d04b4be0f4eec03cb8；真实原始权重、固定相同合成中英数字价目表、448/16x控制、448/4x、896/16x三个独立runner。先HF native features、再改造纯Torch、真实fp32 TFLite导出与Interpreter，检查形状、有限数值、最终视觉特征cos_mean>=.999/cos_min>=.98，记录包版本及源权重SHA；只上传报告不上传权重，不使用用户照片。上游环境固定版本、实际依赖安装/运行待CI；896可能内存或超时。未验证量化、整模型解码、视觉token注入、元数据、Android、速度或OCR准确率。通过后再研究保留原decoder及executor metadata重打包和端到端测试，不能把图形验证当APK。
 - CI [45609390322](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45609390322) 已触发；尚未完成模型转换，未生成APK。
 - CI45609390322 初轮448/4x及896/16x依赖安装和原权重下载均成功，HF全模型加载后runner收到shutdown signal并取消（原因未确认，不能直接断言OOM），尚未进入native_vision或TFLite。为去除无关内存压力，独立probe改用官方MiniCPMV4_7VisionModel/Merger，meta实例化及strict assign加载原视觉权重，直接按官方get_image_features调用链执行，省去语言模型；提交fba73443ac4e11dcd204c6ec5ccf79c0ccbf674c，复验CI [45609879650](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45609879650) 已启动。未有新模型或APK。
+- 第二轮CI45609879650 三组均在native reference加载配置阶段失败，日志ValueError Unrecognized model in source；原hf download日志提示忽略--include。已改用snapshot_download明确allow_patterns及config.json存在和vision_config检查，使用具体MiniCPMV4_7Config类而非AutoConfig；提交819dcd213239e52fdaa81b2e48820715fe9688bd；第三轮CI [45610739030](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45610739030) in_progress。无新模型/APK。用户要求一次性完成，不需逐项征询；仍只在独立分支推进。
 
 ---
 
