@@ -1,3 +1,10 @@
+# 最新｜v0.1.4编译环境权限修复并重跑
+- CI45722268120 completed/failure，native job139583243019 在Prepare source-build environment失败：服务器已预装Bazelisk，全局npm重复安装触发EACCES，未进入源码编译。原560模型及混合后端补丁未改。
+- exp/gemma4-560-hybrid-20261126 新HEAD 9fa1ebdad14638c7bc0ddebfa165f60bcf4ba166，构建脚本优先使用已有Bazelisk，缺失时安装至用户目录。最新CI45722867944已核实in_progress。尚无JNI/APK，需核实实际编译、ABI、发布及真机测试。
+- https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45722867944
+
+---
+
 # 最新｜560视觉GPU+CPU混合底层引擎实验 v0.1.4（构建中）
 - 用户授权开始。原仓库新隔离分支 exp/gemma4-560-hybrid-20261126 HEAD 0c0e5c413e801caa549ec48feea3ba2ecb04c319，基于v0.1.3成功提交f2d15ae7e47beca2f5afe3489750358c84fe66b4。固定官方 LiteRT-LM v0.18.1源码 bda624851d74be34d4e1f7fac1fc4155939539c7；patch_hybrid_runtime.py只改vision_litert_compiled_model_executor.cc的Encoder/Adapter GPU分支，配置CPU选项及缓存、允许kGpu|kCpu，日志BLUESTAR_VISION_HYBRID_014仅表示请求及执行完成，不代表实际GPU占比；CPU路径不变。
 - 独立源码CI以Bazel7.6.1/NDK r28b重编arm64 JNI，repack_hybrid_aar.py替换同版本原厂AAR的JNI，其余Kotlin/GPU库等文件保留，要求原JNI导出子集、ELF架构、动态依赖兼容及APK内JNI SHA/标记一致；重用45719718456的精确修复资产（encoder SHA 6b8caf8e6d95837eb8f0d82ae9aefbe88313e0bb8b23be253822adcfda85dd92，完整模型SHA fb4159987f3cd30aba817ded3b83a04c81a4a09991d88fafee31d1325490c2f8），不重导、不降560、不修改正式APP。独立包com.vobich.bluestar.gemmalab.vision560.hybrid避免旧版签名冲突，需重新导入原厂模型。
