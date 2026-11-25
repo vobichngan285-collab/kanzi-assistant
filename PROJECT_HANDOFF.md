@@ -1,3 +1,11 @@
+# 2026-11-25｜GPU实验室 v0.1.3 CPU恢复及Vulkan隔离（已提交，CI构建中）
+- 用户真机v0.1.2日志：ProtocolException、SocketTimeoutException；随后CPU/GPU自动对比、CPU线程自动对比、手动CPU各2次，共6轮均在requested=cpu threads=4 phase=begin后RuntimeException，未见backend_loaded，尚未进入GPU。模型SHA校验在begin之前，不能确定具体原生失败点或GPU不兼容。用户明确授权修复。
+- 核查固定引擎a5624430e61f44b4842246b15a352740218a3d49：Vulkan在全局backend registry构造/通用扫描阶段注册，CPU也受影响；原版同时修改model_params.devices/split_mode与offload参数。以上是候选原因，不宣称已证实。
+- 独立分支 fix/minicpm-gpu-recovery-v013-20261125，提交 ec30dcbc41ad14af4483900c8893e34b8e15e32f；回读比对仅新增gpu-ai-recovery/prepare.py、README.md、migrate-model.ps1和独立workflow共4文件，旧实验及正式蓝星向导1.0.98不动。以固定v0.1.1基线恢复CPU默认模型设备/上下文参数，禁止Vulkan全局自动注册及通用扫描；仅在GPU视觉模式且LLM成功加载后注册，释放模型/上下文/投影器后删除静态注册项（不dlclose；非独立进程，驱动全局状态可能常驻）。GPU模式LLM禁用KQV/host op offload，拒绝GPU未启用；保留1B、单切片、贪心、CPU4/6/8、GPU视觉、1冷2暖及分段计时。新增llm_load/vision_load/context_prepare/backend_verify/inference阶段和原生返回码，同步保存最后阶段及数值日志；11无GPU、12注册异常、13未编入、14视觉初始化异常。日志不包含图片/提示词/识别文本/私有路径。尚未真机验证。
+- CI [45573819723](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45573819723) in_progress；待核实源码补丁、构建、单测、签名、模型元数据、Vulkan及JNI/注册符号、发布资产。签名与v0.1.2一致才升级原.gpu包（versionCode2），否则独立.gpu.recovery；迁移脚本优先GPU旧包、.speed、旧包，需额外空间约1.78GB，未真机验证。权重不变，不卸载旧版。下载异常尚未专项修复。未验证APK不得给直链；计划tag bluestar-gpu-ai-lab-v013-20261125。
+
+---
+
 # 2026-11-25｜蓝星GPU实验室 v0.1.2（独立APK，构建中）
 - 用户明确批准制作CPU/GPU对比实验版；前置Vulkan探针45566558972成功，不等于天玑9400真机加速。沿用已发布v0.1.1模型及哈希；仅新增gpu-ai-lab/与.github/workflows/minicpm-gpu-lab.yml，不改正式版或既有速度实验。HEAD 900e2fe64d25d5c61ff1fdbd402e8f2a80bb6f68，初次提交8310a3262e30311fa6781d01ec50f80ddc91cc48 / CI45568870729的基准release tag误替换，已修复并增加ELF/JNI校验，当前CI45569008722 in_progress https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45569008722。
 - 复用v0.1.1 prepare.py，固定原引擎a5624430e61f44b4842246b15a352740218a3d49、Vulkan/SPIRV头文件与NDK；独立包com.vobich.bluestar.offlinelab.gpu，Android28+，仅UI显示1B、原两款模型目录元数据完全保持一致。GPU仅视觉编码，LLM固定CPU、禁用KQV/host op offload；CPU4/6/8与GPU视觉+CPU4，同图固定单切片，分别1冷2暖、每次重置上下文；为对照采用贪心采样（不同于v0.1.1温度0.7）。不硬改4x/16x投影器，日志读取真实merge与image_size。
