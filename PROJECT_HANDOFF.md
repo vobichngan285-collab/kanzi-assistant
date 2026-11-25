@@ -6,6 +6,8 @@
 
 - 速度专项首轮45555111990失败：真实旧APK证书934e8d035239b0f1a164b2a2c49e887eb223b78e5b50be2d6d1858d8ee60164b，与本轮临时新证书不一致，已确认不可直接覆盖，需独立.speed包+本地ADB迁移，勿卸载旧版。模型元数据验证成功；Gradle配置阶段阿里云Maven镜像502，Kotlin/原生编译未执行。修复提交 badd0a1e43fe0350a7a3777c1fd1fc63c160f6b0，仅替换CI Gradle依赖源为官方源，重新构建，run待查。未发布。
 
+- 第二轮45555596729：官方依赖源成功，Gradle编译及单元测试全部通过（BUILD SUCCESSFUL 47任务）；APK有效签名，但实际证书303c5e918da1fda0a88f1fe23f6c7a0858253f0706e01dcfb5a68a1f3fa5e6dd与预设证书不同，末道验证正确拦截，未发布。修复提交 4fa2875c7ef526f9786ef16049e87f8be9faa0a5，显式绑定Gradle debug signer到RUNNER_TEMP内预比较密钥绝对路径，保留签名严格比对，不改识别逻辑；第三轮 Actions 45562187102 in_progress。实时预览搜寻只讨论未授权实现。
+
 ---
 
 # 2026-11-25｜蓝星离线AI实验室 v0.1.0（独立实验，CI通过已发布，真机待验）
