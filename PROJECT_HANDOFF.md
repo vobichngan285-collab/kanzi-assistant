@@ -1,3 +1,10 @@
+# 最新｜560量化算子直接诊断与官方V1备用转换（用户授权）
+- CI45674474085失败：关闭SDPA及GPU composite后，V2仍在stablehlo.custom_call FlatBuffer序列化失败，之前扫描二进制mlirbc无法提取目标，不能认定是注意力。官方源码lower_torchao_pass.py明示QAT可生成quant.dequantize/quant.fake_quant等custom_call，具体失败算子尚待实际日志。
+- 独立分支 exp/gemma4-official-560-20261126 HEAD 1faf3749865b2782e8382913dd32b0e2f4a5572e。在V2 portable序列化前遍历实际MLIR operation，输出custom-call target计数；仅当已知stablehlo.custom_call失败且确有目标记录时，使用官方V1直接LiteRT converter路径，对同一QAT meta图所用参数/常量从同一checkpoint真实加载，校验shape与非meta；对官方loader预打包的二补码INT2/INT4按实际bit宽解包为等价INT8值，不随机初始化、不跳过算子、不加载无关语言部分。保留QAT算子，V1 strict_qdq请求，具体是否支持及转换结果待验证；失败如实记录，不保证已修复。原厂语言section、APK内置增量、本地导入原厂文件、目标完整SHA校验方案不变。
+- CI 尚未出现 未知，尚无560模型或APK。正式软件和旧实验不改。
+
+---
+
 # 最新｜560标准注意力算子修复（用户已授权）
 - CI45673141896失败于最终TFLite FlatBuffer序列化：TensorFlow V2能力预检通过，官方权重加载、280/560图MLIR及参数序列化均成功，stablehlo.custom_call 未降级成支持算子，APK未构建。具体custom_call目标尚未确定，融合注意力是待验证假设。
 - 独立分支 exp/gemma4-official-560-20261126 HEAD e0893a3269bf6e2313f2bc23aba78e79b58c1beb，关闭视觉SDPA及GPU融合开关，保留标准eager attention，原始权重及V2加载不变。失败时记录MLIR目标名称诊断，不允许跳过算子、不替换权重、不虚报560。GPU性能可能受影响，待实际验证。仍使用APK内置增量、导入现有原厂模型本地重组、完整SHA及非视觉section验证，正式软件和280/1120旧包不改。
