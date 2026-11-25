@@ -60,7 +60,7 @@ jobs:
           set -euxo pipefail
           python -m venv expenv
           expenv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch==2.12.1
-          expenv/bin/pip install litert-torch==0.9.3 'ai-edge-litert>=2.1.6,<2.2.0' safetensors pillow
+          expenv/bin/pip install litert-torch==0.9.3 'ai-edge-litert>=2.1.6,<2.2.0' jax==0.7.2 jaxlib==0.7.2 'numpy<2.4' safetensors pillow
           expenv/bin/pip check
           expenv/bin/pip freeze > report/export-versions.txt
       - name: Real model eager and TFLite parity

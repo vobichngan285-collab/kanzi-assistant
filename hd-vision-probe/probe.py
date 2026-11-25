@@ -137,7 +137,7 @@ def main():
             opts=mod.Opts(barrier=False,fp16safe=False)
             x=sample(a.out,a.size)
             ref=np.load(a.out/"native.npz")
-            checkpoint("load_reauthored",versions={k:md.version(k) for k in ["litert-torch","litert-converter","ai-edge-litert"]})
+            checkpoint("load_reauthored",versions={k:md.version(k) for k in ["litert-torch","litert-converter","ai-edge-litert","jax","jaxlib"]})
             enc,adp,_=mod.build(str(a.src),opts)
             checkpoint("eager")
             start=time.monotonic()
