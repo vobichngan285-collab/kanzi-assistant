@@ -18,6 +18,8 @@
 
 - 用户真机回传v0.1.4 MT6991，模型SHA校验成功，1698202736 bytes，dispatch_present=true/compiler_present=true。内置448图（按实验流程推测，待用户确认）image_sha099d308e01e3：LiteRT CPU6加载11625ms，三轮session_ms1571/1/2，first_nonblank1971/1464/1433ms，total2292/1791/1710ms，chars均12、chunks均10、thought_chunks=0、CER=0.0000，native_ttft_s0.9082/0.6145/0.5943，prefill_tokens98/decode_tokens11，native_decode_tps16.50/21.58/26.59；warm首字1448.5ms、全程1750.5ms。模型加载和首次session未计入send指标，native_ttft不能当完整视觉输入首字。旧GGUF 3.42秒测试原图/输出/后端不同，不能直接宣称提速率。请求NPU视觉+CPU6开始且loaded load_ms11855，但尚无任何run完成/失败记录，实际NPU仍unverified，待用户确认界面是否卡住、闪退或仍在运行；如重新打开查看previous_incomplete_stage。不修改或发布新APK，仅记录结果。下一步同图真实密集文字CPU6对比与NPU运行阶段诊断，CPU质量不能凭单图推定。
 
+- 用户确认v0.1.4请求NPU加载后未闪退，未回传完整识别结果；批准一次性增加GPU视觉、GPU全面及NPU卡顿诊断直至APK。已核查固定LiteRT-LM v0.18.1 vision executor 的GPU分支为kGpu，NPU为kNpu|kCpu，保留原运行库版本与原SHA模型。提交1e87fdbe59c5f4a5af525a41f33c28b63c0f5d5a：仅改独立litert-npu-lab及其workflow，v0.1.5四模式（CPU6/GPU视觉+CPU6/GPU全面/NPU视觉+CPU6），同图、每组3轮、greedy、关闭思考；新增LabService :inference 隔离进程、LabController主进程看门狗，按连接/加载/创建会话/发送/首字/关闭阶段记录数值日志与10s心跳，超时或手动停止终止推理进程，退出确认后下组，否则停止批次；CPU累计时间与PSS辅助，硬件执行未验证。旧版debug签名不可保证覆盖，独立包com.vobich.bluestar.npulab.speed，版本Code2，原始LiteRT文件重新导入，无需重新下载；保留旧APK/正式版。CI自动测试、构建、签名、arm64三库、隔离进程声明及无INTERNET校验后发布，tag bluestar-npu-lab-v015-20261125。CI 45590730234 in_progress https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45590730234。APK尚未核实发布，GPU/NPU速度与超时行为仍需真机测试。
+
 ---
 
 # 2026-11-25｜视觉编码器Q8量化与MT6991 NPU研究（Host实验通过，真机及NPU未验证）
