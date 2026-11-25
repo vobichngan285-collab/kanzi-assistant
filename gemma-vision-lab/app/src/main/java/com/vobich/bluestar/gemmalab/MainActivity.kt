@@ -62,7 +62,25 @@ class MainActivity:Activity(){
  private fun spinner(items:List<String>)=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,items);root.addView(this);controls.add(this)}
  private fun note(s:String){logs.append(s).append('\n');logView.text=logs.toString()}
  private fun lock(v:Boolean){busy=v;controls.forEach{it.isEnabled=!v};follow.isEnabled=!v&&hasChat;if(v)window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)}
- private fun ready()=model.isFile&&model.length()==Policy.MODEL_SIZE&&stamp.isFile&&stamp.readText()==Policy.MODEL_SHA
+ private val patch by lazy { java.util.Properties().apply { assets.open("patch.properties").use { load(it) } } }
+ private val patchedSha get()=patch.getProperty("sha256")
+ private fun shaFile(f:File):String {
+  val md=MessageDigest.getInstance("SHA-256")
+  f.inputStream().buffered().use{input->val b=ByteArray(1024*1024);while(true){val n=input.read(b);if(n<0)break;md.update(b,0,n)}}
+  return md.digest().joinToString(""){"%02x".format(it.toInt() and 255)}
+ }
+ private fun hex(s:String)=s.chunked(2).map{it.toInt(16).toByte()}.toByteArray()
+ private fun patchModel(f:File){
+  val offset=patch.getProperty("offset").toLong()
+  val before=hex(patch.getProperty("before"));val after=hex(patch.getProperty("after"))
+  require(before.size==after.size&&offset>=0&&offset+before.size<=f.length())
+  java.io.RandomAccessFile(f,"rw").use{file->
+   file.seek(offset);val actual=ByteArray(before.size);file.readFully(actual);require(actual.contentEquals(before)){"元数据原始值不符"}
+   file.seek(offset);file.write(after);file.fd.sync()
+  }
+  require(shaFile(f)==patchedSha){"修正后SHA不匹配"}
+ }
+ private fun ready()=model.isFile&&model.length()==Policy.MODEL_SIZE&&stamp.isFile&&stamp.readText()==patchedSha
  private fun release(){try{chat?.close()}finally{chat=null;try{engine?.close()}finally{engine=null;engineKey=""}}}
  private fun metadata(){
   val data=ModelInfo.from(model.absolutePath).use{m->
@@ -133,8 +151,9 @@ class MainActivity:Activity(){
      }}
      val sha=digest.digest().joinToString(""){"%02x".format(it.toInt() and 255)}
      require(total==Policy.MODEL_SIZE&&sha==Policy.MODEL_SHA){"非本实验锁定的 Penra 版本：bytes="+total+" sha="+sha}
-     stamp.delete();if(model.exists())check(model.delete());check(temp.renameTo(model));stamp.writeText(sha)
-     ui{note("model_verified id=penra_e2b_1120 bytes="+total+" sha="+sha)};metadata()
+     ui{status.text="校验1120视觉元数据修正..."};patchModel(temp)
+     stamp.delete();if(model.exists())check(model.delete());check(temp.renameTo(model));stamp.writeText(patchedSha)
+     ui{note("model_verified id=penra_e2b_1120 bytes="+total+" source_sha="+sha+" patched_sha="+patchedSha+" metadata_only=true")};metadata()
     }catch(t:Throwable){ui{status.text="导入失败: "+t.message;note(status.text.toString());lock(false)}}finally{temp.delete()}
    }
   }else if(requestCode==12){

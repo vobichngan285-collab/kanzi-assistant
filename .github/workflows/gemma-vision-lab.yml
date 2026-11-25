@@ -8,6 +8,7 @@ permissions:
   contents: read
 jobs:
   build:
+    needs: model-check
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -26,6 +27,10 @@ jobs:
           SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" 'platforms;android-36' 'build-tools;36.0.0'
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-penra-metadata-patch
+          path: gemma-vision-lab/app/src/main/assets
       - name: Test and build independent APK
         working-directory: gemma-vision-lab
         run: gradle --no-daemon --max-workers=2 :app:testReleaseUnitTest :app:assembleRelease
@@ -54,6 +59,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -63,17 +71,15 @@ jobs:
           curl -fL --retry 3 --connect-timeout 30 'https://huggingface.co/PenraApp/penra-models/resolve/e7947bb3f9a2960713df011ebca32aedc0f271bb/penra-e2b-1120.litertlm' -o model.litertlm
           test "$(stat -c %s model.litertlm)" = 1708468392
           echo '4f52793970e74cae45b971e447cd5834dac6b9a70b687a5fe0f968c6e1c26b9e  model.litertlm' | sha256sum -c -
-      - name: Check real vision signature with official runtime
+      - name: Verify graph signatures and correct metadata only
         run: |
           set -euo pipefail
-          python -m pip install 'litert-lm==0.18.1'
-          python - <<'PY'
-          import litert_lm
-          with litert_lm.ModelInfo('model.litertlm') as m:
-              print('llm',m.is_llm_model,'vision',m.input_modalities.vision,'max',m.max_vision_token_budget,'signatures',m.vision_signature_selection,'min_runtime',m.min_runtime_version)
-              assert m.is_llm_model and m.input_modalities.vision
-              assert m.max_vision_token_budget >= 1120 and 1120 in (m.vision_signature_selection or [])
-          PY
+          python -m pip install 'litert-lm==0.18.1' tflite
+          python -u gemma-vision-lab/tests/verify_penra_patch.py model.litertlm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-penra-metadata-patch
+          path: patch.properties
   publish:
     needs: [build, model-check]
     runs-on: ubuntu-latest
