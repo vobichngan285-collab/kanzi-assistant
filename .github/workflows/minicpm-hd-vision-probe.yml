@@ -1,0 +1,77 @@
+name: MiniCPM HD vision conversion probe
+on:
+  push:
+    branches: [exp/minicpm-hd-vision-20261125]
+    paths: ['hd-vision-probe/**', '.github/workflows/minicpm-hd-vision-probe.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  vision:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { size: 448, mode: 16x, arm: baseline448 }
+          - { size: 448, mode: 4x, arm: detail448 }
+          - { size: 896, mode: 16x, arm: hd896 }
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    env:
+      HF_HUB_DISABLE_XET: '1'
+      OMP_NUM_THREADS: '4'
+      MKL_NUM_THREADS: '4'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Pin upstream converter and source model
+        run: |
+          set -euxo pipefail
+          git init upstream
+          git -C upstream fetch --depth 1 https://github.com/john-rocky/hf-to-litertlm.git a395b4967fa9e879a5de548d83399b4be2487b1e
+          git -C upstream checkout --detach FETCH_HEAD
+          test "$(git -C upstream rev-parse HEAD)" = a395b4967fa9e879a5de548d83399b4be2487b1e
+          mkdir -p report source
+          free -h; df -h
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+          python -m venv refenv
+          refenv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch==2.14.1
+          refenv/bin/pip install transformers==5.19.0 pillow safetensors huggingface_hub
+          refenv/bin/hf download openbmb/MiniCPM-V-4.7-1B --revision 984a89aafcd5160164f4f0d04b4be0f4eec03cb8 --include '*.json' '*.safetensors' '*.jinja' --local-dir source
+          test -f source/model.safetensors
+          sha256sum source/model.safetensors > report/source.sha256
+          refenv/bin/pip freeze > report/ref-versions.txt
+      - name: Original HF feature reference
+        run: |
+          set -euxo pipefail
+          refenv/bin/python hd-vision-probe/probe.py reference --src source --upstream upstream --out report --size ${{ matrix.size }} --mode ${{ matrix.mode }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Install pinned upstream vision export environment
+        run: |
+          set -euxo pipefail
+          python -m venv expenv
+          expenv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
+          expenv/bin/pip install litert-torch==0.9.3 litert-converter==0.4.0 ai-edge-litert==2.2.0 safetensors pillow
+          expenv/bin/pip freeze > report/export-versions.txt
+      - name: Real model eager and TFLite parity
+        run: |
+          set -euxo pipefail
+          expenv/bin/python hd-vision-probe/probe.py export --src source --upstream upstream --out report --size ${{ matrix.size }} --mode ${{ matrix.mode }}
+      - name: Upload numeric reports only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hd-vision-${{ matrix.arm }}
+          path: |
+            report/*.json
+            report/*.txt
+            report/*.sha256
+            report/fixture.png
+          if-no-files-found: warn
