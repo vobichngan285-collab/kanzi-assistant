@@ -18,7 +18,7 @@ public class MainActivity extends Activity {
     static { System.loadLibrary("bluestar_native"); }
     private static final String[] NAMES={"MiniCPM-V-4_7-1B-Q4_K_M.gguf","mmproj-model-f16.gguf","mmproj-model-f16-4x.gguf"};
     private static final String[] SHA={"f18f594747e5317ab490cff9c06339c9cfb89acbe2f02ebc48a4e167bc23576d","fb9cc047a3cdad5317fd8433a4aeda2d22f00f02ca4bd93b34ad84165b25a900","1e0ab439877e6896ded59ff24cdd242fdffb236394f6fc4a5b019cbd60bb5f4a"};
-    private final ExecutorService worker=Executors.newSingleThreadExecutor();
+    private static final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final ArrayList<View> controls=new ArrayList<>();
     private final StringBuilder speechBuffer=new StringBuilder(), logs=new StringBuilder();
     private TextView status,output,info,log;
@@ -26,12 +26,14 @@ public class MainActivity extends Activity {
     private CheckBox speak;
     private Button stop;
     private File photo;
-    private long photoReadMs=0, runStart=0;
+    private long photoReadMs=0;
+    private int photoOrientation=1;
     private String photoInfo="";
-    private boolean busy=false,destroyed=false,stopped=false,speakRun=false,ttsReady=false;
+    private boolean busy=false,speakRun=false,ttsReady=false;
+    private volatile boolean destroyed=false,stopped=false;
     private TextToSpeech tts;
     private long utterances=0;
-    private native String nativeRun(String model,String projector,String file,int threads);
+    private native String nativeRun(String model,String projector,String file,int threads,int orientation);
     private native void nativeCancel();
     private native void nativeResetCancel();
     private native void nativeRelease();
@@ -96,16 +98,17 @@ public class MainActivity extends Activity {
                 }
                 StringBuilder h=new StringBuilder();for(byte a:digest.digest())h.append(String.format(Locale.ROOT,"%02x",a&255));
                 if(!image&&!h.toString().equals(SHA[index]))throw new IOException("SHA256不匹配：请选择准确的原厂文件");
-                String desc="";
+                String desc="";int orientation=1;
                 if(image){
                     BitmapFactory.Options opt=new BitmapFactory.Options();opt.inJustDecodeBounds=true;BitmapFactory.decodeFile(tmp.getPath(),opt);
                     if(opt.outWidth<=0||opt.outHeight<=0||((long)opt.outWidth*opt.outHeight)>24000000)throw new IOException("图片无效或超过2400万像素");
                     if(!"image/jpeg".equals(opt.outMimeType)&&!"image/png".equals(opt.outMimeType))throw new IOException("请选择JPEG或PNG原图");
-                    desc=opt.outWidth+"×"+opt.outHeight+" bytes="+n+" sha="+h.substring(0,12);
+                    try{orientation=new android.media.ExifInterface(tmp.getPath()).getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION,1);}catch(IOException ignored){}
+                    desc=opt.outWidth+"×"+opt.outHeight+" bytes="+n+" sha="+h.substring(0,12)+" exif="+orientation;
                 }
                 if(!tmp.renameTo(target))throw new IOException("写入失败");
-                final String d=desc;long duration=SystemClock.elapsedRealtime()-t;
-                post(()->{if(image){photo=target;photoInfo=d;photoReadMs=duration;}refresh();status.setText(image?"原图已就绪":"原厂权重校验通过");setBusy(false,false);});
+                final String d=desc;final int ori=orientation;long duration=SystemClock.elapsedRealtime()-t;
+                post(()->{if(image){photo=target;photoInfo=d;photoReadMs=duration;photoOrientation=ori;}refresh();status.setText(image?"原图已就绪":"原厂权重校验通过");setBusy(false,false);});
             }catch(Exception ex){tmp.delete();post(()->{status.setText("失败："+ex.getMessage());setBusy(false,false);});}
         });
     }
@@ -113,17 +116,20 @@ public class MainActivity extends Activity {
         if(busy)return;
         int v=projector.getSelectedItemPosition()+1,n=threads.getSelectedItemPosition()==0?6:4;
         if(photo==null||!weight(0).isFile()||!weight(v).isFile()){status.setText("先导入对应语言和视觉权重，再选择原图");return;}
-        stopped=false;nativeResetCancel();speakRun=speak.isChecked()&&ttsReady;utterances=0;speechBuffer.setLength(0);if(tts!=null)tts.stop();
-        output.setText("");setBusy(true,true);status.setText("开始识别");runStart=SystemClock.elapsedRealtime();
+        stopped=false;speakRun=speak.isChecked()&&ttsReady;utterances=0;speechBuffer.setLength(0);if(tts!=null)tts.stop();
+        output.setText("");setBusy(true,true);status.setText("开始识别");
         final String image=photo.getAbsolutePath(), desc=photoInfo;
-        final long read=photoReadMs;
+        final long read=photoReadMs;final int orientation=photoOrientation;
         final String m=weight(0).getAbsolutePath(),mm=weight(v).getAbsolutePath();
         worker.execute(()->{
             try{
-                String r=nativeRun(m,mm,image,n);
+                if(destroyed||stopped)return;
+                nativeResetCancel();
+                if(destroyed||stopped){nativeCancel();return;}
+                String r=nativeRun(m,mm,image,n,orientation);
                 Debug.MemoryInfo mem=new Debug.MemoryInfo();Debug.getMemoryInfo(mem);
                 post(()->{if(!stopped&&r!=null&&r.startsWith("status=ok"))flushSpeech(true);
-                    logs.append("v=0.2.0 soc=").append(Build.SOC_MODEL).append(" projector=").append(v==1?"16x":"4x").append(" slice_cap=9 ").append(desc).append(" file_read_ms=").append(read).append(" ").append(r).append(" pss_kib=").append(mem.getTotalPss()).append(" tts_queued=").append(utterances).append('\n');log.setText(logs);
+                    logs.append("v=0.2.0 soc=").append(Build.VERSION.SDK_INT>=31?Build.SOC_MODEL:Build.HARDWARE).append(" projector=").append(v==1?"16x":"4x").append(" slice_cap=9 ").append(desc).append(" file_read_ms=").append(read).append(" ").append(r).append(" pss_kib=").append(mem.getTotalPss()).append(" tts_queued=").append(utterances).append('\n');log.setText(logs);
                     status.setText(stopped?"已停止":r!=null&&r.startsWith("status=ok")?"识别完成":"识别失败，查看上方阶段与日志");setBusy(false,false);});
             }catch(Throwable e){post(()->{status.setText("推理失败："+e.getClass().getSimpleName());setBusy(false,false);});}
         });
@@ -143,5 +149,5 @@ public class MainActivity extends Activity {
             if(!s.trim().isEmpty()&&tts.speak(s,TextToSpeech.QUEUE_ADD,null,"native-"+utterances)==TextToSpeech.SUCCESS)utterances++;
         }
     }
-    @Override protected void onDestroy(){destroyed=true;stopped=true;nativeCancel();if(tts!=null){tts.stop();tts.shutdown();}worker.execute(this::nativeRelease);worker.shutdown();super.onDestroy();}
+    @Override protected void onDestroy(){destroyed=true;stopped=true;nativeCancel();if(tts!=null){tts.stop();tts.shutdown();}worker.execute(this::nativeRelease);super.onDestroy();}
 }

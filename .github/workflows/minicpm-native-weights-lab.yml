@@ -64,8 +64,52 @@ jobs:
         with:
           name: bluestar-native-vision-v020
           path: release/
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: tc-mb/llama.cpp-omni
+          ref: 0c0b1109f2d338acf65f28a7b0a1505da3945286
+          path: engine
+          persist-credentials: false
+      - name: Build host reference CLI
+        run: |
+          set -euo pipefail
+          cmake -S engine -B host -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=OFF -DLLAMA_BUILD_APP=OFF -DLLAMA_BUILD_UI=OFF -DLLAMA_BUILD_HTML=OFF -DLLAMA_CURL=OFF -DGGML_CUDA=OFF -DGGML_VULKAN=OFF
+          cmake --build host --target llama-mtmd-cli -j 2
+      - name: Verify actual official weights and simple OCR
+        run: |
+          set -euo pipefail
+          mkdir -p weights
+          base=https://huggingface.co/openbmb/MiniCPM-V-4.7-1B-gguf/resolve/main
+          for file in MiniCPM-V-4_7-1B-Q4_K_M.gguf mmproj-model-f16.gguf mmproj-model-f16-4x.gguf; do
+            curl -fL --retry 3 --connect-timeout 30 "$base/$file" -o "weights/$file"
+          done
+          cat <<'EOF' > weights/SHA256SUMS.txt
+          f18f594747e5317ab490cff9c06339c9cfb89acbe2f02ebc48a4e167bc23576d  MiniCPM-V-4_7-1B-Q4_K_M.gguf
+          fb9cc047a3cdad5317fd8433a4aeda2d22f00f02ca4bd93b34ad84165b25a900  mmproj-model-f16.gguf
+          1e0ab439877e6896ded59ff24cdd242fdffb236394f6fc4a5b019cbd60bb5f4a  mmproj-model-f16-4x.gguf
+          EOF
+          (cd weights && sha256sum -c SHA256SUMS.txt)
+          sudo apt-get update
+          sudo apt-get install -y python3-pil fonts-dejavu-core
+          python3 - <<'PY'
+          from PIL import Image, ImageDraw, ImageFont
+          im=Image.new("RGB",(448,448),"white")
+          d=ImageDraw.Draw(im)
+          f=ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",72)
+          d.text((40,150),"5931",font=f,fill="black")
+          im.save("fixture.png")
+          PY
+          for mode in mmproj-model-f16.gguf mmproj-model-f16-4x.gguf; do
+            timeout 300 host/bin/llama-mtmd-cli -m weights/MiniCPM-V-4_7-1B-Q4_K_M.gguf --mmproj "weights/$mode" --image fixture.png -p '请逐字抄写图片中所有可见文字和数字。不要解释。' --jinja --temp 0 --no-warmup -ngl 0 -t 6 -n 64 > "$mode.txt" 2>"$mode.log"
+            cat "$mode.txt"
+            grep -F 5931 "$mode.txt"
+          done
   publish:
-    needs: build
+    needs: [build, smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: write

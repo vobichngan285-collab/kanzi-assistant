@@ -58,7 +58,7 @@ extern "C" JNIEXPORT void JNICALL Java_com_vobich_bluestar_nativelab_MainActivit
 extern "C" JNIEXPORT void JNICALL Java_com_vobich_bluestar_nativelab_MainActivity_nativeResetCancel(JNIEnv*,jobject){cancelled.store(false);}
 extern "C" JNIEXPORT void JNICALL Java_com_vobich_bluestar_nativelab_MainActivity_nativeRelease(JNIEnv*,jobject){release();}
 extern "C" JNIEXPORT jstring JNICALL Java_com_vobich_bluestar_nativelab_MainActivity_nativeRun(
- JNIEnv* e,jobject o,jstring jm,jstring jv,jstring ji,jint threads){
+ JNIEnv* e,jobject o,jstring jm,jstring jv,jstring ji,jint threads,jint orientation){
     auto begin=Clock::now();long long load=0,reset=0,decode=0,split=0,enc=0,prefill=0,first=-1,gen=0;
     size_t image_chunks=0,image_tokens=0,text_tokens=0;int tokens=0;
     std::string result;
@@ -91,7 +91,31 @@ extern "C" JNIEXPORT jstring JNICALL Java_com_vobich_bluestar_nativelab_MainActi
         auto t=Clock::now();llama_memory_clear(llama_get_memory(ctx),true);reset=ms(t);
         phase(e,o,onphase,"decode");t=Clock::now();
         std::unique_ptr<mtmd_bitmap,decltype(&mtmd_bitmap_free)> bmp(mtmd_helper_bitmap_init_from_file(vision,image.c_str()),mtmd_bitmap_free);
-        check((bool)bmp,"image decode: JPEG/PNG only");decode=ms(t);
+        check((bool)bmp,"image decode: JPEG/PNG only");
+        // Preserve pixels, apply EXIF orientation without lossy re-encoding.
+        if(orientation>=2&&orientation<=8){
+            auto w=mtmd_bitmap_get_nx(bmp.get()),h=mtmd_bitmap_get_ny(bmp.get());
+            auto data=mtmd_bitmap_get_data(bmp.get());
+            check(w>0&&h>0&&mtmd_bitmap_get_n_bytes(bmp.get())==size_t(w)*h*3,"RGB geometry");
+            auto dw=orientation>=5?h:w,dh=orientation>=5?w:h;
+            std::vector<unsigned char> rgb(size_t(dw)*dh*3);
+            for(uint32_t y=0;y<h;y++)for(uint32_t x=0;x<w;x++){
+                uint32_t a=x,b=y;
+                switch(orientation){
+                    case 2:a=w-1-x;break;
+                    case 3:a=w-1-x;b=h-1-y;break;
+                    case 4:b=h-1-y;break;
+                    case 5:a=y;b=x;break;
+                    case 6:a=h-1-y;b=x;break;
+                    case 7:a=h-1-y;b=w-1-x;break;
+                    case 8:a=y;b=w-1-x;break;
+                }
+                auto src=(size_t(y)*w+x)*3,dst=(size_t(b)*dw+a)*3;
+                for(int c=0;c<3;c++)rgb[dst+c]=data[src+c];
+            }
+            bmp.reset(mtmd_bitmap_init(dw,dh,rgb.data()));check((bool)bmp,"orientation");
+        }
+        decode=ms(t);
         phase(e,o,onphase,"split");t=Clock::now();
         common_chat_msg msg;msg.role="user";msg.content=std::string(mtmd_default_marker())+"\n请逐字抄写图片中所有可见文字和数字。按阅读顺序输出，不解释、不补充、不猜测。";
         common_chat_templates_inputs in;in.messages.push_back(msg);in.use_jinja=true;in.enable_thinking=false;in.add_generation_prompt=true;
