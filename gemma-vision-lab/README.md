@@ -1,5 +1,2 @@
-# 蓝星 Gemma 实验室 0.1.0
-独立 Android ARM64 APK；Google LiteRT-LM 0.18.1；锁定 Gallery 1.0.23 原始 Gemma-4-E2B-it（2588147712 bytes，SHA256 181938105e0eefd105961417e8da75903eacda102c4fce9ce90f50b97139a63c）。可导入已下载的同版本文件；Gallery 私有目录不能直接共享，后续MTP更新文件不接受。浏览器下载链接固定原厂revision。
-默认GPU视觉/GPU语言、280（模型支持时）、4000上下文、TopK1、TopP1、temperature0，关闭思考和MTP；模型元数据检测预算，不伪造560/1120。后端请求不证明每个算子GPU执行。
-系统相机EXTRA_OUTPUT获取完整照片，像素由系统相机决定；相册原字节复制。正向JPEG/PNG原图不重编码，EXIF旋转/其他格式转PNG；同图1024/512长边对照不裁剪不放大。内部视觉预处理仍可能缩图。原图不等于模型最终输入分辨率。
-模型常驻、新图重置会话、追问保留上下文、离线中文音色流式朗读（记录入队非出声）。记录图片准备、首次加载、首字、总时长；无INTERNET权限。CI仅编译、策略单元测试、APK校验，真机性能和准确率待验证。
+# 蓝星 Gemma 560 实验 v0.1.2
+独立包 com.vobich.bluestar.gemmalab.vision560，不改280/1120旧包和正式软件。仅转换谷歌官方移动QAT checkpoint的视觉编码器和适配器为280/560签名，复用原厂Gallery部署文件其他全部section，以逐section SHA验证；元数据只改max_num_patches=5040。用官方LiteRT-LM 0.18.1 ModelInfo验证560，未成功则不构建和发布APK。官方导出采用V2 meta流式加载绕过之前全模型from_pretrained PLE尺寸冲突，不忽略权重不匹配，不允许随机权重。新视觉量化和图结构可能不同于旧原厂视觉；实际推理尚需真机验证。原图/1024/512、GPU/GPU、TTS、同模型280/560对照保留；不加入YOLO。模型下载为对应GitHub Actions run的gemma560-model artifact，解压后导入Gemma_E2B_560.litertlm。原始280文件不可作为560导入。模型体积和耗时待验证。

@@ -1,13 +1,65 @@
-name: Blue Star Gemma original image lab v0.1.0
+name: Blue Star Gemma official vision 560 lab v0.1.2
 on:
   push:
-    branches: [exp/gemma4-original-image-20261126]
+    branches: [exp/gemma4-official-560-20261126]
     paths: ['gemma-vision-lab/**', '.github/workflows/gemma-vision-lab.yml']
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: google-ai-edge/litert-torch
+          ref: 046b0e55333f20adbedff78c43b468005a78118b
+          path: converter
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare CPU export
+        run: |
+          set -euo pipefail
+          free -h; df -h .
+          python -m pip install --upgrade pip
+          python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install --pre -e converter accelerate 'litert-lm==0.18.1' tflite
+      - name: Download verified original Gallery package
+        run: |
+          curl -fL --retry 3 'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/6e5c4f1e395deb959c494953478fa5cec4b8008f/gemma-4-E2B-it.litertlm' -o gallery.litertlm
+      - name: Export vision only and validate preserved text sections
+        env:
+          OMP_NUM_THREADS: '2'
+          MKL_NUM_THREADS: '2'
+        run: |
+          set -euo pipefail
+          python -u gemma-vision-lab/tests/export_560.py 2>&1 | tee export.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gemma560-model-identity
+          path: model.properties
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gemma560-model
+          path: |
+            Gemma_E2B_560.litertlm
+            model.properties
+          compression-level: 0
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gemma560-export-log
+          path: export.log
+          if-no-files-found: ignore
   build:
+    needs: export
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -26,6 +78,10 @@ jobs:
           SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" 'platforms;android-36' 'build-tools;36.0.0'
+      - uses: actions/download-artifact@v4
+        with:
+          name: gemma560-model-identity
+          path: gemma-vision-lab/app/src/main/assets
       - name: Test and build independent APK
         working-directory: gemma-vision-lab
         run: gradle --no-daemon --max-workers=2 :app:testReleaseUnitTest :app:assembleRelease
@@ -36,19 +92,19 @@ jobs:
           BT="$ANDROID_HOME/build-tools/36.0.0"
           "$BT/apksigner" verify --verbose --print-certs "$APK"
           "$BT/aapt" dump badging "$APK" | tee badging.txt
-          grep -F "package: name='com.vobich.bluestar.gemmalab' versionCode='1' versionName='0.1.0'" badging.txt
+          grep -F "package: name='com.vobich.bluestar.gemmalab.vision560' versionCode='3' versionName='0.1.2'" badging.txt
           grep -F "launchable-activity: name='com.vobich.bluestar.gemmalab.MainActivity'" badging.txt
           ! grep -F "android.permission.INTERNET" badging.txt
           unzip -Z1 "$APK" > archive.txt
           grep -E '^lib/arm64-v8a/.*litert.*\.so$' archive.txt
           ! grep -E '^lib/(x86|x86_64|armeabi-v7a)/' archive.txt
           mkdir -p release
-          cp "$APK" release/BlueStar_Gemma_Lab_0.1.0.apk
+          cp "$APK" release/BlueStar_Gemma_560_Lab_0.1.2.apk
           cp gemma-vision-lab/README.md release/
           (cd release && sha256sum *.apk > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:
-          name: bluestar-gemma-v010
+          name: bluestar-gemma-v012
           path: release/
   publish:
     needs: build
@@ -58,7 +114,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: bluestar-gemma-v010
+          name: bluestar-gemma-v012
           path: release
       - name: Publish verified APK
         env:
@@ -67,10 +123,10 @@ jobs:
         run: |
           set -euo pipefail
           (cd release && sha256sum -c SHA256SUMS.txt)
-          TAG=bluestar-gemma-v010-original-image-20261126
+          TAG=bluestar-gemma-v012-560-20261126
           retry() { for i in 1 2 3 4; do "$@" && return 0; sleep $((i*3)); done; return 1; }
           if ! gh release view "$TAG" --json targetCommitish >/dev/null 2>&1; then
-            retry gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 Gemma 实验室 v0.1.0" --notes-file release/README.md --prerelease --draft
+            retry gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 Gemma 实验室 v0.1.2" --notes-file release/README.md --prerelease --draft
           fi
           gh release view "$TAG" --json targetCommitish | jq -e --arg sha "$GITHUB_SHA" '.targetCommitish == $sha'
           retry gh release upload "$TAG" release/* --clobber

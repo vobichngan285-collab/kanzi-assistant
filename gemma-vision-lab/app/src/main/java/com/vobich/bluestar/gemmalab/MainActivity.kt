@@ -52,7 +52,7 @@ class MainActivity:Activity(){
  private var engine:Engine?=null
  private var chat:Conversation?=null
  @Volatile private var engineKey=""
- private val model get()=File(filesDir,"gemma-4-E2B-it.litertlm")
+ private val model get()=File(filesDir,"gemma-4-E2B-vision560.litertlm")
  private val stamp get()=File(filesDir,"verified.txt")
  private fun now()=SystemClock.elapsedRealtime()
  private fun dp(x:Int)=(x*resources.displayMetrics.density+.5f).toInt()
@@ -62,25 +62,28 @@ class MainActivity:Activity(){
  private fun spinner(items:List<String>)=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,items);root.addView(this);controls.add(this)}
  private fun note(s:String){logs.append(s).append('\n');logView.text=logs.toString()}
  private fun lock(v:Boolean){busy=v;controls.forEach{it.isEnabled=!v};follow.isEnabled=!v&&hasChat;if(v)window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)}
- private fun ready()=model.isFile&&model.length()==Policy.MODEL_SIZE&&stamp.isFile&&stamp.readText()==Policy.MODEL_SHA
+ private val verifiedModel by lazy { java.util.Properties().apply { assets.open("model.properties").use { load(it) } } }
+ private val modelSize get()=verifiedModel.getProperty("size").toLong()
+ private val modelSha get()=verifiedModel.getProperty("sha256")
+ private fun ready()=model.isFile&&model.length()==modelSize&&stamp.isFile&&stamp.readText()==modelSha
  private fun release(){try{chat?.close()}finally{chat=null;try{engine?.close()}finally{engine=null;engineKey=""}}}
  private fun metadata(){
   val data=ModelInfo.from(model.absolutePath).use{m->
    require(m is ModelInfo.Llm){"模型非LLM"}
    val ceiling=m.maxVisionTokenBudget()
    val opts=Policy.budgets(m.visionSignatureSelection(),ceiling)
-   require(opts.isNotEmpty()){"无有效视觉签名"}
+   require(ceiling==560&&opts.containsAll(listOf(280,560))){"560真实签名校验失败"}
    opts to ("max_visual="+ceiling+" options="+opts.joinToString(",")+" context="+m.maxContextTokens())
   }
-  ui{options=data.first;budget.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,options.map{it.toString()});budget.setSelection(options.indexOf(280).takeIf{it>=0}?:options.lastIndex);note(data.second);status.text="模型已验证";lock(false)}
+  ui{options=data.first;budget.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,options.map{it.toString()});budget.setSelection(options.indexOf(560));note(data.second);status.text="模型已验证";lock(false)}
  }
  override fun onCreate(savedInstanceState:Bundle?){
   super.onCreate(savedInstanceState)
   root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(12),dp(12),dp(24))}
   setContentView(ScrollView(this).apply{addView(root)})
-  label("蓝星 Gemma 实验室 0.1.0",24f);label("Gemma 4 E2B · LiteRT-LM 0.18.1 · 离线")
-  status=label("请导入官方模型")
-  button("浏览器下载原厂模型（2.59GB）",{try{startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(Policy.MODEL_URL)))}catch(t:Throwable){status.text="无法打开浏览器"}})
+  label("蓝星 Gemma 560 实验室 0.1.2",24f);label("Gemma 4 E2B · LiteRT-LM 0.18.1 · 离线")
+  status=label("请导入实验专用560模型")
+  button("打开560模型下载页",{try{startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-gemma-v012-560-20261126")))}catch(t:Throwable){status.text="无法打开浏览器"}})
   button("导入 .litertlm 模型",{pick(11,"*/*")})
   label("推理后端（视觉 / 语言）");backend=spinner(listOf("GPU / GPU（默认）","GPU / CPU","CPU / CPU"))
   label("视觉 Token（模型实际支持）");budget=spinner(listOf("导入后显示"))
@@ -101,7 +104,7 @@ class MainActivity:Activity(){
    if(code==TextToSpeech.SUCCESS){val svc=tts;val voice=svc?.voices?.filter{!it.isNetworkConnectionRequired&&it.locale.language=="zh"}?.maxByOrNull{it.quality};if(voice!=null)voiceReady=svc?.setVoice(voice)==TextToSpeech.SUCCESS}
    note("offline_tts_ready="+voiceReady)
   }}
-  note("v=0.1.0 soc="+Build.SOC_MODEL+" sdk="+Build.VERSION.SDK_INT)
+  note("v=0.1.2 soc="+Build.SOC_MODEL+" sdk="+Build.VERSION.SDK_INT)
   if(ready()){lock(true);worker.execute{try{metadata()}catch(t:Throwable){ui{status.text="模型元数据错误: "+t.message;lock(false)}}}}
  }
  private fun copy(s:String){(getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("蓝星",s));Toast.makeText(this,"已复制",Toast.LENGTH_SHORT).show()}
@@ -126,12 +129,12 @@ class MainActivity:Activity(){
      release();val digest=MessageDigest.getInstance("SHA-256");var total=0L;var last=0L
      contentResolver.openInputStream(uri)!!.use{input->temp.outputStream().buffered().use{out->
       val b=ByteArray(1024*1024)
-      while(true){val n=input.read(b);if(n<0)break;total+=n;require(total<=Policy.MODEL_SIZE){"文件大小不匹配"};digest.update(b,0,n);out.write(b,0,n)
-       if(total-last>=64L*1024*1024){last=total;val percent=total*100/Policy.MODEL_SIZE;ui{status.text="导入 "+percent+"%"}}
+      while(true){val n=input.read(b);if(n<0)break;total+=n;require(total<=modelSize){"文件大小不匹配"};digest.update(b,0,n);out.write(b,0,n)
+       if(total-last>=64L*1024*1024){last=total;val percent=total*100/modelSize;ui{status.text="导入 "+percent+"%"}}
       }
      }}
      val sha=digest.digest().joinToString(""){"%02x".format(it.toInt() and 255)}
-     require(total==Policy.MODEL_SIZE&&sha==Policy.MODEL_SHA){"非本实验锁定的官方版本：bytes="+total+" sha="+sha}
+     require(total==modelSize&&sha==modelSha){"非本实验验证的560版本：bytes="+total+" sha="+sha}
      stamp.delete();if(model.exists())check(model.delete());check(temp.renameTo(model));stamp.writeText(sha)
      ui{note("model_verified bytes="+total+" sha="+sha)};metadata()
     }catch(t:Throwable){ui{status.text="导入失败: "+t.message;note(status.text.toString());lock(false)}}finally{temp.delete()}
@@ -213,7 +216,7 @@ class MainActivity:Activity(){
     },extraContext=mapOf("enable_thinking" to false))
     done.await();error.get()?.let{throw it}
     val elapsed=now()-start;val inf=if(first>=0)first-(dispatch-start)else -1L
-    ui{read("",true);hasChat=true;note("turn follow="+isFollow+" backend_requested="+kind+" budget="+v+" reused="+reused+" prepare_ms="+prep+" load_ms="+load+" conversation_ms="+reset+" first_text_ms="+first+" inference_first_ms="+inf+" total_ms="+elapsed+" tts_first_queue_ms="+firstQueue);status.text="完成 · 首字 "+first+"ms · 全程 "+elapsed+"ms";lock(false)}
+    ui{read("",true);hasChat=true;note("turn model=gallery_text_vision560 follow="+isFollow+" backend_requested="+kind+" budget="+v+" reused="+reused+" prepare_ms="+prep+" load_ms="+load+" conversation_ms="+reset+" first_text_ms="+first+" inference_first_ms="+inf+" total_ms="+elapsed+" tts_first_queue_ms="+firstQueue);status.text="完成 · 首字 "+first+"ms · 全程 "+elapsed+"ms";lock(false)}
    }catch(t:Throwable){try{release()}catch(_:Throwable){};ui{hasChat=false;status.text="推理失败: "+t.message;note("error "+t.javaClass.simpleName+": "+t.message);lock(false)}}
    finally{ExperimentalFlags.visualTokenBudget=null;ExperimentalFlags.enableSpeculativeDecoding=false}
   }
