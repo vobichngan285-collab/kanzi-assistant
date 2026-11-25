@@ -70,7 +70,7 @@ int mtmd_lab_image_size(const mtmd_context * ctx) {
 }
 bool mtmd_support_vision(const mtmd_context * ctx) {''')
 cpp=main/"cpp/llama_jni.cpp"
-change(cpp,'#include <cstdlib>','#include <cstdlib>\n#include <chrono>\n#include <cctype>\n#include <algorithm>')
+change(cpp,'#include <cstdlib>','#include <cstdlib>\n#include <chrono>\n#include <cctype>\n#include <algorithm>\n#include <sstream>')
 change(cpp,'constexpr int   N_THREADS               = 4;','''static int N_THREADS = 4;
 static bool g_lab_gpu = false;
 struct lab_times {
@@ -115,7 +115,8 @@ change(cpp,'mparams.use_gpu   = false;','mparams.use_gpu   = g_lab_gpu;')
 # Keep language model on CPU, including host ops and KV; GPU only accelerates visual encoder.
 change(cpp,'    model_params.n_gpu_layers = 0;','''    model_params.n_gpu_layers = 0;
     static ggml_backend_dev_t cpu_only_devices[] = {nullptr};
-    model_params.devices = cpu_only_devices;''')
+    model_params.devices = cpu_only_devices;
+    model_params.split_mode = LLAMA_SPLIT_MODE_NONE;''')
 change(cpp,'    ctx_params.n_threads_batch = N_THREADS;','''    ctx_params.n_threads_batch = N_THREADS;
     ctx_params.offload_kqv = false;
     ctx_params.op_offload = false;''')
@@ -246,11 +247,12 @@ change(activity,'''                    check(engine.isVisionSupported){"视觉�
                     for''','''                    check(engine.isVisionSupported){"视觉投影器加载失败，禁止文本降级"}
                     val actual=engine.labBackendInfo()
                     append("v=0.1.2 batch="+batch+" "+request+" "+actual+" phase=backend_loaded load_ms="+loadMs)
-                    check(actual.contains(if(cfg.gpu)"backend_gpu=1" else "backend_gpu=0")){"请求的视觉后端未实际启用，不计入对比"}
+                    check(!actual.contains("backend=none") && actual.contains(if(cfg.gpu)"backend_gpu=1" else "backend_gpu=0")){"请求的视觉后端未实际启用，不计入对比"}
                     for''')
 change(activity,'status.text=m.title+" 第"+(run+1)','status.text=cfg.title+" 第"+(run+1)')
 change(activity,'val header="\\n"+m.title+" 第"+(run+1)','val header="\\n"+cfg.title+" 第"+(run+1)')
 change(activity,'''                            append(listOf("v=0.1.1","batch="+batch,''','''                            val native=engine.labTimings()
+                            check(Regex("image_chunks=[1-9][0-9]*\\\\b").containsMatchIn(native)){"未实际编码图像，不计入对比"}
                             append(listOf("v=0.1.2",request,actual,native,"sampling=greedy","batch="+batch,''')
 change(activity,'''                }finally{withContext(NonCancellable){engine.labRelease()}}
             }''','''                }catch(e:CancellationException){throw e}

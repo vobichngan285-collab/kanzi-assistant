@@ -7,12 +7,19 @@ function Shell([string]$cmd) {
     if ($LASTEXITCODE -ne 0) { throw "ADB command failed: $cmd" }
     return ($out -join "`n").Trim()
 }
-try { $null = Shell "run-as $old pwd" } catch { $old = "com.vobich.bluestar.offlinelab"; $null = Shell "run-as $old pwd" }
+$folder = "files/models/minicpm-v-4_7-1b"
+$names = @("MiniCPM-V-4_7-1B-Q4_K_M.gguf","mmproj-model-f16.gguf")
+try {
+    $null = Shell "run-as $old pwd"
+    foreach ($name in $names) { $null = Shell "run-as $old test -s $folder/$name" }
+} catch {
+    $old = "com.vobich.bluestar.offlinelab"
+    $null = Shell "run-as $old pwd"
+    foreach ($name in $names) { $null = Shell "run-as $old test -s $folder/$name" }
+}
 $null = Shell "run-as $new pwd"
 $null = Shell "am force-stop $new"
 $null = Shell "am force-stop $old"
-$folder = "files/models/minicpm-v-4_7-1b"
-$names = @("MiniCPM-V-4_7-1B-Q4_K_M.gguf","mmproj-model-f16.gguf")
 $null = Shell "run-as $new mkdir -p $folder"
 foreach ($name in $names) {
     $path = "$folder/$name"

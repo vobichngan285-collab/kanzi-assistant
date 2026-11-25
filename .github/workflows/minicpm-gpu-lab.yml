@@ -69,7 +69,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p previous "$HOME/.android"
-          gh release download bluestar-gpu-ai-lab-v012-20261125 --repo "$GITHUB_REPOSITORY" --pattern BlueStar_Offline_AI_Lab_0.1.1.apk --dir previous
+          gh release download bluestar-offline-ai-lab-v011-20261125 --repo "$GITHUB_REPOSITORY" --pattern BlueStar_Offline_AI_Lab_0.1.1.apk --dir previous
           echo 'a4fc1eb09fa32cd0d494b8a1ea9530fe6664ea4f4b2aff794c83393a87d93c82  previous/BlueStar_Offline_AI_Lab_0.1.1.apk' | sha256sum -c
           BT="$ANDROID_HOME/build-tools/36.0.0"
           "$BT/apksigner" verify --print-certs previous/*.apk | tee previous-cert.txt
@@ -95,6 +95,7 @@ jobs:
           test "$(git -C upstream-lab/llama.cpp-omni rev-parse HEAD)" = a5624430e61f44b4842246b15a352740218a3d49
           python3 gpu-ai-lab/prepare.py upstream-lab
           git -C upstream-lab diff --check
+          git -C upstream-lab/llama.cpp-omni diff --check
       - name: Compile and run local unit tests
         working-directory: upstream-lab/MiniCPM-V-demo-Android
         run: |
@@ -124,6 +125,14 @@ jobs:
               with zipfile.ZipFile('previous/BlueStar_Offline_AI_Lab_0.1.1.apk') as old:
                   assert json.loads(old.read('assets/lab_models.json'))==data, 'Model metadata changed'
           PY
+          unzip -p "$APK" lib/arm64-v8a/libggml-vulkan.so > "$RUNNER_TEMP/libggml-vulkan.so"
+          readelf -h "$RUNNER_TEMP/libggml-vulkan.so" | grep -F AArch64
+          readelf -d "$RUNNER_TEMP/libggml-vulkan.so" | grep -F libvulkan.so
+          unzip -p "$APK" lib/arm64-v8a/libminicpm_v_demo.so > "$RUNNER_TEMP/libminicpm_v_demo.so"
+          readelf --dyn-syms --wide "$RUNNER_TEMP/libminicpm_v_demo.so" > native-symbols.txt
+          grep -F LlamaEngine_labConfigureNative native-symbols.txt
+          grep -F LlamaEngine_labBackendNative native-symbols.txt
+          grep -F LlamaEngine_labTimingNative native-symbols.txt
           mkdir -p lab-release
           cp "$APK" lab-release/BlueStar_GPU_AI_Lab_0.1.2.apk
           printf 'package=%s\nmigration=%s\nold_cert=%s\nnew_cert=%s\n' "$LAB_PACKAGE" "$LAB_MIGRATION" "$OLD_CERT" "$NEW_CERT" | tee lab-release/INSTALL_MODE.txt
