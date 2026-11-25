@@ -1,3 +1,9 @@
+# 最新｜Gemma 实验编译修复
+- CI45662008583失败，job139374032320日志确认唯一Kotlin编译错误：android.os.*和LiteRT-LM.*的Message同名导致onMessage回调签名歧义；依赖下载、SDK、Manifest和原生库合并均已通过。非模型或GPU运行错误。
+- 实验分支exp/gemma4-original-image-20261126已提交 97378223766d45c9f855ba863335fd12d5808a7c，只将回调参数限定为com.google.ai.edge.litertlm.Message，已回读源码。模型/推理/图像策略不变。用户已下载模型，保留原文件。新版CI 待出现，未查询到；尚无有效APK发布。
+
+---
+
 # 最新｜Gemma 4 E2B 原图实验 v0.1.0（已提交，构建中）
 - 用户真机vivo X200 Pro MT6991 Android16，官方Google AI Edge Gallery 1.0.23通用APK，Gemma-4-E2B-it GPU成功响应。原图默认9.2s错读较多；TopK1/TopP1/temp0/context4000/视觉280后原图8.8s有所改善；裁剪图8.3s仍有错读，用户估计首字2~3s（非精确日志）。直接拍照识别很差，另一次价目表尚可。用户授权独立实验，不改正式蓝星和原厂APP。
 - 核查Gallery tag 1.0.23 tree 9cb31cf47c21b0ed76901ff589a52b509803edfa：MessageInputText.kt内置相机首选512x512（实际由CameraX协商），相册decodeSampledBitmapFromUri目标1024x1024（并非严格上限），PNG重新编码；LlmChatModelHelper.kt分别配置视觉与语言backend，默认视觉GPU；依赖LiteRT-LM 0.18.1（源码bda624851d74be34d4e1f7fac1fc4155939539c7）。ModelUtils.kt按模型视觉签名与预算上限过滤；Gemma4 metadata默认2520 patches→280视觉token，不能简单开放560/1120。实际GPU逐算子执行与精度提升仍待测。
