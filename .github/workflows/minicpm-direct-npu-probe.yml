@@ -1,0 +1,96 @@
+name: Blue Star direct OCR and MT6991 AOT probes
+on:
+  push:
+    branches: [exp/minicpm-npu-direct-20261125]
+    paths: ['direct-npu-probe/**', '.github/workflows/minicpm-direct-npu-probe.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  direct_ocr:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: mlguyYT/MiniCPM-V-Apps
+          ref: 7f2bac650137230539784b794205470077915df7
+          submodules: recursive
+          path: upstream-lab
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Prepare pinned host toolchain
+        run: |
+          set -euo pipefail
+          test "$(git -C upstream-lab/llama.cpp-omni rev-parse HEAD)" = a5624430e61f44b4842246b15a352740218a3d49
+          sudo apt-get update
+          sudo apt-get install -y ninja-build fonts-noto-cjk
+          python -m pip install 'numpy==1.26.4' 'Pillow==11.3.0' 'tqdm==4.67.1' 'sentencepiece==0.2.1' 'pyyaml==6.0.2'
+          python -m py_compile direct-npu-probe/*.py
+          python gpu-vision-probe/prepare.py upstream-lab/llama.cpp-omni
+          python vision-q8-probe/prepare_timing.py upstream-lab/llama.cpp-omni
+          python direct-npu-probe/prepare_direct.py upstream-lab/llama.cpp-omni
+          grep -R -F '"<__media__>"' upstream-lab/llama.cpp-omni/tools/mtmd
+          git -C upstream-lab/llama.cpp-omni diff --check
+      - name: Download verified original F16 and Q4_K_M weights
+        run: |
+          set -euo pipefail
+          mkdir -p probe-report
+          python vision-q8-probe/fetch_weights.py
+      - name: Build host CPU inference CLI
+        run: |
+          set -euo pipefail
+          cmake -S upstream-lab/llama.cpp-omni -B host-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_VULKAN=OFF -DLLAMA_OPENSSL=OFF -DLLAMA_CURL=OFF -DLLAMA_BUILD_COMMON=ON -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF
+          cmake --build host-build --target llama-mtmd-cli -j 2
+      - name: Compare open and closed thinking prefix on identical images
+        run: python direct-npu-probe/bench_direct.py host-build/bin/llama-mtmd-cli
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: direct-ocr-host-report
+          path: direct-report/
+          if-no-files-found: warn
+  npu_aot:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install official unpack and MediaTek compiler tooling
+        run: |
+          set -euo pipefail
+          mkdir -p npu-report
+          python -m venv unpack-env
+          unpack-env/bin/pip install litert-lm
+          unpack-env/bin/pip freeze | tee npu-report/unpack-packages.txt
+          unpack-env/bin/litert-lm unpack --help
+          python -m venv aot-env
+          aot-env/bin/pip install ai-edge-litert-nightly ai-edge-litert-sdk-mediatek-nightly
+          aot-env/bin/pip freeze | tee npu-report/aot-packages.txt
+      - name: Fetch and verify existing community int8 vision bundle
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 4 --retry-all-errors --connect-timeout 30 --max-time 1800 --output vision.litertlm https://huggingface.co/litert-community/MiniCPM-V-4.7-1B/resolve/main/MiniCPM-V-4.7-1B-VL_int8vis.litertlm
+          echo '20c73b5a1e48a315974cff1853535ff5d017100b6420d5ef221b9dd1b955dd7c  vision.litertlm' | sha256sum -c -
+          unpack-env/bin/litert-lm unpack vision.litertlm --output-dir unpacked
+          test -s unpacked/model.toml
+          find unpacked -type f -printf '%f %s\n' | tee npu-report/sections.txt
+      - name: Compile only vision encoder for MT6991 and retain coverage report
+        run: |
+          set -euo pipefail
+          aot-env/bin/python direct-npu-probe/npu_aot.py 2>&1 | tee npu-report/compile.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mt6991-vision-aot-report
+          path: npu-report/
+          if-no-files-found: warn
