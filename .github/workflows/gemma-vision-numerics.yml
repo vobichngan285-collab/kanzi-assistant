@@ -1,8 +1,8 @@
-name: Gemma vision weight scale audit (no APK)
+name: Gemma exact scale correction test (no APK)
 on:
   push:
     branches: [exp/gemma4-vision-numerics-20261126]
-    paths: ['gemma-vision-lab/tests/compare_vision.py', 'gemma-vision-lab/tests/compare_vision_layers.py', 'gemma-vision-lab/tests/compare_vision_scales.py', '.github/workflows/gemma-vision-numerics.yml']
+    paths: ['gemma-vision-lab/tests/compare_vision.py', 'gemma-vision-lab/tests/compare_vision_layers.py', 'gemma-vision-lab/tests/compare_vision_scales.py', 'gemma-vision-lab/tests/test_scale_correction.py', '.github/workflows/gemma-vision-numerics.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -20,8 +20,8 @@ jobs:
           python-version: '3.12'
       - name: Install CPU diagnostic dependencies
         run: |
-          python -m pip install 'litert-lm==0.18.1' 'ai-edge-litert==2.4.0' 'tflite==2.18.0' 'numpy==2.5.5' huggingface_hub
-          python -m py_compile gemma-vision-lab/tests/compare_vision.py gemma-vision-lab/tests/compare_vision_scales.py
+          python -m pip install 'litert-lm==0.18.1' 'ai-edge-litert==2.4.0' 'tflite==2.18.0' 'numpy==2.5.5'
+          python -m py_compile gemma-vision-lab/tests/compare_vision.py gemma-vision-lab/tests/test_scale_correction.py
       - uses: actions/download-artifact@v4
         with:
           name: gemma560-patch
@@ -30,14 +30,14 @@ jobs:
           path: patch-assets
       - name: Download exact original reference
         run: curl -fL --retry 3 'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/6e5c4f1e395deb959c494953478fa5cec4b8008f/gemma-4-E2B-it.litertlm' -o gallery.litertlm
-      - name: Audit deployed and checkpoint weight scales
+      - name: Test exact per-channel scale correction on temporary copy
         run: |
           set -o pipefail
-          python -u gemma-vision-lab/tests/compare_vision_scales.py 2>&1 | tee comparison.log
+          python -u gemma-vision-lab/tests/test_scale_correction.py 2>&1 | tee comparison.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: gemma-vision-weight-scale-report
+          name: gemma-vision-scale-correction-report
           path: |
             comparison.log
             diagnostics/*.json
