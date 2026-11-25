@@ -1,3 +1,11 @@
+# 最新｜560改为APK内置增量（用户授权）
+- 上轮CI45671855923失败：V2 meta加载成功，280/560均完成PyTorch→MLIR及参数序列化；失败发生在Converter V2的TensorFlow支持检查，环境未安装tf-nightly；未产出模型，未发布APK。新CI显式安装tf-nightly-cpu并预检is_supported，不跳过校验。
+- 用户要求只下载APK并导入已下载的原厂2.59GB模型，不再下载完整560文件。独立分支 exp/gemma4-official-560-20261126 HEAD b0fcd00d0c8ae6f14bfe936ec0fdfb06a3d3f861。新方案保留原厂容器元数据、仅重写section偏移，内置新header/metadata/encoder/adapter和精确复制计划。服务器生成目标文件并核验所有非视觉section SHA、protobuf其余字段、真实560图形状和ModelInfo，重组SHA验证后才上传patch-assets（上限1GB）并编译APK，不再上传完整模型artifact。APK逐资产SHA对照验证，大小限制1.9GB。实际APK大小未确定。
+- 手机导入原厂文件时单次流式读取、完整源SHA校验，复制不变section至新私有临时文件，写内置视觉等资产，完整目标SHA及真实签名验证后才启用；不修改用户原始文件。需额外本地空间存放新模型副本，不需额外下载整模型。未真机验证。正式软件、280及1120旧版本均未覆盖。
+- CI 尚未出现 未知；未有可下载APK，后续核查真实构建及发布，不承诺自动后台交付。
+
+---
+
 # 最新｜原厂560视觉专项实验（用户已授权）
 - 用户真机测试第三方1120首次：首字39705ms/inference_first12647ms、load21991ms、conversation5043ms、total90461ms，输出大量英文及虚构重复行；停止该第三方路线，不归因于预算单变量。原厂280热首字1851ms、1024档1627ms保留为成功基线。用户选择原厂560，不加入YOLO（待后续讨论）。
 - 独立分支 exp/gemma4-official-560-20261126 HEAD ad277b8d4cc1a33c43c21f869394c0c6750f8fbd；基于原厂280成功提交97378223766d45c9f855ba863335fd12d5808a7c；改动仅实验目录及其CI。原厂560转换不再重导语言部分：上一轮全模型加载失败确认为 embed_tokens_per_layer.embedding_scale checkpoint [262144,35] vs model [262144,1]。新路径使用官方LiteRT Torch固定046b0e55333f20adbedff78c43b468005a78118b 的V2 meta权重加载，仅导出官方移动QAT checkpoint固定dd693ff40353f057ca5f07e945ad867f4afbf2ec的vision encoder/adapter，280/560签名，不再使用第三方权重，不忽略不匹配，不重新生成语言权重。
