@@ -6,7 +6,7 @@ import android.os.Process
 import java.util.ArrayDeque
 
 /** Main process owns watchdog and logs; native runtime only runs in :inference. */
-class LabController(private val context:Context,private val log:(String)->Unit,private val status:(String)->Unit,private val answer:(String)->Unit,private val finished:()->Unit){
+class LabController(private val context:Context,private val log:(String)->Unit,private val status:(String)->Unit,private val answer:(String)->Unit,private val stream:(Bundle)->Unit,private val abortSpeech:()->Unit,private val finished:()->Unit){
     private val handler=Handler(Looper.getMainLooper())
     private val queue=ArrayDeque<String>()
     private var model="";private var image="";private var ref="";private var strategy="compare"
@@ -36,6 +36,7 @@ class LabController(private val context:Context,private val log:(String)->Unit,p
                     LabProtocol.STAGE->{phase=m.data.getString("stage","unknown");run=m.data.getInt("run");start=SystemClock.elapsedRealtime();last=0L;line("phase="+phase+"_begin run="+run);status(mode+" · "+phase+" · "+run)}
                     LabProtocol.ROW->log(m.data.getString("line",""))
                     LabProtocol.RESULT->answer(m.data.getString("text",""))
+                    LabProtocol.STREAM->stream(m.data)
                     LabProtocol.DONE->{line("phase=mode_complete");if(keepResident&&queue.isEmpty()){resident=true;phase="idle";active=false;line("phase=resident_idle");status(mode+" · 实验结束，模型已常驻");finished()}else end(this)}
                     LabProtocol.FAILED->{line("phase=failed stage="+phase+" "+m.data.getString("line",""));end(this)}
                 }
@@ -115,6 +116,7 @@ class LabController(private val context:Context,private val log:(String)->Unit,p
     private fun end(s:Slot){
         if(current!==s||s.ending)return
         s.ending=true
+        abortSpeech()
         val b=s.binder
         if(b==null||!b.isBinderAlive){
             // No worker handshake: do not assume it can be reused safely.
@@ -148,7 +150,7 @@ class LabController(private val context:Context,private val log:(String)->Unit,p
     }
     private fun gone(s:Slot){
         if(current!==s)return
-        if(!s.ending)s.line("phase=worker_disconnected stage="+s.phase+" run="+s.run)
+        if(!s.ending){abortSpeech();s.line("phase=worker_disconnected stage="+s.phase+" run="+s.run)}
         cleanup(s);current=null
         if(!disposed){if(active)handler.postDelayed({if(current==null&&active)next()},500) else status("模型已释放") }
     }

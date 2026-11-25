@@ -17,7 +17,7 @@ import java.util.concurrent.Executors
 
 class MainActivity: Activity() {
     companion object {
-        const val V="0.1.8"
+        const val V="0.1.9"
         const val SHA="20c73b5a1e48a315974cff1853535ff5d017100b6420d5ef221b9dd1b955dd7c"
         const val URL="https://huggingface.co/litert-community/MiniCPM-V-4.7-1B/resolve/main/MiniCPM-V-4.7-1B-VL_int8vis.litertlm"
         const val PROMPT="请逐字抄写图片中所有可见文字和数字。不要解释。"
@@ -40,6 +40,7 @@ class MainActivity: Activity() {
     private var busy=false
     private val answers=mutableListOf<String>()
     private lateinit var runner: LabController
+    private lateinit var speech: StreamSpeech
 
     override fun onCreate(savedInstanceState:Bundle?){
         super.onCreate(savedInstanceState)
@@ -47,9 +48,9 @@ class MainActivity: Activity() {
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL; val p=(16*resources.displayMetrics.density).toInt();setPadding(p,p,p,p)}
         fun label(s:String,size:Float=17f):TextView=TextView(this).apply{text=s;textSize=size;root.addView(this)}
         fun button(s:String,action:()->Unit){root.addView(Button(this).apply{text=s;isAllCaps=false;setOnClickListener{if(!busy)action()};buttons.add(this)})}
-        label("蓝星 OCR 精度实验室 v"+V,23f).setTextColor(Color.rgb(22,74,160))
+        label("蓝星 OCR 常驻朗读实验 v"+V,23f).setTextColor(Color.rgb(22,74,160))
         status=label(if(ready())"模型已校验" else "首次使用：下载约1.70 GB LiteRT模型后导入，旧GGUF不可复用")
-        label("离线识别；CPU默认；比较原图、等比补边、分区裁剪。不自动删重复文字。")
+        label("离线 CPU 原图识别。预热后保留模型；识别时逐段使用系统离线中文语音。")
         button("下载指定模型（浏览器）"){runCatching{startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(URL)))}.onFailure{status.text="请从发布说明打开模型链接"}}
         button("导入 LiteRT 模型"){choose("*/*",1)}
         button("内置简单图"){selected=sample;reference.setText(SAMPLE);status.text="已选择简单图"}
@@ -57,12 +58,9 @@ class MainActivity: Activity() {
         button("选择图片"){choose("image/*",2)}
         reference=EditText(this).apply{hint="参考文字（可选，用于CER）";setText(SAMPLE);root.addView(this)}
         button("填入蓝星首页正文参考（仅对应截图）"){reference.setText(HOME_REF)}
-        button("自动精度对照（3方案各2次）"){test(listOf("cpu"),"compare")}
-        button("原图识别（1次）"){test(listOf("cpu"),"original")}
-        button("等比补边识别（1次）"){test(listOf("cpu"),"pad")}
-        button("分区识别（1次）"){test(listOf("cpu"),"tiles")}
-        button("GPU视觉分区（1次）"){test(listOf("gpu_vision"),"tiles")}
-        root.addView(Button(this).apply{text="停止实验 / 释放模型";setOnClickListener{if(::runner.isInitialized)runner.stop()}})
+        button("预热模型（不朗读）"){warmup()}
+        button("原图识别并朗读"){test(listOf("cpu"),"original")}
+        root.addView(Button(this).apply{text="停止实验 / 释放模型";setOnClickListener{if(::speech.isInitialized)speech.cancel();if(::runner.isInitialized)runner.stop()}})
         progress=label("等待实验")
         output=label("识别结果")
         root.addView(Button(this).apply{text="复制本批识别原文（含各方案）";setOnClickListener{(getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("识别原文",answers.joinToString("\n\n")));Toast.makeText(this@MainActivity,"已复制",Toast.LENGTH_SHORT).show()}})
@@ -72,12 +70,14 @@ class MainActivity: Activity() {
         val scroll=ScrollView(this).apply{isFillViewport=true;addView(root)}
         if(android.os.Build.VERSION.SDK_INT>=35)scroll.setOnApplyWindowInsetsListener{v,i->val b=i.getInsets(android.view.WindowInsets.Type.systemBars());v.setPadding(b.left,b.top,b.right,b.bottom);i}
         setContentView(scroll)
-        runner=LabController(this,{line->append(line)},{s->status.text=s;progress.text=s},{s->answers.add(s);output.text=s},{busy=false;buttons.forEach{it.isEnabled=true};mark("complete")})
+        speech=StreamSpeech(this){line->append("v=$V "+line)}
+        runner=LabController(this,{line->append(line)},{s->status.text=s;progress.text=s},{s->answers.add(s);output.text=s},{b->speech.accept(b)},{speech.cancel()},{busy=false;buttons.forEach{it.isEnabled=true};mark("complete")})
         if(!sample.exists())makeSample()
         if(!dense.exists())makeDense()
         selected=sample
         val stage=prefs.getString("stage","idle")
         if(stage!="idle" && stage!="complete") append("v=$V previous_incomplete_stage=$stage")
+        if(ready())warmup()
     }
     private fun ready()=model.isFile && prefs.getString("model_sha","")==SHA && prefs.getLong("model_bytes",-1)==model.length()
     private fun choose(type:String,code:Int){startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{addCategory(Intent.CATEGORY_OPENABLE);this.type=type},code)}
@@ -99,7 +99,7 @@ class MainActivity: Activity() {
                 require(part.renameTo(model)){"无法保存模型"}
                 prefs.edit().putString("model_sha",SHA).putLong("model_bytes",bytes).commit()
                 append("v=$V phase=model_verified bytes=$bytes")
-                setStatus("模型导入成功")
+                setStatus("模型导入成功；请点击预热模型")
             }finally{part.delete()}
         }else if(code==2)launch("读取图片"){
             val dest=File(cacheDir,"selected.img");val part=File(cacheDir,"selected.part")
@@ -129,16 +129,23 @@ class MainActivity: Activity() {
         DENSE.lines().forEachIndexed{i,line->c.drawText(line,24f,64f+i*62f,p)}
         FileOutputStream(dense).use{b.compress(Bitmap.CompressFormat.PNG,100,it)};b.recycle()
     }
+    private fun warmup(){
+        if(!ready()||busy)return
+        speech.cancel();busy=true;buttons.forEach{it.isEnabled=false};mark("experiment")
+        answers.clear();output.text="正在预热（内置图片，不朗读）"
+        runner.start(listOf("cpu"),model.absolutePath,sample.absolutePath,SAMPLE,"warmup")
+    }
     private fun test(modes:List<String>,strategy:String){
         if(!ready()){status.text="请先导入指定模型";return}
         if(busy)return
         val image=selected?:sample;val ref=reference.text.toString()
         busy=true;buttons.forEach{it.isEnabled=false};mark("experiment")
-        answers.clear();output.text="正在识别"
+        speech.begin();answers.clear();output.text="正在识别"
         runner.start(modes,model.absolutePath,image.absolutePath,ref,strategy)
     }
     override fun onDestroy(){
         if(::runner.isInitialized)runner.dispose()
+        if(::speech.isInitialized)speech.close()
         worker.shutdown()
         super.onDestroy()
     }

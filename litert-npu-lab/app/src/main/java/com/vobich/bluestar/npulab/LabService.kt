@@ -109,7 +109,7 @@ class LabService:Service(){
                     val c=e.createConversation(ConversationConfig(samplerConfig=SamplerConfig(topK=1,topP=1.0,temperature=0.0,seed=42),maxOutputToken=512,thinkingConfig=ThinkingConfig(enableThinking=false,thinkingTokenBudget=0),extraContext=mapOf("enable_thinking" to false),automaticToolCalling=false))
                     val session=now()-sessionStart;sessions+=session
                     try{
-                        val raw=StringBuilder();var partFirst=-1L;var chunks=0
+                        val raw=StringBuilder();var partFirst=-1L;var chunks=0;var emitted=0
                         stage(reply,"send",run)
                         val sendStart=now()
                         runBlocking{
@@ -117,15 +117,21 @@ class LabService:Service(){
                                 val content=msg.contents.contents.filterIsInstance<Content.Text>().joinToString(""){it.text}
                                 if(msg.channels.isNotEmpty())thought++
                                 if(content.isNotEmpty()){raw.append(content);chunks++}
-                                if(partFirst<0&&Metrics.visible(raw.toString()).any{!it.isWhitespace()}){
+                                val visible=Metrics.visible(raw.toString())
+                                if(partFirst<0&&visible.any{!it.isWhitespace()}){
                                     partFirst=now()-sendStart
                                     if(first<0)first=now()-jobStart
                                     stage(reply,"first_text",run)
+                                }
+                                if(strategy=="original" && visible.length>emitted){
+                                    val delta=visible.substring(emitted);emitted=visible.length
+                                    send(reply,LabProtocol.STREAM,Bundle().apply{putString("text",delta);putLong("start",jobStart);putBoolean("final",false)})
                                 }
                             }
                         }
                         val total=now()-sendStart
                         val answer=Metrics.visible(raw.toString()).trim()
+                        if(strategy=="original")send(reply,LabProtocol.STREAM,Bundle().apply{putLong("start",jobStart);putBoolean("final",true)})
                         answers.add(answer)
                         val b=runCatching{c.getBenchmarkInfo()}.getOrNull()
                         val decode=(b?.lastDecodeTokenCount?:-1).toInt()

@@ -33,12 +33,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
-          cp litert-npu-lab/app/build/outputs/apk/debug/app-debug.apk release/BlueStar_OCR_Quality_Lab_0.1.8.apk
-          APK=release/BlueStar_OCR_Quality_Lab_0.1.8.apk
+          cp litert-npu-lab/app/build/outputs/apk/debug/app-debug.apk release/BlueStar_OCR_Stream_Lab_0.1.9.apk
+          APK=release/BlueStar_OCR_Stream_Lab_0.1.9.apk
           BT="$ANDROID_HOME/build-tools/36.0.0"
           "$BT/apksigner" verify --verbose --print-certs "$APK"
           "$BT/aapt" dump badging "$APK" | tee release/badging.txt
-          grep -F "package: name='com.vobich.bluestar.npulab.quality' versionCode='5' versionName='0.1.8'" release/badging.txt
+          grep -F "package: name='com.vobich.bluestar.npulab.streaming' versionCode='6' versionName='0.1.9'" release/badging.txt
           ! grep -F "uses-permission: name='android.permission.INTERNET'" release/badging.txt
           unzip -Z1 "$APK" | tee release/apk-entries.txt
           grep -Fx 'lib/arm64-v8a/liblitertlm_jni.so' release/apk-entries.txt
@@ -47,15 +47,15 @@ jobs:
           "$BT/aapt" dump xmltree "$APK" AndroidManifest.xml | tee release/manifest.txt
           grep -F ":inference" release/manifest.txt
           cp litert-npu-lab/README.md release/README.md
-          (cd release && sha256sum BlueStar_OCR_Quality_Lab_0.1.8.apk > SHA256SUMS.txt)
+          (cd release && sha256sum BlueStar_OCR_Stream_Lab_0.1.9.apk > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:
-          name: bluestar-npu-lab-v018
+          name: bluestar-npu-lab-v019
           path: release/
       - name: Publish verified experimental APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG=bluestar-npu-lab-v018-20261125
-          gh release create "$TAG" release/BlueStar_OCR_Quality_Lab_0.1.8.apk release/SHA256SUMS.txt release/README.md --repo "${{ github.repository }}" --target "${{ github.sha }}" --title 'Blue Star OCR Quality Lab v0.1.8 (device experiment)' --notes-file release/README.md --prerelease
+          TAG=bluestar-npu-lab-v019-20261125
+          gh release create "$TAG" release/BlueStar_OCR_Stream_Lab_0.1.9.apk release/SHA256SUMS.txt release/README.md --repo "${{ github.repository }}" --target "${{ github.sha }}" --title 'Blue Star OCR Stream Lab v0.1.9 (device experiment)' --notes-file release/README.md --prerelease

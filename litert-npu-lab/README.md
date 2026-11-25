@@ -1,7 +1,7 @@
-# 蓝星 OCR 精度实验室 v0.1.8
-- 保留LiteRT-LM 0.18.1、MediaTek runtime 2.3.2、CPU6、同一1.698GB模型SHA、关闭思考、greedy、同提示词及512 token/会话。已验证的同模式常驻与进程隔离看门狗不改。GPU视觉分区仅备用。正式蓝星不改。
-- 固定上游v0.18.1存在MiniCPM专用切片和通用STB固定尺寸直接缩放/动态等比两路；尚不能从手机日志证明实际bundle走哪条路径。现有prefill98不随图变化，故用APP端对照验证而非断言根因。
-- 同一张原图、同一驻留CPU引擎：原图直传；等比补边为448方形；分区沿长轴2~4块（大正方形2横带，小方形1块），近理想边界搜索低视觉边缘能量位置，无重叠，不保证不切文字，逐块等比补边448并独立新conversation，按图像顺序拼接，不删除或补写文字。ImageDecoder软件解码、EXIF方向处理、上限长边2400，原图基准不转码。自动顺序original,pad,tiles,tiles,pad,original各2次，共6轮，单模式按钮各1次。预处理时间、是否缓存、分区坐标（解码图坐标）、分区首字/生成时长、合并首字（含会话不含预处理）/总时长、空区、512上限命中、CER、非空白长度、答案hash、重复行计数、CPU/PSS/温度记录。重复行仅观察不删除；答案hash不表示准确；无参考CER=NA。
-- 可选“填入蓝星首页正文参考”，仅用于对应用户截图，不含状态栏，若模型读出状态栏计为额外插入，不等于漏读；不内置或上传用户截图。也可填写真实照片参考。每批完整识别原文单独主动复制（RAM内，最多每轮16384字符），数值日志不含原文、照片。自动对照耗时可能更长，不保证分区更快或更准确。
-- 因旧CI临时签名，独立包com.vobich.bluestar.npulab.quality；保留旧版，导入原来已下载.litertlm，不重新下载。原文件丢失时旧版私有目录不保证可读。模型 https://huggingface.co/litert-community/MiniCPM-V-4.7-1B/resolve/main/MiniCPM-V-4.7-1B-VL_int8vis.litertlm
-- 推荐：选之前蓝星首页截图→填入对应参考→自动精度对照→复制本批识别原文和数值日志。再真实密集图验证。无TTS，无网络权限；实际效果待真机。
+# Blue Star OCR Stream Lab v0.1.9
+Independent CPU6 LiteRT 0.18.1 experiment. Existing model SHA and raw-image OCR prompt/sampling are unchanged.
+- Import the same previously downloaded 1698202736-byte LiteRT model, no GGUF. Tap prewarm after import; on later launches with verified model, prewarm automatically using a built-in sample, without speech.
+- Select a real image and tap original OCR with speech. Reuse the isolated engine while the activity lives; release explicitly or on activity destruction. No claim of permanent background survival.
+- Stream visible text to Android system TTS, require an installed offline Chinese voice; no network permission or cloud voice integration. New OCR or stop cancels prior speech. Logs record first request and engine onStart (not acoustic playback) relative to job and button timestamps.
+- Compare cold without warmup (release, then OCR) against prewarm plus repeated new images. Use optional reference text for CER. No accuracy improvement is claimed.
+- Independent package, old experimental APKs and production app unaffected. Import the existing original model file again; no need to download if retained.

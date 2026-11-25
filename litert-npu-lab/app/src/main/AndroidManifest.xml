@@ -1,5 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-  <application android:label="蓝星 OCR 精度实验室" android:allowBackup="false" android:usesCleartextTraffic="false" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+  <queries><intent><action android:name="android.intent.action.TTS_SERVICE"/></intent></queries>
+  <application android:label="蓝星 OCR 常驻朗读实验" android:allowBackup="false" android:usesCleartextTraffic="false" android:theme="@android:style/Theme.Material.Light.NoActionBar">
     <uses-native-library android:name="libvndksupport.so" android:required="false"/>
     <uses-native-library android:name="libOpenCL.so" android:required="false"/>
     <uses-native-library android:name="libneuronusdk_adapter.so" android:required="false"/>
