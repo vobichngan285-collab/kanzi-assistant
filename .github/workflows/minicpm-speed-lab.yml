@@ -1,0 +1,150 @@
+name: MiniCPM 448 mixed precision speed lab v0.1.13
+on:
+  push:
+    branches: [exp/minicpm-hd-vision-20261125]
+    paths: ['hd-speed-lab/**', '.github/workflows/minicpm-speed-lab.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  vision:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { size: 448, mode: 4x, arm: speed448 }
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      HF_HUB_DISABLE_XET: '1'
+      OMP_NUM_THREADS: '4'
+      MKL_NUM_THREADS: '4'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Pin upstream converter and source model
+        run: |
+          set -euxo pipefail
+          git init upstream
+          git -C upstream fetch --depth 1 https://github.com/john-rocky/hf-to-litertlm.git a395b4967fa9e879a5de548d83399b4be2487b1e
+          git -C upstream checkout --detach FETCH_HEAD
+          test "$(git -C upstream rev-parse HEAD)" = a395b4967fa9e879a5de548d83399b4be2487b1e
+          mkdir -p report source
+          free -h; df -h
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+          python -m venv refenv
+          refenv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch==2.14.1
+          refenv/bin/pip install transformers==5.19.0 pillow safetensors huggingface_hub
+          refenv/bin/python -c 'from huggingface_hub import snapshot_download; snapshot_download("openbmb/MiniCPM-V-4.7-1B",revision="984a89aafcd5160164f4f0d04b4be0f4eec03cb8",allow_patterns=["*.json","*.safetensors","*.jinja","LICENSE*","README.md"],local_dir="source")'
+          test -s source/config.json
+          refenv/bin/python -c 'import json; c=json.load(open("source/config.json")); print("model_type",c.get("model_type"),"vision_config keys",list(c["vision_config"]))'
+          test -f source/model.safetensors
+          sha256sum source/model.safetensors > report/source.sha256
+          refenv/bin/pip freeze > report/ref-versions.txt
+      - name: Original HF feature reference
+        run: |
+          set -euxo pipefail
+          refenv/bin/python hd-vision-probe/probe.py reference --src source --upstream upstream --out report --size ${{ matrix.size }} --mode ${{ matrix.mode }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned upstream vision export environment
+        run: |
+          set -euxo pipefail
+          python -m venv expenv
+          expenv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch==2.12.1
+          expenv/bin/pip install litert-torch==0.9.3 'ai-edge-litert>=2.1.6,<2.2.0' jax==0.7.2 jaxlib==0.7.2 'numpy<2.4' safetensors pillow
+          expenv/bin/pip check
+          expenv/bin/pip freeze > report/export-versions.txt
+      - name: Real model eager and TFLite parity
+        run: |
+          set -euxo pipefail
+          expenv/bin/python hd-vision-probe/probe.py export --src source --upstream upstream --out report --size ${{ matrix.size }} --mode ${{ matrix.mode }}
+      - name: Retrieve the exact verified v0.1.12 FP16 baseline
+        run: |
+          set -euxo pipefail
+          curl -fL --retry 3 'https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-hd-lab-detail448-v0112-20261125/BlueStar-detail448.litertlm' -o baseline.litertlm
+          echo '0d705d8bba51bae8e10c6bfdfc727a1fcc154dd703d9d2f36e9e8bfadc19ee63  baseline.litertlm' | sha256sum -c -
+          rm -rf source refenv
+      - name: Screen genuine mixed quantization and isolate encoder time
+        run: |
+          set -euxo pipefail
+          expenv/bin/python hd-speed-lab/mixed.py screen --base baseline.litertlm
+      - name: Pack and test ranked candidates against v0.1.12 until one passes
+        run: |
+          set -euo pipefail
+          python -m venv runenv
+          runenv/bin/pip install litert-lm==0.20.0 pillow
+          mkdir -p candidate
+          ok=0
+          while IFS= read -r name; do
+            cp "report/$name.tflite" report/selected_encoder.tflite
+            python -c 'import json,sys; p="report/"; d=json.load(open(p+"mixed_trials.json")); x=next(x for x in d["accepted"] if x["name"]==sys.argv[1]); json.dump(x,open(p+"quant.json","w"))' "$name"
+            rm -rf report/base_sections report/check_sections
+            rm -f candidate/BlueStar-speed448.litertlm report/smoke.json
+            if expenv/bin/python hd-speed-lab/pack.py pack --out report --upstream upstream --size 448 --mode 4x --base baseline.litertlm --model candidate/BlueStar-speed448.litertlm &&
+               runenv/bin/python hd-speed-lab/mixed.py smoke --base baseline.litertlm --model candidate/BlueStar-speed448.litertlm; then
+              ok=1
+              break
+            fi
+            if [ -f report/smoke.json ]; then cp report/smoke.json "report/smoke-$name.json"; fi
+          done < report/candidate_names.txt
+          test "$ok" = 1
+          rm -f report/*.tflite baseline.litertlm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Build isolated APK bound to exact candidate model
+        run: |
+          set -euxo pipefail
+          python hd-speed-lab/configure_apk.py --report report/bundle.json --arm ${{ matrix.arm }}
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
+          "$SDKMANAGER" 'platforms;android-36' 'build-tools;36.0.0'
+          (cd litert-npu-lab && gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug)
+          cp litert-npu-lab/app/build/outputs/apk/debug/app-debug.apk candidate/BlueStar-${{ matrix.arm }}-0.1.13.apk
+          APK=candidate/BlueStar-${{ matrix.arm }}-0.1.13.apk
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/apksigner" verify --verbose --print-certs "$APK"
+          "$BT/aapt" dump badging "$APK" | tee report/badging.txt
+          grep -F "package: name='com.vobich.bluestar.npulab.${{ matrix.arm }}' versionCode='10' versionName='0.1.13'" report/badging.txt
+          ! grep -F "uses-permission: name='android.permission.INTERNET'" report/badging.txt
+          unzip -Z1 "$APK" | grep -Fx 'lib/arm64-v8a/liblitertlm_jni.so'
+          "$BT/aapt" dump xmltree "$APK" AndroidManifest.xml | grep -F ':inference'
+          cp report/bundle.json report/smoke.json candidate/
+          cp hd-speed-lab/README.md candidate/README.md
+          cp report/mixed_trials.json report/quant.json candidate/
+          (cd candidate && sha256sum *.apk *.litertlm > SHA256SUMS.txt)
+      - name: Publish standalone APK and verified raw model
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-speed448-v0113-20261125
+          test "$(stat -c %s candidate/BlueStar-speed448.litertlm)" -lt 1997042272
+          (cd candidate && sha256sum -c SHA256SUMS.txt)
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --prerelease --title "BlueStar OCR 448 mixed precision v0.1.13" --notes-file candidate/README.md
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" candidate/*
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets > report/release-assets.json
+          python -c 'import json,pathlib; a={x["name"]:x["size"] for x in json.load(open("report/release-assets.json"))["assets"]}; assert a=={p.name:p.stat().st_size for p in pathlib.Path("candidate").iterdir() if p.is_file()},a'
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,isDraft,assets
+      - name: Upload numeric reports only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hd-vision-${{ matrix.arm }}
+          path: |
+            report/*.json
+            report/*.txt
+            report/*.sha256
+            report/fixture.png
+          if-no-files-found: warn
