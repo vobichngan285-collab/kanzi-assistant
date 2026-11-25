@@ -1,0 +1,4 @@
+# 蓝星GPU实验室 v0.1.2
+独立包 com.vobich.bluestar.offlinelab.gpu，Android 28+，仅1B，原GGUF及SHA256目录完全不变；不替换v0.1.1或正式蓝星。旧包签名私钥未持久化，不能覆盖，附ADB本地迁移脚本从.speed（或旧包），复制需要额外约1.78GB，不卸载、不删除原文件，未真机验证。若已有外部模型文件可导入。可手动下载，不自动下载。未来可预设私有LAB_GPU_KEYSTORE_B64确保签名稳定。
+同图单切片，CPU4/6/8线程及GPU视觉+CPU4，GPU只用于视觉编码器，LLM CPU，禁用KQV及host op offload；CPU与GPU统一贪心采样（区别于v0.1.1温度0.7）。每配置独立加载模型、1冷2暖，每轮重置上下文。预热模型不等于实时预览。输出文本显示在本地，可选参考CER，数值日志记录实际主视觉backend、GPU标志、merge元数据（2=4x,4=16x）、内部image_size、图像chunk和视觉token数、tokenize/vision_encode/image_decode/text_decode微秒、首字/总耗时毫秒、温度/PSS。主视觉后端GPU不证明全部算子均在GPU，调度器可回退个别算子。GPU全局回退CPU时显式失败，不计入GPU数据；驱动可能native crash，CPU对照先执行，保留已完成日志。无自动GPU重试。原图或同一所选分辨率；单次批次不代表统计稳定性。先用可确认的清晰文字图片，记录实际内容，避免上次2–3 token假成功。真实设备未验，不能保证亚秒级或GPU兼容性。此版不实现常驻跨任务或视频预览。
+Vulkan依赖沿用已成功探针固定引擎及Khronos头，保留CPU后端和v86，CI验证APK签名、包名、库、模型元数据与v0.1.1完全一致。仅修改独立生成脚本及新工作流，不改原v0.1.1文件。
