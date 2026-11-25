@@ -1,3 +1,10 @@
+# 最新｜v0.1.4 Bazel依赖冲突修复并重跑
+- CI45722867944 native job139585257935 环境准备、固定官方源码及混合补丁均成功，Bazel仓库映射失败：TensorFlow workspace1.bzl load compatibility_proxy_repo，而旧rules_cc无该符号。未进入JNI编译完成。报告artifact15072828212。
+- 核对官方v0.18.1 WORKSPACE有两组TensorFlow/LiteRT pin，后面的TF a1179d3c224967bd979950b823d5ce2a7e8f4c94实际生效，workspace1确实调用compatibility_proxy_repo；rules_cc 0.2.9源代码含此函数，并采用Bazel 7兼容native分支。BCR source.json提供固定archive integrity。隔离分支 exp/gemma4-560-hybrid-20261126 HEAD bd81240aff962f887a36f8ff1b9be1ff2572596f 仅在CI内固定rules_cc 0.2.9及完整校验，不改模型、560预算、原修复权重或正式APP；该兼容修复尚未通过完整编译。新增WORKSPACE diff诊断。
+- 新CI45723493748 已核实in_progress，尚无JNI/APK。后续先核实真实日志、ABI检查、发布及真机混合视觉准确率和速度。https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45723493748
+
+---
+
 # 最新｜v0.1.4编译环境权限修复并重跑
 - CI45722268120 completed/failure，native job139583243019 在Prepare source-build environment失败：服务器已预装Bazelisk，全局npm重复安装触发EACCES，未进入源码编译。原560模型及混合后端补丁未改。
 - exp/gemma4-560-hybrid-20261126 新HEAD 9fa1ebdad14638c7bc0ddebfa165f60bcf4ba166，构建脚本优先使用已有Bazelisk，缺失时安装至用户目录。最新CI45722867944已核实in_progress。尚无JNI/APK，需核实实际编译、ABI、发布及真机测试。
