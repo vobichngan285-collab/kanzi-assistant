@@ -30,6 +30,8 @@
 
 - 用户批准CPU/GPU视觉优化至APK，继续原规则无需逐项确认。提交ab03341235ae1589bb5dd80bfaa605a6db0643ff，compare核实仅litert-npu-lab及独立workflow共9文件，v0.1.7；保留已验证LiteRT运行时/同SHA模型/CPU6/同原提示词/简单图/无思考；暂停GPU全面/NPU入口。单模式4轮后同隔离进程保留Engine，下一次同模式（包括新图片）复用；切换模式/手动释放/Activity销毁终止进程，非后台永久常驻。ABBA CPU/GPU/GPU/CPU四组各4轮、每组新进程、各8轮（2首次6组内暖轮），不双模型并驻；增加448密集文字合成图、继续支持原相册图及用户填写参考CER。数值记录batch/block/resident_reused/电池温度（0.1C，非SoC）/Android thermal status、CPU累计、PSS与分段时间，最多600行、UI最近24行、复制完整缓存；保留隔离看门狗与10s心跳。旧版CI临时debug签名不可保证覆盖，独立包com.vobich.bluestar.npulab.resident versionCode4，重新导入同1.698GB原文件，不重下；正式版不动。CI45593140018 https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45593140018 已启动，目标tag bluestar-npu-lab-v017-20261125，待实际编译/发布验证，真机常驻和速度未验证。
 
+- v0.1.7 Release已核实：CI45593140018 job139132243498，构建/单测/签名/包校验/上传/发布全部success，tag bluestar-npu-lab-v017-20261125，目标ab03341235ae1589bb5dd80bfaa605a6db0643ff，APK BlueStar_CPU_GPU_Lab_0.1.7.apk 18480579 bytes SHA256 c7bb26455b558e722b0a9b149bb3f5a51eaaf2deba3c2ba8d4f55fa2275a6ca9，下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-npu-lab-v017-20261125/BlueStar_CPU_GPU_Lab_0.1.7.apk 。独立安装保留旧版，导入原始LiteRT文件；先密集图自动ABBA各8轮，再单模式连续两次（换图）核验resident_reused/load_ms。实际手机常驻与提速尚未验收，硬件覆盖未证实，不改正式蓝星。用户授权已执行到实际发布。
+
 ---
 
 # 2026-11-25｜视觉编码器Q8量化与MT6991 NPU研究（Host实验通过，真机及NPU未验证）
