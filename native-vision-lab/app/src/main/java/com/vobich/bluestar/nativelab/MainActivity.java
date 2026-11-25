@@ -32,7 +32,7 @@ public class MainActivity extends Activity {
     private boolean busy=false,speakRun=false,ttsReady=false;
     private volatile boolean destroyed=false,stopped=false;
     private TextToSpeech tts;
-    private long utterances=0;
+    private long utterances=0,firstTts=-1,runStart=0;
     private native String nativeRun(String model,String projector,String file,int threads,int orientation);
     private native void nativeCancel();
     private native void nativeResetCancel();
@@ -116,20 +116,20 @@ public class MainActivity extends Activity {
         if(busy)return;
         int v=projector.getSelectedItemPosition()+1,n=threads.getSelectedItemPosition()==0?6:4;
         if(photo==null||!weight(0).isFile()||!weight(v).isFile()){status.setText("先导入对应语言和视觉权重，再选择原图");return;}
-        stopped=false;speakRun=speak.isChecked()&&ttsReady;utterances=0;speechBuffer.setLength(0);if(tts!=null)tts.stop();
-        output.setText("");setBusy(true,true);status.setText("开始识别");
+        stopped=false;speakRun=speak.isChecked()&&ttsReady;utterances=0;firstTts=-1;speechBuffer.setLength(0);if(tts!=null)tts.stop();
+        output.setText("");setBusy(true,true);status.setText("开始识别");runStart=SystemClock.elapsedRealtime();
         final String image=photo.getAbsolutePath(), desc=photoInfo;
         final long read=photoReadMs;final int orientation=photoOrientation;
         final String m=weight(0).getAbsolutePath(),mm=weight(v).getAbsolutePath();
         worker.execute(()->{
             try{
-                if(destroyed||stopped)return;
+                if(destroyed||stopped){post(()->setBusy(false,false));return;}
                 nativeResetCancel();
-                if(destroyed||stopped){nativeCancel();return;}
+                if(destroyed||stopped){nativeCancel();post(()->setBusy(false,false));return;}
                 String r=nativeRun(m,mm,image,n,orientation);
                 Debug.MemoryInfo mem=new Debug.MemoryInfo();Debug.getMemoryInfo(mem);
                 post(()->{if(!stopped&&r!=null&&r.startsWith("status=ok"))flushSpeech(true);
-                    logs.append("v=0.2.0 soc=").append(Build.VERSION.SDK_INT>=31?Build.SOC_MODEL:Build.HARDWARE).append(" projector=").append(v==1?"16x":"4x").append(" slice_cap=9 ").append(desc).append(" file_read_ms=").append(read).append(" ").append(r).append(" pss_kib=").append(mem.getTotalPss()).append(" tts_queued=").append(utterances).append('\n');log.setText(logs);
+                    logs.append("v=0.2.0 soc=").append(Build.VERSION.SDK_INT>=31?Build.SOC_MODEL:Build.HARDWARE).append(" projector=").append(v==1?"16x":"4x").append(" slice_cap=9 ").append(desc).append(" file_read_ms=").append(read).append(" ").append(r).append(" pss_kib=").append(mem.getTotalPss()).append(" tts_first_queue_ms=").append(firstTts).append(" tts_queued=").append(utterances).append('\n');log.setText(logs);
                     status.setText(stopped?"已停止":r!=null&&r.startsWith("status=ok")?"识别完成":"识别失败，查看上方阶段与日志");setBusy(false,false);});
             }catch(Throwable e){post(()->{status.setText("推理失败："+e.getClass().getSimpleName());setBusy(false,false);});}
         });
@@ -146,7 +146,7 @@ public class MainActivity extends Activity {
             int cut=-1;for(int i=0;i<speechBuffer.length();i++){if("，。！？；\n,.!?;".indexOf(speechBuffer.charAt(i))>=0){cut=i+1;break;}}
             if(cut<0){if(end)cut=speechBuffer.length();else if(speechBuffer.length()>=24)cut=24;else break;}
             String s=speechBuffer.substring(0,cut);speechBuffer.delete(0,cut);
-            if(!s.trim().isEmpty()&&tts.speak(s,TextToSpeech.QUEUE_ADD,null,"native-"+utterances)==TextToSpeech.SUCCESS)utterances++;
+            if(!s.trim().isEmpty()&&tts.speak(s,TextToSpeech.QUEUE_ADD,null,"native-"+utterances)==TextToSpeech.SUCCESS){if(firstTts<0)firstTts=SystemClock.elapsedRealtime()-runStart;utterances++;}
         }
     }
     @Override protected void onDestroy(){destroyed=true;stopped=true;nativeCancel();if(tts!=null){tts.stop();tts.shutdown();}worker.execute(this::nativeRelease);super.onDestroy();}

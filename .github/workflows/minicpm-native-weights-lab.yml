@@ -4,6 +4,9 @@ on:
     branches: [exp/minicpm-native-weights-20261125]
     paths: ['native-vision-lab/**', '.github/workflows/minicpm-native-weights-lab.yml']
   workflow_dispatch:
+concurrency:
+  group: bluestar-native-weights-final
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -38,13 +41,18 @@ jobs:
           echo CMAKE_BUILD_PARALLEL_LEVEL=2 >> "$GITHUB_ENV"
           mkdir -p native-vision-lab/app/src/main/assets
           cp engine/LICENSE native-vision-lab/app/src/main/assets/ENGINE_LICENSE.txt
+          OMP=$(find "$ANDROID_HOME/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64" -path "*aarch64*/libomp.so" -type f | head -1)
+          if [ -n "$OMP" ]; then
+            mkdir -p native-vision-lab/app/src/main/jniLibs/arm64-v8a
+            cp "$OMP" native-vision-lab/app/src/main/jniLibs/arm64-v8a/libomp.so
+          fi
       - name: Build independent Blue Star APK
         working-directory: native-vision-lab
-        run: gradle --no-daemon --max-workers=2 :app:assembleDebug
+        run: gradle --no-daemon --max-workers=2 :app:assembleRelease
       - name: Verify signed APK, isolated identity and native code
         run: |
           set -euo pipefail
-          APK=native-vision-lab/app/build/outputs/apk/debug/app-debug.apk
+          APK=native-vision-lab/app/build/outputs/apk/release/app-release.apk
           BT="$ANDROID_HOME/build-tools/36.0.0"
           "$BT/apksigner" verify --verbose --print-certs "$APK"
           "$BT/aapt" dump badging "$APK" | tee badging.txt
@@ -53,6 +61,9 @@ jobs:
           ! grep -F "android.permission.INTERNET" badging.txt
           unzip -p "$APK" lib/arm64-v8a/libbluestar_native.so > "$RUNNER_TEMP/native.so"
           readelf -h "$RUNNER_TEMP/native.so" | grep AArch64
+          grep -R -F "CMAKE_BUILD_TYPE:STRING=Release" native-vision-lab/app/.cxx/Release || grep -R -F "CMAKE_BUILD_TYPE:STRING=RelWithDebInfo" native-vision-lab/app/.cxx/RelWithDebInfo
+          readelf -d "$RUNNER_TEMP/native.so" | tee needed.txt
+          if grep -F "libomp.so" needed.txt; then unzip -l "$APK" | grep -F "lib/arm64-v8a/libomp.so"; fi
           readelf --dyn-syms --wide "$RUNNER_TEMP/native.so" > symbols.txt
           grep Java_com_vobich_bluestar_nativelab_MainActivity_nativeRun symbols.txt
           grep Java_com_vobich_bluestar_nativelab_MainActivity_nativeCancel symbols.txt
@@ -125,4 +136,4 @@ jobs:
         run: |
           set -euo pipefail
           (cd release && sha256sum -c SHA256SUMS.txt)
-          gh release create bluestar-native-vision-v020-20261125 release/* --target "$GITHUB_SHA" --title "蓝星原厂模型实验室 v0.2.0" --notes-file release/README.md --prerelease
+          gh release create bluestar-native-vision-v020-optimized-20261125 release/* --target "$GITHUB_SHA" --title "蓝星原厂模型实验室 v0.2.0" --notes-file release/README.md --prerelease
