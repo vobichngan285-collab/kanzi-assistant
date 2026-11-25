@@ -1,3 +1,11 @@
+# 最新｜原厂视觉 CPU 性能诊断 v0.2.2（已提交，待构建验证）
+- 用户v0.2.1真机224万模式1296×1728，vision2/10 tokens63，本阶段6秒/总40秒；44万模式576×768，vision1/5 tokens63，本阶段17秒/总21秒；均未获得完整结果，不能断言平均块耗时或卡死。已证实缩图和chunk数减少，单块成本仍高。用户授权底层CPU专项。
+- 对照原厂OpenBMB/MiniCPM-V-Apps 6665801f45dd17c7664a67469eb7e9013fd81def Android v2.6：CPU4/batch2048、默认视觉图初始化、动态v86显式fp16/bf16、通用视觉4.6非当前4.7 1B；QNN仅特定OCR路径，非MT6991。固定引擎tc-mb/llama.cpp-omni 0c0b1109f2d338acf65f28a7b0a1505da3945286 的KleidiAI F16分支受SME/内核选择等条件约束，ggml-cpu.c在SVE或MATMUL_INT8时明确undef GGML_USE_LLAMAFILE；不盲目开启。clip warmup主要预留计算图/缓冲区及Flash Attention支持检查，并非完成实际视觉编码。
+- 原分支exp/minicpm-native-weights-20261125，HEAD 09f69bcdb846e01f7c287b2cda41e7de179c73c7，compare仅8个独立实验文件；正式蓝星与旧APK不改。保留原权重SHA/动态切片/六档分辨率/提示/TTS。显式原厂ARM编译参数armv8.6-a+dotprod+i8mm+fp16+bf16；仅实验构建对固定引擎插入线程0的通用F16 MUL_MAT分支和KleidiAI F16成功返回计数，不改变数学、权重。每个完成视觉块记录wall/process CPU/两个计数并可实时复制；GGML CPU特征/HWCAP。独立无需模型的1152×1152×256 F16×F32矩阵三轮，CPU4/6/高性能4核请求，输出数值校验。OCR模式对照原参数、视觉图预初始化、高性能4核请求（CPU4）、预初始化+batch/ubatch/实际eval2048。高性能核仅当前允许核按capacity或最高频率排序，调用线程回读，不能证明所有运算线程绑核；若失败不宣称启用。模式改变重载，矩阵测试会释放模型。停止仍需块返回。实际kernel计数/提速/识别精度尚未真机验证。
+- 版本0.2.2 versionCode3同实验包，旧GGUF无需重下，若签名冲突仅卸载旧实验APK。CI保留缩图测试、原厂权重Host OCR、APK签名/权限/ARM64/JNI检查，发布重试机制。CI [45653847435](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45653847435) in_progress；APK未验证发布。下一步先无模型矩阵测速复制日志，再同图44万CPU6原参数及CPU4等对照，重点看每块通用F16/KAI计数、wall/process CPU；不保证1～2秒。
+
+---
+
 # 最新｜原厂权重分辨率对照 v0.2.1（已发布，待真机）
 - 用户v0.2.0真机截图最终显示语言✓、16x✓、4x未导入，3072×4096、3281168 bytes、sha508ae2824466，默认16x/CPU6，进入vision阶段后持续未出字。此前导入SHA失败后来解决，未确认原因；尚无完整推理日志，无法区分视觉编码慢或卡死。用户授权分辨率优化实验，不改正式蓝星或模型。
 - 原实验分支 exp/minicpm-native-weights-20261125 从成功v0.2.0提交c9c19ccb7aac92a9843fcc10ec99429f88fbf829推进至2a0511eb4ba89eae96c38e28d1689ce209f25ff9；compare核实仅native-vision-lab及独立workflow共7文件。第一次更新ref服务报错，核查旧HEAD后用精确expected_sha租约完成同一父子提交快进，已回读HEAD。保留模型SHA、原厂引擎固定提交、16x/CPU6默认、原生动态切片上限9、常驻/离线TTS。新增原图/315/224默认/177/79/44万像素上限，按比例不放大，EXIF校正后原生RGB面积加权缩放、无JPEG/PNG重编码。UI每500ms显示阶段/总计、实际视觉chunk序号与总数及token，非内部tile进度；推理时允许复制当前阶段日志。停止仍需等待当前块返回，未实现硬中断。记录实际缩放尺寸、resize_ms、完成chunk数量等。新增Host纯C++像素上限、比例、面积平均测试，CI保留原厂权重简单OCR smoke和APK签名/版本/ARM64/无INTERNET检查。
