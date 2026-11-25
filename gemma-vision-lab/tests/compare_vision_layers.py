@@ -5,6 +5,7 @@ import numpy as np
 # Reuse exact source/patch verification, extraction and static descriptions.
 p=Path(__file__).with_name("compare_vision.py")
 exec(compile(p.read_text().split("rng=np.random.default_rng(20261126)",1)[0],str(p),"exec"))
+import struct as binary_struct  # shared setup defines a variable called struct
 rng=np.random.default_rng(20261126)
 images=rng.uniform(-1,1,size=(1,2520,768)).astype(np.float32)
 yy,xx=np.indices((60,42))
@@ -88,7 +89,10 @@ for label,path in paths.items():
 pairs=[]
 for layer,(aa,bb) in enumerate(zip(catalog["original"]["groups"],catalog["converted"]["groups"])):
     ka=[r["key"] for r in aa];kb=[r["key"] for r in bb]
-    if ka==kb:
+    if layer==0 and ka and kb and ka[0]==kb[0] and "input_projection" in aa[0]["out"]["name"]:
+        matches=[(0,0)]
+        confidence="first_projection_candidate_check_input_and_weights"
+    elif ka==kb:
         matches=list(zip(range(len(ka)),range(len(kb))));confidence="same_order_and_shapes"
     else:
         # Only unambiguous unique-shape matches in differing groups; repeated shapes are not proof.
@@ -127,6 +131,11 @@ for label,path in paths.items():
             w=get_const(m,g,raw,prod,r["inputs"][1]["id"])
             if w is not None:weights[label][row["label"]]=(list(w.shape),sample(w))
     for row in residual_pairs:chosen.add(row[side]["out"]["id"])
+    quant={}
+    for idx in chosen:
+        t=g.Tensors(idx); q=t.Quantization()
+        if q and q.ScaleLength() and types_enum.get(t.Type()) in ("INT8","UINT8","INT32"):
+            quant[idx]=(np.array(q.ScaleAsNumpy(),np.float32),np.array(q.ZeroPointAsNumpy(),np.float32) if q.ZeroPointLength() else np.zeros(1,np.float32),q.QuantizedDimension())
     old=[int(x) for x in g.OutputsAsNumpy()]
     # Append a new FlatBuffer vector; all original tensor/weight offsets and signature maps unchanged.
     field=g._tab.Pos+g._tab.Offset(8)
@@ -136,8 +145,8 @@ for label,path in paths.items():
     # Stream the original bytes and patch one unsigned offset on disk.
     with patched.open("wb") as f:
         f.write(raw); f.write(b"\0"*((-len(raw))%4)); pos=f.tell()
-        f.write(struct.pack("<I",len(new_outputs)));f.write(struct.pack("<"+"i"*len(new_outputs),*new_outputs))
-        f.seek(field);f.write(struct.pack("<I",pos-field))
+        f.write(binary_struct.pack("<I",len(new_outputs)));f.write(binary_struct.pack("<"+"i"*len(new_outputs),*new_outputs))
+        f.seek(field);f.write(binary_struct.pack("<I",pos-field))
     del raw,m,g,desc,prod,groups,key,adds,ops;gc.collect()
     it,run,base_out=infer(path);del run,it;gc.collect()
     try:
@@ -149,6 +158,12 @@ for label,path in paths.items():
         if valid[label]:
             for idx in sorted(chosen):
                 a=it.get_tensor(idx,subgraph_index=gi)
+                if idx in quant:
+                    scale,zero,axis=quant[idx]
+                    if len(scale)>1:
+                        dims=[1]*a.ndim;dims[axis]=len(scale);scale=scale.reshape(dims)
+                        if len(zero)>1:zero=zero.reshape(dims)
+                    a=(a.astype(np.float32)-zero)*scale
                 samples[label][idx]=(list(a.shape),sample(a))
         del run,it
     finally:
@@ -166,7 +181,7 @@ if all(valid.get(k,False) for k in paths):
         if row["label"] in weights["original"] and row["label"] in weights["converted"]:
             u,v=weights["original"][row["label"]],weights["converted"][row["label"]]
             data["sample_weight_dequantized"]=metrics(u[1],v[1]) if u[0]==v[0] else {"shape_mismatch":[u[0],v[0]]}
-        # Quantized activations must not be directly equated with float tensors.
+        # Quantized activations were dequantized from tensor metadata where available.
         if a["out"]["dtype"]!=b["out"]["dtype"]:data["output_dtype_mismatch"]=True
         report.append(data)
         print("layer_probe",json.dumps(data),flush=True)
