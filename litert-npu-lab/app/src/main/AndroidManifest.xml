@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-  <application android:label="蓝星 NPU 实验室" android:allowBackup="false" android:usesCleartextTraffic="false" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+  <application android:label="蓝星 GPU NPU 实验室" android:allowBackup="false" android:usesCleartextTraffic="false" android:theme="@android:style/Theme.Material.Light.NoActionBar">
     <uses-native-library android:name="libvndksupport.so" android:required="false"/>
     <uses-native-library android:name="libOpenCL.so" android:required="false"/>
     <uses-native-library android:name="libneuronusdk_adapter.so" android:required="false"/>
@@ -9,7 +9,8 @@
     <uses-native-library android:name="libneuron_adapter_mgvi.so" android:required="false"/>
     <uses-native-library android:name="libneuron_adapter.so" android:required="false"/>
     <uses-native-library android:name="libneuron_sys_util.mtk.so" android:required="false"/>
-    <activity android:name=".MainActivity" android:exported="true" android:configChanges="orientation|screenSize|keyboardHidden">
+    <service android:name="com.vobich.bluestar.npulab.LabService" android:exported="false" android:process=":inference"/>
+    <activity android:name="com.vobich.bluestar.npulab.MainActivity" android:exported="true" android:configChanges="orientation|screenSize|keyboardHidden">
       <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
     </activity>
   </application>

@@ -17,7 +17,7 @@ import java.util.concurrent.Executors
 
 class MainActivity: Activity() {
     companion object {
-        const val V="0.1.4"
+        const val V="0.1.5"
         const val SHA="20c73b5a1e48a315974cff1853535ff5d017100b6420d5ef221b9dd1b955dd7c"
         const val URL="https://huggingface.co/litert-community/MiniCPM-V-4.7-1B/resolve/main/MiniCPM-V-4.7-1B-VL_int8vis.litertlm"
         const val PROMPT="请逐字抄写图片中所有可见文字和数字。不要解释。"
@@ -34,6 +34,7 @@ class MainActivity: Activity() {
     private lateinit var reference:EditText
     private val buttons=mutableListOf<Button>()
     private var busy=false
+    private lateinit var runner: LabController
 
     override fun onCreate(savedInstanceState:Bundle?){
         super.onCreate(savedInstanceState)
@@ -41,17 +42,21 @@ class MainActivity: Activity() {
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL; val p=(16*resources.displayMetrics.density).toInt();setPadding(p,p,p,p)}
         fun label(s:String,size:Float=17f):TextView=TextView(this).apply{text=s;textSize=size;root.addView(this)}
         fun button(s:String,action:()->Unit){root.addView(Button(this).apply{text=s;isAllCaps=false;setOnClickListener{if(!busy)action()};buttons.add(this)})}
-        label("蓝星 NPU 实验室 v"+V,23f).setTextColor(Color.rgb(22,74,160))
+        label("蓝星 GPU / NPU 实验室 v"+V,23f).setTextColor(Color.rgb(22,74,160))
         status=label(if(ready())"模型已校验" else "首次使用：下载约1.70 GB LiteRT模型后导入，旧GGUF不可复用")
-        label("本地离线；不上传图片；NPU为请求，实际硬件执行需验证")
+        label("本地离线；GPU/NPU为请求；加速器超时后隔离进程会停止。")
         button("下载指定模型（浏览器）"){runCatching{startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(URL)))}.onFailure{status.text="请从发布说明打开模型链接"}}
         button("导入 LiteRT 模型"){choose("*/*",1)}
         button("内置测试图"){selected=sample;reference.setText(SAMPLE);status.text="已选择内置图"}
         button("选择图片"){choose("image/*",2)}
         reference=EditText(this).apply{hint="参考文字（可选，用于CER）";setText(SAMPLE);root.addView(this)}
-        button("CPU 6线程（3轮）"){test(listOf(false))}
-        button("NPU视觉 + CPU 6线程（3轮）"){test(listOf(true))}
-        button("自动对比 CPU / NPU（各3轮）"){test(listOf(false,true))}
+        button("CPU 6线程（3轮）"){test(listOf("cpu"))}
+        button("GPU视觉 + CPU 6线程（3轮）"){test(listOf("gpu_vision"))}
+        button("GPU全面加速（3轮）"){test(listOf("gpu_all"))}
+        button("NPU视觉 + CPU 6线程（3轮）"){test(listOf("npu_vision"))}
+        button("自动对比 CPU / GPU（各3轮）"){test(listOf("cpu","gpu_vision","gpu_all"))}
+        button("自动对比全部模式（各3轮）"){test(listOf("cpu","gpu_vision","gpu_all","npu_vision"))}
+        root.addView(Button(this).apply{text="停止当前实验";setOnClickListener{if(::runner.isInitialized)runner.stop()}})
         output=label("识别结果")
         root.addView(Button(this).apply{text="复制数值日志";setOnClickListener{(getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("蓝星NPU日志",prefs.getString("rows","")?:""));Toast.makeText(this@MainActivity,"已复制",Toast.LENGTH_SHORT).show()}})
         button("清空日志"){prefs.edit().remove("rows").commit();logs.text=""}
@@ -59,6 +64,7 @@ class MainActivity: Activity() {
         val scroll=ScrollView(this).apply{isFillViewport=true;addView(root)}
         if(android.os.Build.VERSION.SDK_INT>=35)scroll.setOnApplyWindowInsetsListener{v,i->val b=i.getInsets(android.view.WindowInsets.Type.systemBars());v.setPadding(b.left,b.top,b.right,b.bottom);i}
         setContentView(scroll)
+        runner=LabController(this,{line->append(line)},{s->status.text=s},{s->output.text=s},{busy=false;buttons.forEach{it.isEnabled=true};mark("complete")})
         if(!sample.exists())makeSample()
         selected=sample
         val stage=prefs.getString("stage","idle")
@@ -107,53 +113,17 @@ class MainActivity: Activity() {
         c.drawText("蓝星向导",224f,160f,p);c.drawText("药品 5931",224f,250f,p)
         FileOutputStream(sample).use{b.compress(Bitmap.CompressFormat.PNG,100,it)};b.recycle()
     }
-    private fun test(modes:List<Boolean>){
+    private fun test(modes:List<String>){
         if(!ready()){status.text="请先导入指定模型";return}
+        if(busy)return
         val image=selected?:sample;val ref=reference.text.toString()
-        launch("准备识别"){
-            val hash=sha256(image).take(12)
-            for(npu in modes){
-                val mode=if(npu)"npu_vision" else "cpu"
-                try{runMode(mode,npu,image,hash,ref)}
-                catch(t:Throwable){append("v=$V requested=$mode phase=failed error="+t.javaClass.simpleName);setStatus("$mode 失败："+t.javaClass.simpleName)}
-            }
-        }
+        busy=true;buttons.forEach{it.isEnabled=false};mark("experiment")
+        runner.start(modes,model.absolutePath,image.absolutePath,ref)
     }
-    @OptIn(ExperimentalApi::class)
-    private fun runMode(mode:String,npu:Boolean,image:File,hash:String,ref:String){
-        val dir=applicationInfo.nativeLibraryDir
-        val dispatch=File(dir,"libLiteRtDispatch_MediaTek.so").isFile
-        val compiler=File(dir,"libLiteRtCompilerPlugin_MediaTek.so").isFile
-        val soc=if(android.os.Build.VERSION.SDK_INT>=31)android.os.Build.SOC_MODEL else "unknown"
-        mark("$mode:load")
-        append("v=$V requested=$mode phase=begin threads=6 soc="+soc.replace(" ","_")+" image_sha=$hash dispatch_present=$dispatch compiler_present=$compiler")
-        if(npu)require(dispatch&&compiler){"MediaTek运行库缺失"}
-        ExperimentalFlags.enableBenchmark=true
-        ExperimentalFlags.enableSpeculativeDecoding=false
-        val e=Engine(EngineConfig(modelPath=model.absolutePath,backend=Backend.CPU(threadCount=6),visionBackend=if(npu)Backend.NPU(nativeLibraryDir=dir) else Backend.CPU(threadCount=6),maxNumImages=1,cacheDir=File(cacheDir,mode).apply{mkdirs()}.absolutePath))
-        var initialized=false;val load=now()
-        try{
-            e.initialize();initialized=true
-            append("v=$V requested=$mode phase=loaded load_ms="+(now()-load)+" actual_npu=unverified")
-            for(run in 1..3){
-                mark("$mode:run$run");val start=now()
-                e.createConversation(ConversationConfig(samplerConfig=SamplerConfig(topK=1,topP=1.0,temperature=0.0,seed=42),maxOutputToken=512,thinkingConfig=ThinkingConfig(enableThinking=false,thinkingTokenBudget=0),extraContext=mapOf("enable_thinking" to false),automaticToolCalling=false)).use{c->
-                    val sessionMs=now()-start;val raw=StringBuilder();var first=-1L;var chunks=0;var thought=0;val send=now()
-                    runBlocking{c.sendMessageAsync(Contents.of(Content.ImageFile(image.absolutePath),Content.Text(PROMPT)),extraContext=mapOf("enable_thinking" to false)).collect{msg->
-                        val content=msg.contents.contents.filterIsInstance<Content.Text>().joinToString(""){it.text}
-                        if(msg.channels.isNotEmpty())thought++
-                        if(content.isNotEmpty()){raw.append(content);chunks++}
-                        if(first<0&&Metrics.visible(raw.toString()).any{!it.isWhitespace()})first=now()-send
-                    }}
-                    val total=now()-send;val answer=Metrics.visible(raw.toString()).trim()
-                    val b=runCatching{c.getBenchmarkInfo()}.getOrNull()
-                    val cer=Metrics.cer(ref,answer)?.let{String.format(Locale.US,"%.4f",it)}?:"NA"
-                    val phase=if(answer.isBlank())"empty" else "complete"
-                    append("v=$V requested=$mode run=$run phase=$phase image_sha=$hash session_ms=$sessionMs first_nonblank_ms=$first total_ms=$total chars="+answer.length+" chunks=$chunks thought_chunks=$thought cer=$cer native_ttft_s="+(b?.timeToFirstTokenInSecond?:-1.0)+" prefill_tokens="+(b?.lastPrefillTokenCount?:-1)+" decode_tokens="+(b?.lastDecodeTokenCount?:-1)+" native_decode_tps="+(b?.lastDecodeTokensPerSecond?:-1.0)+" actual_npu=unverified")
-                    runOnUiThread{output.text="$mode 第$run 轮\n"+answer.ifBlank{"（空答案）"}}
-                }
-            }
-        }finally{if(initialized)e.close()}
+    override fun onDestroy(){
+        if(::runner.isInitialized)runner.dispose()
+        worker.shutdown()
+        super.onDestroy()
     }
     private fun now()=SystemClock.elapsedRealtime()
     private fun hex(b:ByteArray)=b.joinToString(""){"%02x".format(it.toInt() and 255)}

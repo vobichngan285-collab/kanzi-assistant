@@ -1,6 +1,6 @@
-# 蓝星 NPU 实验室 v0.1.4
-独立真机实验，不覆盖正式蓝星或旧GGUF实验室；APK是测试工具，不是已验证提速版。
-- LiteRT-LM Android 0.18.1 + 官方MediaTek runtime 2.3.2，固定配对，依据官方API和公开的MT6989 AAR加载报告（非MT6991 MiniCPM验证）。源代码v0.18.1确认vision executor NPU分支请求NPU|CPU，故不能把NPU选项或成功推理当成纯NPU证明。
-- 指定同家族社区模型：https://huggingface.co/litert-community/MiniCPM-V-4.7-1B/resolve/main/MiniCPM-V-4.7-1B-VL_int8vis.litertlm ，约1.70GB，SHA256 20c73b5a1e48a315974cff1853535ff5d017100b6420d5ef221b9dd1b955dd7c。与GGUF不同格式，不可复用旧权重，保留旧版。浏览器下载后选择文件导入，可能需额外约1.70GB存储。APP自身无网络权限。
-- 先用内置图点CPU6，再点NPU视觉+CPU6；每组3次新conversation、共享组内engine、关闭思考、greedy。也可自动对比。结果文字在屏幕显示；复制日志只含数值/后端请求/错误类型，未含照片或识别文字。空答案标记empty。first_nonblank不是TTS可朗读延迟。无TTS。真实NPU算子覆盖/回退需配合原生日志（ADB logcat按app PID过滤）；不宣称真实NPU已启用。NPU可能失败、native crash或首次JIT慢，重开可查看持久化阶段。无真机测试不能宣称提速。
-- APK构建后自动验证版本、签名、arm64 JNI与MediaTek插件/dispatch打包、无INTERNET权限、单元测试，再发布实验Release。JIT路线绕开Host AOT障碍，未改原模型/程序。
+# 蓝星 GPU / NPU 实验室 v0.1.5
+- 使用已验证的v0.1.4 LiteRT-LM 0.18.1、MediaTek runtime 2.3.2、同一1.698GB模型（SHA不变），同一448内置测试图和提示词，保持CPU6基准、关闭思考、每组3轮。新增GPU视觉+CPU6、GPU全面、NPU视觉+CPU6。GPU/NPU请求不等于真实硬件执行或提速；仍需真机结果、原生日志。CPU累计时间与PSS仅辅助，不证明全部算子GPU/NPU。CPU与GPU模式会使用各自缓存。
+- v0.1.4使用CI临时debug签名，无法保证覆盖安装，故独立包com.vobich.bluestar.npulab.speed，不卸载旧版。选择之前已下载的原始模型重新导入即可，无需再次下载。约1.70GB内部副本；如原文件已删除，不能保证从旧版私有目录直接访问。下载链接（仅原文件丢失时）：https://huggingface.co/litert-community/MiniCPM-V-4.7-1B/resolve/main/MiniCPM-V-4.7-1B-VL_int8vis.litertlm
+- UI与每组推理分离到独立:inference进程；阶段connect/load/conversation/send/first_text/close均记录，10秒心跳，加载/创建会话120s、等待首字180s、首字后120s、关闭30s上限。超时或手动停止终止隔离进程，确认binder死亡后才进入下组；不能确认退出则停止批次。不同组重新加载，同组共享模型。数值日志不包含图片和OCR文字。无TTS，不修改正式蓝星。不宣称解决NPU卡顿根因。
+- 推荐先选内置图→自动对比CPU/GPU；随后单独NPU，或选全部对比。复制数值日志。NPU可能需要JIT，超时只能说明本轮在限定时间内未完成。首次session、加载与首字分别记录，native TTFT不是完整视觉延迟。
+- CI单测、编译、签名、包版本、ARM64运行库、独立进程声明及无INTERNET权限验证后发布实验APK。真机功能及GPU加速尚未验证。
