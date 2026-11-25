@@ -1,8 +1,9 @@
-# 2026-11-25｜精细识别与推理状态专项 v0.1.11（构建中）
+# 2026-11-25｜精细识别与推理状态专项 v0.1.11（已发布，待真机）
 - v0.1.10真机价目表原图同sha508ae2824466，常驻原图首字1627/1671ms、TTS点击1751/1798ms。ROI对照第1原图1631ms/4281ms/94字符；第2 ROI 2916ms/8028ms/192字符，第3复用ROI 1545ms/5735ms/148字符，第4日志未完成。ML Kit检测28行/2组/主25行，rect854,948,2028,2804，1174x1856/17.3%面积，decode109/detect595/crop688/prepare1397ms。ROI明显改善但仍错漏/充值金额错误，同裁剪输出不同；CER=NA。用户怀疑尺寸，手动裁剪曾更好。
 - 核实模型卡 https://huggingface.co/litert-community/MiniCPM-V-4.7-1B ：同SHA的1.70GB int8vis bundle固定448×448/64视觉token，不支持原版动态切片及finer detail。模型卡还明确报告该混合GatedDeltaNet模型跨Conversation复用Engine状态异常；上游issue https://github.com/google-ai-edge/LiteRT-LM/issues/3165 ，修复提交e1f86b05bf8a731331622a2622440e9f93d9a9f5；已直接核查v0.20.0 tag runtime/executor/llm_litert_compiled_model_executor.cc Reset()确实清零state_/decode_state_。不宣称真机已修复；升级不改变固定448模型，突破本身须重新转换模型/改运行时或其他模型格式。本轮用按检测行间隙分区提高有效视觉像素，不是原生动态视觉。
 - 用户授权。原实验分支exp/minicpm-npu-direct-20261125，从d5bb7492eda14965c9c6158483e568abb74b3b10提交ec03ee861d8de36c5782adc789307f0b8fa41532，依赖固定0.20.0（AAR解析和编译待CI），同模型SHA/CPU6/原提示词/greedy/预热/流式系统离线TTS。ROI旧边距11%保留；紧贴1.8%及至少4检测像素，分区只在检测行的纵向空隙处分成2–3区（不能保障漏检文字完整）。精细对照宽边/紧贴/分区/紧贴/宽边，状态对照同紧贴裁剪常驻3次/新Engine两次（显式close/reinitialize，load独立计时），无声、记录文本哈希/耗时/坐标/排除行。主区域可能漏其他文字。新增单元测试行框完整性和策略。独立包com.vobich.bluestar.npulab.detail versionCode8，无INTERNET，仍导入原模型。正式应用未改。
 - CI [45606408906](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45606408906) in_progress，APK未发布验证。
+- CI45606408906 completed/success，job139178295914 单测/编译/签名/包验证/上传/发布均通过。Release tag bluestar-npu-lab-v0111-20261125，目标ec03ee861d8de36c5782adc789307f0b8fa41532；APK BlueStar_OCR_Detail_Lab_0.1.11.apk 35365613 bytes SHA256 f411ee3a9aa4e6abd491b24b32744e3119a76732f0fc65c3939240e3aa8c9801，直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-npu-lab-v0111-20261125/BlueStar_OCR_Detail_Lab_0.1.11.apk 。用户导入已有模型、预热、选原价目表图，先精细识别对照，另做状态稳定性对照，回传原文和数值日志。运行库0.20.0编译成功不等于真机状态修复已确认，固定448视觉输入未突破；正式应用未修改。
 
 ---
 
