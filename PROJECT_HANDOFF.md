@@ -1,3 +1,9 @@
+# 最新｜560权重尺度已修复并通过数值运行，进入真实图片OCR验证
+- CI45717336793 completed/success，job139566649978，artifact15070142934。原厂112个INT8权重全量SHA256匹配转换280和560，各112/112，无遗漏；共享112个FP32缓冲区按原厂实际逐通道scale/zero point修正，临时encoder SHA256 6b8caf8e6d95837eb8f0d82ae9aefbe88313e0bb8b23be253822adcfda85dd92。280三输入余弦0.53243/0.64418/0.63836提升至0.92216/0.90580/0.86648，相对L2 0.45750/0.43490/0.50743，仍非等价，mask一致。560特征[1,560,768]全部有限、有效mask560；仅说明数值可运行，不代表OCR已正常。用户明确目标是560，不单独制作280，280仅参考。
+- 原独立诊断分支exp/gemma4-vision-numerics-20261126 新提交54711d340f2f9e2650973537ef6f2216b3dec79d，新增test_corrected_ocr.py及独立workflow，复现精确修复并校验SHA，按原有section plan重组临时完整模型，生成两张含中文、价格、号码的合成测试图，服务器CPU用LiteRT-LM Engine对比原厂280、未修560、修复560文本输出与CER、耗时，尝试显式max_vision_tokens_per_image；实际选择签名仍需日志核实。无真机GPU验证、不发布APK。新CI状态需核查，尚无真实文字识别结果。
+ 
+---
+
 # 最新｜已证实视觉FC权重漏反量化；精确修复对照运行中
 - CI45716914147 completed/success，job139565208504。三方权重审计报告artifact15069498897。前两层14个Q/K/V/O、MLP gate/up/down INT8权重：抽样原厂raw、HF QAT raw、转换FP32值完全一致(relative L2=0)，HF逐通道乘实际scale后的抽样与原厂反量化完全一致(relative L2=0)。第0层Q/K/V/O范数比517.34/508.91/511.48/513.26；gate/up/down 512.76/512.89/1025.12。第2层QKV仅原厂/转换两方raw抽样一致，HF未下载该层对应权重，不能当三方验证。第一图像投影非量化且输出此前已接近。明确转换FC常量为未反量化整数值；仍需实测正确尺度是否充分恢复整图特征，以及排除图内补偿和激活量化差异。
 - 按用户一次性完成的授权，独立诊断分支exp/gemma4-vision-numerics-20261126 HEAD 7ac8ca822b03b6f49fc5ed3c1524ac19c5730999，新增test_scale_correction.py及调整独立workflow。仅对临时encoder副本按全量INT8内容SHA256+shape匹配原厂280的112个独立FC权重，要求转换280/560各完整匹配且无未匹配整数权重；严格使用原厂真实量化轴、scale、zero point写入FP32，不用固定512比例。复验3种280输入的最终特征及mask，560仅有限性检查。保留原文件、正式APP和已发布APK，不将未经验证的临时模型发布。CI45717336793已核实in_progress，尚无修复后数值或安装包。
