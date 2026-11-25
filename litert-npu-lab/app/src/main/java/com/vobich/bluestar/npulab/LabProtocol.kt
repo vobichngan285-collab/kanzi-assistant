@@ -8,7 +8,10 @@ object LabProtocol {
     const val RESULT=6
     const val DONE=7
     const val FAILED=8
-    val modes=setOf("cpu","gpu_vision","gpu_all","npu_vision")
+    val modes=setOf("cpu","gpu_vision")
+    const val rounds=4
+    // ABBA order balances first/last exposure, one engine at a time.
+    val comparison=listOf("cpu","gpu_vision","gpu_vision","cpu")
     fun deadlineMs(stage:String):Long=when(stage){
         "connect"->20000L
         "load","conversation"->120000L

@@ -13,12 +13,17 @@ class LabController(private val context:Context,private val log:(String)->Unit,p
     private var current:Slot?=null
     private var disposed=false
     private var active=false
+    private var blocked=false
+    private var keepResident=false
+    private var batch=0L
+    private var block=0
     private inner class Slot(val mode:String){
         var remote:Messenger?=null
         var binder:IBinder?=null
         var pid=0
         var bound=false
         var ending=false
+        var resident=false
         var phase="connect"
         var run=0
         var start=SystemClock.elapsedRealtime()
@@ -31,7 +36,7 @@ class LabController(private val context:Context,private val log:(String)->Unit,p
                     LabProtocol.STAGE->{phase=m.data.getString("stage","unknown");run=m.data.getInt("run");start=SystemClock.elapsedRealtime();last=0L;line("phase="+phase+"_begin run="+run);status(mode+" · "+phase+" · "+run)}
                     LabProtocol.ROW->log(m.data.getString("line",""))
                     LabProtocol.RESULT->answer(m.data.getString("text",""))
-                    LabProtocol.DONE->{line("phase=mode_complete");end(this)}
+                    LabProtocol.DONE->{line("phase=mode_complete");if(keepResident&&queue.isEmpty()){resident=true;phase="idle";active=false;line("phase=resident_idle");status(mode+" · 实验结束，模型已常驻");finished()}else end(this)}
                     LabProtocol.FAILED->{line("phase=failed stage="+phase+" "+m.data.getString("line",""));end(this)}
                 }
             }
@@ -43,10 +48,7 @@ class LabController(private val context:Context,private val log:(String)->Unit,p
                 binder=b;remote=Messenger(b)
                 try{
                     b.linkToDeath(death,0)
-                    remote!!.send(Message.obtain(null,LabProtocol.START).apply{
-                        replyTo=receiver
-                        data=Bundle().apply{putString("mode",mode);putString("model",model);putString("image",image);putString("ref",ref.take(4096))}
-                    })
+                    sendStart(this@Slot)
                 }catch(_:RemoteException){gone(this@Slot)}
             }
             override fun onServiceDisconnected(name:ComponentName){gone(this@Slot)}
@@ -54,6 +56,15 @@ class LabController(private val context:Context,private val log:(String)->Unit,p
             override fun onNullBinding(name:ComponentName){line("phase=null_binding");end(this@Slot)}
         }
         fun line(s:String)=log("v="+MainActivity.V+" requested="+mode+" "+s)
+    }
+    private fun sendStart(s:Slot){
+        s.resident=false;s.phase="load";s.run=0;s.start=SystemClock.elapsedRealtime();s.last=0
+        try{
+            requireNotNull(s.remote).send(Message.obtain(null,LabProtocol.START).apply{
+                replyTo=s.receiver
+                data=Bundle().apply{putString("mode",s.mode);putString("model",model);putString("image",image);putString("ref",ref.take(4096));putLong("batch",batch);putInt("block",block)}
+            })
+        }catch(t:Throwable){s.line("phase=start_failed error="+t.javaClass.simpleName);end(s)}
     }
     private val tick=object:Runnable{
         override fun run(){
@@ -73,15 +84,25 @@ class LabController(private val context:Context,private val log:(String)->Unit,p
         }
     }
     fun start(modes:List<String>,model:String,image:String,ref:String){
-        if(active||disposed)return
+        if(disposed||active){finished();return}
+        if(blocked){status("无法确认旧进程退出，请关闭软件重开");finished();return}
         require(modes.isNotEmpty() && modes.all{it in LabProtocol.modes})
-        this.model=model;this.image=image;this.ref=ref;queue.addAll(modes);active=true
-        next();handler.removeCallbacks(tick);handler.postDelayed(tick,1000)
+        this.model=model;this.image=image;this.ref=ref
+        batch=SystemClock.elapsedRealtime();block=0;keepResident=modes.size==1
+        queue.addAll(modes);active=true
+        log("v="+MainActivity.V+" phase=batch_begin batch="+batch+" order="+modes.joinToString(","))
+        val old=current
+        if(old!=null){
+            if(!old.ending&&old.resident&&keepResident&&old.mode==modes.first()&&old.binder?.isBinderAlive==true){
+                queue.removeFirst();block=1;old.line("phase=resident_reuse batch="+batch);sendStart(old)
+            }else if(!old.ending)end(old)
+        }else next()
+        handler.removeCallbacks(tick);handler.postDelayed(tick,1000)
     }
     private fun next(){
         if(disposed)return
         if(queue.isEmpty()){active=false;status("实验结束，请复制数值日志");finished();return}
-        val s=Slot(queue.removeFirst());current=s
+        block++;val s=Slot(queue.removeFirst());current=s
         status(s.mode+" · 启动隔离进程")
         try{
             s.bound=context.bindService(Intent(context,LabService::class.java),s.connection,Context.BIND_AUTO_CREATE)
@@ -113,7 +134,7 @@ class LabController(private val context:Context,private val log:(String)->Unit,p
                     handler.postDelayed({
                         if(current===s){
                             if(s.binder?.isBinderAlive!=true)gone(s)
-                            else{queue.clear();s.line("phase=worker_exit_unconfirmed batch_stopped=1");cleanup(s);current=null;active=false;status("无法确认实验进程退出，请重开软件");finished()}
+                            else{queue.clear();s.line("phase=worker_exit_unconfirmed batch_stopped=1");cleanup(s);current=null;blocked=true;val wasActive=active;active=false;status("无法确认实验进程退出，请重开软件");if(wasActive)finished()}
                         }
                     },3000)
                 }
@@ -128,11 +149,13 @@ class LabController(private val context:Context,private val log:(String)->Unit,p
         if(current!==s)return
         if(!s.ending)s.line("phase=worker_disconnected stage="+s.phase+" run="+s.run)
         cleanup(s);current=null
-        if(!disposed)handler.postDelayed({if(current==null&&active)next()},500)
+        if(!disposed){if(active)handler.postDelayed({if(current==null&&active)next()},500) else status("模型已释放") }
     }
     fun stop(){
-        if(!active)return
-        queue.clear();current?.let{it.line("phase=user_stop stage="+it.phase);end(it)}
+        queue.clear()
+        val s=current
+        if(s!=null){s.line("phase=user_stop stage="+s.phase);end(s)}
+        else if(active){active=false;status("实验已停止");finished()}
     }
     fun dispose(){
         disposed=true;queue.clear();active=false;handler.removeCallbacks(tick)

@@ -6,11 +6,11 @@ android {
     namespace = "com.vobich.bluestar.npulab"
     compileSdk = 36
     defaultConfig {
-        applicationId = "com.vobich.bluestar.npulab.speed"
+        applicationId = "com.vobich.bluestar.npulab.resident"
         minSdk = 28
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.1.6"
+        versionCode = 4
+        versionName = "0.1.7"
         ndk { abiFilters += "arm64-v8a" }
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }

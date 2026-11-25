@@ -17,19 +17,22 @@ import java.util.concurrent.Executors
 
 class MainActivity: Activity() {
     companion object {
-        const val V="0.1.6"
+        const val V="0.1.7"
         const val SHA="20c73b5a1e48a315974cff1853535ff5d017100b6420d5ef221b9dd1b955dd7c"
         const val URL="https://huggingface.co/litert-community/MiniCPM-V-4.7-1B/resolve/main/MiniCPM-V-4.7-1B-VL_int8vis.litertlm"
         const val PROMPT="请逐字抄写图片中所有可见文字和数字。不要解释。"
         const val SAMPLE="蓝星向导\n药品 5931"
+        const val DENSE="营业时间\n09:30 - 18:00\n药品咨询服务\n请在窗口排队\n编号 4827\n价格 28.50 元"
     }
     private val worker=Executors.newSingleThreadExecutor()
     private val model by lazy{File(filesDir,"minicpm-v47-int8vis.litertlm")}
     private val prefs by lazy{getSharedPreferences("lab",MODE_PRIVATE)}
     private val sample by lazy{File(cacheDir,"sample.png")}
+    private val dense by lazy{File(cacheDir,"dense.png")}
     private var selected:File?=null
     private lateinit var status:TextView
     private lateinit var output:TextView
+    private lateinit var progress:TextView
     private lateinit var logs:TextView
     private lateinit var reference:EditText
     private val buttons=mutableListOf<Button>()
@@ -42,30 +45,30 @@ class MainActivity: Activity() {
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL; val p=(16*resources.displayMetrics.density).toInt();setPadding(p,p,p,p)}
         fun label(s:String,size:Float=17f):TextView=TextView(this).apply{text=s;textSize=size;root.addView(this)}
         fun button(s:String,action:()->Unit){root.addView(Button(this).apply{text=s;isAllCaps=false;setOnClickListener{if(!busy)action()};buttons.add(this)})}
-        label("蓝星 GPU / NPU 实验室 v"+V,23f).setTextColor(Color.rgb(22,74,160))
+        label("蓝星 CPU / GPU 实验室 v"+V,23f).setTextColor(Color.rgb(22,74,160))
         status=label(if(ready())"模型已校验" else "首次使用：下载约1.70 GB LiteRT模型后导入，旧GGUF不可复用")
-        label("本地离线；GPU/NPU为请求；加速器超时后隔离进程会停止。")
+        label("本地离线；同模式模型常驻。GPU为请求，实际硬件参与待验证。")
         button("下载指定模型（浏览器）"){runCatching{startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(URL)))}.onFailure{status.text="请从发布说明打开模型链接"}}
         button("导入 LiteRT 模型"){choose("*/*",1)}
-        button("内置测试图"){selected=sample;reference.setText(SAMPLE);status.text="已选择内置图"}
+        button("内置简单图"){selected=sample;reference.setText(SAMPLE);status.text="已选择简单图"}
+        button("内置密集文字图"){selected=dense;reference.setText(DENSE);status.text="已选择密集文字图"}
         button("选择图片"){choose("image/*",2)}
         reference=EditText(this).apply{hint="参考文字（可选，用于CER）";setText(SAMPLE);root.addView(this)}
-        button("CPU 6线程（3轮）"){test(listOf("cpu"))}
-        button("GPU视觉 + CPU 6线程（3轮）"){test(listOf("gpu_vision"))}
-        button("GPU全面加速（3轮）"){test(listOf("gpu_all"))}
-        button("NPU视觉 + CPU 6线程（3轮）"){test(listOf("npu_vision"))}
-        button("自动对比 CPU / GPU（各3轮）"){test(listOf("cpu","gpu_vision","gpu_all"))}
-        button("自动对比全部模式（各3轮）"){test(listOf("cpu","gpu_vision","gpu_all","npu_vision"))}
-        root.addView(Button(this).apply{text="停止当前实验";setOnClickListener{if(::runner.isInitialized)runner.stop()}})
+        button("CPU 6线程（4轮，模型常驻）"){test(listOf("cpu"))}
+        button("GPU视觉 + CPU 6线程（4轮，模型常驻）"){test(listOf("gpu_vision"))}
+        button("自动对照 CPU/GPU（交错各8轮）"){test(LabProtocol.comparison)}
+        root.addView(Button(this).apply{text="停止实验 / 释放模型";setOnClickListener{if(::runner.isInitialized)runner.stop()}})
+        progress=label("等待实验")
         output=label("识别结果")
         root.addView(Button(this).apply{text="复制数值日志";setOnClickListener{(getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("蓝星NPU日志",prefs.getString("rows","")?:""));Toast.makeText(this@MainActivity,"已复制",Toast.LENGTH_SHORT).show()}})
         button("清空日志"){prefs.edit().remove("rows").commit();logs.text=""}
-        logs=label(prefs.getString("rows","")?:"",13f)
+        logs=label((prefs.getString("rows","")?:"").lines().takeLast(24).joinToString("\n"),13f)
         val scroll=ScrollView(this).apply{isFillViewport=true;addView(root)}
         if(android.os.Build.VERSION.SDK_INT>=35)scroll.setOnApplyWindowInsetsListener{v,i->val b=i.getInsets(android.view.WindowInsets.Type.systemBars());v.setPadding(b.left,b.top,b.right,b.bottom);i}
         setContentView(scroll)
-        runner=LabController(this,{line->append(line)},{s->status.text=s},{s->output.text=s},{busy=false;buttons.forEach{it.isEnabled=true};mark("complete")})
+        runner=LabController(this,{line->append(line)},{s->status.text=s;progress.text=s},{s->output.text=s},{busy=false;buttons.forEach{it.isEnabled=true};mark("complete")})
         if(!sample.exists())makeSample()
+        if(!dense.exists())makeDense()
         selected=sample
         val stage=prefs.getString("stage","idle")
         if(stage!="idle" && stage!="complete") append("v=$V previous_incomplete_stage=$stage")
@@ -113,6 +116,13 @@ class MainActivity: Activity() {
         c.drawText("蓝星向导",224f,160f,p);c.drawText("药品 5931",224f,250f,p)
         FileOutputStream(sample).use{b.compress(Bitmap.CompressFormat.PNG,100,it)};b.recycle()
     }
+    private fun makeDense(){
+        val b=Bitmap.createBitmap(448,448,Bitmap.Config.ARGB_8888)
+        val c=Canvas(b);c.drawColor(Color.WHITE)
+        val p=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=Color.BLACK;textSize=31f;textAlign=Paint.Align.LEFT}
+        DENSE.lines().forEachIndexed{i,line->c.drawText(line,24f,64f+i*62f,p)}
+        FileOutputStream(dense).use{b.compress(Bitmap.CompressFormat.PNG,100,it)};b.recycle()
+    }
     private fun test(modes:List<String>){
         if(!ready()){status.text="请先导入指定模型";return}
         if(busy)return
@@ -129,7 +139,7 @@ class MainActivity: Activity() {
     private fun hex(b:ByteArray)=b.joinToString(""){"%02x".format(it.toInt() and 255)}
     private fun sha256(f:File):String{val md=MessageDigest.getInstance("SHA-256");FileInputStream(f).use{input->val b=ByteArray(65536);while(true){val n=input.read(b);if(n<0)break;md.update(b,0,n)}};return hex(md.digest())}
     private fun mark(s:String){prefs.edit().putString("stage",s).commit()}
-    private fun append(s:String){val rows=((prefs.getString("rows","")?:"")+"\n"+s).trim().lines().takeLast(120).joinToString("\n");prefs.edit().putString("rows",rows).commit();runOnUiThread{logs.text=rows}}
+    private fun append(s:String){val rows=((prefs.getString("rows","")?:"")+"\n"+s).trim().lines().takeLast(600).joinToString("\n");prefs.edit().putString("rows",rows).commit();runOnUiThread{logs.text=rows.lines().takeLast(24).joinToString("\n")}}
     private fun setStatus(s:String){runOnUiThread{status.text=s}}
     private fun launch(s:String,block:()->Unit){
         if(busy)return;busy=true;buttons.forEach{it.isEnabled=false};setStatus(s)

@@ -1,7 +1,6 @@
-# 蓝星 GPU / NPU 实验室 v0.1.6
-- 使用已验证的v0.1.4 LiteRT-LM 0.18.1、MediaTek runtime 2.3.2、同一1.698GB模型（SHA不变），同一448内置测试图和提示词，保持CPU6基准、关闭思考、每组3轮。新增GPU视觉+CPU6、GPU全面、NPU视觉+CPU6。GPU/NPU请求不等于真实硬件执行或提速；仍需真机结果、原生日志。CPU累计时间与PSS仅辅助，不证明全部算子GPU/NPU。CPU与GPU模式会使用各自缓存。
-- v0.1.4使用CI临时debug签名，无法保证覆盖安装，故独立包com.vobich.bluestar.npulab.speed，不卸载旧版。选择之前已下载的原始模型重新导入即可，无需再次下载。约1.70GB内部副本；如原文件已删除，不能保证从旧版私有目录直接访问。下载链接（仅原文件丢失时）：https://huggingface.co/litert-community/MiniCPM-V-4.7-1B/resolve/main/MiniCPM-V-4.7-1B-VL_int8vis.litertlm
-- UI与每组推理分离到独立:inference进程；阶段connect/load/conversation/send/first_text/close均记录，10秒心跳，加载/创建会话120s、等待首字180s、首字后120s、关闭30s上限。超时或手动停止终止隔离进程，确认binder死亡后才进入下组；不能确认退出则停止批次。不同组重新加载，同组共享模型。数值日志不包含图片和OCR文字。无TTS，不修改正式蓝星。不宣称解决NPU卡顿根因。
-- 推荐先选内置图→自动对比CPU/GPU；随后单独NPU，或选全部对比。复制数值日志。NPU可能需要JIT，超时只能说明本轮在限定时间内未完成。首次session、加载与首字分别记录，native TTFT不是完整视觉延迟。
-- CI单测、编译、签名、包版本、ARM64运行库、独立进程声明及无INTERNET权限验证后发布实验APK。真机功能及GPU加速尚未验证。
-- 代码复核修正跨模式切换时看门狗可能停止的问题；不建议使用中间构建v0.1.5。
+# 蓝星 CPU / GPU 实验室 v0.1.7
+- 根据v0.1.6真机结果暂移除GPU全面及NPU测试入口，保持LiteRT-LM 0.18.1、MediaTek runtime 2.3.2、相同模型SHA256与448内置简单图、CPU6、相同提示词、关闭思考、greedy，不改正式蓝星。GPU视觉为请求，不能证明硬件覆盖。
+- 单模式4轮结束后保留同一独立推理进程与Engine；再次点同模式并选择新图，复用模型，记录resident_reused和load_ms。切换模式或停止/释放、退出Activity时终止隔离进程，避免双引擎占内存。系统仍可能回收进程，不承诺后台永久常驻。
+- 自动对照按CPU/GPU/GPU/CPU（ABBA）4组各4轮，每组新进程，分开初始化与组内预热，两个模式各8轮，其中各2轮首次和6轮后续；避免同时载入两个模型。对照结束释放模型。记录batch/block、首字、总耗时、session、CPU累计时间、PSS、系统热状态、可用电池温度（0.1摄氏度，非芯片温度，-1不可用）、CER与输出数。不能根据CPU累计时间推断功耗或NPU。内置简单/密集合成图或真实相册原图，可选参考文字；无参考则CER=NA。日志复制最多600行，屏幕仅最近24行。保持10秒心跳及分阶段超时、手动停止和确认进程退出后才开始下组。
+- 旧实验APK是CI临时签名，采用独立包com.vobich.bluestar.npulab.resident，保留旧版不覆盖。重新导入之前下载的1.698GB原始.litertlm文件，不重新下载；如原始文件丢失则可能需重新下载，旧版私有目录不能直接读。模型链接 https://huggingface.co/litert-community/MiniCPM-V-4.7-1B/resolve/main/MiniCPM-V-4.7-1B-VL_int8vis.litertlm
+- 推荐先选内置密集图或真实密集图，点自动对照；再单独选CPU或GPU，完成后选新图再次点相同模式核实常驻。无TTS，无网络权限，数值日志不包含识别文字或图片。实际加速与常驻行为待真机验证。

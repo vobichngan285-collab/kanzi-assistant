@@ -3,7 +3,9 @@ import org.junit.Test
 import org.junit.Assert.*
 class LabProtocolTest {
     @Test fun modesAndWatchdog(){
-        assertEquals(setOf("cpu","gpu_vision","gpu_all","npu_vision"),LabProtocol.modes)
+        assertEquals(setOf("cpu","gpu_vision"),LabProtocol.modes)
+        assertEquals(listOf("cpu","gpu_vision","gpu_vision","cpu"),LabProtocol.comparison)
+        assertEquals(4,LabProtocol.rounds)
         assertEquals(20000L,LabProtocol.deadlineMs("connect"))
         assertEquals(120000L,LabProtocol.deadlineMs("conversation"))
         assertEquals(180000L,LabProtocol.deadlineMs("send"))
