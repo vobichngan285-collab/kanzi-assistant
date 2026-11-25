@@ -1,3 +1,10 @@
+# 2026-11-25｜CPU原图预热与流式朗读 v0.1.9（已提交，构建中）
+- 用户v0.1.8真机同图fbe2b3e63ba1自动原图/补边/三段切片交叉6轮：原图首字8801/1647ms、总10316/3173ms、71/73字符；首次模型加载18381ms、首次conversation 5317ms后续1ms。补边首字1579/1517ms、总2773/1998ms、50/21字符（实际错漏明显）；切片首字1524/1551ms、总7611/5813ms、148/47字符（第一次重复6行、第二次漏读）。参考CER=NA，不能给精确准确率，原图文本相对稳定。电池34.2C、thermal0。此前v0.1.7已验证跨任务同PID模型复用，非永久后台存活。
+- 用户授权继续独立实验到发布，不需再次确认。原分支exp/minicpm-npu-direct-20261125，从v0.1.8固定a317e44efeaf7a80af27453708d631ac308a26d3提交0c01e954edabdb2a91b1203796c4eaca2ada96d5；compare核实仅litert-npu-lab及独立workflow共10文件。v0.1.9保留同模型SHA/LiteRT0.18.1/CPU6/原图/原提示词/greedy/关闭思考，界面移除补边切片GPU入口；内置图无声完整预热（导入后手动，已校验模型后续启动自动），保留隔离引擎直至手动释放/Activity销毁；推理进程逐增量IPC至主进程，本机Android TTS离线中文voice，标点或16字分段、末段flush，下一次识别及停止取消旧语音；日志tts_first_request、tts_first_on_start以job/tap起点分别计时，不等于真实声响。不改正式蓝星/微软云端语音；离线中文voice可用性、预热收益、精度与TTS均待真机，非长期后台常驻。独立包com.vobich.bluestar.npulab.streaming versionCode6，需重新导入已下载模型原文件，不必重新下载。
+- CI [45598995337](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45598995337) in_progress，单测/构建/签名/包版本/隔离进程/ARM64库/无INTERNET检查通过才发布tag bluestar-npu-lab-v019-20261125。尚未核实APK发布，不给未验证直链。待CI完成后更新结果。
+ 
+---
+
 # 2026-11-25｜关闭思考与天玑9400 NPU视觉 AOT（思考实验通过，NPU真机实验APK已发布）
 - 用户明确批准下一阶段研究。固定安卓上游7f2bac650137230539784b794205470077915df7 的 llama_jni.cpp 已有 assistant_turn_prefix()：g_minicpmv_version 47/471 直接用空闭合think scaffold；视觉processUserPrompt走手工ChatML，而先前Host mtmd-cli走common_chat_format_single，默认enable_thinking=true，不能将Host思考归因手机。Android版本识别实际分支、只输出2 token及有效朗读首字仍待核实。OpenBMB官方 https://openbmb.cn/docs/guides/minicpm-v/minicpm-v-4.7/inference 支持enable_thinking=False。无需换权重，不重复修改手机逻辑。
 - 独立分支 exp/minicpm-npu-direct-20261125，提交 c66853d751580aaab10279a94268a3c82298f927，基于已验证Host Q8探针894493e57d0c3f54445e6612b9a42732081e956f，仅新增direct-npu-probe/与独立workflow。CI [45581664544](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45581664544) queued。Host F16原视觉+原Q4_K_M，同单切片/CPU6/greedy，3张合成中英文数字文字图各开/关思考1轮，使用同安卓风格ChatML手工前缀（固定上游实际marker <__media__> 已核实），记录编码/prefill/prefill+生成/生成token含EOG、最终回答及去空白CER；不把思考文本当OCR答案，模型冷启动不计入prefill+生成。尚未编译/运行验证，非手机/TTS速度。
