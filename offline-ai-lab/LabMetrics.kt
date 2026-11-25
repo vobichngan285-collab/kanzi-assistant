@@ -1,5 +1,12 @@
 package com.example.minicpm_v_demo
 object LabMetrics {
+    fun fit(width:Int,height:Int,edge:Int):Pair<Int,Int>{
+        require(width>0 && height>0 && edge>=0)
+        val longest=maxOf(width,height)
+        if(edge==0 || longest<=edge)return width to height
+        return maxOf(1,((width.toLong()*edge+longest/2)/longest).toInt()) to
+               maxOf(1,((height.toLong()*edge+longest/2)/longest).toInt())
+    }
     fun rate(tokens:Int,ms:Long):String =
         if(ms>0)String.format(java.util.Locale.US,"%.2f",tokens*1000.0/ms) else "NA"
     fun cer(reference:String,result:String):Double{

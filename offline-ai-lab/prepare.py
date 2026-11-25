@@ -1,4 +1,4 @@
-import pathlib,sys,json,re,urllib.request,hashlib,shutil
+import pathlib,sys,json,re,urllib.request,hashlib,shutil,os
 root=pathlib.Path(sys.argv[1]); lab=pathlib.Path(__file__).parent
 app=root/"MiniCPM-V-demo-Android/app"; main=app/"src/main"
 java=main/"java/com/example/minicpm_v_demo"
@@ -7,19 +7,21 @@ def change(path,old,new):
     assert s.count(old)==1, (path,old,s.count(old))
     path.write_text(s.replace(old,new))
 gradle=app/"build.gradle.kts"
-change(gradle,'applicationId = "com.tianchi.minicpmv"','applicationId = "com.vobich.bluestar.offlinelab"')
-change(gradle,'versionCode = 17','versionCode = 1')
-change(gradle,'versionName = "2.5"','versionName = "0.1.0"')
+package=os.environ.get("LAB_PACKAGE","com.vobich.bluestar.offlinelab")
+assert package in ("com.vobich.bluestar.offlinelab","com.vobich.bluestar.offlinelab.speed")
+change(gradle,'applicationId = "com.tianchi.minicpmv"','applicationId = "'+package+'"')
+change(gradle,'versionCode = 17','versionCode = 2')
+change(gradle,'versionName = "2.5"','versionName = "0.1.1"')
 change(gradle,'implementation(libs.androidx.core.ktx)','implementation(libs.androidx.core.ktx)\n    implementation("androidx.documentfile:documentfile:1.0.1")')
 manifest=main/"AndroidManifest.xml"
 manifest.write_text('''<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 <uses-permission android:name="android.permission.INTERNET"/>
-<application android:allowBackup="false" android:usesCleartextTraffic="false" android:label="蓝星离线AI实验室" android:icon="@mipmap/ic_launcher" android:theme="@style/Theme.MiniCPMVdemo">
+<application android:allowBackup="false" android:usesCleartextTraffic="false" android:label="蓝星离线AI实验室 速度实验" android:icon="@mipmap/ic_launcher" android:theme="@style/Theme.MiniCPMVdemo">
 <activity android:name=".LabActivity" android:exported="true" android:screenOrientation="portrait" android:launchMode="singleTask" android:configChanges="orientation|screenSize|keyboardHidden">
 <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
 </activity>
 <provider android:name="androidx.core.content.FileProvider" android:authorities="com.vobich.bluestar.offlinelab.labfiles" android:exported="false" android:grantUriPermissions="true"><meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/lab_paths"/></provider>
-</application></manifest>''')
+</application></manifest>'''.replace("com.vobich.bluestar.offlinelab.labfiles",package+".labfiles"))
 (main/"res/xml").mkdir(parents=True,exist_ok=True)
 (main/"res/xml/lab_paths.xml").write_text('<paths xmlns:android="http://schemas.android.com/apk/res/android"><cache-path name="lab_photos" path="lab_photos/"/></paths>')
 kt=java/"LlamaEngine.kt"

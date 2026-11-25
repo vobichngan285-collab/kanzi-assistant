@@ -3,7 +3,10 @@ package com.example.minicpm_v_demo
 import android.app.ActivityManager
 import android.app.AlertDialog
 import android.content.*
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import android.net.Uri
 import android.os.*
 import android.os.Process
@@ -35,6 +38,12 @@ class LabActivity : AppCompatActivity() {
     private lateinit var engine:LlamaEngine
     private lateinit var picker:Spinner
     private lateinit var task:Spinner
+    private lateinit var slices:Spinner
+    private lateinit var resolution:Spinner
+    private val sliceValues=listOf(1,2,4,6,9)
+    private val edgeValues=listOf(0,2048,1536,1024,768)
+    private data class Trial(val edge:Int,val slices:Int)
+    private data class Prepared(val photo:Photo,val resizeMs:Long)
     private lateinit var custom:EditText
     private lateinit var reference:EditText
     private lateinit var status:TextView
@@ -82,6 +91,11 @@ class LabActivity : AppCompatActivity() {
         val scroll=ScrollView(this)
         val root=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;setPadding(24,24,24,24) }
         scroll.addView(root);setContentView(scroll)
+        ViewCompat.setOnApplyWindowInsetsListener(scroll){v,insets->
+            val bars=insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            v.setPadding(bars.left,bars.top,bars.right,bars.bottom);insets
+        }
+        ViewCompat.requestApplyInsets(scroll)
         fun label(s:String,size:Float=17f)=TextView(this).apply { text=s;textSize=size;root.addView(this) }
         fun button(s:String,action:()->Unit)=Button(this).apply {
             text=s;setOnClickListener { action() };root.addView(this);controls.add(this)
@@ -91,7 +105,7 @@ class LabActivity : AppCompatActivity() {
             root.addView(this);controls.add(this)
         }
         label("蓝星离线AI实验室",25f)
-        label("4.7 安卓适配实验 · CPU · 不上传照片")
+        label("v0.1.1 · 图像速度专项 · CPU · 不上传照片")
         picker=spinner(models.map { it.title+" · "+String.format(java.util.Locale.US,"%.2f GB",it.size/1e9) })
         status=label("请选择模型；下载或导入后可断网实验")
         button("下载所选模型（校验 SHA-256）") {
@@ -123,8 +137,25 @@ class LabActivity : AppCompatActivity() {
         task=spinner(tasks.map{it.first})
         custom=EditText(this).apply{hint="自定义任务提示词（选择自定义时使用）";maxLines=4;root.addView(this);controls.add(this)}
         reference=EditText(this).apply{hint="可选：正确文字，用于计算字符错误率";maxLines=5;root.addView(this);controls.add(this)}
-        button("测试所选模型（1次冷加载 + 2次暖测）"){startTest(listOf(selected()))}
-        button("两款模型顺序对比（同图同任务）"){startTest(models)}
+        label("图片分辨率（保持比例，不裁切）")
+        resolution=spinner(edgeValues.map{if(it==0)"原图" else "最长边 "+it+" px"})
+        label("视觉切片上限")
+        slices=spinner(sliceValues.map{it.toString()})
+        button("测试所选配置（1次冷加载 + 2次暖测）"){
+            val config=Trial(edgeValues[resolution.selectedItemPosition],sliceValues[slices.selectedItemPosition])
+            startTest(listOf(selected()),List(3){config},"manual")
+        }
+        button("自动对比切片（原图：1 / 2 / 4 / 6 / 9）"){
+            startTest(listOf(selected()),sliceValues.map{Trial(0,it)},"slice_sweep")
+        }
+        button("自动对比分辨率（固定所选切片）"){
+            val n=sliceValues[slices.selectedItemPosition]
+            startTest(listOf(selected()),listOf(768,1024,1536,2048,0).map{Trial(it,n)},"resolution_sweep")
+        }
+        button("两款模型顺序对比（同图同配置）"){
+            val config=Trial(edgeValues[resolution.selectedItemPosition],sliceValues[slices.selectedItemPosition])
+            startTest(models,List(3){config},"model_sweep")
+        }
         stop=button("停止（当前原生阶段完成后）"){stopping=true;status.text="已请求停止，等待当前阶段结束"}
         controls.remove(stop);stop.isEnabled=false
         button("复制数值日志（不含图片、提示词或识别文本）"){
@@ -260,13 +291,37 @@ class LabActivity : AppCompatActivity() {
     }
     private fun charge():Int?=(getSystemService(BATTERY_SERVICE) as BatteryManager)
         .getIntProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER).takeUnless{it==Int.MIN_VALUE || it<=0}
-    private fun startTest(chosen:List<Model>){
+    private suspend fun preparePhoto(original:Photo,edge:Int):Prepared=withContext(Dispatchers.Default){
+        checkStop()
+        val start=now()
+        val (width,height)=LabMetrics.fit(original.width,original.height,edge)
+        if(width==original.width && height==original.height) return@withContext Prepared(original,0L)
+        var sample=1
+        while(original.width/(sample*2)>=width && original.height/(sample*2)>=height)sample*=2
+        val opts=BitmapFactory.Options().apply{inSampleSize=sample;inPreferredConfig=Bitmap.Config.ARGB_8888}
+        val decoded=BitmapFactory.decodeByteArray(original.bytes,0,original.bytes.size,opts)?:error("图片解码失败")
+        try{
+            val resized=Bitmap.createScaledBitmap(decoded,width,height,true)
+            try{
+                val bytes=ByteArrayOutputStream().use{out->
+                    check(resized.compress(Bitmap.CompressFormat.PNG,100,out)){"缩放图片编码失败"}
+                    out.toByteArray()
+                }
+                checkStop()
+                Prepared(Photo(bytes,width,height,digest(bytes)),now()-start)
+            }finally{if(resized!==decoded)resized.recycle()}
+        }finally{decoded.recycle()}
+    }
+    private fun startTest(chosen:List<Model>,trials:List<Trial>,suite:String){
         val p=photo?:run{status.text="请先拍照或导入图片";return}
         val prompt=if(task.selectedItemPosition==tasks.lastIndex)custom.text.toString().trim() else tasks[task.selectedItemPosition].second
         val ref=reference.text.toString()
         if(prompt.isBlank()||prompt.length>1500||ref.length>4096){status.text="提示词须1–1500字；参考文字最多4096字";return}
         val taskIndex=task.selectedItemPosition
         operate("离线实验"){
+            output.text=""
+            val results=StringBuilder()
+            val batch=now()
             withTimeout(30000){engine.state.first{it !is LlamaState.Uninitialized && it !is LlamaState.Initializing}}
             check(engine.state.value is LlamaState.Initialized){"推理引擎未就绪，请退出重开实验工具"}
             for(m in chosen){
@@ -278,43 +333,50 @@ class LabActivity : AppCompatActivity() {
                 if(m.id.endsWith("35b"))require(mem.totalMem>=10L*1024*1024*1024 && !mem.lowMemory){"高性能版需要约12GB物理内存；请释放内存"}
                 LlamaEngine.setSelectedModel(applicationContext,m.id)
                 LlamaEngine.setEnableThinkingPref(applicationContext,false)
-                LlamaEngine.setImageMaxSliceNumsPref(applicationContext,9)
+                LlamaEngine.setImageMaxSliceNumsPref(applicationContext,trials.first().slices)
                 val loadStart=now()
                 try{
                     status.text="加载 "+m.title
                     engine.loadModel(LlamaEngine.modelPath(this),LlamaEngine.mmprojPath(this))
                     val loadMs=now()-loadStart
                     check(engine.isVisionSupported){"视觉投影器加载失败，禁止文本降级"}
-                    for(run in 0..2){
+                    for((run,trial) in trials.withIndex()){
                         checkStop()
                         val resetStart=now()
                         if(run>0)engine.clearContext()
-                        val reset=if(run==0)0L else now()-resetStart
-                        status.text=m.title+" 第"+(run+1)+"轮"
-                        output.text=""
+                        engine.setImageMaxSliceNums(trial.slices)
+                        val reset=now()-resetStart
+                        status.text=m.title+" 第"+(run+1)+"/"+trials.size+"轮 · 切片 "+trial.slices+" · "+(if(trial.edge==0)"原图" else trial.edge.toString())
+                        val prep=preparePhoto(p,trial.edge)
+                        checkStop()
+                        val input=prep.photo
+                        val header="\n"+m.title+" 第"+(run+1)+"轮 · "+input.width+"×"+input.height+" · 切片上限 "+trial.slices+"\n"
                         val started=now();val cpu=Process.getElapsedCpuTime();val temp=batteryTemp();val ch=charge()
                         var first=-1L;var speak=-1L;var maxPss=Debug.getPss()
                         val text=StringBuilder()
                         val sampler=lifecycleScope.launch{while(isActive){maxPss=maxOf(maxPss,Debug.getPss());delay(500)}}
                         try{
-                            engine.prefillImage(p.bytes)
+                            engine.prefillImage(input.bytes)
                             val accept=now()-started
                             engine.sendUserPrompt(prompt,512).collect{chunk->
                                 checkStop();text.append(chunk)
                                 if(first<0 && chunk.any{!it.isWhitespace()})first=now()-started
                                 if(speak<0 && first>=0 && (text.count{!it.isWhitespace()}>=12 || text.any{it in "。！？；\n.!?"}))speak=now()-started
-                                output.text=text.toString()
+                                output.text=results.toString()+header+text.toString()
                             }
                             checkStop()
                             check(first>=0 && engine.state.value is LlamaState.ModelReady){"推理未产生有效输出"}
                             val elapsed=now()-started;val cpuMs=Process.getElapsedCpuTime()-cpu
                             val t2=batteryTemp();val c2=charge()
                             val cer=if(ref.isNotBlank()&&taskIndex==0)withContext(Dispatchers.Default){LabMetrics.cer(ref,text.toString()).toString()} else "NA"
-                            append(listOf("model="+m.id,"run="+(run+1),"phase="+(if(run==0)"cold" else "warm"),
-                                "image="+p.width+"x"+p.height,"sha="+p.sha.take(12),"task="+taskIndex,"slices=9","max_tokens=512",
+                            results.append(header).append(text).append("\n")
+                            output.text=results.toString()
+                            append(listOf("v=0.1.1","batch="+batch,"suite="+suite,"model="+m.id,"run="+(run+1),"phase="+(if(run==0)"cold" else "warm"),
+                                "source="+p.width+"x"+p.height,"source_sha="+p.sha.take(12),
+                                "image="+input.width+"x"+input.height,"sha="+input.sha.take(12),"task="+taskIndex,"slices="+trial.slices,"edge="+trial.edge,"max_tokens=512","resize_ms="+prep.resizeMs,
                                 "load_ms="+(if(run==0)loadMs else 0L),"reset_ms="+reset,"image_accept_ms="+accept,
-                                "prompt_prefill_ms="+engine.labPromptMs,"first_text_ms="+first,
-                                "first_speakable_est_ms="+(if(speak<0)elapsed else speak),"total_ms="+elapsed,
+                                "prompt_prefill_ms="+engine.labPromptMs,"first_text_ms="+first,"e2e_first_ms="+(prep.resizeMs+first),
+                                "first_speakable_est_ms="+(if(speak<0)elapsed else speak),"total_ms="+elapsed,"e2e_total_ms="+(prep.resizeMs+elapsed),
                                 "tokens="+engine.labGeneratedTokens,"generation_tok_s="+LabMetrics.rate(engine.labGeneratedTokens,elapsed-accept-engine.labPromptMs),
                                 "cpu_process_ms="+cpuMs,"pss_sample_max_kib="+maxPss,"temp_start_deciC="+temp,"temp_end_deciC="+t2,
                                 "charge_delta_uAh="+(if(ch!=null&&c2!=null)(ch-c2).toString() else "NA"),"cer="+cer).joinToString(" "))

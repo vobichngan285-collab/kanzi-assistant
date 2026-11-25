@@ -25,13 +25,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - name: Verify pinned upstream and prepare independent lab
-        run: |
-          set -euo pipefail
-          test "$(git -C upstream-lab rev-parse HEAD)" = 7f2bac650137230539784b794205470077915df7
-          test "$(git -C upstream-lab/llama.cpp-omni rev-parse HEAD)" = a5624430e61f44b4842246b15a352740218a3d49
-          python3 offline-ai-lab/prepare.py upstream-lab
-          git -C upstream-lab diff --check
       - name: Install pinned Android toolchain
         run: |
           set -euo pipefail
@@ -39,6 +32,43 @@ jobs:
           test -x "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" 'platforms;android-36.1' 'build-tools;36.0.0' 'ndk;27.0.12077973' 'cmake;4.1.2'
+      - name: Compare old APK certificate before selecting package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LAB_DEBUG_KEYSTORE_B64: ${{ secrets.LAB_DEBUG_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          mkdir -p previous "$HOME/.android"
+          gh release download bluestar-offline-ai-lab-v010-20261125 --repo "$GITHUB_REPOSITORY" --pattern BlueStar_Offline_AI_Lab_0.1.0.apk --dir previous
+          echo '03851ddc853b06d7e6eb70ff768a30dfaf61d08cfcbefad1808d0f8cf34b09df  previous/BlueStar_Offline_AI_Lab_0.1.0.apk' | sha256sum -c
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/apksigner" verify --print-certs previous/*.apk | tee previous-cert.txt
+          OLD=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' previous-cert.txt)
+          test -n "$OLD"
+          KEY="$HOME/.android/debug.keystore"
+          if [ -n "$LAB_DEBUG_KEYSTORE_B64" ]; then
+            printf '%s' "$LAB_DEBUG_KEYSTORE_B64" | base64 -d > "$KEY"
+            chmod 600 "$KEY"
+          elif [ ! -f "$KEY" ]; then
+            keytool -genkeypair -keystore "$KEY" -storepass android -keypass android -alias androiddebugkey -dname 'CN=Android Debug,O=Android,C=US' -keyalg RSA -keysize 2048 -validity 10000
+          fi
+          NEW=$(keytool -exportcert -keystore "$KEY" -storepass android -alias androiddebugkey | sha256sum | cut -d' ' -f1)
+          if [ "$NEW" = "$OLD" ]; then
+            echo LAB_PACKAGE=com.vobich.bluestar.offlinelab >> "$GITHUB_ENV"
+            echo LAB_MIGRATION=upgrade >> "$GITHUB_ENV"
+          else
+            echo LAB_PACKAGE=com.vobich.bluestar.offlinelab.speed >> "$GITHUB_ENV"
+            echo LAB_MIGRATION=side_by_side >> "$GITHUB_ENV"
+          fi
+          echo "OLD_CERT=$OLD" >> "$GITHUB_ENV"
+          echo "NEW_CERT=$NEW" >> "$GITHUB_ENV"
+      - name: Verify pinned upstream and prepare independent lab
+        run: |
+          set -euo pipefail
+          test "$(git -C upstream-lab rev-parse HEAD)" = 7f2bac650137230539784b794205470077915df7
+          test "$(git -C upstream-lab/llama.cpp-omni rev-parse HEAD)" = a5624430e61f44b4842246b15a352740218a3d49
+          python3 offline-ai-lab/prepare.py upstream-lab
+          git -C upstream-lab diff --check
       - name: Compile and run local unit tests
         working-directory: upstream-lab/MiniCPM-V-demo-Android
         run: |
@@ -49,9 +79,12 @@ jobs:
           set -euo pipefail
           APK=upstream-lab/MiniCPM-V-demo-Android/app/build/outputs/apk/debug/app-debug.apk
           BT="$ANDROID_HOME/build-tools/36.0.0"
-          "$BT/apksigner" verify --verbose "$APK"
+          "$BT/apksigner" verify --verbose --print-certs "$APK" | tee new-cert.txt
+          ACTUAL=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' new-cert.txt)
+          test "$ACTUAL" = "$NEW_CERT"
+          if [ "$LAB_MIGRATION" = upgrade ]; then test "$ACTUAL" = "$OLD_CERT"; else test "$ACTUAL" != "$OLD_CERT"; fi
           "$BT/aapt" dump badging "$APK" | tee badging.txt
-          grep -F "package: name='com.vobich.bluestar.offlinelab' versionCode='1' versionName='0.1.0'" badging.txt
+          grep -F "package: name='$LAB_PACKAGE' versionCode='2' versionName='0.1.1'" badging.txt
           grep -F "launchable-activity: name='com.example.minicpm_v_demo.LabActivity'" badging.txt
           python3 - "$APK" <<'PY'
           import sys,zipfile,json
@@ -63,13 +96,17 @@ jobs:
               data=json.loads(z.read('assets/lab_models.json'))
               assert [len(m['files']) for m in data['models']]==[2,43]
               assert len({m['id'] for m in data['models']})==2
+              with zipfile.ZipFile('previous/BlueStar_Offline_AI_Lab_0.1.0.apk') as old:
+                  assert json.loads(old.read('assets/lab_models.json'))==data, 'Model metadata changed'
           PY
           mkdir -p lab-release
-          cp "$APK" lab-release/BlueStar_Offline_AI_Lab_0.1.0.apk
+          cp "$APK" lab-release/BlueStar_Offline_AI_Lab_0.1.1.apk
+          printf 'package=%s\nmigration=%s\nold_cert=%s\nnew_cert=%s\n' "$LAB_PACKAGE" "$LAB_MIGRATION" "$OLD_CERT" "$NEW_CERT" | tee lab-release/INSTALL_MODE.txt
+          if [ "$LAB_MIGRATION" = side_by_side ]; then cp offline-ai-lab/migrate-model.ps1 lab-release/; fi
           (cd lab-release && sha256sum *.apk > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:
-          name: offline-ai-lab
+          name: offline-ai-lab-v011
           path: lab-release/
   publish:
     needs: build
@@ -79,7 +116,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: offline-ai-lab
+          name: offline-ai-lab-v011
           path: lab-release
       - name: Publish verified experimental APK
         env:
@@ -88,4 +125,4 @@ jobs:
         run: |
           set -euo pipefail
           (cd lab-release && sha256sum -c SHA256SUMS.txt)
-          gh release create bluestar-offline-ai-lab-v010-20261125 lab-release/* --target "$GITHUB_SHA" --title "蓝星离线AI实验室 v0.1.0" --notes "Independent 4.7 1B and experimental 35B Android CPU lab. Build and package checks only; real-device vision inference is not yet verified. OCR 1.0 layout pipeline not included. Models downloaded separately." --prerelease
+          gh release create bluestar-offline-ai-lab-v011-20261125 lab-release/* --target "$GITHUB_SHA" --title "蓝星离线AI实验室 v0.1.1" --notes-file lab-release/INSTALL_MODE.txt --prerelease
