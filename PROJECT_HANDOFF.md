@@ -1,3 +1,10 @@
+# 最新｜560清除恒等标记算子（用户授权最后一轮针对性修复）
+- CI45677884628失败：真实MLIR只记录mark_tensor，280/560各368个；V2最终序列化失败；V1已实际加载211个张量，但PARAMETER需torch.nn.Parameter而非普通Tensor。
+- 官方固定转换器源码backend/composite/mark_tensor.py明确mark_tensor eager实现return x，Meta返回empty_like，lowering仅生成单输入单输出同类型标记；是融合边界注释，不是量化或实际计算。新分支HEAD c6504eb91410a484e19623765ddb0ffed7097c0a，在两条转换路径共享的MLIR lowering返回后，仅识别目标mark_tensor、校验输入输出数/类型和backend_config，替换使用关系并擦除标记、verify计算图，打印标记所属融合名称计数；不删除真实数学运算或其他custom_call。V1参数恢复torch.nn.Parameter类型，保留原数据及shape校验。融合优化减少可能影响速度，实际数值和手机性能尚未验证。
+- 保持原厂语言section逐字节验证、APK内置增量、原厂模型本地重组方案；正式软件/280/1120旧版不改。CI 尚未出现 未知，当前无可下载APK。若仍失败建议先暂停560，讨论原厂280+YOLO文字区域实验（尚未授权实施YOLO）。
+
+---
+
 # 最新｜560量化算子直接诊断与官方V1备用转换（用户授权）
 - CI45674474085失败：关闭SDPA及GPU composite后，V2仍在stablehlo.custom_call FlatBuffer序列化失败，之前扫描二进制mlirbc无法提取目标，不能认定是注意力。官方源码lower_torchao_pass.py明示QAT可生成quant.dequantize/quant.fake_quant等custom_call，具体失败算子尚待实际日志。
 - 独立分支 exp/gemma4-official-560-20261126 HEAD 1faf3749865b2782e8382913dd32b0e2f4a5572e。在V2 portable序列化前遍历实际MLIR operation，输出custom-call target计数；仅当已知stablehlo.custom_call失败且确有目标记录时，使用官方V1直接LiteRT converter路径，对同一QAT meta图所用参数/常量从同一checkpoint真实加载，校验shape与非meta；对官方loader预打包的二补码INT2/INT4按实际bit宽解包为等价INT8值，不随机初始化、不跳过算子、不加载无关语言部分。保留QAT算子，V1 strict_qdq请求，具体是否支持及转换结果待验证；失败如实记录，不保证已修复。原厂语言section、APK内置增量、本地导入原厂文件、目标完整SHA校验方案不变。
