@@ -90,7 +90,7 @@ def main():
     expected_adp=(1,tokens,1024)
     try:
         if a.stage=="reference":
-            from transformers import AutoConfig
+            from transformers import MiniCPMV4_7Config
             from transformers.models.minicpmv4_7.modeling_minicpmv4_7 import MiniCPMV4_7VisionModel, MiniCPMV4_7Merger
             from safetensors import safe_open
             import transformers
@@ -102,7 +102,7 @@ def main():
             strip=mod.strip_from_image(x)
             ts=torch.tensor([[grid,grid]],dtype=torch.long)
             checkpoint("load_hf",transformers=transformers.__version__)
-            cfg=AutoConfig.from_pretrained(str(a.src))
+            cfg=MiniCPMV4_7Config.from_pretrained(str(a.src))
             cfg.vision_config._attn_implementation="eager"
             # Instantiate only native vision modules on meta; assign original
             # weights directly, without allocating text decoder or duplicate FP32 weights.

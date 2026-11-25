@@ -42,7 +42,9 @@ jobs:
           python -m venv refenv
           refenv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch==2.14.1
           refenv/bin/pip install transformers==5.19.0 pillow safetensors huggingface_hub
-          refenv/bin/hf download openbmb/MiniCPM-V-4.7-1B --revision 984a89aafcd5160164f4f0d04b4be0f4eec03cb8 --include '*.json' '*.safetensors' '*.jinja' --local-dir source
+          refenv/bin/python -c 'from huggingface_hub import snapshot_download; snapshot_download("openbmb/MiniCPM-V-4.7-1B",revision="984a89aafcd5160164f4f0d04b4be0f4eec03cb8",allow_patterns=["*.json","*.safetensors","*.jinja"],local_dir="source")'
+          test -s source/config.json
+          refenv/bin/python -c 'import json; c=json.load(open("source/config.json")); print("model_type",c.get("model_type"),"vision_config keys",list(c["vision_config"]))'
           test -f source/model.safetensors
           sha256sum source/model.safetensors > report/source.sha256
           refenv/bin/pip freeze > report/ref-versions.txt
