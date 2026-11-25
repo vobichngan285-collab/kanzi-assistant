@@ -37,6 +37,8 @@
 
 - v0.1.7 用户再换图测试batch38280402，pid32422继续复用，image_sha=fbe2b3e63ba1，load_ms0/resident_reused=true，session6/1/1/1ms；首字5111/2218/2203/2117ms（后3均2179.3ms），完整6654/3104/3010/2928ms（后3均3014ms），输出60/32/32/32字符，decode42/23/23/23，thought_chunks0、CER=NA，电池37.4C/thermal0。用户提供蓝星向导C110首页截图（聊天附件691×1536，附件SHA前缀7789e5e49631，与手机原始测试文件hash不同，可能为聊天转码，不能证明字节相同）。人工核查正文不计状态栏与空白共50字符，若确为本轮测试图，后三轮32字符无法完整覆盖正文。未提供实际识别文本，不能确定具体漏项、错字或幻觉，亦不能算精确CER。建议先用截图原文作参考或复制最后一轮识别文本，进一步查固定448视觉输入对竖屏小字影响，实验原图整幅与保比例分区裁剪对照，不盲目改token上限；不修改APK/正式版，待用户授权。
 
+- 用户批准图像质量优化从头至APK无需再次确认。核查固定LiteRT-LM v0.18.1 runtime/components/preprocessor/minicpmv_image_preprocess.cc（有MiniCPM等比切片逻辑）、support/preprocessor/stb_image_preprocessor.cc（固定目标直接缩放、无固定目标等比），Config.kt及top_p_cpu_sampler.cc（支持temperature=0及topK）；实际手机bundle走哪条尚未证明，不能将漏字直接归因于拉伸或随机采样。提交a317e44efeaf7a80af27453708d631ac308a26d3，compare确认仅litert-npu-lab及独立workflow12文件，v0.1.8；保留已验证LiteRT 0.18.1/CPU6/关闭思考/greedy/512每会话/同模型SHA/常驻与进程隔离。CPU同engine原图直传、等比448补边、长轴2-4非重叠分区（近边界搜索低视觉边缘能量位置，大方图2横带/小方图1块），ImageDecoder软件解码长边最多2400、EXIF方向由系统解码，逐区新conversation按原图顺序合并，不自动删文字；缝可能切字且总耗时可能增加，不能宣称已经提高准确率。自动original,pad,tiles,tiles,pad,original各2次；单方案1次；GPU视觉分区备用。记录图尺寸、分区坐标、预处理缓存及耗时、各区首字/总耗时、合并首字/总耗时（含session不含预处理）、CER、非空白长度、答案hash、重复行计数、空区、512上限命中、CPU/PSS/温度；可单独主动复制本批识别原文，数值日志仍无文字/图像。可填入用户提供蓝星首页正文参考（不含状态栏，状态栏识别会计作插入），不内置用户截图。独立包com.vobich.bluestar.npulab.quality code5，旧CI临时签名不可保证覆盖，导入原始已下载1.698GB模型无需重下，保留旧版。CI45597292580 https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45597292580 构建中，目标tag bluestar-npu-lab-v018-20261125，未核实发布。正式蓝星不改，无TTS，实际效果待真机。
+
 ---
 
 # 2026-11-25｜视觉编码器Q8量化与MT6991 NPU研究（Host实验通过，真机及NPU未验证）
