@@ -1,3 +1,11 @@
+# 最新｜原厂560视觉专项实验（用户已授权）
+- 用户真机测试第三方1120首次：首字39705ms/inference_first12647ms、load21991ms、conversation5043ms、total90461ms，输出大量英文及虚构重复行；停止该第三方路线，不归因于预算单变量。原厂280热首字1851ms、1024档1627ms保留为成功基线。用户选择原厂560，不加入YOLO（待后续讨论）。
+- 独立分支 exp/gemma4-official-560-20261126 HEAD ad277b8d4cc1a33c43c21f869394c0c6750f8fbd；基于原厂280成功提交97378223766d45c9f855ba863335fd12d5808a7c；改动仅实验目录及其CI。原厂560转换不再重导语言部分：上一轮全模型加载失败确认为 embed_tokens_per_layer.embedding_scale checkpoint [262144,35] vs model [262144,1]。新路径使用官方LiteRT Torch固定046b0e55333f20adbedff78c43b468005a78118b 的V2 meta权重加载，仅导出官方移动QAT checkpoint固定dd693ff40353f057ca5f07e945ad867f4afbf2ec的vision encoder/adapter，280/560签名，不再使用第三方权重，不忽略不匹配，不重新生成语言权重。
+- 官方Gallery 2.588GB源包固定SHA，使用官方builder解包/替换视觉encoder/adapter/metadata（2520→5040）/重封装；逐section SHA验证非视觉全部字节一致，protobuf其余字段一致，560计算图形状与官方ModelInfo均验证才允许APK编译。新视觉导出与原厂旧视觉权重/量化是否完全相同不保证。实际CPU/GPU推理待真机，不能把元数据核验等同推理成功。
+- 独立实验APK v0.1.2 com.vobich.bluestar.gemmalab.vision560，默认560，提供同模型280/560对照，保持原图/1024/512、原推理库、TTS、模型常驻与日志。CI导出成功才生成model.properties，APK锁定该模型SHA及字节；模型作为CI artifact单独提供，APK发布前验证。CI 45671855923 in_progress，暂时没有已验证模型或APK。后续查run/jobs/logs和Release，不提供未验证下载链接。正式蓝星、原厂280、第三方1120旧实验均未覆盖。
+
+---
+
 # 最新｜Gemma 1120 实验 APK 发布成功（待真机）
 - CI45667687853 model-check/build/publish全部success，发布非草稿，target 44dfd3718c5e7e6fe4f02b15133cb76b7380ffd5。APK 18207185 bytes SHA256 b612f1cf6ebc8ff9a3d7d8781eb109f70491bf3fab439a96112f03016eaaf96f，asset uploaded。下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-gemma-v011-1120-20261126/BlueStar_Gemma_1120_Lab_0.1.1.apk
 - 实际计算图 vision_1120 inputs [1,10080,768],[1,10080,2]；vision_adapter_1120 input [1,1120,768]。原metadata max_num_patches2520,pooling字段0（默认）；只修改offset16531四字节8801d813→8801e04e，补丁后官方ModelInfo AFTER 1120 [1120]，文件SHA256 a356e20927dbb68ebdec29ad59f2a39eeb09942789a7007c420ad110174072e5。APK导入原第三方模型并修正私有副本，保留原文件。实际GPU/CPU推理、识别率及延迟尚待真机，不能把签名校验等同推理成功。
