@@ -61,7 +61,7 @@ jobs:
           ! grep -F "android.permission.INTERNET" badging.txt
           unzip -p "$APK" lib/arm64-v8a/libbluestar_native.so > "$RUNNER_TEMP/native.so"
           readelf -h "$RUNNER_TEMP/native.so" | grep AArch64
-          grep -R -F "CMAKE_BUILD_TYPE:STRING=Release" native-vision-lab/app/.cxx/Release || grep -R -F "CMAKE_BUILD_TYPE:STRING=RelWithDebInfo" native-vision-lab/app/.cxx/RelWithDebInfo
+          find native-vision-lab/app/.cxx -name CMakeCache.txt -exec grep -E "^CMAKE_BUILD_TYPE:[A-Z]+=(Release|RelWithDebInfo)$" {} +
           readelf -d "$RUNNER_TEMP/native.so" | tee needed.txt
           if grep -F "libomp.so" needed.txt; then unzip -l "$APK" | grep -F "lib/arm64-v8a/libomp.so"; fi
           readelf --dyn-syms --wide "$RUNNER_TEMP/native.so" > symbols.txt
