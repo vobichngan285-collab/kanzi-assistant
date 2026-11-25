@@ -1,4 +1,4 @@
-name: Blue Star native weights lab v0.2.0
+name: Blue Star native weights lab v0.2.1
 on:
   push:
     branches: [exp/minicpm-native-weights-20261125]
@@ -46,6 +46,10 @@ jobs:
             mkdir -p native-vision-lab/app/src/main/jniLibs/arm64-v8a
             cp "$OMP" native-vision-lab/app/src/main/jniLibs/arm64-v8a/libomp.so
           fi
+      - name: Test area resize and pixel budgets
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra -Werror -I native-vision-lab/app/src/main/cpp native-vision-lab/tests/resize_test.cpp -o /tmp/resize_test
+          /tmp/resize_test
       - name: Build independent Blue Star APK
         working-directory: native-vision-lab
         run: gradle --no-daemon --max-workers=2 :app:assembleRelease
@@ -56,7 +60,7 @@ jobs:
           BT="$ANDROID_HOME/build-tools/36.0.0"
           "$BT/apksigner" verify --verbose --print-certs "$APK"
           "$BT/aapt" dump badging "$APK" | tee badging.txt
-          grep -F "package: name='com.vobich.bluestar.nativelab' versionCode='1' versionName='0.2.0'" badging.txt
+          grep -F "package: name='com.vobich.bluestar.nativelab' versionCode='2' versionName='0.2.1'" badging.txt
           grep -F "launchable-activity: name='com.vobich.bluestar.nativelab.MainActivity'" badging.txt
           ! grep -F "android.permission.INTERNET" badging.txt
           unzip -p "$APK" lib/arm64-v8a/libbluestar_native.so > "$RUNNER_TEMP/native.so"
@@ -68,12 +72,12 @@ jobs:
           grep Java_com_vobich_bluestar_nativelab_MainActivity_nativeRun symbols.txt
           grep Java_com_vobich_bluestar_nativelab_MainActivity_nativeCancel symbols.txt
           mkdir -p release
-          cp "$APK" release/BlueStar_Native_Vision_Lab_0.2.0.apk
+          cp "$APK" release/BlueStar_Native_Vision_Lab_0.2.1.apk
           cp native-vision-lab/README.md release/
           (cd release && sha256sum *.apk > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:
-          name: bluestar-native-vision-v020
+          name: bluestar-native-vision-v021
           path: release/
   smoke:
     runs-on: ubuntu-24.04
@@ -127,7 +131,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: bluestar-native-vision-v020
+          name: bluestar-native-vision-v021
           path: release
       - name: Publish verified independent APK
         env:
@@ -136,4 +140,4 @@ jobs:
         run: |
           set -euo pipefail
           (cd release && sha256sum -c SHA256SUMS.txt)
-          gh release create bluestar-native-vision-v020-optimized-20261125 release/* --target "$GITHUB_SHA" --title "蓝星原厂模型实验室 v0.2.0" --notes-file release/README.md --prerelease
+          gh release create bluestar-native-vision-v021-resize-20261126 release/* --target "$GITHUB_SHA" --title "蓝星原厂模型实验室 v0.2.1" --notes-file release/README.md --prerelease

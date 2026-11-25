@@ -7,8 +7,8 @@ android {
         applicationId = "com.vobich.bluestar.nativelab"
         minSdk = 28
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.2.0"
+        versionCode = 2
+        versionName = "0.2.1"
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild { cmake {
             arguments += listOf("-DANDROID_STL=c++_shared", "-DENGINE_DIR=" + (System.getenv("ENGINE_DIR") ?: error("ENGINE_DIR required")))

@@ -10,6 +10,7 @@
 #include "mtmd-helper.h"
 #include "chat.h"
 #include "common.h"
+#include "resize_area.h"
 static llama_model *model=nullptr;
 static llama_context *ctx=nullptr;
 static mtmd_context *vision=nullptr;
@@ -58,9 +59,9 @@ extern "C" JNIEXPORT void JNICALL Java_com_vobich_bluestar_nativelab_MainActivit
 extern "C" JNIEXPORT void JNICALL Java_com_vobich_bluestar_nativelab_MainActivity_nativeResetCancel(JNIEnv*,jobject){cancelled.store(false);}
 extern "C" JNIEXPORT void JNICALL Java_com_vobich_bluestar_nativelab_MainActivity_nativeRelease(JNIEnv*,jobject){release();}
 extern "C" JNIEXPORT jstring JNICALL Java_com_vobich_bluestar_nativelab_MainActivity_nativeRun(
- JNIEnv* e,jobject o,jstring jm,jstring jv,jstring ji,jint threads,jint orientation){
-    auto begin=Clock::now();long long load=0,reset=0,decode=0,split=0,enc=0,prefill=0,first=-1,gen=0;
-    size_t image_chunks=0,image_tokens=0,text_tokens=0;int tokens=0;
+ JNIEnv* e,jobject o,jstring jm,jstring jv,jstring ji,jint threads,jint orientation,jint pixel_cap){
+    auto begin=Clock::now();long long load=0,reset=0,decode=0,resize=0,split=0,enc=0,prefill=0,first=-1,gen=0;
+    size_t image_chunks=0,image_tokens=0,text_tokens=0,encoded_chunks=0; uint32_t input_w=0,input_h=0,work_w=0,work_h=0;int tokens=0;
     std::string result;
     llama_batch batch{};llama_sampler* sampler=nullptr;
     try{
@@ -71,6 +72,7 @@ extern "C" JNIEXPORT jstring JNICALL Java_com_vobich_bluestar_nativelab_MainActi
         check(onphase&&onpiece,"callback methods missing");
         auto m=str(e,jm),v=str(e,jv),image=str(e,ji);
         check(threads==4||threads==6,"bad threads");
+        check(pixel_cap==0||pixel_cap==3145728||pixel_cap==2239488||pixel_cap==1769472||pixel_cap==786432||pixel_cap==442368,"bad pixel cap");
         check(!cancelled,"cancelled");
         if(!backend_started){llama_log_set(quiet,nullptr);mtmd_helper_log_set(quiet,nullptr);llama_backend_init();backend_started=true;}
         if(!model||m!=active_model||v!=active_vision||threads!=active_threads){
@@ -116,6 +118,17 @@ extern "C" JNIEXPORT jstring JNICALL Java_com_vobich_bluestar_nativelab_MainActi
             bmp.reset(mtmd_bitmap_init(dw,dh,rgb.data()));check((bool)bmp,"orientation");
         }
         decode=ms(t);
+        check(!cancelled,"cancelled");
+        input_w=mtmd_bitmap_get_nx(bmp.get()); input_h=mtmd_bitmap_get_ny(bmp.get());
+        check(input_w>0&&input_h>0&&uint64_t(input_w)*input_h<=24000000&&mtmd_bitmap_get_n_bytes(bmp.get())==size_t(input_w)*input_h*3,"RGB geometry");
+        auto dims=bluestar::fit(input_w,input_h,pixel_cap); work_w=dims.first;work_h=dims.second;
+        if(work_w!=input_w||work_h!=input_h){
+            phase(e,o,onphase,"resize");t=Clock::now();
+            auto rgb=bluestar::resize_area(mtmd_bitmap_get_data(bmp.get()),input_w,input_h,work_w,work_h);
+            bmp.reset(mtmd_bitmap_init(work_w,work_h,rgb.data()));check((bool)bmp,"resize bitmap");
+            resize=ms(t);
+        }
+        check(!cancelled,"cancelled");
         phase(e,o,onphase,"split");t=Clock::now();
         common_chat_msg msg;msg.role="user";msg.content=std::string(mtmd_default_marker())+"\n请逐字抄写图片中所有可见文字和数字。按阅读顺序输出，不解释、不补充、不猜测。";
         common_chat_templates_inputs in;in.messages.push_back(msg);in.use_jinja=true;in.enable_thinking=false;in.add_generation_prompt=true;
@@ -140,10 +153,12 @@ extern "C" JNIEXPORT jstring JNICALL Java_com_vobich_bluestar_nativelab_MainActi
             check(!cancelled,"cancelled");
             auto c=mtmd_input_chunks_get(chunks.get(),i);
             if(mtmd_input_chunk_get_type(c)==MTMD_INPUT_CHUNK_TYPE_IMAGE){
-                phase(e,o,onphase,"vision");t=Clock::now();
-                check(mtmd_encode_chunk(vision,c)==0,"vision encode");enc+=ms(t);
+                auto progress=std::string("vision ")+std::to_string(encoded_chunks+1)+"/"+std::to_string(image_chunks)+" tokens="+std::to_string(mtmd_input_chunk_get_n_tokens(c))+" input="+std::to_string(work_w)+"x"+std::to_string(work_h);
+                phase(e,o,onphase,progress.c_str());t=Clock::now();
+                check(mtmd_encode_chunk(vision,c)==0,"vision encode");enc+=ms(t);encoded_chunks++;
                 check(!cancelled,"cancelled");
-                phase(e,o,onphase,"prefill");t=Clock::now();llama_pos next=pos;
+                auto progress2=std::string("prefill image ")+std::to_string(encoded_chunks)+"/"+std::to_string(image_chunks);
+                phase(e,o,onphase,progress2.c_str());t=Clock::now();llama_pos next=pos;
                 check(mtmd_helper_decode_image_chunk(vision,ctx,c,mtmd_get_output_embd(vision),pos,0,512,&next)==0,"image prefill");
                 llama_synchronize(ctx);pos=next;prefill+=ms(t);
             }else{
@@ -186,6 +201,6 @@ extern "C" JNIEXPORT jstring JNICALL Java_com_vobich_bluestar_nativelab_MainActi
     if(batch.token)llama_batch_free(batch);
     if(sampler)llama_sampler_free(sampler);
     if(e->ExceptionCheck())return nullptr;
-    auto report="status="+result+" threads="+std::to_string(threads)+" load_ms="+std::to_string(load)+" reset_ms="+std::to_string(reset)+" decode_ms="+std::to_string(decode)+" split_ms="+std::to_string(split)+" vision_ms="+std::to_string(enc)+" prefill_ms="+std::to_string(prefill)+" image_chunks="+std::to_string(image_chunks)+" image_tokens="+std::to_string(image_tokens)+" text_tokens="+std::to_string(text_tokens)+" first_ms="+std::to_string(first)+" gen_ms="+std::to_string(gen)+" tokens="+std::to_string(tokens)+" total_ms="+std::to_string(ms(begin)-load);
+    auto report="status="+result+" threads="+std::to_string(threads)+" load_ms="+std::to_string(load)+" reset_ms="+std::to_string(reset)+" decode_ms="+std::to_string(decode)+" resize_ms="+std::to_string(resize)+" pixel_cap="+std::to_string(pixel_cap)+" input="+std::to_string(input_w)+"x"+std::to_string(input_h)+" work="+std::to_string(work_w)+"x"+std::to_string(work_h)+" encoded_chunks="+std::to_string(encoded_chunks)+" split_ms="+std::to_string(split)+" vision_ms="+std::to_string(enc)+" prefill_ms="+std::to_string(prefill)+" image_chunks="+std::to_string(image_chunks)+" image_tokens="+std::to_string(image_tokens)+" text_tokens="+std::to_string(text_tokens)+" first_ms="+std::to_string(first)+" gen_ms="+std::to_string(gen)+" tokens="+std::to_string(tokens)+" total_ms="+std::to_string(ms(begin)-load);
     return e->NewStringUTF(report.c_str());
 }
