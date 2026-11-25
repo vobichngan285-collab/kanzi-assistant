@@ -6,3 +6,5 @@
 
 ## v0.1.1 速度专项
 模型revision、文件路径及内容不变。单配置1冷2暖；原图切片1/2/4/6/9；分辨率768/1024/1536/2048/原图固定切片。单次探索，非统计结论。缩放保持比例不放大，PNG避免二次JPEG损失，保持原像素方向，原图不改。日志增加resize_ms、e2e_first_ms、e2e_total_ms、source_sha与实际尺寸。prefill仍合并视觉与提示词，切片是上限非实际数量；各轮文字仅屏幕。修复系统栏遮挡。旧版默认debug签名未保存密钥，CI验旧APK及新签名，仅一致才同包覆盖，不一致则独立.speed包且附本机ADB迁移脚本（需电脑/USB调试与约1.78GB额外空间；只读旧app）。可选预配置LAB_DEBUG_KEYSTORE_B64，不能公开密钥。用户首轮1B成功：3072×4096、9切片、load2648ms、accept264ms、prefill40738ms、first41055ms、total45047ms、157 token、38.81t/s、PSS2339325KiB，CER缺失。未验证准确率。
+
+首次v0.1.1 CI 45555111990 已证实旧签名934e8d035239b0f1a164b2a2c49e887eb223b78e5b50be2d6d1858d8ee60164b与本轮新签名不同，选用独立.speed包。Gradle配置阶段阿里云镜像502，未进入Kotlin/原生编译。仅修改CI所用Gradle仓库为官方Google/Maven Central/Plugin Portal，不改推理与模型代码。

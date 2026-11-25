@@ -6,6 +6,31 @@ def change(path,old,new):
     s=path.read_text()
     assert s.count(old)==1, (path,old,s.count(old))
     path.write_text(s.replace(old,new))
+# GitHub-hosted US runners use canonical Maven repositories; avoid Aliyun 502s
+# for artifacts outside the Google repository.
+settings=app.parent/"settings.gradle.kts"
+settings_original=settings.read_text()
+assert settings_original.count("maven.aliyun.com")==5
+settings.write_text('''pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+plugins {
+    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = "MiniCPM-V-demo"
+include(":app")
+''')
 gradle=app/"build.gradle.kts"
 package=os.environ.get("LAB_PACKAGE","com.vobich.bluestar.offlinelab")
 assert package in ("com.vobich.bluestar.offlinelab","com.vobich.bluestar.offlinelab.speed")
