@@ -22,6 +22,8 @@
 
 - 发布前复核发现模式切换500ms间隔可能使看门狗停止调度，已修正提交01140fa2bf6d35d8757170a9152c700a70292843，明确使用android.os.Process，版本递增v0.1.6 versionCode3，独立包仍com.vobich.bluestar.npulab.speed，最终tag bluestar-npu-lab-v016-20261125。CI45590953688 https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45590953688 已启动；v0.1.5是中间构建不建议使用，即使CI发布也仅交付v0.1.6或后续修正版。模型、原签名保护、正式版均不变。尚未验证最终构建及真机。
 
+- v0.1.5 CI45590730234 failure，Kotlin编译LabService的Message.obtain与LiteRT-LM Message名称冲突。无需再次授权已修复b337fc02094f8c07b7d79257eb1e371474288de0，显式import android.os.Message；v0.1.6最终修正版CI45591118120 https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45591118120 in_progress，前一v0.1.6构建45590953688未包含该修复。只交付经核实的最终修正版，未确认发布。
+
 ---
 
 # 2026-11-25｜视觉编码器Q8量化与MT6991 NPU研究（Host实验通过，真机及NPU未验证）
