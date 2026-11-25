@@ -1,3 +1,10 @@
+# 2026-11-25｜视觉编码器Q8量化与MT6991 NPU研究（独立Host探针，CI待验）
+- 用户新日志全部v=0.1.2（不能当v0.1.3验收），同图source_sha=ffe30aa9ef5e、3072x4096、1切片、merge=4、内部448、63视觉token。CPU/GPU各3轮：CPU4首字均值3910ms、视觉编码3200.959ms；Vulkan0实际主视觉GPU标志1，首字5832ms、视觉5053.817ms，慢约49%，CPU累计时间降低但不能证明所有算子GPU。另一同图CPU线程批次：4/6/8线程首字均值4044.3/3420.3/3423ms，视觉3323.16/2713.475/2681.217ms，6线程约79%首字在视觉，8线程收益不明显；所有15轮均2次生成调用，CER=NA，未证实OCR质量。用户批准开展量化/NPU研究。
+- 已核查固定引擎a5624430e61f44b4842246b15a352740218a3d49的gguf-py Q8_0、writer/readback及clip-impl实际attention/FFN矩阵命名。独立分支 exp/minicpm-vision-q8-probe-20261125，提交 94a738cae369529c04d8fd9113e5b53d8d927129；仅新增vision-q8-probe/及独立workflow。使用原HF revision 2a3a3ddfbfc3d8e98c1070680b2fa98df88c3452两权重及LFS SHA校验；保留原LLM Q4_K_M，实验性地仅量化视觉块attention/FFN二维对齐矩阵为Q8_0；patch/位置embedding、merger、投影、norm、bias及架构元数据不改（更新file_type/quant版本）；验证tensor名称形状、未变tensor逐字节、metadata及finite解量化。Host CPU CLI固定单切片6线程，2张人工生成中英文数字测试图，F16/Q8各跑两图，记录图像编码时间与完整回答。数字匹配仅辅助，不能替代CER；不发布权重/不生成APK、不使用用户图片、不改正式版或现有实验版。CI [45577368996](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45577368996) queued，尚未实际量化/编译/测速成功；Host性能不能外推真机。
+- NPU研究：Google LiteRT CompiledModel 官方明确列MT6991（https://developers.google.cn/edge/litert/next/mediatek）；支持SoC不等于MiniCPM视觉图支持，GGUF不能直接NPU。社区LiteRT-LM https://huggingface.co/litert-community/MiniCPM-V-4.7-1B 的int8视觉版本1.70GB，作者Pixel8a CPU首字2.2–3.0s，S26 Adreno F16视觉GPU报告0.93s；不是同机同图比较，作者还报告Mali内存/GPU问题及Qualcomm动态int8 decoder NPU拒绝，不能据此推定MediaTek。后续先评估视觉单图转换及MediaTek compiler/dispatch、算子支持/真实NPU执行；未开展NPU实测。优先Q8 Host可行性验证，后续才做Android CPU6原F16/Q8对照及识别质量，保留原权重和旧版。
+ 
+---
+
 # 2026-11-25｜GPU实验室 v0.1.3 CPU恢复及Vulkan隔离（已发布，待真机）
 - 用户真机v0.1.2日志：ProtocolException、SocketTimeoutException；随后CPU/GPU自动对比、CPU线程自动对比、手动CPU各2次，共6轮均在requested=cpu threads=4 phase=begin后RuntimeException，未见backend_loaded，尚未进入GPU。模型SHA校验在begin之前，不能确定具体原生失败点或GPU不兼容。用户明确授权修复。
 - 核查固定引擎a5624430e61f44b4842246b15a352740218a3d49：Vulkan在全局backend registry构造/通用扫描阶段注册，CPU也受影响；原版同时修改model_params.devices/split_mode与offload参数。以上是候选原因，不宣称已证实。
