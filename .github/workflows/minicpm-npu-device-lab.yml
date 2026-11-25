@@ -1,0 +1,57 @@
+name: Blue Star NPU device JIT lab APK
+on:
+  push:
+    branches: [exp/minicpm-npu-direct-20261125]
+    paths: ['litert-npu-lab/**', '.github/workflows/minicpm-npu-device-lab.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Build and test independent Android APK
+        working-directory: litert-npu-lab
+        run: |
+          set -euo pipefail
+          sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+          gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:assembleDebug
+      - name: Verify APK and collect release
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp litert-npu-lab/app/build/outputs/apk/debug/app-debug.apk release/BlueStar_NPU_Lab_0.1.4.apk
+          APK=release/BlueStar_NPU_Lab_0.1.4.apk
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/apksigner" verify --verbose --print-certs "$APK"
+          "$BT/aapt" dump badging "$APK" | tee release/badging.txt
+          grep -F "package: name='com.vobich.bluestar.npulab' versionCode='1' versionName='0.1.4'" release/badging.txt
+          ! grep -F "uses-permission: name='android.permission.INTERNET'" release/badging.txt
+          unzip -Z1 "$APK" | tee release/apk-entries.txt
+          grep -Fx 'lib/arm64-v8a/liblitertlm_jni.so' release/apk-entries.txt
+          grep -Fx 'lib/arm64-v8a/libLiteRtDispatch_MediaTek.so' release/apk-entries.txt
+          grep -Fx 'lib/arm64-v8a/libLiteRtCompilerPlugin_MediaTek.so' release/apk-entries.txt
+          cp litert-npu-lab/README.md release/README.md
+          (cd release && sha256sum BlueStar_NPU_Lab_0.1.4.apk > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bluestar-npu-lab-v014
+          path: release/
+      - name: Publish verified experimental APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-npu-lab-v014-20261125
+          gh release create "$TAG" release/BlueStar_NPU_Lab_0.1.4.apk release/SHA256SUMS.txt release/README.md --repo "${{ github.repository }}" --target "${{ github.sha }}" --title 'Blue Star NPU Lab v0.1.4 (device experiment)' --notes-file release/README.md --prerelease
