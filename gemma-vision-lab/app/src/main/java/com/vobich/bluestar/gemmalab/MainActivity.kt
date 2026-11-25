@@ -207,7 +207,7 @@ class MainActivity:Activity(){
     val done=CountDownLatch(1);val error=AtomicReference<Throwable?>(null)
     val dispatch=now();ui{status.text="识别中...";note("dispatch source="+src+" input="+shape+" bytes="+bytes+" format="+format+" budget="+v)}
     chat!!.sendMessageAsync(Contents.of(contents),object:MessageCallback{
-     override fun onMessage(message:Message){val s=message.toString();if(s.isNotEmpty()){if(first<0&&s.isNotBlank())first=now()-start;val firstSeen=first;ui{output.append(s);read(s);status.text=if(firstSeen>=0)"首字 "+firstSeen+"ms · 生成中" else "生成中"}}}
+     override fun onMessage(message:com.google.ai.edge.litertlm.Message){val s=message.toString();if(s.isNotEmpty()){if(first<0&&s.isNotBlank())first=now()-start;val firstSeen=first;ui{output.append(s);read(s);status.text=if(firstSeen>=0)"首字 "+firstSeen+"ms · 生成中" else "生成中"}}}
      override fun onDone(){done.countDown()}
      override fun onError(throwable:Throwable){error.set(throwable);done.countDown()}
     },extraContext=mapOf("enable_thinking" to false))
