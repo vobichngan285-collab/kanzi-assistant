@@ -3,6 +3,7 @@ package com.vobich.bluestar.npulab
 import android.app.Service
 import android.content.Intent
 import android.os.*
+import android.os.Process
 import com.google.ai.edge.litertlm.*
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.collect

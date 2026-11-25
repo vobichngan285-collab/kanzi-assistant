@@ -2,6 +2,7 @@ package com.vobich.bluestar.npulab
 
 import android.content.*
 import android.os.*
+import android.os.Process
 import java.util.ArrayDeque
 
 /** Main process owns watchdog and logs; native runtime only runs in :inference. */
@@ -56,8 +57,9 @@ class LabController(private val context:Context,private val log:(String)->Unit,p
     }
     private val tick=object:Runnable{
         override fun run(){
-            val s=current?:return
-            if(!s.ending){
+            if(!active||disposed)return
+            val s=current
+            if(s!=null&&!s.ending){
                 val elapsed=SystemClock.elapsedRealtime()-s.start
                 if(elapsed>=LabProtocol.deadlineMs(s.phase)){
                     s.line("phase=timeout stage="+s.phase+" run="+s.run+" elapsed_ms="+elapsed)
@@ -67,7 +69,7 @@ class LabController(private val context:Context,private val log:(String)->Unit,p
                     status(s.mode+" · "+s.phase+" · "+(elapsed/1000)+"秒")
                 }
             }
-            if(current!=null)handler.postDelayed(this,1000)
+            if(active&&!disposed)handler.postDelayed(this,1000)
         }
     }
     fun start(modes:List<String>,model:String,image:String,ref:String){

@@ -17,7 +17,7 @@ import java.util.concurrent.Executors
 
 class MainActivity: Activity() {
     companion object {
-        const val V="0.1.5"
+        const val V="0.1.6"
         const val SHA="20c73b5a1e48a315974cff1853535ff5d017100b6420d5ef221b9dd1b955dd7c"
         const val URL="https://huggingface.co/litert-community/MiniCPM-V-4.7-1B/resolve/main/MiniCPM-V-4.7-1B-VL_int8vis.litertlm"
         const val PROMPT="请逐字抄写图片中所有可见文字和数字。不要解释。"
