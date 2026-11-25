@@ -66,8 +66,9 @@ cpp.write_text(s)
 hf="https://huggingface.co"; repo="tc-mb/MiniCPM-V-Apps-gguf"
 def get(url):
     with urllib.request.urlopen(url,timeout=60) as f:return f.read()
-meta=json.loads(get(f"{hf}/api/models/{repo}/revision/main"))
-rev=meta["sha"];assert re.fullmatch("[a-f0-9]{40}",rev)
+rev="2a3a3ddfbfc3d8e98c1070680b2fa98df88c3452"
+meta=json.loads(get(f"{hf}/api/models/{repo}/revision/{rev}"))
+assert meta["sha"]==rev
 models=[]
 for ident,title,prefix,mainfile in [
  ("minicpm-v-4_7-1b","MiniCPM-V 4.7 1B","MiniCPM-V-4.7-1B","MiniCPM-V-4_7-1B-Q4_K_M.gguf"),

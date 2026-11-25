@@ -10,6 +10,7 @@ import android.os.Process
 import android.view.View
 import android.view.WindowManager
 import android.widget.*
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
@@ -73,6 +74,9 @@ class LabActivity : AppCompatActivity() {
     }
     override fun onCreate(state:Bundle?) {
         super.onCreate(state)
+        onBackPressedDispatcher.addCallback(this,object:OnBackPressedCallback(true){
+            override fun handleOnBackPressed(){if(busy)status.text="实验或下载正在进行，请先停止" else finish()}
+        })
         models=readManifest()
         engine=LlamaEngine.getInstance(applicationContext)
         val scroll=ScrollView(this)
@@ -137,8 +141,6 @@ class LabActivity : AppCompatActivity() {
         out.putString("shot",shotFile?.absolutePath);out.putString("import",pendingImport)
         super.onSaveInstanceState(out)
     }
-    @Deprecated("Deprecated in Android")
-    override fun onBackPressed(){if(busy)status.text="实验或下载正在进行，请先停止" else super.onBackPressed()}
     private fun selected()=models[picker.selectedItemPosition]
     private fun directory(m:Model)=File(LlamaEngine.modelDir(this),m.id)
     private fun now()=SystemClock.elapsedRealtime()
@@ -300,22 +302,22 @@ class LabActivity : AppCompatActivity() {
                             engine.sendUserPrompt(prompt,512).collect{chunk->
                                 checkStop();text.append(chunk)
                                 if(first<0 && chunk.any{!it.isWhitespace()})first=now()-started
-                                if(speak<0 && (text.length>=12 || text.any{it in "。！？；\n.!?"}))speak=now()-started
+                                if(speak<0 && first>=0 && (text.count{!it.isWhitespace()}>=12 || text.any{it in "。！？；\n.!?"}))speak=now()-started
                                 output.text=text.toString()
                             }
                             checkStop()
                             check(first>=0 && engine.state.value is LlamaState.ModelReady){"推理未产生有效输出"}
                             val elapsed=now()-started;val cpuMs=Process.getElapsedCpuTime()-cpu
                             val t2=batteryTemp();val c2=charge()
-                            val cer=if(ref.isNotBlank()&&taskIndex==0)LabMetrics.cer(ref,text.toString()).toString() else "NA"
-                            append(listOf("model="+m.id,"run="+(run+1),"phase="+if(run==0)"cold" else "warm",
+                            val cer=if(ref.isNotBlank()&&taskIndex==0)withContext(Dispatchers.Default){LabMetrics.cer(ref,text.toString()).toString()} else "NA"
+                            append(listOf("model="+m.id,"run="+(run+1),"phase="+(if(run==0)"cold" else "warm"),
                                 "image="+p.width+"x"+p.height,"sha="+p.sha.take(12),"task="+taskIndex,"slices=9","max_tokens=512",
-                                "load_ms="+if(run==0)loadMs else 0L,"reset_ms="+reset,"image_accept_ms="+accept,
+                                "load_ms="+(if(run==0)loadMs else 0L),"reset_ms="+reset,"image_accept_ms="+accept,
                                 "prompt_prefill_ms="+engine.labPromptMs,"first_text_ms="+first,
-                                "first_speakable_est_ms="+if(speak<0)elapsed else speak,"total_ms="+elapsed,
+                                "first_speakable_est_ms="+(if(speak<0)elapsed else speak),"total_ms="+elapsed,
                                 "tokens="+engine.labGeneratedTokens,"generation_tok_s="+LabMetrics.rate(engine.labGeneratedTokens,elapsed-accept-engine.labPromptMs),
                                 "cpu_process_ms="+cpuMs,"pss_sample_max_kib="+maxPss,"temp_start_deciC="+temp,"temp_end_deciC="+t2,
-                                "charge_delta_uAh="+if(ch!=null&&c2!=null)ch-c2 else "NA","cer="+cer).joinToString(" "))
+                                "charge_delta_uAh="+(if(ch!=null&&c2!=null)(ch-c2).toString() else "NA"),"cer="+cer).joinToString(" "))
                         }finally{sampler.cancelAndJoin()}
                     }
                 }finally{withContext(NonCancellable){engine.labRelease()}}
