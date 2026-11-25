@@ -22,7 +22,7 @@ public class MainActivity extends Activity {
     private final ArrayList<View> controls=new ArrayList<>();
     private final StringBuilder speechBuffer=new StringBuilder(), logs=new StringBuilder();
     private TextView status,output,info,log;
-    private Spinner projector,threads,resolution;
+    private Spinner projector,threads,resolution,profile;
     private static final int[] PIXEL_CAPS={0,3145728,2239488,1769472,786432,442368};
     private final Handler timer=new Handler(Looper.getMainLooper());
     private boolean running=false;
@@ -42,7 +42,8 @@ public class MainActivity extends Activity {
     private volatile boolean destroyed=false,stopped=false;
     private TextToSpeech tts;
     private long utterances=0,firstTts=-1,runStart=0;
-    private native String nativeRun(String model,String projector,String file,int threads,int orientation,int pixelCap);
+    private native String nativeRun(String model,String projector,String file,int threads,int orientation,int pixelCap,int profile);
+    private native String nativeBench();
     private native void nativeCancel();
     private native void nativeResetCancel();
     private native void nativeRelease();
@@ -55,7 +56,7 @@ public class MainActivity extends Activity {
         ScrollView scroll=new ScrollView(this);LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);
         int pad=(int)(16*getResources().getDisplayMetrics().density);l.setPadding(pad,pad,pad,pad);
         scroll.addView(l);setContentView(scroll);
-        text(l,"蓝星原厂模型实验室 0.2.1",23);
+        text(l,"蓝星原厂模型实验室 0.2.2",23);
         text(l,"MiniCPM-V 4.7 1B · 原厂GGUF · 全图动态切片（上限9）",17);
         info=text(l,"",16);
         for(int i=0;i<NAMES.length;i++){final int k=i;
@@ -67,6 +68,8 @@ public class MainActivity extends Activity {
         }
         projector=spinner(l,new String[]{"原厂16x标准（默认）","原厂4x精细（可选）"});
         threads=spinner(l,new String[]{"CPU 6线程（默认）","CPU 4线程（基线）"});
+        profile=spinner(l,new String[]{"默认：原运行参数","视觉图预初始化","高性能4核调度请求（选CPU4）","原厂预初始化 + batch2048"});
+        button(l,"FP16矩阵专项测速（无需模型）",this::bench);
         text(l,"图片分辨率（保持整图及比例，不裁剪）",16);
         resolution=spinner(l,new String[]{"原图（不缩放）","高清 ≤315万像素","标准 ≤224万像素（默认）","均衡 ≤177万像素","极速 ≤79万像素","极限 ≤44万像素"});resolution.setSelection(2);
         speak=new CheckBox(this);speak.setText("流式离线朗读");speak.setChecked(true);l.addView(speak);controls.add(speak);
@@ -74,7 +77,7 @@ public class MainActivity extends Activity {
         button(l,"开始识别",this::start);
         stop=button(l,"停止识别",()->{stopped=true;nativeCancel();if(tts!=null)tts.stop();showProgress();});controls.remove(stop);stop.setEnabled(false);
         status=text(l,"就绪",18);output=text(l,"",19);
-        Button copy=button(l,"复制诊断日志",()->{String snapshot=logs.toString();if(running)snapshot+="v=0.2.1 current_phase="+currentPhase+" phase_elapsed_ms="+(SystemClock.elapsedRealtime()-phaseStart)+" elapsed_ms="+(SystemClock.elapsedRealtime()-runStart)+" "+photoInfo+"\n";((android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("诊断",snapshot));Toast.makeText(this,"已复制",Toast.LENGTH_SHORT).show();});controls.remove(copy);
+        Button copy=button(l,"复制诊断日志",()->{String snapshot=logs.toString();if(running)snapshot+="v=0.2.2 current_phase="+currentPhase+" phase_elapsed_ms="+(SystemClock.elapsedRealtime()-phaseStart)+" elapsed_ms="+(SystemClock.elapsedRealtime()-runStart)+" "+photoInfo+"\n";((android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("诊断",snapshot));Toast.makeText(this,"已复制",Toast.LENGTH_SHORT).show();});controls.remove(copy);
         log=text(l,"",14);
         refresh();
         tts=new TextToSpeech(this, code->{
@@ -123,9 +126,15 @@ public class MainActivity extends Activity {
             }catch(Exception ex){tmp.delete();post(()->{status.setText("失败："+ex.getMessage());setBusy(false,false);});}
         });
     }
+    private void bench(){
+        if(busy)return;
+        setBusy(true,false);runStart=phaseStart=SystemClock.elapsedRealtime();currentPhase="FP16矩阵对照（4/6/高性能4核）";running=true;timer.removeCallbacks(ticker);timer.post(ticker);
+        worker.execute(()->{try{String r=nativeBench();post(()->{endProgress();logs.append("v=0.2.2 ").append(r).append('\n');log.setText(logs);status.setText("矩阵测试结束，请复制日志");setBusy(false,false);});}catch(Throwable e){post(()->{endProgress();status.setText("矩阵测试失败："+e.getClass().getSimpleName());setBusy(false,false);});}});
+    }
     private void start(){
         if(busy)return;
-        int v=projector.getSelectedItemPosition()+1,n=threads.getSelectedItemPosition()==0?6:4, cap=PIXEL_CAPS[resolution.getSelectedItemPosition()];
+        int v=projector.getSelectedItemPosition()+1,n=threads.getSelectedItemPosition()==0?6:4, cap=PIXEL_CAPS[resolution.getSelectedItemPosition()], cfg=profile.getSelectedItemPosition();
+        if(cfg==2&&n!=4){status.setText("高性能4核对照请先选择CPU4线程");return;}
         if(photo==null||!weight(0).isFile()||!weight(v).isFile()){status.setText("先导入对应语言和视觉权重，再选择原图");return;}
         stopped=false;speakRun=speak.isChecked()&&ttsReady;utterances=0;firstTts=-1;speechBuffer.setLength(0);if(tts!=null)tts.stop();
         output.setText("");setBusy(true,true);status.setText("开始识别");runStart=SystemClock.elapsedRealtime();phaseStart=runStart;currentPhase="prepare";running=true;timer.removeCallbacks(ticker);timer.post(ticker);
@@ -137,16 +146,16 @@ public class MainActivity extends Activity {
                 if(destroyed||stopped){post(()->{endProgress();status.setText("已停止");setBusy(false,false);});return;}
                 nativeResetCancel();
                 if(destroyed||stopped){nativeCancel();post(()->{endProgress();status.setText("已停止");setBusy(false,false);});return;}
-                String r=nativeRun(m,mm,image,n,orientation,cap);
+                String r=nativeRun(m,mm,image,n,orientation,cap,cfg);
                 Debug.MemoryInfo mem=new Debug.MemoryInfo();Debug.getMemoryInfo(mem);
                 post(()->{endProgress();if(!stopped&&r!=null&&r.startsWith("status=ok"))flushSpeech(true);
-                    logs.append("v=0.2.1 soc=").append(Build.VERSION.SDK_INT>=31?Build.SOC_MODEL:Build.HARDWARE).append(" projector=").append(v==1?"16x":"4x").append(" slice_cap=9 ").append(desc).append(" file_read_ms=").append(read).append(" ").append(r).append(" pss_kib=").append(mem.getTotalPss()).append(" tts_first_queue_ms=").append(firstTts).append(" tts_queued=").append(utterances).append('\n');log.setText(logs);
+                    logs.append("v=0.2.2 soc=").append(Build.VERSION.SDK_INT>=31?Build.SOC_MODEL:Build.HARDWARE).append(" projector=").append(v==1?"16x":"4x").append(" slice_cap=9 ").append(desc).append(" file_read_ms=").append(read).append(" ").append(r).append(" pss_kib=").append(mem.getTotalPss()).append(" tts_first_queue_ms=").append(firstTts).append(" tts_queued=").append(utterances).append('\n');log.setText(logs);
                     status.setText(stopped?"已停止":r!=null&&r.startsWith("status=ok")?"识别完成":"识别失败，查看上方阶段与日志");setBusy(false,false);});
             }catch(Throwable e){post(()->{endProgress();status.setText("推理失败："+e.getClass().getSimpleName());setBusy(false,false);});}
         });
     }
     // JNI callbacks are on the single inference executor. UI and TTS stay on main.
-    public void onPhase(String phase){post(()->{if(running&&!stopped){currentPhase=phase;phaseStart=SystemClock.elapsedRealtime();showProgress();}});}
+    public void onPhase(String phase){post(()->{if(running&&!stopped){if(phase.startsWith("vision_done")){logs.append(phase).append('\n');log.setText(logs);}currentPhase=phase;phaseStart=SystemClock.elapsedRealtime();showProgress();}});}
     public void onPiece(byte[] bytes){
         String chunk=new String(bytes,StandardCharsets.UTF_8);
         post(()->{if(stopped)return;output.append(chunk);if(speakRun){speechBuffer.append(chunk);flushSpeech(false);}});

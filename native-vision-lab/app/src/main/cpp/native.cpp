@@ -11,12 +11,13 @@
 #include "chat.h"
 #include "common.h"
 #include "resize_area.h"
+#include "perf_diag.h"
 static llama_model *model=nullptr;
 static llama_context *ctx=nullptr;
 static mtmd_context *vision=nullptr;
 static common_chat_templates_ptr tmpls;
 static std::string active_model,active_vision;
-static int active_threads=0;
+static int active_threads=0,active_profile=-1;
 static std::atomic<bool> cancelled{false};
 static bool backend_started=false;
 using Clock=std::chrono::steady_clock;
@@ -28,7 +29,7 @@ static void release(){
     if(vision) mtmd_free(vision);
     if(ctx) llama_free(ctx);
     if(model) llama_model_free(model);
-    vision=nullptr; ctx=nullptr; model=nullptr; active_threads=0;
+    vision=nullptr; ctx=nullptr; model=nullptr; active_threads=0;active_profile=-1;
     active_model.clear();active_vision.clear();
 }
 static std::string str(JNIEnv* e,jstring j){
@@ -58,9 +59,19 @@ static void emit(JNIEnv* e,jobject o,jmethodID m,const std::string &s){
 extern "C" JNIEXPORT void JNICALL Java_com_vobich_bluestar_nativelab_MainActivity_nativeCancel(JNIEnv*,jobject){cancelled.store(true);}
 extern "C" JNIEXPORT void JNICALL Java_com_vobich_bluestar_nativelab_MainActivity_nativeResetCancel(JNIEnv*,jobject){cancelled.store(false);}
 extern "C" JNIEXPORT void JNICALL Java_com_vobich_bluestar_nativelab_MainActivity_nativeRelease(JNIEnv*,jobject){release();}
+extern "C" JNIEXPORT jstring JNICALL Java_com_vobich_bluestar_nativelab_MainActivity_nativeBench(JNIEnv* e,jobject){
+    try{
+        release();
+        if(!backend_started){llama_log_set(quiet,nullptr);mtmd_helper_log_set(quiet,nullptr);llama_backend_init();backend_started=true;}
+        auto s=bsdiag::features();
+        for(auto p:{0,1,2})s+="\n"+bsdiag::bench(p==1?6:4,p==2);
+        return e->NewStringUTF(s.c_str());
+    }catch(const std::exception &ex){return e->NewStringUTF(ex.what());}
+}
 extern "C" JNIEXPORT jstring JNICALL Java_com_vobich_bluestar_nativelab_MainActivity_nativeRun(
- JNIEnv* e,jobject o,jstring jm,jstring jv,jstring ji,jint threads,jint orientation,jint pixel_cap){
-    auto begin=Clock::now();long long load=0,reset=0,decode=0,resize=0,split=0,enc=0,prefill=0,first=-1,gen=0;
+ JNIEnv* e,jobject o,jstring jm,jstring jv,jstring ji,jint threads,jint orientation,jint pixel_cap,jint profile){
+    bsdiag::Affinity affinity(profile==2);auto cpu_begin=bsdiag::cpu_ms();
+    std::string chunk_stats;auto begin=Clock::now();long long load=0,reset=0,decode=0,resize=0,split=0,enc=0,prefill=0,first=-1,gen=0;
     size_t image_chunks=0,image_tokens=0,text_tokens=0,encoded_chunks=0; uint32_t input_w=0,input_h=0,work_w=0,work_h=0;int tokens=0;
     std::string result;
     llama_batch batch{};llama_sampler* sampler=nullptr;
@@ -71,23 +82,23 @@ extern "C" JNIEXPORT jstring JNICALL Java_com_vobich_bluestar_nativelab_MainActi
         e->DeleteLocalRef(clazz);
         check(onphase&&onpiece,"callback methods missing");
         auto m=str(e,jm),v=str(e,jv),image=str(e,ji);
-        check(threads==4||threads==6,"bad threads");
+        check(threads==4||threads==6,"bad threads");check(profile>=0&&profile<=3,"bad profile");
         check(pixel_cap==0||pixel_cap==3145728||pixel_cap==2239488||pixel_cap==1769472||pixel_cap==786432||pixel_cap==442368,"bad pixel cap");
         check(!cancelled,"cancelled");
         if(!backend_started){llama_log_set(quiet,nullptr);mtmd_helper_log_set(quiet,nullptr);llama_backend_init();backend_started=true;}
-        if(!model||m!=active_model||v!=active_vision||threads!=active_threads){
+        if(!model||m!=active_model||v!=active_vision||threads!=active_threads||profile!=active_profile){
             phase(e,o,onphase,"load");auto t=Clock::now();release();
             auto mp=llama_model_default_params();mp.n_gpu_layers=0;mp.use_mmap=true;
             model=llama_model_load_from_file(m.c_str(),mp);check(model,"language model load");
             auto cp=llama_context_default_params();
-            cp.n_ctx=8192;cp.n_batch=512;cp.n_ubatch=512;cp.n_threads=threads;cp.n_threads_batch=threads;
+            cp.n_ctx=8192;cp.n_batch=profile==3?2048:512;cp.n_ubatch=cp.n_batch;cp.n_threads=threads;cp.n_threads_batch=threads;
             cp.flash_attn_type=LLAMA_FLASH_ATTN_TYPE_AUTO;cp.abort_callback=abort_fn;cp.abort_callback_data=nullptr;
             ctx=llama_init_from_model(model,cp);check(ctx,"language context load");
             auto vp=mtmd_context_params_default();vp.use_gpu=false;vp.n_threads=threads;
-            vp.image_max_slice_nums=9;vp.flash_attn_type=LLAMA_FLASH_ATTN_TYPE_AUTO;vp.warmup=false;
+            vp.image_max_slice_nums=9;vp.flash_attn_type=LLAMA_FLASH_ATTN_TYPE_AUTO;vp.warmup=profile==1||profile==3;
             vision=mtmd_init_from_file(v.c_str(),model,vp);check(vision&&mtmd_support_vision(vision),"vision model load");
             tmpls=common_chat_templates_init(model,"");check((bool)tmpls,"model template");
-            active_model=m;active_vision=v;active_threads=threads;load=ms(t);
+            active_model=m;active_vision=v;active_threads=threads;active_profile=profile;load=ms(t);
         }
         check(!cancelled,"cancelled");
         auto t=Clock::now();llama_memory_clear(llama_get_memory(ctx),true);reset=ms(t);
@@ -148,6 +159,7 @@ extern "C" JNIEXPORT jstring JNICALL Java_com_vobich_bluestar_nativelab_MainActi
             else throw std::runtime_error("unsupported chunk");
         }
         check(image_chunks>0&&image_tokens+text_tokens+512<8192,"image context exceeds limit");
+        const int eval_batch=profile==3?2048:512;
         llama_pos pos=0;
         for(size_t i=0;i<count;i++){
             check(!cancelled,"cancelled");
@@ -155,15 +167,19 @@ extern "C" JNIEXPORT jstring JNICALL Java_com_vobich_bluestar_nativelab_MainActi
             if(mtmd_input_chunk_get_type(c)==MTMD_INPUT_CHUNK_TYPE_IMAGE){
                 auto progress=std::string("vision ")+std::to_string(encoded_chunks+1)+"/"+std::to_string(image_chunks)+" tokens="+std::to_string(mtmd_input_chunk_get_n_tokens(c))+" input="+std::to_string(work_w)+"x"+std::to_string(work_h);
                 phase(e,o,onphase,progress.c_str());t=Clock::now();
-                check(mtmd_encode_chunk(vision,c)==0,"vision encode");enc+=ms(t);encoded_chunks++;
+                auto before_generic=bs_count_f16_generic(),before_kai=bs_count_f16_kai();auto before_cpu=bsdiag::cpu_ms();
+                check(mtmd_encode_chunk(vision,c)==0,"vision encode");auto dt=ms(t);enc+=dt;encoded_chunks++;
+                auto detail=std::string(" block=")+std::to_string(encoded_chunks)+":"+std::to_string(dt)+"ms:"+std::to_string(bsdiag::cpu_ms()-before_cpu)+"cpu_ms:"+std::to_string(bs_count_f16_generic()-before_generic)+"generic_f16:"+std::to_string(bs_count_f16_kai()-before_kai)+"kai_f16";
+                chunk_stats+=detail;
+                phase(e,o,onphase,("vision_done"+detail).c_str());
                 check(!cancelled,"cancelled");
                 auto progress2=std::string("prefill image ")+std::to_string(encoded_chunks)+"/"+std::to_string(image_chunks);
                 phase(e,o,onphase,progress2.c_str());t=Clock::now();llama_pos next=pos;
-                check(mtmd_helper_decode_image_chunk(vision,ctx,c,mtmd_get_output_embd(vision),pos,0,512,&next)==0,"image prefill");
+                check(mtmd_helper_decode_image_chunk(vision,ctx,c,mtmd_get_output_embd(vision),pos,0,eval_batch,&next)==0,"image prefill");
                 llama_synchronize(ctx);pos=next;prefill+=ms(t);
             }else{
                 phase(e,o,onphase,"prefill");t=Clock::now();llama_pos next=pos;
-                check(mtmd_helper_eval_chunk_single(vision,ctx,c,pos,0,512,i+1==count,&next)==0,"text prefill");
+                check(mtmd_helper_eval_chunk_single(vision,ctx,c,pos,0,eval_batch,i+1==count,&next)==0,"text prefill");
                 llama_synchronize(ctx);pos=next;prefill+=ms(t);
             }
         }
@@ -202,5 +218,6 @@ extern "C" JNIEXPORT jstring JNICALL Java_com_vobich_bluestar_nativelab_MainActi
     if(sampler)llama_sampler_free(sampler);
     if(e->ExceptionCheck())return nullptr;
     auto report="status="+result+" threads="+std::to_string(threads)+" load_ms="+std::to_string(load)+" reset_ms="+std::to_string(reset)+" decode_ms="+std::to_string(decode)+" resize_ms="+std::to_string(resize)+" pixel_cap="+std::to_string(pixel_cap)+" input="+std::to_string(input_w)+"x"+std::to_string(input_h)+" work="+std::to_string(work_w)+"x"+std::to_string(work_h)+" encoded_chunks="+std::to_string(encoded_chunks)+" split_ms="+std::to_string(split)+" vision_ms="+std::to_string(enc)+" prefill_ms="+std::to_string(prefill)+" image_chunks="+std::to_string(image_chunks)+" image_tokens="+std::to_string(image_tokens)+" text_tokens="+std::to_string(text_tokens)+" first_ms="+std::to_string(first)+" gen_ms="+std::to_string(gen)+" tokens="+std::to_string(tokens)+" total_ms="+std::to_string(ms(begin)-load);
+    report+=" profile="+std::to_string(profile)+" process_cpu_ms="+std::to_string(bsdiag::cpu_ms()-cpu_begin)+affinity.info()+bsdiag::features()+chunk_stats;
     return e->NewStringUTF(report.c_str());
 }
