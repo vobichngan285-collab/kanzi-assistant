@@ -12,6 +12,13 @@ def change(path,old,new):
     s=path.read_text()
     assert s.count(old)==1,(str(path),old,s.count(old))
     path.write_text(s.replace(old,new))
+def change_user_prompt(path,old,new):
+    s=path.read_text()
+    start=s.index("Java_com_example_minicpm_1v_1demo_LlamaEngine_processUserPrompt(")
+    end=s.index("static bool is_valid_utf8(",start)
+    part=s[start:end]
+    assert part.count(old)==1,(str(path),"processUserPrompt",part.count(old))
+    path.write_text(s[:start]+part.replace(old,new)+s[end:])
 gradle=app/"build.gradle.kts"
 change(gradle,'applicationId = "com.vobich.bluestar.offlinelab.speed"','applicationId = "com.vobich.bluestar.offlinelab.gpu"')
 change(gradle,'versionCode = 2','versionCode = 1')
@@ -135,7 +142,7 @@ change(cpp,'''        int32_t res = mtmd_tokenize(g_ctx_vision, chunks, &text,
                                    g_pending_bitmap ? pending : nullptr,
                                    g_pending_bitmap ? 1 : 0);
         g_lab_times.tokenize_us = lab_us(lab_start);''')
-change(cpp,'''        llama_pos new_n_past;
+change_user_prompt(cpp,'''        llama_pos new_n_past;
         if (mtmd_helper_eval_chunks(g_ctx_vision, g_context, chunks,
                                     current_position, 0, BATCH_SIZE,
                                     true, &new_n_past)) {
