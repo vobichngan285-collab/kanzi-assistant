@@ -1,3 +1,10 @@
+# 最新｜Gemma 原图实验 v0.1.0 已发布
+- CI45664351739 build/publish均success；单元测试、APK签名、独立包身份、ARM64原生库、无INTERNET权限检查通过。Release bluestar-gemma-v010-original-image-20261126 非草稿，target 97378223766d45c9f855ba863335fd12d5808a7c，APK 18203584 bytes，SHA256 af889a24b7b1e4b9ea8b5eab0589a8fb13f4ebefbb43d676910f64a14e3a6952，已核实uploaded。
+- 下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-gemma-v010-original-image-20261126/BlueStar_Gemma_Lab_0.1.0.apk
+- 用户已下载模型，导入后先测同一价目表原图两次（冷/热），再1024/512对照及系统拍照，复制日志。真机识别率、GPU实际执行与延迟待验证，正式蓝星未改。
+
+---
+
 # 最新｜Gemma 实验编译修复
 - CI45662008583失败，job139374032320日志确认唯一Kotlin编译错误：android.os.*和LiteRT-LM.*的Message同名导致onMessage回调签名歧义；依赖下载、SDK、Manifest和原生库合并均已通过。非模型或GPU运行错误。
 - 实验分支exp/gemma4-original-image-20261126已提交 97378223766d45c9f855ba863335fd12d5808a7c，只将回调参数限定为com.google.ai.edge.litertlm.Message，已回读源码。模型/推理/图像策略不变。用户已下载模型，保留原文件。新版CI 待出现，未查询到；尚无有效APK发布。
