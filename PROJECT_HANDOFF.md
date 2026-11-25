@@ -4,6 +4,8 @@
 - 独立分支 fix/minicpm-gpu-recovery-v013-20261125，提交 ec30dcbc41ad14af4483900c8893e34b8e15e32f；回读比对仅新增gpu-ai-recovery/prepare.py、README.md、migrate-model.ps1和独立workflow共4文件，旧实验及正式蓝星向导1.0.98不动。以固定v0.1.1基线恢复CPU默认模型设备/上下文参数，禁止Vulkan全局自动注册及通用扫描；仅在GPU视觉模式且LLM成功加载后注册，释放模型/上下文/投影器后删除静态注册项（不dlclose；非独立进程，驱动全局状态可能常驻）。GPU模式LLM禁用KQV/host op offload，拒绝GPU未启用；保留1B、单切片、贪心、CPU4/6/8、GPU视觉、1冷2暖及分段计时。新增llm_load/vision_load/context_prepare/backend_verify/inference阶段和原生返回码，同步保存最后阶段及数值日志；11无GPU、12注册异常、13未编入、14视觉初始化异常。日志不包含图片/提示词/识别文本/私有路径。尚未真机验证。
 - CI [45573819723](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45573819723) in_progress；待核实源码补丁、构建、单测、签名、模型元数据、Vulkan及JNI/注册符号、发布资产。签名与v0.1.2一致才升级原.gpu包（versionCode2），否则独立.gpu.recovery；迁移脚本优先GPU旧包、.speed、旧包，需额外空间约1.78GB，未真机验证。权重不变，不卸载旧版。下载异常尚未专项修复。未验证APK不得给直链；计划tag bluestar-gpu-ai-lab-v013-20261125。
 
+- 首轮CI 45573819723 completed/failure：Android/Vulkan工具、签名准备及权重元数据均成功；源码准备在prepare.py第159行失败日志完整行匹配为0，未编译/发布。修复提交 3d28a8b82d76d5a779f10b1c53fb6d3e468f6e12，改为仅匹配唯一phase=failed表达式，移除无意义的自替换断言，不动CPU/GPU逻辑。第二轮push已提交，待查询实际run。首轮已确认签名不同、独立.gpu.recovery模式；下一轮仍以实际签名比对为准。
+
 ---
 
 # 2026-11-25｜蓝星GPU实验室 v0.1.2（独立APK，构建中）
