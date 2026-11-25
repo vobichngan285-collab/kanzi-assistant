@@ -1,9 +1,11 @@
-# 2026-11-25｜蓝星离线AI实验室 v0.1.0（独立实验，构建待核实，真机待验）
+# 2026-11-25｜蓝星离线AI实验室 v0.1.0（独立实验，CI通过已发布，真机待验）
 - 用户批准独立实验、模型分开下载、现有任务及数值对比、逐行检查；用户确认 v1.0.98 C110主动通知实测稳定，25次实体及5次遥控取图日志成功，长期锁屏/待机仍待测；正式版不修改。
 - 实际复核原厂 OpenBMB/MiniCPM-V-Apps main 6665801f45dd17c7664a67469eb7e9013fd81def：安卓 v2.6 源码 ModelInfo 有 OCR 1.0，但无4.7两档；官方网页列出4.7支持不能替代安卓源码验证。找到社区安卓适配 mlguyYT/MiniCPM-V-Apps 7f2bac650137230539784b794205470077915df7，原生引擎子模块 a5624430e61f44b4842246b15a352740218a3d49；作者实测S20短文本35B，图像推理、最终1B、天玑9400未证实。第一版仅4.7 1B及35B，OCR 1.0需另行适配官方版面分析/ONNX管线，不假冒已支持；不含TTS、追问或C110。保留五个正式任务原提示词及自定义。
 - 分支 exp/minicpm-offline-lab-20261125 基于正式版 a1850a37e965e1b9115ca26dd277755749811c03；初始 ef78194fef3468a85180f9a819f9a2d8bbaddbb8，当前 7a72cf455a40ff4e68cb984ba8db8e54a668d1d0。新增 offline-ai-lab/ 独立实验及 .github/workflows/minicpm-offline-lab.yml；独立包名 com.vobich.bluestar.offlinelab；同图同任务每模型1冷2暖、串行释放、原图JPEG/PNG、下载/导入/删除、SHA256与长度检查、数值日志、可选参考文字CER；首段估计非实际出声，PSS采样非真实峰值，电量计可能缺失。固定模型权重HF revision 2a3a3ddfbfc3d8e98c1070680b2fa98df88c3452，首轮CI已验证1B两文件1780750400 B、35B 43文件16623585508 B及40专家分片尺寸匹配。
 - 首轮 Actions 45550533566 源码替换和权重元数据成功，ubuntu-latest映射26.04无sdkmanager失败，未编译/发布；已修正为ubuntu-22.04及完整SDK命令路径、固定权重revision、返回拦截及CER线程，第二轮 45550743418 源码和权重验证成功，SDK安装进行中。真实 CI/Release 待后续核查。预定 tag bluestar-offline-ai-lab-v010-20261125；未验证资产不得发下载链接。原厂源码和社区后端并非全量人工审计；新增代码已检查关键状态、文件校验、取消及 native reset/decode 失败传播，实际编译/真机仍未完成。
 - 后续：查询本轮Actions并据实际失败日志修复；核对APK实际包名、launcher、native库、签名及SHA256与Release资产后回写记录。先真机测试1B图像任务和断网；高性能版需足够存储与内存，可能慢/OOM/热，确认后再下载；不把CI通过当真机通过。另研究官方OCR 1.0后端接入；不得回退正式蓝星。
+
+- 第二轮 Actions 45550743418 已 completed/success（SDK、完整编译、单元测试、APK包名/启动Activity/原生库/模型元数据/签名验证、上传、发布均成功）；Release target 7a72cf455a40ff4e68cb984ba8db8e54a668d1d0，资产 22553106 bytes，SHA256 03851ddc853b06d7e6eb70ff768a30dfaf61d08cfcbefad1808d0f8cf34b09df，已验证 uploaded。下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-offline-ai-lab-v010-20261125/BlueStar_Offline_AI_Lab_0.1.0.apk 。真机未验收，先测1B。模型不打包、不进入自有仓库；手动下载HF。
 
 ---
 
