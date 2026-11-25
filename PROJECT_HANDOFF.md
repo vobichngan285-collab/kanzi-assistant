@@ -3,6 +3,7 @@
 - 用户批准自动定位与裁剪实验；原分支exp/minicpm-npu-direct-20261125，基于v0.1.9 0c01e954edabdb2a91b1203796c4eaca2ada96d5，提交5ddb7dbe44bf189c024104dbc5a72bb26e0a10ba，仅独立litert-npu-lab及workflow 10文件。固定官方bundled ML Kit Chinese 16.0.1（https://developers.google.com/ml-kit/vision/text-recognition/v2/android），只取行框不使用识别文本，手动初始化于隔离进程；邻近行框聚类（横向项目价格、纵向相邻行），选择主群并留边，检测长边2000，按坐标映射回方向已校正的高分辨率图（最多4096长边/16MP）裁剪PNG；无框、弱区、面积过大或检测异常退回原图并明确日志。可能漏掉其他文字区域，UI明确仅主文字区，保留原图入口；不做整图全覆盖承诺。原模型/CPU6/提示词/greedy/常驻/预热/流式TTS不变；新增无声original/roi/roi/original对照，第二次ROI复用裁剪，数值日志含检测耗时、群组、框、排除行数、裁剪耗时，首字/总耗时现含预处理（CPU累计仍不含）；独立包com.vobich.bluestar.npulab.roi versionCode7，无INTERNET，未使用私人照片做构建素材，继续导入原模型不需重新下载。真机自动定位准确率、额外耗时未验证。
 - CI [45603143415](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45603143415) in_progress；单测、编译、签名、包名、隔离进程、无INTERNET验证成功才发布tag bluestar-npu-lab-v0110-20261125，尚未核实发布。正式蓝星与旧Release不变。
 - 首轮CI45603143415 failure，Gradle插件classpath解析期间 Maven Central repo.maven.apache.org 返回HTTP429，尚未进入Kotlin编译，不能归因ROI代码。仅实验Gradle settings增加Google托管Maven Central镜像及官方repo1端点，保留原google/mavenCentral/Gradle portal和依赖版本，提交79fe2cb700ac94657a6c8dd61a740c80134c7b29，第二轮CI [45603471329](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45603471329) in_progress，APK尚未核实。
+- 第二轮CI45603471329 已跨过classpath下载，但ML Kit传递AndroidX依赖触发checkDebugAarMetadata，尚未编译Kotlin。已添加独立子项目android.useAndroidX=true，提交d5bb7492eda14965c9c6158483e568abb74b3b10；第三轮CI [45603738677](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45603738677) in_progress，APK尚未核实。
 
 ---
 
