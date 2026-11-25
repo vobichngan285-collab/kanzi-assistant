@@ -28,6 +28,8 @@
 
 - 用户v0.1.6 MT6991真机完整自动对比（确认未整体卡住），同一image_sha099d308e01e3、模型1698202736 bytes，三种完成模式每轮chars12/chunks10/thought_chunks0/CER0、prefill98/decode11，硬件实际执行均unverified。CPU6 load18571ms，session6416/1/1，first3148/2764/1454ms，total3438/3033/1724ms，process CPU10136/9622/7722ms，PSS2406677/2581164/2580836KiB；GPU视觉+CPU6 load20918ms，session13431/1/2，first3891/1808/1688ms，total4245/2086/1971ms，process CPU8440/5055/4961ms，PSS2883721/2880023/2879855KiB；GPU全面load超时120135ms，未进入识别，成功隔离终止并进入NPU（不等同确定永久不支持）；NPU视觉+CPU6 load32733ms，session5393/3/1，first17226/5000/6452ms，total17602/5305/7054ms，CPU11364/9600/9553ms，PSS2805410/2763286/2517138KiB，正常mode_complete。第2/3轮平均首字CPU2109/GPU1748/NPU5726ms，GPU比本批CPU少17.12%，暖完整CPU2378.5/GPU2028.5/NPU6179.5ms，暖CPU累计8672/GPU5008/NPU9576.5ms，GPU少42.25%，但同图v0.1.4 CPU暖首字1448.5ms更快，v0.1.6 CPU第3轮1454ms也比GPU两次快，顺序/热状态/系统负载/进程架构/缓存差异未控，不能定论GPU更快或更省电。下一步建议CPU与GPU视觉同图多轮交错/独立重复、温度和PSS与累计CPU诊断、真实密集图CER、模型常驻；NPU与GPU全面暂不作为默认，先不改APK。真实加速器执行和覆盖未证实。
 
+- 用户批准CPU/GPU视觉优化至APK，继续原规则无需逐项确认。提交ab03341235ae1589bb5dd80bfaa605a6db0643ff，compare核实仅litert-npu-lab及独立workflow共9文件，v0.1.7；保留已验证LiteRT运行时/同SHA模型/CPU6/同原提示词/简单图/无思考；暂停GPU全面/NPU入口。单模式4轮后同隔离进程保留Engine，下一次同模式（包括新图片）复用；切换模式/手动释放/Activity销毁终止进程，非后台永久常驻。ABBA CPU/GPU/GPU/CPU四组各4轮、每组新进程、各8轮（2首次6组内暖轮），不双模型并驻；增加448密集文字合成图、继续支持原相册图及用户填写参考CER。数值记录batch/block/resident_reused/电池温度（0.1C，非SoC）/Android thermal status、CPU累计、PSS与分段时间，最多600行、UI最近24行、复制完整缓存；保留隔离看门狗与10s心跳。旧版CI临时debug签名不可保证覆盖，独立包com.vobich.bluestar.npulab.resident versionCode4，重新导入同1.698GB原文件，不重下；正式版不动。CI45593140018 https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45593140018 已启动，目标tag bluestar-npu-lab-v017-20261125，待实际编译/发布验证，真机常驻和速度未验证。
+
 ---
 
 # 2026-11-25｜视觉编码器Q8量化与MT6991 NPU研究（Host实验通过，真机及NPU未验证）
