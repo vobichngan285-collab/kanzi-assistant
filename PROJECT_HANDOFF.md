@@ -1,3 +1,10 @@
+# 最新｜560实验版 v0.1.2 已发布
+- CI45681289795 export/build/publish 全部 success；APK签名、身份、离线权限、native runtime及内置资产校验通过。Release bluestar-gemma-v012-560-20261126 非draft，目标416717949a90a5e031eb5ca012a8c2affa7c3ed5，APK已上传，693121607字节，SHA256 74430a90ae3f8e5e0db70323512c8a1ff73f3723c08fa225ae0c1d6ca7e7766e。
+- 下载：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-gemma-v012-560-20261126/BlueStar_Gemma_560_Lab_0.1.2.apk
+- 用户导入已下载原厂2.59GB模型，APK内置增量重组；额外私有模型空间必需。280/560选档，GPU/GPU请求，先用同一价格表原图连续三轮记录准确率及冷/热启动首字、总耗时。尚无真机运行结果，不能认定精度或速度已提升。正式蓝星及旧实验保持不变。
+
+---
+
 # 最新｜560完整模型及增量校验通过，APK构建中
 - CI45681289795 export job139442192634成功：真实encoder签名vision_560 [1,5040,768]/[1,5040,2]、vision_280 [1,2520,768]/[1,2520,2]；adapter签名[1,560,768]/[1,280,768]。官方ModelInfo确认560 [280,560]；原始头24个偏移字段更新校验通过，9个非视觉section逐字节SHA一致，完整模型及重组SHA验证通过。增量资产674921419字节，artifact gemma560-patch ID15053923830成功上传。实际APK大小待构建结果，不必再下载完整2.59GB原厂模型，但手机需空间生成私有副本。
 - 独立分支 exp/gemma4-official-560-20261126 HEAD 416717949a90a5e031eb5ca012a8c2affa7c3ed5；build job139446996244正在下载增量资产，尚未完成APK编译/签名/发布，Release查询404。真实手机推理准确率及性能仍待验证。正式蓝星、旧280/1120不改。
