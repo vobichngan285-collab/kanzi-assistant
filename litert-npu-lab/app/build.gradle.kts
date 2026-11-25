@@ -6,11 +6,11 @@ android {
     namespace = "com.vobich.bluestar.npulab"
     compileSdk = 36
     defaultConfig {
-        applicationId = "com.vobich.bluestar.npulab.roi"
+        applicationId = "com.vobich.bluestar.npulab.detail"
         minSdk = 28
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.1.10"
+        versionCode = 8
+        versionName = "0.1.11"
         ndk { abiFilters += "arm64-v8a" }
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
@@ -19,7 +19,7 @@ android {
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
 dependencies {
     implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.1")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.20.0")
     implementation("com.google.ai.edge.litert:litert-npu-runtime-mediatek:2.3.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     testImplementation("junit:junit:4.13.2")

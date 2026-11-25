@@ -17,7 +17,7 @@ import java.util.concurrent.Executors
 
 class MainActivity: Activity() {
     companion object {
-        const val V="0.1.10"
+        const val V="0.1.11"
         const val SHA="20c73b5a1e48a315974cff1853535ff5d017100b6420d5ef221b9dd1b955dd7c"
         const val URL="https://huggingface.co/litert-community/MiniCPM-V-4.7-1B/resolve/main/MiniCPM-V-4.7-1B-VL_int8vis.litertlm"
         const val PROMPT="请逐字抄写图片中所有可见文字和数字。不要解释。"
@@ -48,9 +48,9 @@ class MainActivity: Activity() {
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL; val p=(16*resources.displayMetrics.density).toInt();setPadding(p,p,p,p)}
         fun label(s:String,size:Float=17f):TextView=TextView(this).apply{text=s;textSize=size;root.addView(this)}
         fun button(s:String,action:()->Unit){root.addView(Button(this).apply{text=s;isAllCaps=false;setOnClickListener{if(!busy)action()};buttons.add(this)})}
-        label("蓝星 OCR 自动定位实验 v"+V,23f).setTextColor(Color.rgb(22,74,160))
+        label("蓝星 OCR 精细识别实验 v"+V,23f).setTextColor(Color.rgb(22,74,160))
         status=label(if(ready())"模型已校验" else "首次使用：下载约1.70 GB LiteRT模型后导入，旧GGUF不可复用")
-        label("离线文字定位＋高清裁剪；自动模式仅朗读主文字区域，可能遗漏其他区域。对照模式不朗读。")
+        label("LiteRT 0.20.0；紧贴裁剪、按文字行分区及状态对照。固定448模型未更换；主文字区可能漏掉其他区域。对照不朗读。")
         button("下载指定模型（浏览器）"){runCatching{startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(URL)))}.onFailure{status.text="请从发布说明打开模型链接"}}
         button("导入 LiteRT 模型"){choose("*/*",1)}
         button("内置简单图"){selected=sample;reference.setText(SAMPLE);status.text="已选择简单图"}
@@ -59,7 +59,10 @@ class MainActivity: Activity() {
         reference=EditText(this).apply{hint="参考文字（可选，用于CER）";setText(SAMPLE);root.addView(this)}
         button("填入蓝星首页正文参考（仅对应截图）"){reference.setText(HOME_REF)}
         button("预热模型（不朗读）"){warmup()}
-        button("自动定位并朗读主文字区"){test(listOf("cpu"),"roi")}
+        button("紧贴文字裁剪并朗读"){test(listOf("cpu"),"tight")}
+        button("原自动裁剪并朗读"){test(listOf("cpu"),"roi")}
+        button("精细识别对照（宽边/紧贴/文字分区/紧贴/宽边）"){test(listOf("cpu"),"detail_compare")}
+        button("状态稳定性对照（常驻3次 / 全新引擎2次）"){test(listOf("cpu"),"state_compare")}
         button("原图识别并朗读"){test(listOf("cpu"),"original")}
         button("原图与自动裁剪对照（各2次，不朗读）"){test(listOf("cpu"),"roi_compare")}
         root.addView(Button(this).apply{text="停止实验 / 释放模型";setOnClickListener{if(::speech.isInitialized)speech.cancel();if(::runner.isInitialized)runner.stop()}})
@@ -142,7 +145,7 @@ class MainActivity: Activity() {
         if(busy)return
         val image=selected?:sample;val ref=reference.text.toString()
         busy=true;buttons.forEach{it.isEnabled=false};mark("experiment")
-        if(strategy=="roi_compare")speech.cancel() else speech.begin();answers.clear();output.text="正在识别"
+        if(strategy.endsWith("compare"))speech.cancel() else speech.begin();answers.clear();output.text="正在识别"
         runner.start(modes,model.absolutePath,image.absolutePath,ref,strategy)
     }
     override fun onDestroy(){

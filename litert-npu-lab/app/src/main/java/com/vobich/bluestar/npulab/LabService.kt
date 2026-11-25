@@ -76,10 +76,11 @@ class LabService:Service(){
         val reused=residentEngine!=null
         require(!reused||residentMode==mode)
         val load=now()
-        val e=residentEngine?:Engine(EngineConfig(modelPath=model.absolutePath,backend=textBackend,visionBackend=visionBackend,maxNumImages=1,cacheDir=File(cacheDir,"backend-"+mode).apply{mkdirs()}.absolutePath)).also{
+        fun newEngine():Engine=Engine(EngineConfig(modelPath=model.absolutePath,backend=textBackend,visionBackend=visionBackend,maxNumImages=1,cacheDir=File(cacheDir,"backend-"+mode).apply{mkdirs()}.absolutePath)).also{
             it.initialize();residentEngine=it;residentMode=mode
         }
-        row(reply,prefix+" phase=loaded load_ms="+(now()-load)+" resident_reused="+reused+" hardware_execution=unverified")
+        var e=residentEngine?:newEngine()
+        row(reply,prefix+" runtime=0.20.0 phase=loaded load_ms="+(now()-load)+" resident_reused="+reused+" hardware_execution=unverified")
         val strategy=input.getString("strategy","compare")
         require(strategy in LabProtocol.strategies)
         val bounds=BitmapFactory.Options().apply{inJustDecodeBounds=true}
@@ -92,11 +93,18 @@ class LabService:Service(){
         try{
             for((idx,kind) in plan.withIndex()){
                 val run=idx+1
+                val fresh=strategy=="state_compare"&&idx>=3
+                var runLoad=0L
+                if(fresh){
+                    stage(reply,"close_engine",run);residentEngine=null;residentMode=null;e.close()
+                    stage(reply,"load",run);val startLoad=now();e=newEngine();runLoad=now()-startLoad
+                }
+                row(reply,prefix+" run="+run+" phase=engine_policy fresh="+fresh+" run_load_ms="+runLoad+" runtime=0.20.0")
                 stage(reply,"prepare",run)
                 val prep=now()
                 val cached=prepared.containsKey(kind)
                 val parts=prepared.getOrPut(kind){
-                    if(kind=="roi")locator.prepare(image,partDir){ detail->row(reply,prefix+" run="+run+" "+detail)}
+                    if(kind in setOf("roi","tight","bands"))locator.prepare(image,partDir,kind){ detail->row(reply,prefix+" run="+run+" "+detail)}
                     else ImageParts.prepare(image,kind,partDir,bounds.outWidth,bounds.outHeight)
                 }
                 val prepMs=now()-prep
@@ -127,7 +135,7 @@ class LabService:Service(){
                                     if(first<0)first=now()-jobStart
                                     stage(reply,"first_text",run)
                                 }
-                                if((strategy=="original"||strategy=="roi") && visible.length>emitted){
+                                if((strategy=="original"||strategy=="roi"||strategy=="tight") && visible.length>emitted){
                                     val delta=visible.substring(emitted);emitted=visible.length
                                     send(reply,LabProtocol.STREAM,Bundle().apply{putString("text",delta);putLong("start",jobStart);putBoolean("final",false)})
                                 }
@@ -135,7 +143,7 @@ class LabService:Service(){
                         }
                         val total=now()-sendStart
                         val answer=Metrics.visible(raw.toString()).trim()
-                        if((strategy=="original"||strategy=="roi"))send(reply,LabProtocol.STREAM,Bundle().apply{putLong("start",jobStart);putBoolean("final",true)})
+                        if((strategy=="original"||strategy=="roi"||strategy=="tight"))send(reply,LabProtocol.STREAM,Bundle().apply{putLong("start",jobStart);putBoolean("final",true)})
                         answers.add(answer)
                         val b=runCatching{c.getBenchmarkInfo()}.getOrNull()
                         val decode=(b?.lastDecodeTokenCount?:-1).toInt()
@@ -151,7 +159,7 @@ class LabService:Service(){
                 val normalized=answer.filterNot{it.isWhitespace()}
                 val digest=MessageDigest.getInstance("SHA-256").digest(normalized.toByteArray(Charsets.UTF_8)).joinToString(""){"%02x".format(it.toInt() and 255)}.take(12)
                 val phase=if(answer.isBlank())"empty" else "complete"
-                row(reply,prefix+" run="+run+" phase="+phase+" strategy="+kind+" image_sha="+hash+" prepare_ms="+prepMs+" parts="+parts.size+" empty_parts="+answers.count{it.isBlank()}+" session_ms="+sessions+" first_nonblank_ms="+first+" total_ms="+total+" chars="+answer.length+" nonspace_chars="+normalized.length+" answer_sha="+digest+" repeated_lines="+ImageParts.repeatedLines(answer)+" token_cap_parts="+capHits+" decode_tokens="+(if(tokenKnown)tokens else -1)+" thought_chunks="+thought+" cer="+cer+" cpu_process_ms="+cpu+" pss_kib="+Debug.getPss()+" battery_temp_before_decic="+tempBefore+" battery_temp_after_decic="+batteryTemp()+" thermal_before="+thermalBefore+" thermal_after="+thermal()+" resident_reused="+reused+" hardware_execution=unverified")
+                row(reply,prefix+" run="+run+" phase="+phase+" strategy="+kind+" image_sha="+hash+" prepare_ms="+prepMs+" parts="+parts.size+" empty_parts="+answers.count{it.isBlank()}+" session_ms="+sessions+" first_nonblank_ms="+first+" total_ms="+total+" chars="+answer.length+" nonspace_chars="+normalized.length+" answer_sha="+digest+" repeated_lines="+ImageParts.repeatedLines(answer)+" token_cap_parts="+capHits+" decode_tokens="+(if(tokenKnown)tokens else -1)+" thought_chunks="+thought+" cer="+cer+" cpu_process_ms="+cpu+" pss_kib="+Debug.getPss()+" battery_temp_before_decic="+tempBefore+" battery_temp_after_decic="+batteryTemp()+" thermal_before="+thermalBefore+" thermal_after="+thermal()+" resident_reused="+(!fresh&&(reused||idx>0))+" fresh_engine="+fresh+" run_load_ms="+runLoad+" hardware_execution=unverified")
                 send(reply,LabProtocol.RESULT,Bundle().apply{putString("text","第"+run+"次 "+kind+"（"+parts.size+"区，CER="+cer+"）\n"+answer.take(16384).ifBlank{"（空答案）"})})
             }
         }finally{partDir.listFiles()?.forEach{it.delete()}}

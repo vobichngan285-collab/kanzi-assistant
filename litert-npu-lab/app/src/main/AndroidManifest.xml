@@ -2,7 +2,7 @@
   <uses-permission android:name="android.permission.INTERNET" tools:node="remove"/>
   <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove"/>
   <queries><intent><action android:name="android.intent.action.TTS_SERVICE"/></intent></queries>
-  <application android:label="蓝星 OCR 自动定位实验" android:allowBackup="false" android:usesCleartextTraffic="false" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+  <application android:label="蓝星 OCR 精细识别实验" android:allowBackup="false" android:usesCleartextTraffic="false" android:theme="@android:style/Theme.Material.Light.NoActionBar">
     <provider android:name="com.google.mlkit.common.internal.MlKitInitProvider" android:authorities="${applicationId}.mlkitinitprovider" tools:node="remove"/>
     <uses-native-library android:name="libvndksupport.so" android:required="false"/>
     <uses-native-library android:name="libOpenCL.so" android:required="false"/>

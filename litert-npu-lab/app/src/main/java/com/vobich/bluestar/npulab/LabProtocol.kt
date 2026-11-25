@@ -10,10 +10,10 @@ object LabProtocol {
     const val FAILED=8
     const val STREAM=9
     val modes=setOf("cpu","gpu_vision")
-    val strategies=setOf("original","pad","tiles","compare","warmup","roi","roi_compare")
+    val strategies=setOf("original","pad","tiles","compare","warmup","roi","roi_compare","tight","bands","detail_compare","state_compare")
     fun plan(strategy:String):List<String>{
         require(strategy in strategies)
-        return if(strategy=="roi_compare")listOf("original","roi","roi","original") else if(strategy=="compare")listOf("original","pad","tiles","tiles","pad","original")else listOf(if(strategy=="warmup")"original" else strategy)
+        return if(strategy=="state_compare")List(5){"tight"} else if(strategy=="detail_compare")listOf("roi","tight","bands","tight","roi") else if(strategy=="roi_compare")listOf("original","roi","roi","original") else if(strategy=="compare")listOf("original","pad","tiles","tiles","pad","original")else listOf(if(strategy=="warmup")"original" else strategy)
     }
     fun deadlineMs(stage:String):Long=when(stage){
         "connect"->20000L

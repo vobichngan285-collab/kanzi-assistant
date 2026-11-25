@@ -8,8 +8,8 @@ data class TextBox(val l:Int,val t:Int,val r:Int,val b:Int){
     fun clamp(w:Int,h:Int)=TextBox(l.coerceIn(0,w),t.coerceIn(0,h),r.coerceIn(0,w),b.coerceIn(0,h))
 }
 object RegionGeometry {
-    data class Choice(val box:TextBox?,val groups:Int,val included:Int,val total:Int,val reason:String)
-    fun choose(boxes:List<TextBox>,width:Int,height:Int):Choice{
+    data class Choice(val box:TextBox?,val groups:Int,val included:Int,val total:Int,val reason:String,val members:List<TextBox> = emptyList())
+    fun choose(boxes:List<TextBox>,width:Int,height:Int,marginFraction:Double=0.11):Choice{
         val lines=boxes.map{it.clamp(width,height)}.filter{it.w>=6&&it.h>=5}
         if(lines.isEmpty())return Choice(null,0,0,0,"no_lines")
         if(lines.size>500)return Choice(null,0,0,lines.size,"too_many_lines")
@@ -28,12 +28,42 @@ object RegionGeometry {
         }
         val groups=lines.indices.groupBy{root(it)}.values
         val best=groups.maxByOrNull{g->g.sumOf{lines[it].area.toDouble().let(::sqrt)}}!!
-        val core=best.map{lines[it]}.reduce{a,b->a.union(b)}
+        val members=best.map{lines[it]}
+        val core=members.reduce{a,b->a.union(b)}
         if(best.size<2 && core.area<width.toLong()*height*0.025)return Choice(null,groups.size,best.size,lines.size,"weak_region")
-        val margin=max(8,(max(core.w,core.h)*0.11).roundToInt())
+        val margin=max(4,(max(core.w,core.h)*marginFraction).roundToInt())
         val crop=TextBox(core.l-margin,core.t-margin,core.r+margin,core.b+margin).clamp(width,height)
         if(crop.area>=width.toLong()*height*0.80)return Choice(null,groups.size,best.size,lines.size,"already_full")
-        return Choice(crop,groups.size,best.size,lines.size,"primary_region")
+        return Choice(crop,groups.size,best.size,lines.size,"primary_region",members)
+    }
+    // Partition only at real vertical gaps, preserving all detected boxes without overlaps.
+    fun bands(choice:Choice,w:Int,h:Int):List<TextBox>{
+        val core=choice.box?:return emptyList()
+        val lines=choice.members
+        if(lines.size<4)return listOf(core)
+        val rows=mutableListOf<TextBox>()
+        for(b in lines.sortedBy{it.t}){
+            val last=rows.lastOrNull()
+            if(last!=null && b.t<=last.b)rows[rows.lastIndex]=last.union(b) else rows.add(b)
+        }
+        if(rows.size<4)return listOf(core)
+        val span=rows.last().b-rows.first().t
+        val n=if(rows.size>=9 && span>core.w*1.2)3 else 2
+        val cuts=mutableListOf<Int>()
+        var start=0
+        for(i in 1 until n){
+            val ideal=rows.first().t+span*i/n
+            val candidates=(start+1..rows.size-(n-i)).filter{rows[it].t>rows[it-1].b}
+            val k=candidates.minByOrNull{abs((rows[it].t+rows[it-1].b)/2-ideal)}?:break
+            cuts.add(k);start=k
+        }
+        val ends=listOf(0)+cuts+listOf(rows.size)
+        val m=max(4,(rows.map{it.h}.sorted()[rows.size/2]*0.22).roundToInt())
+        return ends.zipWithNext().map{(a,b)->
+            val top=if(a==0)core.t else max(rows[a].t-m,(rows[a-1].b+rows[a].t)/2)
+            val bottom=if(b==rows.size)core.b else min(rows[b-1].b+m,(rows[b-1].b+rows[b].t)/2)
+            TextBox(core.l,top,core.r,bottom).clamp(w,h)
+        }
     }
     fun scale(box:TextBox,sw:Int,sh:Int,dw:Int,dh:Int)=TextBox(
         floor(box.l.toDouble()*dw/sw).toInt(),floor(box.t.toDouble()*dh/sh).toInt(),

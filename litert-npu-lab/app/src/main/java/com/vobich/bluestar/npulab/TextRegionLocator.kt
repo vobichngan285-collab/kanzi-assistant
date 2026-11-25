@@ -21,7 +21,7 @@ class TextRegionLocator(context:Context){
         TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
     }
     private fun now()=SystemClock.elapsedRealtime()
-    fun prepare(image:File,dir:File,log:(String)->Unit):List<ImageParts.Part>{
+    fun prepare(image:File,dir:File,kind:String,log:(String)->Unit):List<ImageParts.Part>{
         val bounds=BitmapFactory.Options().apply{inJustDecodeBounds=true}
         BitmapFactory.decodeFile(image.absolutePath,bounds)
         fun fallback(reason:String):List<ImageParts.Part>{
@@ -47,18 +47,24 @@ class TextRegionLocator(context:Context){
                     result.textBlocks.flatMap{block->block.lines.mapNotNull{line->line.boundingBox?.let{TextBox(it.left,it.top,it.right,it.bottom)}}}
                 }finally{if(small!==full)small.recycle()}
                 val detected=now()
-                val choice=RegionGeometry.choose(lines,dw,dh)
-                log("phase=roi_detect source="+full.width+"x"+full.height+" detector="+dw+"x"+dh+" decode_ms="+(decoded-start)+" detect_ms="+(detected-decoded)+" lines="+choice.total+" groups="+choice.groups+" included="+choice.included+" decision="+choice.reason)
+                val choice=RegionGeometry.choose(lines,dw,dh,if(kind=="roi")0.11 else 0.018)
+                log("phase=roi_detect kind="+kind+" source="+full.width+"x"+full.height+" detector="+dw+"x"+dh+" decode_ms="+(decoded-start)+" detect_ms="+(detected-decoded)+" lines="+choice.total+" groups="+choice.groups+" included="+choice.included+" decision="+choice.reason)
                 val box=choice.box?:return fallback(choice.reason)
-                val b=RegionGeometry.scale(box,dw,dh,full.width,full.height)
-                if(b.w<16||b.h<16)return fallback("small_crop")
-                val crop=Bitmap.createBitmap(full,b.l,b.t,b.w,b.h)
-                try{
-                    val out=File(dir,"roi.png")
-                    FileOutputStream(out).use{require(crop.compress(Bitmap.CompressFormat.PNG,100,it))}
-                    log("phase=roi_crop rect="+b.l+","+b.t+","+b.r+","+b.b+"@"+full.width+"x"+full.height+" crop_width="+b.w+" crop_height="+b.h+" area_permille="+(b.area*1000/(full.width.toLong()*full.height))+" crop_ms="+(now()-detected)+" excluded_lines="+(choice.total-choice.included))
-                    return listOf(ImageParts.Part(out,""+b.l+","+b.t+","+b.r+","+b.b+"@"+full.width+"x"+full.height))
-                }finally{if(crop!==full)crop.recycle()}
+                val regions=if(kind=="bands")RegionGeometry.bands(choice,dw,dh) else listOf(box)
+                val mapped=regions.map{RegionGeometry.scale(it,dw,dh,full.width,full.height)}
+                if(mapped.isEmpty()||mapped.any{it.w<16||it.h<16})return fallback("small_crop")
+                val parts=mapped.mapIndexed{i,b->
+                    val crop=Bitmap.createBitmap(full,b.l,b.t,b.w,b.h)
+                    try{
+                        val out=File(dir,kind+"-"+i+".png")
+                        val started=now()
+                        FileOutputStream(out).use{require(crop.compress(Bitmap.CompressFormat.PNG,100,it))}
+                        log("phase=roi_crop kind="+kind+" part="+(i+1)+"/"+mapped.size+" rect="+b.l+","+b.t+","+b.r+","+b.b+"@"+full.width+"x"+full.height+" crop_width="+b.w+" crop_height="+b.h+" area_permille="+(b.area*1000/(full.width.toLong()*full.height))+" encode_ms="+(now()-started)+" excluded_lines="+(choice.total-choice.included))
+                        ImageParts.Part(out,""+b.l+","+b.t+","+b.r+","+b.b+"@"+full.width+"x"+full.height)
+                    }finally{if(crop!==full)crop.recycle()}
+                }
+                log("phase=roi_prepared kind="+kind+" parts="+parts.size+" crop_ms="+(now()-detected))
+                return parts
             }finally{full.recycle()}
         }catch(e:Exception){return fallback(e.javaClass.simpleName)}
     }
