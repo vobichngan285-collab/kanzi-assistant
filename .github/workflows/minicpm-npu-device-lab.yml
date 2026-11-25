@@ -25,7 +25,9 @@ jobs:
         working-directory: litert-npu-lab
         run: |
           set -euo pipefail
-          sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
+          test -x "$SDKMANAGER"
+          "$SDKMANAGER" 'platforms;android-36' 'build-tools;36.0.0'
           gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:assembleDebug
       - name: Verify APK and collect release
         run: |
