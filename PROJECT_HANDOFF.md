@@ -1,3 +1,11 @@
+# 最新｜560修复版真机性能实验APK构建（v0.1.3）
+- 复用已通过两张合成中文OCR的精确修复encoder SHA256 6b8caf8e6d95837eb8f0d82ae9aefbe88313e0bb8b23be253822adcfda85dd92，不重导、不重复280实验。原诊断分支 exp/gemma4-vision-numerics-20261126 HEAD f2d15ae7e47beca2f5afe3489750358c84fe66b4：新增package_corrected_560.py及独立构建workflow，先从原始补丁和原厂权重复现全部112组逐通道修正，校验精确encoder哈希及已完成OCR报告中corrected两图CER=0，再重组验证所有section与目标SHA、ModelInfo、资产完整性；之后Android单测/签名/无网络权限/arm64/内置资产哈希检查，通过才发布独立实验预发行。
+- v0.1.3独立包 com.vobich.bluestar.gemmalab.vision560.corrected，不覆盖正式APP及旧实验。保持560默认和原图、离线OCR/TTS，增加四档明确的视觉/语言组合：CPU/CPU默认正确性基准、CPU/GPU语言加速（新增，绕过已知GPU视觉编译问题）、GPU/CPU、GPU/GPU实验。各档独立缓存、保持热模型复用、记录请求后端、首字/总耗时/加载、native benchmark及失败原因。CPU/GPU语言组合是待验证方案，不保证性能；GPU视觉兼容性尚未修复，需真实MT6991日志。仅独立实验版本，不宣称最终性能通过。
+- CI45719718456已核实in_progress，尚无成功构建/发布，需核实export/build/publish真实结果及Release资产。计划tag bluestar-gemma-v013-560-corrected-20261126，预发行文件 BlueStar_Gemma_560_Corrected_0.1.3.apk。当前不可提供未经验证的下载链接。下一步真机同一复杂价格表/同一560预算对照CPU/CPU、CPU/GPU及GPU视觉实验，核对准确率、首字及热推理速度。
+- https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45719718456
+
+---
+
 # 最新｜560修复后真实OCR突破（2026-11-26）
 - CI45718390348 completed/success，job139570213658，artifact15072025114。复现112组权重精确反量化；Linux服务器CPU完整LiteRT-LM端到端OCR，1512x1512合成中文菜单及公告，原厂280预处理768x768/2304 patches，未修和修复560预处理1104x1104/4761 patches（超出280容量；560签名存在，按v0.18.1实际patch选择算法使用560容量）。原厂菜单CER0、公告0.04255319，耗时10.445/10.161秒；未修560 CER0.97222222/0.91489362，耗时26.532/25.414秒；修复560两图CER均0（忽略非字母数字字符与空白），耗时26.994/26.188秒。菜单商品与全部价格及合计、公告号码均正确。两张合成图仅证明本次识别恢复，不代表一般图片准确率100%，也不是手机速度。实际有效patch数4761，不宣称每次恰好输出560个有效视觉token。
 - 诊断分支exp/gemma4-vision-numerics-20261126 HEAD 370b9733120822186e84648168c619780b3d8cac；修复encoder SHA256 6b8caf8e6d95837eb8f0d82ae9aefbe88313e0bb8b23be253822adcfda85dd92。正式APP与已发布APK不变；560 GPU兼容性、手机速度与实际复杂价格表仍未验收。下一步针对560加速和独立实验APK验证，不重做280。报告 https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45718390348/artifacts/15072025114
