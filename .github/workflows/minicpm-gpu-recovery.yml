@@ -1,0 +1,176 @@
+name: Blue Star CPU GPU vision lab
+on:
+  push:
+    branches: [fix/minicpm-gpu-recovery-v013-20261125]
+    paths: ['gpu-ai-recovery/**', '.github/workflows/minicpm-gpu-recovery.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: mlguyYT/MiniCPM-V-Apps
+          ref: 7f2bac650137230539784b794205470077915df7
+          path: upstream-lab
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: KhronosGroup/Vulkan-Headers
+          ref: 9a0f3099c8a9607a7c0f3127d8abfdc19a93e8c5
+          path: vk-headers
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: KhronosGroup/SPIRV-Headers
+          ref: 01e0577914a75a2569c846778c2f93aa8e6feddd
+          path: spirv-headers
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install pinned Android toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ninja-build glslc
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'platforms;android-36.1' 'build-tools;36.0.0' 'ndk;27.0.12077973' 'cmake;4.1.2'
+      - name: Configure pinned Vulkan tools
+        run: |
+          set -euo pipefail
+          test "$(git -C vk-headers rev-parse HEAD)" = 9a0f3099c8a9607a7c0f3127d8abfdc19a93e8c5
+          test "$(git -C spirv-headers rev-parse HEAD)" = 01e0577914a75a2569c846778c2f93aa8e6feddd
+          CM="$ANDROID_HOME/cmake/4.1.2/bin/cmake"
+          VKLIB="$ANDROID_HOME/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/28/libvulkan.so"
+          test -f "$VKLIB"
+          "$CM" -S spirv-headers -B spirv-build -G Ninja -DSPIRV_HEADERS_ENABLE_TESTS=OFF -DSPIRV_HEADERS_ENABLE_INSTALL=ON -DCMAKE_INSTALL_PREFIX="$PWD/spirv-install"
+          "$CM" --install spirv-build
+          echo "LAB_VK_CXX_FLAGS=-I$PWD/vk-headers/include -I$PWD/spirv-headers/include" >> "$GITHUB_ENV"
+          echo "LAB_VK_INCLUDE=$PWD/vk-headers/include" >> "$GITHUB_ENV"
+          echo "LAB_VK_LIB=$VKLIB" >> "$GITHUB_ENV"
+          echo "LAB_GLSLC=$(command -v glslc)" >> "$GITHUB_ENV"
+          echo "LAB_SPIRV_DIR=$PWD/spirv-install/share/cmake/SPIRV-Headers" >> "$GITHUB_ENV"
+          echo CMAKE_BUILD_PARALLEL_LEVEL=2 >> "$GITHUB_ENV"
+      - name: Prepare separate GPU lab signing key
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LAB_GPU_KEYSTORE_B64: ${{ secrets.LAB_GPU_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          mkdir -p previous "$HOME/.android"
+          gh release download bluestar-offline-ai-lab-v011-20261125 --repo "$GITHUB_REPOSITORY" --pattern BlueStar_Offline_AI_Lab_0.1.1.apk --dir previous
+          echo 'a4fc1eb09fa32cd0d494b8a1ea9530fe6664ea4f4b2aff794c83393a87d93c82  previous/BlueStar_Offline_AI_Lab_0.1.1.apk' | sha256sum -c
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/apksigner" verify --print-certs previous/*.apk | tee previous-cert.txt
+          mkdir -p previous-gpu
+          gh release download bluestar-gpu-ai-lab-v012-20261125 --repo "$GITHUB_REPOSITORY" --pattern BlueStar_GPU_AI_Lab_0.1.2.apk --dir previous-gpu
+          echo '0d5ce6e9debd39050d9fbc5c4dd7b7fbc663fc20114b0052bd3565215733f65b  previous-gpu/BlueStar_GPU_AI_Lab_0.1.2.apk' | sha256sum -c
+          "$BT/apksigner" verify --print-certs previous-gpu/*.apk | tee previous-gpu-cert.txt
+          OLD=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' previous-gpu-cert.txt)
+          test -n "$OLD"
+          KEY="$RUNNER_TEMP/bluestar-offline-lab.keystore"
+          if [ -n "$LAB_GPU_KEYSTORE_B64" ]; then
+            printf '%s' "$LAB_GPU_KEYSTORE_B64" | base64 -d > "$KEY"
+            chmod 600 "$KEY"
+          elif [ ! -f "$KEY" ]; then
+            keytool -genkeypair -keystore "$KEY" -storepass android -keypass android -alias androiddebugkey -dname 'CN=Android Debug,O=Android,C=US' -keyalg RSA -keysize 2048 -validity 10000
+          fi
+          NEW=$(keytool -exportcert -keystore "$KEY" -storepass android -alias androiddebugkey | sha256sum | cut -d' ' -f1)
+          if [ "$NEW" = "$OLD" ]; then
+            echo LAB_PACKAGE=com.vobich.bluestar.offlinelab.gpu >> "$GITHUB_ENV"
+            echo LAB_MIGRATION=upgrade >> "$GITHUB_ENV"
+          else
+            echo LAB_PACKAGE=com.vobich.bluestar.offlinelab.gpu.recovery >> "$GITHUB_ENV"
+            echo LAB_MIGRATION=side_by_side >> "$GITHUB_ENV"
+          fi
+          echo "OLD_CERT=$OLD" >> "$GITHUB_ENV"
+          echo "NEW_CERT=$NEW" >> "$GITHUB_ENV"
+          echo "LAB_DEBUG_KEYSTORE_PATH=$KEY" >> "$GITHUB_ENV"
+      - name: Verify pinned upstream and prepare independent lab
+        run: |
+          set -euo pipefail
+          test "$(git -C upstream-lab rev-parse HEAD)" = 7f2bac650137230539784b794205470077915df7
+          test "$(git -C upstream-lab/llama.cpp-omni rev-parse HEAD)" = a5624430e61f44b4842246b15a352740218a3d49
+          python3 gpu-ai-recovery/prepare.py upstream-lab
+          git -C upstream-lab diff --check
+          git -C upstream-lab/llama.cpp-omni diff --check
+      - name: Compile and run local unit tests
+        working-directory: upstream-lab/MiniCPM-V-demo-Android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --max-workers=2 :app:testDebugUnitTest :app:assembleDebug
+      - name: Verify APK identity, signature, native runtime and model metadata
+        run: |
+          set -euo pipefail
+          APK=upstream-lab/MiniCPM-V-demo-Android/app/build/outputs/apk/debug/app-debug.apk
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/apksigner" verify --verbose --print-certs "$APK" | tee new-cert.txt
+          ACTUAL=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' new-cert.txt)
+          test "$ACTUAL" = "$NEW_CERT"
+          "$BT/aapt" dump badging "$APK" | tee badging.txt
+          grep -F "package: name='$LAB_PACKAGE' versionCode='2' versionName='0.1.3'" badging.txt
+          grep -F "launchable-activity: name='com.example.minicpm_v_demo.LabActivity'" badging.txt
+          python3 - "$APK" <<'PY'
+          import sys,zipfile,json
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              names=set(z.namelist())
+              for n in ['libminicpm_v_demo.so','libmtmd.so','libllama.so','libllama-common.so','libggml.so','libggml-cpu.so','libggml-base.so','libomp.so','libggml-cpu-v86.so','libggml-vulkan.so']:
+                  assert 'lib/arm64-v8a/'+n in names,n
+              assert not any(n.endswith(('.gguf','.bin','.onnx')) for n in names if n.startswith('assets/'))
+              data=json.loads(z.read('assets/lab_models.json'))
+              assert [len(m['files']) for m in data['models']]==[2,43]
+              assert len({m['id'] for m in data['models']})==2
+              with zipfile.ZipFile('previous/BlueStar_Offline_AI_Lab_0.1.1.apk') as old:
+                  assert json.loads(old.read('assets/lab_models.json'))==data, 'Model metadata changed'
+          PY
+          unzip -p "$APK" lib/arm64-v8a/libggml-vulkan.so > "$RUNNER_TEMP/libggml-vulkan.so"
+          readelf -h "$RUNNER_TEMP/libggml-vulkan.so" | grep -F AArch64
+          readelf -d "$RUNNER_TEMP/libggml-vulkan.so" | grep -F libvulkan.so
+          unzip -p "$APK" lib/arm64-v8a/libminicpm_v_demo.so > "$RUNNER_TEMP/libminicpm_v_demo.so"
+          readelf --dyn-syms --wide "$RUNNER_TEMP/libminicpm_v_demo.so" > native-symbols.txt
+          grep -F LlamaEngine_labConfigureNative native-symbols.txt
+          grep -F LlamaEngine_labBackendNative native-symbols.txt
+          grep -F LlamaEngine_labTimingNative native-symbols.txt
+          unzip -p "$APK" lib/arm64-v8a/libggml.so > "$RUNNER_TEMP/libggml.so"
+          readelf --dyn-syms --wide "$RUNNER_TEMP/libggml.so" > registry-symbols.txt
+          grep -F ggml_lab_enable_vulkan registry-symbols.txt
+          grep -F ggml_lab_disable_vulkan registry-symbols.txt
+          mkdir -p lab-release
+          cp "$APK" lab-release/BlueStar_GPU_AI_Lab_0.1.3.apk
+          printf 'package=%s\nmigration=%s\nold_cert=%s\nnew_cert=%s\n' "$LAB_PACKAGE" "$LAB_MIGRATION" "$OLD_CERT" "$NEW_CERT" | tee lab-release/INSTALL_MODE.txt
+          cp gpu-ai-recovery/migrate-model.ps1 lab-release/
+          cp gpu-ai-recovery/README.md lab-release/
+          (cd lab-release && sha256sum *.apk > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gpu-ai-lab-v013
+          path: lab-release/
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: gpu-ai-lab-v013
+          path: lab-release
+      - name: Publish verified experimental APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          (cd lab-release && sha256sum -c SHA256SUMS.txt)
+          gh release create bluestar-gpu-ai-lab-v013-20261125 lab-release/* --target "$GITHUB_SHA" --title "蓝星GPU实验室 v0.1.3" --notes-file lab-release/INSTALL_MODE.txt --prerelease
