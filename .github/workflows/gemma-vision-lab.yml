@@ -49,6 +49,16 @@ jobs:
           compression-level: 0
           retention-days: 14
       - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: gemma560-converted-vision
+          path: |
+            vision/encoder.tflite
+            vision/adapter.tflite
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: gemma560-export-log

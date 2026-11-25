@@ -172,14 +172,22 @@ del src
 import flatbuffers, struct
 from litert_lm_builder import litertlm_core as core
 schema=peek.schema
-raw_header=peek.read_litertlm_header(str(base),sys.stdout)
-header=schema.LiteRTLMMetaDataT.InitFromObj(raw_header)
+# Preserve the exact source header bytes. No generated union object API:
+# its VDataCreator/VdataCreator spelling bug failed the previous build.
+with base.open("rb") as f:
+    prefix=f.read(core.HEADER_BEGIN_BYTE_OFFSET)
+    assert prefix[:8]==core.HEADER_MAGIC_BYTES
+    header_end=struct.unpack_from("<Q",prefix,core.HEADER_END_LOCATION_BYTE_OFFSET)[0]
+    assert core.HEADER_BEGIN_BYTE_OFFSET<header_end<=base.stat().st_size
+    raw=bytearray(f.read(header_end-core.HEADER_BEGIN_BYTE_OFFSET))
+assert len(raw)==header_end-core.HEADER_BEGIN_BYTE_OFFSET
+raw_header=schema.LiteRTLMMetaData.GetRootAs(raw,0)
 section_info=raw_header.SectionMetadata()
 patch=Path("patch-assets");patch.mkdir()
 rows=[]
 changed=[]
 with base.open("rb") as f:
-    for i,obj in enumerate(header.sectionMetadata.objects):
+    for i in range(section_info.ObjectsLength()):
         s=section_info.Objects(i)
         typ=peek.get_model_type(s) or ""
         start,end=s.BeginOffset(),s.EndOffset()
@@ -192,33 +200,62 @@ with base.open("rb") as f:
             changed.append(typ)
         elif s.DataType()==schema.AnySectionDataType.LlmMetadataProto:
             f.seek(start)
-            m=llm_metadata_pb2.LlmMetadata.FromString(f.read(end-start))
+            metadata_raw=f.read(end-start)
+            m=llm_metadata_pb2.LlmMetadata.FromString(metadata_raw)
             g=m.llm_model_type.gemma4
             assert g.max_num_patches==2520 and g.pooling_kernel_size in (0,3)
+            from google.protobuf.internal.encoder import _VarintBytes
+            tag=_VarintBytes(g.DESCRIPTOR.fields_by_name["max_num_patches"].number<<3)
+            old=tag+_VarintBytes(2520);new=tag+_VarintBytes(5040)
+            assert len(old)==len(new)
             g.max_num_patches=5040
+            candidates=[]
+            for off in range(len(metadata_raw)-len(old)+1):
+                if metadata_raw[off:off+len(old)]!=old:continue
+                candidate=metadata_raw[:off]+new+metadata_raw[off+len(old):]
+                try:
+                    if llm_metadata_pb2.LlmMetadata.FromString(candidate)==m:candidates.append(candidate)
+                except Exception:pass
+            assert len(candidates)==1,"Unique metadata field not identified"
             asset="metadata.bin"
-            (patch/asset).write_bytes(m.SerializeToString())
+            (patch/asset).write_bytes(candidates[0])
             changed.append("metadata")
         rows.append(dict(source=start,n=(patch/asset).stat().st_size if asset else end-start,asset=asset))
 assert sorted(changed)==["metadata","tf_lite_vision_adapter","tf_lite_vision_encoder"],changed
 assert all(rows[i]["source"]<rows[i+1]["source"] for i in range(len(rows)-1))
-def serialize():
-    fb=flatbuffers.Builder(core.BLOCK_SIZE)
-    fb.Finish(header.Pack(fb))
-    return bytes(fb.Output())
 def align(n):return (n+core.BLOCK_SIZE-1)//core.BLOCK_SIZE*core.BLOCK_SIZE
-initial=serialize()
-offset=align(core.HEADER_BEGIN_BYTE_OFFSET+len(initial))
-for row,obj in zip(rows,header.sectionMetadata.objects):
+offset=align(header_end)
+original=bytes(raw)
+updated_fields=[]
+for i,row in enumerate(rows):
+    obj=section_info.Objects(i)
     row["dest"]=offset
-    obj.beginOffset=offset;obj.endOffset=offset+row["n"]
-    offset=align(obj.endOffset)
-final=serialize()
-assert len(final)==len(initial)
-with base.open("rb") as f: prefix=bytearray(f.read(core.HEADER_BEGIN_BYTE_OFFSET))
-struct.pack_into("<Q",prefix,core.HEADER_END_LOCATION_BYTE_OFFSET,core.HEADER_BEGIN_BYTE_OFFSET+len(final))
-(patch/"header.bin").write_bytes(prefix+final)
-rows.insert(0,dict(source=-1,dest=0,n=len(prefix)+len(final),asset="header.bin"))
+    # SectionObject schema: items slot 4, begin_offset slot 6,
+    # end_offset slot 8, data_type slot 10. Offsets are ulong.
+    # Verify old bytes against generated getters before changing anything.
+    begin,end=obj.BeginOffset(),obj.EndOffset()
+    for slot,expected,value in ((6,begin,offset),(8,end,offset+row["n"])):
+        relative=obj._tab.Offset(slot)
+        assert relative>0,"Missing offset field"
+        pos=obj._tab.Pos+relative
+        assert 0<=pos<=len(raw)-8
+        assert struct.unpack_from("<Q",original,pos)[0]==expected
+        assert all(abs(pos-prev)>=8 for prev in updated_fields)
+        struct.pack_into("<Q",raw,pos,value)
+        updated_fields.append(pos)
+    offset=align(offset+row["n"])
+# Reparse modified bytes and independently verify all changes.
+new_header=schema.LiteRTLMMetaData.GetRootAs(raw,0).SectionMetadata()
+assert new_header.ObjectsLength()==len(rows)
+for i,row in enumerate(rows):
+    obj=new_header.Objects(i)
+    assert obj.BeginOffset()==row["dest"] and obj.EndOffset()==row["dest"]+row["n"]
+reversed_header=bytearray(raw)
+for pos in updated_fields:reversed_header[pos:pos+8]=original[pos:pos+8]
+assert bytes(reversed_header)==original,"Non-offset header bytes changed"
+print("verified original header preserved; changed offset fields",len(updated_fields),flush=True)
+(patch/"header.bin").write_bytes(prefix+raw)
+rows.insert(0,dict(source=-1,dest=0,n=header_end,asset="header.bin"))
 out=Path("Gemma_E2B_560.litertlm")
 with base.open("rb") as f,out.open("wb") as o:
     for row in rows:
