@@ -6,7 +6,7 @@ android {
  namespace = "com.vobich.bluestar.gemmalab"
  compileSdk = 36
  defaultConfig {
-  applicationId = "com.vobich.bluestar.gemmalab.vision560.corrected"
+  applicationId = "com.vobich.bluestar.gemmalab.vision560.hybrid"
   minSdk = 28
   targetSdk = 35
   versionCode = 5

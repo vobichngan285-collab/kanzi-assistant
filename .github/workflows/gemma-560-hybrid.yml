@@ -122,7 +122,7 @@ jobs:
           BT="$ANDROID_HOME/build-tools/36.0.0"
           "$BT/apksigner" verify --verbose --print-certs "$APK"
           "$BT/aapt" dump badging "$APK" | tee badging.txt
-          grep -F "package: name='com.vobich.bluestar.gemmalab.vision560.corrected' versionCode='5' versionName='0.1.4'" badging.txt
+          grep -F "package: name='com.vobich.bluestar.gemmalab.vision560.hybrid' versionCode='5' versionName='0.1.4'" badging.txt
           grep -F "launchable-activity: name='com.vobich.bluestar.gemmalab.MainActivity'" badging.txt
           ! grep -F "android.permission.INTERNET" badging.txt
           unzip -Z1 "$APK" > archive.txt
