@@ -1,0 +1,71 @@
+name: Gemma official QAT high vision export feasibility
+on:
+  push:
+    branches: [exp/gemma4-official-export-20261126]
+    paths: ['.github/workflows/gemma-official-high-export.yml', 'gemma-official-export/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: google-ai-edge/litert-torch
+          ref: 046b0e55333f20adbedff78c43b468005a78118b
+          path: converter
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare CPU export environment
+        run: |
+          set -euo pipefail
+          free -h
+          df -h .
+          python -m pip install --upgrade pip
+          python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install --pre -e converter 'accelerate' 'litert-lm==0.18.1'
+          python -m pip freeze > export-environment.txt
+      - name: Export official checkpoint at 280,560,1120
+        env:
+          OMP_NUM_THREADS: '2'
+          MKL_NUM_THREADS: '2'
+        run: |
+          set -euo pipefail
+          python -u gemma-official-export/export_high.py 2>&1 | tee export.log
+      - name: Validate all requested signatures using matching runtime
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import litert_lm
+          from pathlib import Path
+          model=Path('model_path.txt').read_text()
+          with litert_lm.ModelInfo(model) as m:
+              print(m.max_vision_token_budget,m.vision_signature_selection,m.min_runtime_version)
+              assert m.is_llm_model and m.input_modalities.vision
+              assert m.max_vision_token_budget==1120 and set([280,560,1120]).issubset(m.vision_signature_selection or [])
+          PY
+          mkdir -p verified
+          cp "$(cat model_path.txt)" verified/gemma-e2b-official-qat-vision-280-560-1120.litertlm
+          (cd verified && sha256sum *.litertlm > SHA256SUMS.txt)
+          cp export-environment.txt verified/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gemma-qat-high-vision-verified-metadata
+          path: verified/
+          compression-level: 0
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gemma-qat-export-diagnostics
+          path: |
+            export.log
+            export-environment.txt
+          if-no-files-found: ignore
