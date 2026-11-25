@@ -12,6 +12,8 @@
 - CI45586980891 completed/failure，官方SDK v8_0_10 x86_64 libneuron_adapter.so 的ldd和独立ctypes.CDLL均成功（DL_OPEN_OK），LiteRT插件内部仍报Failed to load NeuronAdapter，已按关卡停止，未重下MiniCPM。报告artifact15009057429。AOT加载问题未解决，不能归因模型。
 - 用户明确授权本次研究→修复→编译→发布APK全流程，无需逐项确认；真机效果、权限及不可解决阻碍仍如实说明。独立真机JIT实验路线已提交bcd31a8f89bf38e641d59d1b43e024a9bc0299bf，仅新增litert-npu-lab/及独立workflow。采用固定LiteRT-LM 0.18.1 + MediaTek runtime 2.3.2（公开MT6989报告可加载，不等于本机MiniCPM兼容；v0.19.1/2.3.x ABI已知问题），核查v0.18.1 EngineConfig、ThinkingConfig、BenchmarkInfo和vision executor NPU|CPU分支。独立包com.vobich.bluestar.npulab，v0.1.4，CPU6/请求NPU视觉+CPU6，同图每组3次新conversation、关闭思考、greedy、first_nonblank/total/原生benchmark/CER/空答案/持久阶段；实际NPU未验证（可能CPU混合/回退），不静默重试CPU。内置合成图或用户图片，数值日志无照片/文本；无TTS、无网络权限。用户需浏览器下载已验证SHA的约1.70GB LiteRT模型并导入，旧GGUF不可复用，保留旧版，导入另需约1.70GB。CI自动单测/构建/签名/包版本/ARM64 JNI/MediaTek dispatch及compiler/无INTERNET权限校验，成功才发布独立实验APK，预计tag bluestar-npu-lab-v014-20261125；CI 45587771687 in_progress https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45587771687。正式蓝星不改，APK未核实发布，真机效果未验证。
 
+- APK首轮CI45587771687 completed/failure，runner的sdkmanager不在PATH（command not found），尚未开始Gradle编译。已按此前成功GPU workflow使用ANDROID_HOME/cmdline-tools查找真实可执行文件，修复提交800047ec50fc14f19fb2b54f2d06c3fc392637d3，不改模型或APP逻辑。第二轮CI 45588214145 queued https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45588214145。尚未发布APK，未经核实不发直链。
+
 ---
 
 # 2026-11-25｜视觉编码器Q8量化与MT6991 NPU研究（Host实验通过，真机及NPU未验证）
