@@ -1,0 +1,41 @@
+name: Blue Star MT6991 SDK repair and AOT gate
+on:
+  push:
+    branches: [exp/minicpm-npu-direct-20261125]
+    paths: ['npu-recovery/**', '.github/workflows/minicpm-npu-recovery.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  repair_and_compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install and inventory pinned official SDK
+        run: |
+          set -euo pipefail
+          mkdir -p npu-report
+          python -m venv unpack-env
+          unpack-env/bin/pip install litert-lm==0.20.0
+          python -m venv aot-env
+          aot-env/bin/pip install --no-cache-dir -v ai-edge-litert-nightly==2.5.0.dev20261123 ai-edge-litert-sdk-mediatek-nightly==2.5.0.dev20261123 2>&1 | tee npu-report/sdk-install.txt
+          aot-env/bin/pip freeze > npu-report/aot-packages.txt
+          aot-env/bin/python -m py_compile npu-recovery/run.py
+          curl --fail --location --retry 3 --connect-timeout 30 --max-time 120 --output control.tflite https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite
+          sha256sum control.tflite > npu-report/control-sha256.txt
+      - name: SDK load repair and gated control plus actual vision AOT
+        run: |
+          set -euo pipefail
+          aot-env/bin/python npu-recovery/run.py 2>&1 | tee npu-report/run.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mt6991-recovery-report
+          path: npu-report/
+          if-no-files-found: warn
