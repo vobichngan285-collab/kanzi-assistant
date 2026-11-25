@@ -1,3 +1,10 @@
+# 最新｜Gemma 1120 实验 APK 发布成功（待真机）
+- CI45667687853 model-check/build/publish全部success，发布非草稿，target 44dfd3718c5e7e6fe4f02b15133cb76b7380ffd5。APK 18207185 bytes SHA256 b612f1cf6ebc8ff9a3d7d8781eb109f70491bf3fab439a96112f03016eaaf96f，asset uploaded。下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-gemma-v011-1120-20261126/BlueStar_Gemma_1120_Lab_0.1.1.apk
+- 实际计算图 vision_1120 inputs [1,10080,768],[1,10080,2]；vision_adapter_1120 input [1,1120,768]。原metadata max_num_patches2520,pooling字段0（默认）；只修改offset16531四字节8801d813→8801e04e，补丁后官方ModelInfo AFTER 1120 [1120]，文件SHA256 a356e20927dbb68ebdec29ad59f2a39eeb09942789a7007c420ad110174072e5。APK导入原第三方模型并修正私有副本，保留原文件。实际GPU/CPU推理、识别率及延迟尚待真机，不能把签名校验等同推理成功。
+- 官方QAT重新导出CI45667440751失败，环境安装成功但Load source model时RuntimeError ignore_mismatched_sizes=False；未产出官方高预算模型。下一步如继续官方路线，核对权重/转换器加载器版本与具体张量尺寸，不允许忽略不匹配随机初始化。优先让用户真机测试已发布1120包，不修改正式软件及原厂280成功版本。
+
+---
+
 # 最新｜Gemma 高视觉预算双路线（已提交，校验中）
 - v0.1.0真机MT6991原厂原图3072×4096 3.28MB/280：冷load25530ms、conversation4072、inference_first2546；两次热first1867/1851ms、total7662/7565ms、TTS入队1948/1937ms；1024长边768×1024热first1627ms（prepare231,inference1389）、total6765ms，部分中文改善但仍错漏；512用户称很差。尚无原图文字GT，不宣称CER。用户授权突破280并行两路线，正式蓝星及成功280版本不改。
 - 第三方PenraApp/penra-models revision e7947bb3f9a2960713df011ebca32aedc0f271bb，penra-e2b-1120.litertlm 1708468392 bytes，SHA256 4f52793970e74cae45b971e447cd5834dac6b9a70b687a5fe0f968c6e1c26b9e。链接 https://huggingface.co/PenraApp/penra-models/resolve/e7947bb3f9a2960713df011ebca32aedc0f271bb/penra-e2b-1120.litertlm 。真实下载与SHA在CI45667256562 job139392647154通过，但官方Python LiteRT-LM 0.18.1 ModelInfo实际输出 llm True vision True max 280 signatures [1120] min_runtime None，故断言失败，阻止发布。不是单纯APP下拉限制。第三方量化/词表可能不同，准确率差异不能全归因于视觉预算。
