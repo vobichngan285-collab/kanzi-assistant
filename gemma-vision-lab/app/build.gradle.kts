@@ -9,13 +9,13 @@ android {
   applicationId = "com.vobich.bluestar.gemmalab.vision560.corrected"
   minSdk = 28
   targetSdk = 35
-  versionCode = 4
-  versionName = "0.1.3"
+  versionCode = 5
+  versionName = "0.1.4"
   ndk { abiFilters += "arm64-v8a" }
  }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
  buildTypes { getByName("release") { signingConfig = signingConfigs.getByName("debug"); isMinifyEnabled = false } }
- packaging { jniLibs { useLegacyPackaging = true } }
+ packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += "**/liblitertlm_jni.so" } }
 }
 kotlin { jvmToolchain(17) }
 dependencies {
