@@ -6,6 +6,8 @@
 
 - GPU APK CI45569008722失败于源码准备：Vulkan工具链、签名、模型元数据已通过，分段计时补丁匹配到两处原生eval代码，唯一性断言正确拦截，尚未编译。修复提交 c22e9ac0eff0f393fb9acade41f578dc63e61681，限定processUserPrompt函数范围，已对固定上游源码核实范围内仅一处、全文件两处，不动其他识别逻辑。新构建 Actions 45569359903 in_progress https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45569359903。未发布APK。
 
+- GPU APK CI45569359903 completed/success，编译、单元测试、APK签名、包名、原生库/JNI符号、模型元数据一致性和发布均通过。Release bluestar-gpu-ai-lab-v012-20261125，target c22e9ac0eff0f393fb9acade41f578dc63e61681；实际APK 75370304 bytes，SHA256 0d5ce6e9debd39050d9fbc5c4dd7b7fbc663fc20114b0052bd3565215733f65b，包名com.vobich.bluestar.offlinelab.gpu，签名02342bfd6ba378c4f25cc4ed1cee13656a135d56f2af50aa8130514d94e48e64。独立安装，不覆盖旧包；附本地ADB迁移脚本（未真机验证），权重不变。APK https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-gpu-ai-lab-v012-20261125/BlueStar_GPU_AI_Lab_0.1.2.apk 。先同图自动对比CPU4/GPU视觉，保留屏幕识别内容及日志，然后CPU4/6/8；实际GPU可用性和速度、准确率尚待真机验证。正式蓝星未改。
+
 ---
 
 # 2026-11-25｜GPU视觉编码研究及交叉编译探针
