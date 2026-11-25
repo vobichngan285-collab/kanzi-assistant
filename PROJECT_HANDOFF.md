@@ -1,3 +1,11 @@
+# 2026-11-25｜GPU视觉编码研究及交叉编译探针
+- 用户v0.1.1真机同图source_sha8098b89d120d切片1/2/4/6/9 first_ms 4037/12015/20494/29830/44849；单切片五分辨率576×768、768×1024、1152×1536、1536×2048、原图prefill 4002/3717/3839/3926/3943ms，含缩放首字4350/4102/4591/5171/4174ms。2–3生成调用，未验证正确率。用户批准开始下一阶段研究。
+- 核查已用JNI固定N_THREADS=4、n_gpu_layers=0、mparams.use_gpu=false；mtmd-image.cpp单切片仅overview、内部按hparams.image_size及patch对齐重采样；clip.cpp支持GPU/IGPU但可能回退CPU，必须验证实际设备。4x/16x由投影器GGUF n_merge=2/4决定，当前文件实际metadata未读，不可硬改。LiteRT社区1B 448×448 S26 GPU 930ms，非天玑实测，Mali驱动有兼容性风险且不同格式模型。
+- 先做独立交叉编译探针，未改v0.1.1 APK/模型/正式版，不新增用户安装包、不下载权重、不触发旧APK工作流。HEAD 785a7274b2c43b87718063014e8b2224e227741e，新增gpu-vision-probe/prepare.py、README.md、.github/workflows/minicpm-gpu-probe.yml。原引擎a5624430e61f44b4842246b15a352740218a3d49，固定Khronos头文件及NDK，单切片llama-mtmd-cli，启用Vulkan、保留CPU路径。仅CI编译/ELF及依赖验证，非真机测速。Actions 45566558972 in_progress https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45566558972。
+- 后续核实编译；再进行实际设备CPU/GPU同图对比及准确性，保留GGUF权重，分离视觉编码、LLM prefill和首字，测试4/6/8线程。之后再考虑常驻与实时预览最新帧，不声称毫秒级已实现。旧签名问题未解决，不要卸载旧实验版。
+
+---
+
 # 2026-11-25｜蓝星离线AI实验室 v0.1.1（速度专项，构建中）
 - v0.1.0 用户真机1B首轮已完成：3072×4096、9切片、加载2648ms、image_accept264ms、prompt_prefill40738ms、first41055ms、total45047ms、157 token、38.81t/s、PSS2339325KiB、电池34.5℃前后不变；CER未输入、精度及暖机未验证。用户授权增加分辨率和切片实验，不修改正式蓝星，不更换模型。
 - 同独立分支 exp/minicpm-offline-lab-20261125，基于已发布7a72cf455a40ff4e68cb984ba8db8e54a668d1d0，HEAD c403aadf9a2263a1fb189f856b9a38423dcb3156。新增1/2/4/6/9切片上限，原图及2048/1536/1024/768最长边；原图切片横向实验、固定切片分辨率实验、单配置1冷2暖及原双模型对比；图像按比例不放大不裁切，缩放使用PNG，保留原图字节；记录输入实际尺寸、缩放耗时、首字及含缩放时间、每轮文本显示，修复系统栏覆盖，增加缩放比例单测。模型源、目录、版本完全不变；原生视觉和提示词仍合并计时。上限不等于实际切片数。
