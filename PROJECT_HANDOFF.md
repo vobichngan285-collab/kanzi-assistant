@@ -1,3 +1,11 @@
+# 最新｜560真机异常，转入数值定位实验（不改APP）
+- 用户真机v0.1.2 MT6991 SDK36：原厂输入SHA及本地重组验证成功，输出3034159952字节 SHA54ca03d8888d9d2a8284606be35165f47958b00ed548a5cab50994de34dd3952，ModelInfo 560 [280,560]。GPU vision创建conversation报Some ops are not accelerated，官方runtime executor GPU分支仅kGpu，没有kCpu兜底。CPU/CPU 560反复输出50/1/20/1，转换版280反复100/200/10/50；原厂280曾正常输出中文但错漏。故冻结560发布，不再仅修GPU，先诊断实际数值。
+- 核查固定官方转换器：实际成功V2路径无quant.* custom_call，移除的是odml.rms_norm和aten.gelu.default的恒等标记；V1备用从未用于此次成功产物，不能将其参数错误归因于已发布版本。官方vision encoder接口images/positions_xy→features/mask，adapter soft_tokens→mm_embedding。原厂文件与HF checkpoint同系列但不能仅凭名称认定内部权重/布局数值完全相同。
+- 新独立诊断分支 exp/gemma4-vision-numerics-20261126 HEAD b565367e1a230d176788095087466d86e04ea82f；CI45686173505已启动。仅复用CI45681289795的已发布gemma560-patch artifact、下载并校验原厂280参考，提取原厂encoder/adapter；打印签名、dtype、算子分布、常量buffer hash重合及外部权重情况；CPU同输入对照adapter，encoder满patch/部分padding对照，原厂encoder输出分别喂两个adapter，记录cosine/relative L2/有限值及mask；560仅做数值健全性检查。若原厂图含独立CPU interpreter不支持的算子/外部权重，记unavailable，不当作通过或差异证据。此轮没有转换、APK构建/发布、修改正式APP。后续先看真实报告再决定修复，尚无数值结果。
+- https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45686173505
+
+---
+
 # 最新｜560实验版 v0.1.2 已发布
 - CI45681289795 export/build/publish 全部 success；APK签名、身份、离线权限、native runtime及内置资产校验通过。Release bluestar-gemma-v012-560-20261126 非draft，目标416717949a90a5e031eb5ca012a8c2affa7c3ed5，APK已上传，693121607字节，SHA256 74430a90ae3f8e5e0db70323512c8a1ff73f3723c08fa225ae0c1d6ca7e7766e。
 - 下载：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-gemma-v012-560-20261126/BlueStar_Gemma_560_Lab_0.1.2.apk
