@@ -3,6 +3,8 @@
 - 原实验分支 exp/minicpm-native-weights-20261125 从成功v0.2.0提交c9c19ccb7aac92a9843fcc10ec99429f88fbf829推进至2a0511eb4ba89eae96c38e28d1689ce209f25ff9；compare核实仅native-vision-lab及独立workflow共7文件。第一次更新ref服务报错，核查旧HEAD后用精确expected_sha租约完成同一父子提交快进，已回读HEAD。保留模型SHA、原厂引擎固定提交、16x/CPU6默认、原生动态切片上限9、常驻/离线TTS。新增原图/315/224默认/177/79/44万像素上限，按比例不放大，EXIF校正后原生RGB面积加权缩放、无JPEG/PNG重编码。UI每500ms显示阶段/总计、实际视觉chunk序号与总数及token，非内部tile进度；推理时允许复制当前阶段日志。停止仍需等待当前块返回，未实现硬中断。记录实际缩放尺寸、resize_ms、完成chunk数量等。新增Host纯C++像素上限、比例、面积平均测试，CI保留原厂权重简单OCR smoke和APK签名/版本/ARM64/无INTERNET检查。
 - 版本0.2.1 versionCode2、原独立包com.vobich.bluestar.nativelab，尝试覆盖安装，若实验签名冲突只卸载旧实验包且保留已下载模型；不需重下权重。CI [45650961218](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45650961218) 已启动，计划tag bluestar-native-vision-v021-resize-20261126，APK尚未验证或发布。真机速度、准确率待测；优先同照片224万两轮（排除冷加载），再79万、315万，比较首字、总时长、视觉耗时/token及文字/金额准确性。不承诺1～2秒。
 
+- CI45650961218 build和smoke均success，APK签名/完整性/缩放测试及原厂OCR通过；artifact15040331648，ZIP SHA256 d77ba3b252934e4967a727618e9a61be87fd726be5f8a56a1841a3d450e2bde1。publish失败于GitHub uploads HTTP500，APK内部SHA校验成功。直接重跑失败任务工具内部报错，run_attempt仍1。已新增仅发布workflow，提交afc5279e24bfc322514fe4378c0dc8c99ad8c109，固定读取原artifact、原构建SHA和成功job，重试上传并验证发布，不重新编译。重发run尚未显示；公开下载未核实。
+
 ---
 
 # 2026-11-25｜蓝星原厂权重独立实验 v0.2.0（已发布，待真机）
