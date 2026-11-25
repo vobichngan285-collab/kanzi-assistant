@@ -1,3 +1,10 @@
+# 最新｜560标准注意力算子修复（用户已授权）
+- CI45673141896失败于最终TFLite FlatBuffer序列化：TensorFlow V2能力预检通过，官方权重加载、280/560图MLIR及参数序列化均成功，stablehlo.custom_call 未降级成支持算子，APK未构建。具体custom_call目标尚未确定，融合注意力是待验证假设。
+- 独立分支 exp/gemma4-official-560-20261126 HEAD e0893a3269bf6e2313f2bc23aba78e79b58c1beb，关闭视觉SDPA及GPU融合开关，保留标准eager attention，原始权重及V2加载不变。失败时记录MLIR目标名称诊断，不允许跳过算子、不替换权重、不虚报560。GPU性能可能受影响，待实际验证。仍使用APK内置增量、导入现有原厂模型本地重组、完整SHA及非视觉section验证，正式软件和280/1120旧包不改。
+- CI 尚未出现 未知，尚无可下载APK。下一步核查实际结果。
+
+---
+
 # 最新｜560改为APK内置增量（用户授权）
 - 上轮CI45671855923失败：V2 meta加载成功，280/560均完成PyTorch→MLIR及参数序列化；失败发生在Converter V2的TensorFlow支持检查，环境未安装tf-nightly；未产出模型，未发布APK。新CI显式安装tf-nightly-cpu并预检is_supported，不跳过校验。
 - 用户要求只下载APK并导入已下载的原厂2.59GB模型，不再下载完整560文件。独立分支 exp/gemma4-official-560-20261126 HEAD b0fcd00d0c8ae6f14bfe936ec0fdfb06a3d3f861。新方案保留原厂容器元数据、仅重写section偏移，内置新header/metadata/encoder/adapter和精确复制计划。服务器生成目标文件并核验所有非视觉section SHA、protobuf其余字段、真实560图形状和ModelInfo，重组SHA验证后才上传patch-assets（上限1GB）并编译APK，不再上传完整模型artifact。APK逐资产SHA对照验证，大小限制1.9GB。实际APK大小未确定。
