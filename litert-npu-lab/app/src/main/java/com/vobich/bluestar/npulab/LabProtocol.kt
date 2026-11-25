@@ -9,12 +9,14 @@ object LabProtocol {
     const val DONE=7
     const val FAILED=8
     val modes=setOf("cpu","gpu_vision")
-    const val rounds=4
-    // ABBA order balances first/last exposure, one engine at a time.
-    val comparison=listOf("cpu","gpu_vision","gpu_vision","cpu")
+    val strategies=setOf("original","pad","tiles","compare")
+    fun plan(strategy:String):List<String>{
+        require(strategy in strategies)
+        return if(strategy=="compare")listOf("original","pad","tiles","tiles","pad","original")else listOf(strategy)
+    }
     fun deadlineMs(stage:String):Long=when(stage){
         "connect"->20000L
-        "load","conversation"->120000L
+        "load","conversation","prepare"->120000L
         "send"->180000L
         "first_text"->120000L
         "close_conversation","close_engine"->30000L

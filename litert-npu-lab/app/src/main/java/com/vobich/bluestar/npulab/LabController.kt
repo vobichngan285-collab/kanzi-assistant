@@ -9,7 +9,7 @@ import java.util.ArrayDeque
 class LabController(private val context:Context,private val log:(String)->Unit,private val status:(String)->Unit,private val answer:(String)->Unit,private val finished:()->Unit){
     private val handler=Handler(Looper.getMainLooper())
     private val queue=ArrayDeque<String>()
-    private var model="";private var image="";private var ref=""
+    private var model="";private var image="";private var ref="";private var strategy="compare"
     private var current:Slot?=null
     private var disposed=false
     private var active=false
@@ -62,7 +62,7 @@ class LabController(private val context:Context,private val log:(String)->Unit,p
         try{
             requireNotNull(s.remote).send(Message.obtain(null,LabProtocol.START).apply{
                 replyTo=s.receiver
-                data=Bundle().apply{putString("mode",s.mode);putString("model",model);putString("image",image);putString("ref",ref.take(4096));putLong("batch",batch);putInt("block",block)}
+                data=Bundle().apply{putString("mode",s.mode);putString("model",model);putString("image",image);putString("ref",ref.take(4096));putString("strategy",strategy);putLong("batch",batch);putInt("block",block)}
             })
         }catch(t:Throwable){s.line("phase=start_failed error="+t.javaClass.simpleName);end(s)}
     }
@@ -83,14 +83,15 @@ class LabController(private val context:Context,private val log:(String)->Unit,p
             if(active&&!disposed)handler.postDelayed(this,1000)
         }
     }
-    fun start(modes:List<String>,model:String,image:String,ref:String){
+    fun start(modes:List<String>,model:String,image:String,ref:String,strategy:String){
         if(disposed||active){finished();return}
         if(blocked){status("无法确认旧进程退出，请关闭软件重开");finished();return}
         require(modes.isNotEmpty() && modes.all{it in LabProtocol.modes})
-        this.model=model;this.image=image;this.ref=ref
+        require(strategy in LabProtocol.strategies)
+        this.model=model;this.image=image;this.ref=ref;this.strategy=strategy
         batch=SystemClock.elapsedRealtime();block=0;keepResident=modes.size==1
         queue.addAll(modes);active=true
-        log("v="+MainActivity.V+" phase=batch_begin batch="+batch+" order="+modes.joinToString(","))
+        log("v="+MainActivity.V+" phase=batch_begin batch="+batch+" order="+modes.joinToString(",")+" strategy="+strategy)
         val old=current
         if(old!=null){
             if(!old.ending&&old.resident&&keepResident&&old.mode==modes.first()&&old.binder?.isBinderAlive==true){

@@ -17,11 +17,12 @@ import java.util.concurrent.Executors
 
 class MainActivity: Activity() {
     companion object {
-        const val V="0.1.7"
+        const val V="0.1.8"
         const val SHA="20c73b5a1e48a315974cff1853535ff5d017100b6420d5ef221b9dd1b955dd7c"
         const val URL="https://huggingface.co/litert-community/MiniCPM-V-4.7-1B/resolve/main/MiniCPM-V-4.7-1B-VL_int8vis.litertlm"
         const val PROMPT="请逐字抄写图片中所有可见文字和数字。不要解释。"
         const val SAMPLE="蓝星向导\n药品 5931"
+        const val HOME_REF="C110运动相机\n监听\nWi-Fi未连接\n快速连接\n灯光\n快捷拍照\n实时预览\n朗读任务\n阅读模式\n设置\n主页\n预览\n按住AI"
         const val DENSE="营业时间\n09:30 - 18:00\n药品咨询服务\n请在窗口排队\n编号 4827\n价格 28.50 元"
     }
     private val worker=Executors.newSingleThreadExecutor()
@@ -37,6 +38,7 @@ class MainActivity: Activity() {
     private lateinit var reference:EditText
     private val buttons=mutableListOf<Button>()
     private var busy=false
+    private val answers=mutableListOf<String>()
     private lateinit var runner: LabController
 
     override fun onCreate(savedInstanceState:Bundle?){
@@ -45,28 +47,32 @@ class MainActivity: Activity() {
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL; val p=(16*resources.displayMetrics.density).toInt();setPadding(p,p,p,p)}
         fun label(s:String,size:Float=17f):TextView=TextView(this).apply{text=s;textSize=size;root.addView(this)}
         fun button(s:String,action:()->Unit){root.addView(Button(this).apply{text=s;isAllCaps=false;setOnClickListener{if(!busy)action()};buttons.add(this)})}
-        label("蓝星 CPU / GPU 实验室 v"+V,23f).setTextColor(Color.rgb(22,74,160))
+        label("蓝星 OCR 精度实验室 v"+V,23f).setTextColor(Color.rgb(22,74,160))
         status=label(if(ready())"模型已校验" else "首次使用：下载约1.70 GB LiteRT模型后导入，旧GGUF不可复用")
-        label("本地离线；同模式模型常驻。GPU为请求，实际硬件参与待验证。")
+        label("离线识别；CPU默认；比较原图、等比补边、分区裁剪。不自动删重复文字。")
         button("下载指定模型（浏览器）"){runCatching{startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(URL)))}.onFailure{status.text="请从发布说明打开模型链接"}}
         button("导入 LiteRT 模型"){choose("*/*",1)}
         button("内置简单图"){selected=sample;reference.setText(SAMPLE);status.text="已选择简单图"}
         button("内置密集文字图"){selected=dense;reference.setText(DENSE);status.text="已选择密集文字图"}
         button("选择图片"){choose("image/*",2)}
         reference=EditText(this).apply{hint="参考文字（可选，用于CER）";setText(SAMPLE);root.addView(this)}
-        button("CPU 6线程（4轮，模型常驻）"){test(listOf("cpu"))}
-        button("GPU视觉 + CPU 6线程（4轮，模型常驻）"){test(listOf("gpu_vision"))}
-        button("自动对照 CPU/GPU（交错各8轮）"){test(LabProtocol.comparison)}
+        button("填入蓝星首页正文参考（仅对应截图）"){reference.setText(HOME_REF)}
+        button("自动精度对照（3方案各2次）"){test(listOf("cpu"),"compare")}
+        button("原图识别（1次）"){test(listOf("cpu"),"original")}
+        button("等比补边识别（1次）"){test(listOf("cpu"),"pad")}
+        button("分区识别（1次）"){test(listOf("cpu"),"tiles")}
+        button("GPU视觉分区（1次）"){test(listOf("gpu_vision"),"tiles")}
         root.addView(Button(this).apply{text="停止实验 / 释放模型";setOnClickListener{if(::runner.isInitialized)runner.stop()}})
         progress=label("等待实验")
         output=label("识别结果")
+        root.addView(Button(this).apply{text="复制本批识别原文（含各方案）";setOnClickListener{(getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("识别原文",answers.joinToString("\n\n")));Toast.makeText(this@MainActivity,"已复制",Toast.LENGTH_SHORT).show()}})
         root.addView(Button(this).apply{text="复制数值日志";setOnClickListener{(getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("蓝星NPU日志",prefs.getString("rows","")?:""));Toast.makeText(this@MainActivity,"已复制",Toast.LENGTH_SHORT).show()}})
         button("清空日志"){prefs.edit().remove("rows").commit();logs.text=""}
         logs=label((prefs.getString("rows","")?:"").lines().takeLast(24).joinToString("\n"),13f)
         val scroll=ScrollView(this).apply{isFillViewport=true;addView(root)}
         if(android.os.Build.VERSION.SDK_INT>=35)scroll.setOnApplyWindowInsetsListener{v,i->val b=i.getInsets(android.view.WindowInsets.Type.systemBars());v.setPadding(b.left,b.top,b.right,b.bottom);i}
         setContentView(scroll)
-        runner=LabController(this,{line->append(line)},{s->status.text=s;progress.text=s},{s->output.text=s},{busy=false;buttons.forEach{it.isEnabled=true};mark("complete")})
+        runner=LabController(this,{line->append(line)},{s->status.text=s;progress.text=s},{s->answers.add(s);output.text=s},{busy=false;buttons.forEach{it.isEnabled=true};mark("complete")})
         if(!sample.exists())makeSample()
         if(!dense.exists())makeDense()
         selected=sample
@@ -123,12 +129,13 @@ class MainActivity: Activity() {
         DENSE.lines().forEachIndexed{i,line->c.drawText(line,24f,64f+i*62f,p)}
         FileOutputStream(dense).use{b.compress(Bitmap.CompressFormat.PNG,100,it)};b.recycle()
     }
-    private fun test(modes:List<String>){
+    private fun test(modes:List<String>,strategy:String){
         if(!ready()){status.text="请先导入指定模型";return}
         if(busy)return
         val image=selected?:sample;val ref=reference.text.toString()
         busy=true;buttons.forEach{it.isEnabled=false};mark("experiment")
-        runner.start(modes,model.absolutePath,image.absolutePath,ref)
+        answers.clear();output.text="正在识别"
+        runner.start(modes,model.absolutePath,image.absolutePath,ref,strategy)
     }
     override fun onDestroy(){
         if(::runner.isInitialized)runner.dispose()

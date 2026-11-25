@@ -3,6 +3,7 @@ package com.vobich.bluestar.npulab
 import android.app.Service
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.BitmapFactory
 import android.os.*
 import android.os.Process
 import android.os.Message
@@ -78,43 +79,72 @@ class LabService:Service(){
             it.initialize();residentEngine=it;residentMode=mode
         }
         row(reply,prefix+" phase=loaded load_ms="+(now()-load)+" resident_reused="+reused+" hardware_execution=unverified")
-        for(run in 1..LabProtocol.rounds){
-                stage(reply,"conversation",run)
-                val start=now()
-                val c=e.createConversation(ConversationConfig(samplerConfig=SamplerConfig(topK=1,topP=1.0,temperature=0.0,seed=42),maxOutputToken=512,thinkingConfig=ThinkingConfig(enableThinking=false,thinkingTokenBudget=0),extraContext=mapOf("enable_thinking" to false),automaticToolCalling=false))
-                val session=now()-start
-                try{
-                    row(reply,prefix+" run="+run+" phase=conversation_ready session_ms="+session)
-                    val raw=StringBuilder()
-                    var first=-1L;var chunks=0;var thought=0
-                    val tempBefore=batteryTemp()
-                    val thermalBefore=thermal()
-                    val cpuStart=Process.getElapsedCpuTime()
-                    stage(reply,"send",run)
-                    val sendStart=now()
-                    runBlocking{
-                        c.sendMessageAsync(Contents.of(Content.ImageFile(image.absolutePath),Content.Text(MainActivity.PROMPT)),extraContext=mapOf("enable_thinking" to false)).collect{msg->
-                            val content=msg.contents.contents.filterIsInstance<Content.Text>().joinToString(""){it.text}
-                            if(msg.channels.isNotEmpty())thought++
-                            if(content.isNotEmpty()){raw.append(content);chunks++}
-                            if(first<0&&Metrics.visible(raw.toString()).any{!it.isWhitespace()}){
-                                first=now()-sendStart
-                                stage(reply,"first_text",run)
-                                row(reply,prefix+" run="+run+" phase=first_text first_nonblank_ms="+first)
+        val strategy=input.getString("strategy","compare")
+        require(strategy in LabProtocol.strategies)
+        val bounds=BitmapFactory.Options().apply{inJustDecodeBounds=true}
+        BitmapFactory.decodeFile(image.absolutePath,bounds)
+        require(bounds.outWidth>0&&bounds.outHeight>0)
+        val plan=LabProtocol.plan(strategy)
+        val partDir=File(cacheDir,"ocr-prepared").apply{mkdirs()}
+        partDir.listFiles()?.forEach{it.delete()}
+        val prepared=mutableMapOf<String,List<ImageParts.Part>>()
+        try{
+            for((idx,kind) in plan.withIndex()){
+                val run=idx+1
+                stage(reply,"prepare",run)
+                val prep=now()
+                val cached=prepared.containsKey(kind)
+                val parts=prepared.getOrPut(kind){ImageParts.prepare(image,kind,partDir,bounds.outWidth,bounds.outHeight)}
+                val prepMs=now()-prep
+                row(reply,prefix+" run="+run+" phase=prepared strategy="+kind+" source_width="+bounds.outWidth+" source_height="+bounds.outHeight+" parts="+parts.size+" prepare_ms="+prepMs+" prepare_reused="+cached)
+                val jobStart=now()
+                val cpuStart=Process.getElapsedCpuTime()
+                val tempBefore=batteryTemp();val thermalBefore=thermal()
+                val answers=mutableListOf<String>()
+                var first=-1L;var tokens=0;var tokenKnown=true;var capHits=0;var thought=0;var sessions=0L
+                for((partIdx,part) in parts.withIndex()){
+                    val n=partIdx+1
+                    stage(reply,"conversation",run)
+                    val sessionStart=now()
+                    val c=e.createConversation(ConversationConfig(samplerConfig=SamplerConfig(topK=1,topP=1.0,temperature=0.0,seed=42),maxOutputToken=512,thinkingConfig=ThinkingConfig(enableThinking=false,thinkingTokenBudget=0),extraContext=mapOf("enable_thinking" to false),automaticToolCalling=false))
+                    val session=now()-sessionStart;sessions+=session
+                    try{
+                        val raw=StringBuilder();var partFirst=-1L;var chunks=0
+                        stage(reply,"send",run)
+                        val sendStart=now()
+                        runBlocking{
+                            c.sendMessageAsync(Contents.of(Content.ImageFile(part.file.absolutePath),Content.Text(MainActivity.PROMPT)),extraContext=mapOf("enable_thinking" to false)).collect{msg->
+                                val content=msg.contents.contents.filterIsInstance<Content.Text>().joinToString(""){it.text}
+                                if(msg.channels.isNotEmpty())thought++
+                                if(content.isNotEmpty()){raw.append(content);chunks++}
+                                if(partFirst<0&&Metrics.visible(raw.toString()).any{!it.isWhitespace()}){
+                                    partFirst=now()-sendStart
+                                    if(first<0)first=now()-jobStart
+                                    stage(reply,"first_text",run)
+                                }
                             }
                         }
-                    }
-                    val total=now()-sendStart
-                    val cpu=Process.getElapsedCpuTime()-cpuStart
-                    val tempAfter=batteryTemp();val thermalAfter=thermal()
-                    val answer=Metrics.visible(raw.toString()).trim()
-                    val b=runCatching{c.getBenchmarkInfo()}.getOrNull()
-                    val cer=Metrics.cer(ref,answer)?.let{String.format(Locale.US,"%.4f",it)}?:"NA"
-                    val phase=if(answer.isBlank())"empty" else "complete"
-                    row(reply,prefix+" run="+run+" phase="+phase+" image_sha="+hash+" session_ms="+session+" first_nonblank_ms="+first+" total_ms="+total+" chars="+answer.length+" chunks="+chunks+" thought_chunks="+thought+" cer="+cer+" native_ttft_s="+(b?.timeToFirstTokenInSecond?:-1.0)+" prefill_tokens="+(b?.lastPrefillTokenCount?:-1)+" decode_tokens="+(b?.lastDecodeTokenCount?:-1)+" native_decode_tps="+(b?.lastDecodeTokensPerSecond?:-1.0)+" cpu_process_ms="+cpu+" pss_kib="+Debug.getPss()+" battery_temp_before_decic="+tempBefore+" battery_temp_after_decic="+tempAfter+" thermal_before="+thermalBefore+" thermal_after="+thermalAfter+" resident_reused="+reused+" hardware_execution=unverified")
-                    send(reply,LabProtocol.RESULT,Bundle().apply{putString("text",mode+" 第"+run+"轮\n"+answer.take(8192).ifBlank{"（空答案）"})})
-                }finally{stage(reply,"close_conversation",run);c.close()}
-        }
+                        val total=now()-sendStart
+                        val answer=Metrics.visible(raw.toString()).trim()
+                        answers.add(answer)
+                        val b=runCatching{c.getBenchmarkInfo()}.getOrNull()
+                        val decode=(b?.lastDecodeTokenCount?:-1).toInt()
+                        if(decode<0)tokenKnown=false else tokens+=decode
+                        if(decode>=512)capHits++
+                        row(reply,prefix+" run="+run+" phase=part_complete strategy="+kind+" part="+n+"/"+parts.size+" rect="+part.rect+" session_ms="+session+" first_nonblank_ms="+partFirst+" total_ms="+total+" chars="+answer.length+" chunks="+chunks+" decode_tokens="+decode+" native_ttft_s="+(b?.timeToFirstTokenInSecond?:-1.0)+" native_decode_tps="+(b?.lastDecodeTokensPerSecond?:-1.0))
+                    }finally{stage(reply,"close_conversation",run);c.close()}
+                }
+                val answer=answers.filter{it.isNotBlank()}.joinToString("\n")
+                val total=now()-jobStart
+                val cpu=Process.getElapsedCpuTime()-cpuStart
+                val cer=Metrics.cer(ref,answer)?.let{String.format(Locale.US,"%.4f",it)}?:"NA"
+                val normalized=answer.filterNot{it.isWhitespace()}
+                val digest=MessageDigest.getInstance("SHA-256").digest(normalized.toByteArray(Charsets.UTF_8)).joinToString(""){"%02x".format(it.toInt() and 255)}.take(12)
+                val phase=if(answer.isBlank())"empty" else "complete"
+                row(reply,prefix+" run="+run+" phase="+phase+" strategy="+kind+" image_sha="+hash+" prepare_ms="+prepMs+" parts="+parts.size+" empty_parts="+answers.count{it.isBlank()}+" session_ms="+sessions+" first_nonblank_ms="+first+" total_ms="+total+" chars="+answer.length+" nonspace_chars="+normalized.length+" answer_sha="+digest+" repeated_lines="+ImageParts.repeatedLines(answer)+" token_cap_parts="+capHits+" decode_tokens="+(if(tokenKnown)tokens else -1)+" thought_chunks="+thought+" cer="+cer+" cpu_process_ms="+cpu+" pss_kib="+Debug.getPss()+" battery_temp_before_decic="+tempBefore+" battery_temp_after_decic="+batteryTemp()+" thermal_before="+thermalBefore+" thermal_after="+thermal()+" resident_reused="+reused+" hardware_execution=unverified")
+                send(reply,LabProtocol.RESULT,Bundle().apply{putString("text","第"+run+"次 "+kind+"（"+parts.size+"区，CER="+cer+"）\n"+answer.take(16384).ifBlank{"（空答案）"})})
+            }
+        }finally{partDir.listFiles()?.forEach{it.delete()}}
         row(reply,prefix+" phase=engine_retained pss_kib="+Debug.getPss())
     }
     private fun batteryTemp():Int=runCatching{registerReceiver(null,IntentFilter(Intent.ACTION_BATTERY_CHANGED))?.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE,-1)?:-1}.getOrDefault(-1)
