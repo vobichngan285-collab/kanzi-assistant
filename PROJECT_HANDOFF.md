@@ -1,3 +1,10 @@
+# 最新｜原厂权重分辨率对照 v0.2.1（CI已启动）
+- 用户v0.2.0真机截图最终显示语言✓、16x✓、4x未导入，3072×4096、3281168 bytes、sha508ae2824466，默认16x/CPU6，进入vision阶段后持续未出字。此前导入SHA失败后来解决，未确认原因；尚无完整推理日志，无法区分视觉编码慢或卡死。用户授权分辨率优化实验，不改正式蓝星或模型。
+- 原实验分支 exp/minicpm-native-weights-20261125 从成功v0.2.0提交c9c19ccb7aac92a9843fcc10ec99429f88fbf829推进至2a0511eb4ba89eae96c38e28d1689ce209f25ff9；compare核实仅native-vision-lab及独立workflow共7文件。第一次更新ref服务报错，核查旧HEAD后用精确expected_sha租约完成同一父子提交快进，已回读HEAD。保留模型SHA、原厂引擎固定提交、16x/CPU6默认、原生动态切片上限9、常驻/离线TTS。新增原图/315/224默认/177/79/44万像素上限，按比例不放大，EXIF校正后原生RGB面积加权缩放、无JPEG/PNG重编码。UI每500ms显示阶段/总计、实际视觉chunk序号与总数及token，非内部tile进度；推理时允许复制当前阶段日志。停止仍需等待当前块返回，未实现硬中断。记录实际缩放尺寸、resize_ms、完成chunk数量等。新增Host纯C++像素上限、比例、面积平均测试，CI保留原厂权重简单OCR smoke和APK签名/版本/ARM64/无INTERNET检查。
+- 版本0.2.1 versionCode2、原独立包com.vobich.bluestar.nativelab，尝试覆盖安装，若实验签名冲突只卸载旧实验包且保留已下载模型；不需重下权重。CI [45650961218](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45650961218) 已启动，计划tag bluestar-native-vision-v021-resize-20261126，APK尚未验证或发布。真机速度、准确率待测；优先同照片224万两轮（排除冷加载），再79万、315万，比较首字、总时长、视觉耗时/token及文字/金额准确性。不承诺1～2秒。
+
+---
+
 # 2026-11-25｜蓝星原厂权重独立实验 v0.2.0（已发布，待真机）
 - 用户真机官方APP v2.6：OCR 1.0逐块识别缓慢且红色装饰误检标题；官方通用视觉APP整图3072×4096、PNG8800KB、所有价格及充值正确、个别专业词错误，图片预填充很慢；切片上限2后严重错读、误判餐厅。源码确认蓝条是prefillImage而非网络上传（MainActivity解码→PNG→native再次解码→mtmd_tokenize→mtmd_helper_eval_chunks）。用户明确要求不改原厂APP、不改正式蓝星主体，只借用原厂模型与必要推理库，授权制作独立实验版。
 - 既有GGUF真机原图9切片上限首字41.055s/38.81tok/s；此前单切片CPU6首字约3.42s但精度未证实，CPU8无明显收益，Vulkan4视觉更慢，NPU实际执行未证实。故本次不重做低切片/视觉量化或强制GPU/NPU，保留原生动态切片9、原始4x/16x官方FP16权重与M-RoPE，默认16x CPU6、CPU4对照、4x可选。选择4.7 1B作为既有项目同模型延续，非官方APP截图4.6；官方模型仓 https://huggingface.co/openbmb/MiniCPM-V-4.7-1B-gguf （根目录非thinking），官方Q4_K_M SHA f18f594747e5317ab490cff9c06339c9cfb89acbe2f02ebc48a4e167bc23576d；16x SHA fb9cc047a3cdad5317fd8433a4aeda2d22f00f02ca4bd93b34ad84165b25a900；4x SHA 1e0ab439877e6896ded59ff24cdd242fdffb236394f6fc4a5b019cbd60bb5f4a。引擎固定官方APP v2.6配套tc-mb/llama.cpp-omni 0c0b1109f2d338acf65f28a7b0a1505da3945286，仅链接库，不clone/改造原厂APP。旧模型文件SHA不同，不能自动假定可复用。
