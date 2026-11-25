@@ -4,6 +4,8 @@
 - 新增原生分段：tokenize、vision_encode、image_decode、text_decode微秒，实际image_chunks/visual_tokens/text_tokens、主视觉backend及GPU标记、首字/总耗时、PSS、温度；用原始单chunk helper/encode/decode逻辑分别计时。拒绝无图像编码或GPU请求回退CPU的结果，选中GPU不代表所有算子都GPU，驱动可能native crash，禁止自动重试；日志先保存CPU结果和backend begin。新增代码已复查，实际Kotlin/C++编译和真机未确认。保留可选CER与屏幕文本；避免上次2–3 token误判。
 - v0.1.1签名私钥未持久化，新包独立安装，附ADB本地迁移脚本从.speed优先、缺模型时回退旧包；SHA256复核，复制需额外约1.78GB，脚本未真机验证；不要卸载旧版，用户无需必须重新联网下载。可预配置私有LAB_GPU_KEYSTORE_B64，未配置不能承诺未来覆盖。当前尚未发布APK；成功后核实签名、模型元数据和libggml-vulkan、原生JNI符号、Release实际资产，再追加记录。暂不实现实时预览/跨任务常驻，待GPU真机结果。
 
+- GPU APK CI45569008722失败于源码准备：Vulkan工具链、签名、模型元数据已通过，分段计时补丁匹配到两处原生eval代码，唯一性断言正确拦截，尚未编译。修复提交 c22e9ac0eff0f393fb9acade41f578dc63e61681，限定processUserPrompt函数范围，已对固定上游源码核实范围内仅一处、全文件两处，不动其他识别逻辑。新构建 Actions 45569359903 in_progress https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45569359903。未发布APK。
+
 ---
 
 # 2026-11-25｜GPU视觉编码研究及交叉编译探针
