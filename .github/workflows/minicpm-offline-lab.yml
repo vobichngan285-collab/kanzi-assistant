@@ -45,7 +45,7 @@ jobs:
           "$BT/apksigner" verify --print-certs previous/*.apk | tee previous-cert.txt
           OLD=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' previous-cert.txt)
           test -n "$OLD"
-          KEY="$HOME/.android/debug.keystore"
+          KEY="$RUNNER_TEMP/bluestar-offline-lab.keystore"
           if [ -n "$LAB_DEBUG_KEYSTORE_B64" ]; then
             printf '%s' "$LAB_DEBUG_KEYSTORE_B64" | base64 -d > "$KEY"
             chmod 600 "$KEY"
@@ -62,6 +62,7 @@ jobs:
           fi
           echo "OLD_CERT=$OLD" >> "$GITHUB_ENV"
           echo "NEW_CERT=$NEW" >> "$GITHUB_ENV"
+          echo "LAB_DEBUG_KEYSTORE_PATH=$KEY" >> "$GITHUB_ENV"
       - name: Verify pinned upstream and prepare independent lab
         run: |
           set -euo pipefail

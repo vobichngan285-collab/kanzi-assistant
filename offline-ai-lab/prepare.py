@@ -38,6 +38,18 @@ change(gradle,'applicationId = "com.tianchi.minicpmv"','applicationId = "'+packa
 change(gradle,'versionCode = 17','versionCode = 2')
 change(gradle,'versionName = "2.5"','versionName = "0.1.1"')
 change(gradle,'implementation(libs.androidx.core.ktx)','implementation(libs.androidx.core.ktx)\n    implementation("androidx.documentfile:documentfile:1.0.1")')
+# Explicitly bind the debug signer to the exact key whose certificate CI compared.
+# Android Gradle Plugin default user home can differ from the shell HOME.
+change(gradle,'    signingConfigs {','''    signingConfigs {
+        getByName("debug") {
+            val labKey = System.getenv("LAB_DEBUG_KEYSTORE_PATH")
+                ?: error("LAB_DEBUG_KEYSTORE_PATH must be set")
+            storeFile = file(labKey)
+            check(storeFile?.isFile == true) { "Lab signing key not found" }
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }''')
 manifest=main/"AndroidManifest.xml"
 manifest.write_text('''<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 <uses-permission android:name="android.permission.INTERNET"/>
