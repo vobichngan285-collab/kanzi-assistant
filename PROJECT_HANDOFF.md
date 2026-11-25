@@ -1,7 +1,8 @@
-# 2026-11-25｜CPU原图预热与流式朗读 v0.1.9（已提交，构建中）
+# 2026-11-25｜CPU原图预热与流式朗读 v0.1.9（已发布，待真机）
 - 用户v0.1.8真机同图fbe2b3e63ba1自动原图/补边/三段切片交叉6轮：原图首字8801/1647ms、总10316/3173ms、71/73字符；首次模型加载18381ms、首次conversation 5317ms后续1ms。补边首字1579/1517ms、总2773/1998ms、50/21字符（实际错漏明显）；切片首字1524/1551ms、总7611/5813ms、148/47字符（第一次重复6行、第二次漏读）。参考CER=NA，不能给精确准确率，原图文本相对稳定。电池34.2C、thermal0。此前v0.1.7已验证跨任务同PID模型复用，非永久后台存活。
 - 用户授权继续独立实验到发布，不需再次确认。原分支exp/minicpm-npu-direct-20261125，从v0.1.8固定a317e44efeaf7a80af27453708d631ac308a26d3提交0c01e954edabdb2a91b1203796c4eaca2ada96d5；compare核实仅litert-npu-lab及独立workflow共10文件。v0.1.9保留同模型SHA/LiteRT0.18.1/CPU6/原图/原提示词/greedy/关闭思考，界面移除补边切片GPU入口；内置图无声完整预热（导入后手动，已校验模型后续启动自动），保留隔离引擎直至手动释放/Activity销毁；推理进程逐增量IPC至主进程，本机Android TTS离线中文voice，标点或16字分段、末段flush，下一次识别及停止取消旧语音；日志tts_first_request、tts_first_on_start以job/tap起点分别计时，不等于真实声响。不改正式蓝星/微软云端语音；离线中文voice可用性、预热收益、精度与TTS均待真机，非长期后台常驻。独立包com.vobich.bluestar.npulab.streaming versionCode6，需重新导入已下载模型原文件，不必重新下载。
-- CI [45598995337](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45598995337) in_progress，单测/构建/签名/包版本/隔离进程/ARM64库/无INTERNET检查通过才发布tag bluestar-npu-lab-v019-20261125。尚未核实APK发布，不给未验证直链。待CI完成后更新结果。
+- CI [45598995337](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45598995337) in_progress，单测/构建/签名/包版本/隔离进程/ARM64库/无INTERNET检查通过才发布tag bluestar-npu-lab-v019-20261125。初始构建记录，最终发布结果如下。
+- v0.1.9 Release已核实：CI45598995337 单测/编译、签名/包验证和artifact均success；发布资产已上传，tag bluestar-npu-lab-v019-20261125，目标0c01e954edabdb2a91b1203796c4eaca2ada96d5，APK BlueStar_OCR_Stream_Lab_0.1.9.apk 18520091 bytes SHA256 7d4c4136210a52aee787af8879a59ce6012836f26c2bf58c2c3208f3244baa54，直链 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-npu-lab-v019-20261125/BlueStar_OCR_Stream_Lab_0.1.9.apk 。CI最终状态success。首次导入同模型后手动预热，后续已验证模型启动自动预热。选真实图片原图识别并朗读，换图重复，回传日志。系统离线中文语音可用性与真实首声待验，正式蓝星未修改。
  
 ---
 
