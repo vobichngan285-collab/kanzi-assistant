@@ -1,0 +1,55 @@
+name: Blue Star Q8 vision encoder host probe
+on:
+  push:
+    branches: [exp/minicpm-vision-q8-probe-20261125]
+    paths: ['vision-q8-probe/**', '.github/workflows/minicpm-vision-q8-probe.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: mlguyYT/MiniCPM-V-Apps
+          ref: 7f2bac650137230539784b794205470077915df7
+          submodules: recursive
+          path: upstream-lab
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Prepare pinned host toolchain
+        run: |
+          set -euo pipefail
+          test "$(git -C upstream-lab/llama.cpp-omni rev-parse HEAD)" = a5624430e61f44b4842246b15a352740218a3d49
+          sudo apt-get update
+          sudo apt-get install -y ninja-build fonts-noto-cjk
+          python -m pip install 'numpy==1.26.4' 'Pillow==11.3.0' 'tqdm==4.67.1' 'sentencepiece==0.2.1' 'pyyaml==6.0.2'
+          python -m py_compile vision-q8-probe/*.py
+          python gpu-vision-probe/prepare.py upstream-lab/llama.cpp-omni
+          git -C upstream-lab/llama.cpp-omni diff --check
+      - name: Download original verified weights and quantize vision matrices
+        run: |
+          set -euo pipefail
+          mkdir -p probe-report
+          python vision-q8-probe/fetch_weights.py
+          PYTHONPATH="$PWD/upstream-lab/llama.cpp-omni/gguf-py" python vision-q8-probe/quantize.py probe-models/mmproj-model-f16.gguf probe-models/mmproj-model-q8-probe.gguf probe-report/quantization.json
+      - name: Build host CPU inference CLI
+        run: |
+          set -euo pipefail
+          cmake -S upstream-lab/llama.cpp-omni -B host-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_VULKAN=OFF -DLLAMA_OPENSSL=OFF -DLLAMA_CURL=OFF -DLLAMA_BUILD_COMMON=ON -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF
+          cmake --build host-build --target llama-mtmd-cli -j 2
+      - name: Run both projectors on synthetic text images
+        run: python vision-q8-probe/bench.py host-build/bin/llama-mtmd-cli
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vision-q8-host-report
+          path: probe-report/
+          if-no-files-found: warn
