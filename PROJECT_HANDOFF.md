@@ -1,3 +1,10 @@
+# 最新｜560完整模型及增量校验通过，APK构建中
+- CI45681289795 export job139442192634成功：真实encoder签名vision_560 [1,5040,768]/[1,5040,2]、vision_280 [1,2520,768]/[1,2520,2]；adapter签名[1,560,768]/[1,280,768]。官方ModelInfo确认560 [280,560]；原始头24个偏移字段更新校验通过，9个非视觉section逐字节SHA一致，完整模型及重组SHA验证通过。增量资产674921419字节，artifact gemma560-patch ID15053923830成功上传。实际APK大小待构建结果，不必再下载完整2.59GB原厂模型，但手机需空间生成私有副本。
+- 独立分支 exp/gemma4-official-560-20261126 HEAD 416717949a90a5e031eb5ca012a8c2affa7c3ed5；build job139446996244正在下载增量资产，尚未完成APK编译/签名/发布，Release查询404。真实手机推理准确率及性能仍待验证。正式蓝星、旧280/1120不改。
+- 下一步核查CI45681289795及release bluestar-gemma-v012-560-20261126，核实APK签名、体积、digest、目标commit、发布状态后再提供下载链接。
+
+---
+
 # 最新｜560视觉转换成功，修复封装（用户授权）
 - CI45679323992已成功导出encoder及adapter两档真实图，mark_tensor清除后无剩余custom_call；encoder每档清除odml.rms_norm 336、aten.gelu.default 32，adapter每档rms_norm 3。最终失败在生成的FlatBuffer Python object API LiteRTLMMetaDataT.InitFromObj→KeyValuePairT._UnPack调用不存在的VDataCreator（实际VdataCreator）。未产生完整模型或APK，视觉推理未验证。
 - 独立分支 exp/gemma4-official-560-20261126 HEAD 416717949a90a5e031eb5ca012a8c2affa7c3ed5，保留已成功视觉导出逻辑，封装改为直接保存原厂头字节，仅按官方schema SectionObject begin_offset/end_offset的vtable槽6/8修改ulong偏移；逐字段对照原getter，重新解析并反向恢复校验，确保其它头字节完全相同。metadata用上一轮已验证的等长varint唯一命中法改2520→5040，protobuf全字段比较。原有非视觉section SHA、真实签名、ModelInfo、最终重组SHA校验不变。若封装仍失败，CI另存已导出的视觉模块供后续复用，避免重复转换。模型仍由APK内置增量＋用户已有原厂2.59GB文件本地重组。
