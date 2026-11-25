@@ -1,3 +1,11 @@
+# 2026-11-25｜蓝星GPU实验室 v0.1.2（独立APK，构建中）
+- 用户明确批准制作CPU/GPU对比实验版；前置Vulkan探针45566558972成功，不等于天玑9400真机加速。沿用已发布v0.1.1模型及哈希；仅新增gpu-ai-lab/与.github/workflows/minicpm-gpu-lab.yml，不改正式版或既有速度实验。HEAD 900e2fe64d25d5c61ff1fdbd402e8f2a80bb6f68，初次提交8310a3262e30311fa6781d01ec50f80ddc91cc48 / CI45568870729的基准release tag误替换，已修复并增加ELF/JNI校验，当前CI45569008722 in_progress https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45569008722。
+- 复用v0.1.1 prepare.py，固定原引擎a5624430e61f44b4842246b15a352740218a3d49、Vulkan/SPIRV头文件与NDK；独立包com.vobich.bluestar.offlinelab.gpu，Android28+，仅UI显示1B、原两款模型目录元数据完全保持一致。GPU仅视觉编码，LLM固定CPU、禁用KQV/host op offload；CPU4/6/8与GPU视觉+CPU4，同图固定单切片，分别1冷2暖、每次重置上下文；为对照采用贪心采样（不同于v0.1.1温度0.7）。不硬改4x/16x投影器，日志读取真实merge与image_size。
+- 新增原生分段：tokenize、vision_encode、image_decode、text_decode微秒，实际image_chunks/visual_tokens/text_tokens、主视觉backend及GPU标记、首字/总耗时、PSS、温度；用原始单chunk helper/encode/decode逻辑分别计时。拒绝无图像编码或GPU请求回退CPU的结果，选中GPU不代表所有算子都GPU，驱动可能native crash，禁止自动重试；日志先保存CPU结果和backend begin。新增代码已复查，实际Kotlin/C++编译和真机未确认。保留可选CER与屏幕文本；避免上次2–3 token误判。
+- v0.1.1签名私钥未持久化，新包独立安装，附ADB本地迁移脚本从.speed优先、缺模型时回退旧包；SHA256复核，复制需额外约1.78GB，脚本未真机验证；不要卸载旧版，用户无需必须重新联网下载。可预配置私有LAB_GPU_KEYSTORE_B64，未配置不能承诺未来覆盖。当前尚未发布APK；成功后核实签名、模型元数据和libggml-vulkan、原生JNI符号、Release实际资产，再追加记录。暂不实现实时预览/跨任务常驻，待GPU真机结果。
+
+---
+
 # 2026-11-25｜GPU视觉编码研究及交叉编译探针
 - 用户v0.1.1真机同图source_sha8098b89d120d切片1/2/4/6/9 first_ms 4037/12015/20494/29830/44849；单切片五分辨率576×768、768×1024、1152×1536、1536×2048、原图prefill 4002/3717/3839/3926/3943ms，含缩放首字4350/4102/4591/5171/4174ms。2–3生成调用，未验证正确率。用户批准开始下一阶段研究。
 - 核查已用JNI固定N_THREADS=4、n_gpu_layers=0、mparams.use_gpu=false；mtmd-image.cpp单切片仅overview、内部按hparams.image_size及patch对齐重采样；clip.cpp支持GPU/IGPU但可能回退CPU，必须验证实际设备。4x/16x由投影器GGUF n_merge=2/4决定，当前文件实际metadata未读，不可硬改。LiteRT社区1B 448×448 S26 GPU 930ms，非天玑实测，Mali驱动有兼容性风险且不同格式模型。
