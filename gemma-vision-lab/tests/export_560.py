@@ -22,7 +22,7 @@ source=snapshot_download("google/gemma-4-E2B-it-qat-mobile-transformers",revisio
 config=json.loads(Path(source,"config.json").read_text())
 assert config["quantization_config"]["quant_method"]=="gemma"
 work=Path("vision").resolve();work.mkdir(exist_ok=True)
-plan=export(model=source,dry_run=True,task="image_text_to_text",target="cpu_gpu",bundle_litert_lm=False,export_vision_encoder=True,export_audio_encoder=False,quantization_recipe=None,vision_encoder_quantization_recipe=None,use_v2=True,delete_in_memory_params=False,gemma4_vision_token_budgets="280,560")
+plan=export(model=source,dry_run=True,task="image_text_to_text",target="cpu_gpu",bundle_litert_lm=False,export_vision_encoder=True,export_audio_encoder=False,quantization_recipe=None,vision_encoder_quantization_recipe=None,use_v2=True,delete_in_memory_params=False,apply_gpu_composites=False,use_sdpa_composite=False,use_sdpa_composite_for_vision=False,use_rope_composite=False,use_swiglu_composite=False,use_qkv_norm_rope_composite=False,use_short_conv_composite=False,gemma4_vision_token_budgets="280,560")
 fields={f.name for f in dataclasses.fields(exportable_module.ExportableModuleConfig)}
 known={};extra={}
 for k,v in plan.export_kwargs.items():
@@ -32,8 +32,29 @@ for k,v in plan.export_kwargs.items():
 for k in ("model","output_dir","work_dir","task"):known.pop(k,None)
 cfg=exportable_module.ExportableModuleConfig(model=source,output_dir=str(work),work_dir=str(work),task=exportable_module_config.ExportTask(plan.task),extra_kwargs=extra,**known)
 assert cfg.use_v2 and not cfg.use_random_weights
+assert not cfg.use_sdpa_composite_for_vision and not cfg.apply_gpu_composites
+print('vision attention: standard eager, composite disabled',flush=True)
 src=export_lib.load_model(source,cfg,task=cfg.task,trust_remote_code=False)
 src.model.set_attn_implementation("eager")
+# On failure, preserve the actual custom-call targets from the converter input.
+from litert_torch._convert import converter_v2
+original_convert=converter_v2._convert_mlir_bytecode
+def diagnose(flags,temp_dir,target_path):
+    try:
+        return original_convert(flags,temp_dir,target_path)
+    except Exception:
+        import collections,re
+        for p in Path(temp_dir).rglob("*"):
+            if p.is_file() and p.suffix in (".mlir",".mlirbc",".bc"):
+                try:
+                    raw=p.read_bytes()
+                    targets=collections.Counter(x.decode(errors="replace") for x in re.findall(rb"(?:odml|quant|stablehlo|tf|tfl)\\.[a-zA-Z0-9_]+",raw))
+                    print("MLIR diagnostic",p.name,targets.most_common(50),flush=True)
+                except Exception as exc:
+                    print("diagnostic read failure",exc,flush=True)
+        raise
+converter_v2._convert_mlir_bytecode=diagnose
+
 for cls,name,adapter in [(vision_exportable.LiteRTExportableModuleForGemma4VisionEncoder,"encoder",False),(vision_exportable.LiteRTExportableModuleForGemma4VisionAdapter,"adapter",True)]:
     module=cls(src.model,cfg,src.tokenizer) if adapter else cls(src.model,cfg)
     samples=module.get_sample_inputs(src.model_config,image_processor=src.image_processor,**cfg.extra_kwargs)
