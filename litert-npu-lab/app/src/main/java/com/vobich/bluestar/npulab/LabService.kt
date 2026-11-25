@@ -21,6 +21,7 @@ class LabService:Service(){
     private var started=false
     private var residentEngine:Engine?=null
     private var residentMode:String?=null
+    private val locator by lazy { TextRegionLocator(this) }
     private val main=Handler(Looper.getMainLooper())
     private val incoming=Messenger(Handler(Looper.getMainLooper()){msg->
         when(msg.what){
@@ -94,10 +95,13 @@ class LabService:Service(){
                 stage(reply,"prepare",run)
                 val prep=now()
                 val cached=prepared.containsKey(kind)
-                val parts=prepared.getOrPut(kind){ImageParts.prepare(image,kind,partDir,bounds.outWidth,bounds.outHeight)}
+                val parts=prepared.getOrPut(kind){
+                    if(kind=="roi")locator.prepare(image,partDir){ detail->row(reply,prefix+" run="+run+" "+detail)}
+                    else ImageParts.prepare(image,kind,partDir,bounds.outWidth,bounds.outHeight)
+                }
                 val prepMs=now()-prep
                 row(reply,prefix+" run="+run+" phase=prepared strategy="+kind+" source_width="+bounds.outWidth+" source_height="+bounds.outHeight+" parts="+parts.size+" prepare_ms="+prepMs+" prepare_reused="+cached)
-                val jobStart=now()
+                val jobStart=prep
                 val cpuStart=Process.getElapsedCpuTime()
                 val tempBefore=batteryTemp();val thermalBefore=thermal()
                 val answers=mutableListOf<String>()
@@ -123,7 +127,7 @@ class LabService:Service(){
                                     if(first<0)first=now()-jobStart
                                     stage(reply,"first_text",run)
                                 }
-                                if(strategy=="original" && visible.length>emitted){
+                                if((strategy=="original"||strategy=="roi") && visible.length>emitted){
                                     val delta=visible.substring(emitted);emitted=visible.length
                                     send(reply,LabProtocol.STREAM,Bundle().apply{putString("text",delta);putLong("start",jobStart);putBoolean("final",false)})
                                 }
@@ -131,7 +135,7 @@ class LabService:Service(){
                         }
                         val total=now()-sendStart
                         val answer=Metrics.visible(raw.toString()).trim()
-                        if(strategy=="original")send(reply,LabProtocol.STREAM,Bundle().apply{putLong("start",jobStart);putBoolean("final",true)})
+                        if((strategy=="original"||strategy=="roi"))send(reply,LabProtocol.STREAM,Bundle().apply{putLong("start",jobStart);putBoolean("final",true)})
                         answers.add(answer)
                         val b=runCatching{c.getBenchmarkInfo()}.getOrNull()
                         val decode=(b?.lastDecodeTokenCount?:-1).toInt()
