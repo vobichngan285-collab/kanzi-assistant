@@ -4,6 +4,8 @@
 - 先做独立交叉编译探针，未改v0.1.1 APK/模型/正式版，不新增用户安装包、不下载权重、不触发旧APK工作流。HEAD 785a7274b2c43b87718063014e8b2224e227741e，新增gpu-vision-probe/prepare.py、README.md、.github/workflows/minicpm-gpu-probe.yml。原引擎a5624430e61f44b4842246b15a352740218a3d49，固定Khronos头文件及NDK，单切片llama-mtmd-cli，启用Vulkan、保留CPU路径。仅CI编译/ELF及依赖验证，非真机测速。Actions 45566558972 in_progress https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45566558972。
 - 后续核实编译；再进行实际设备CPU/GPU同图对比及准确性，保留GGUF权重，分离视觉编码、LLM prefill和首字，测试4/6/8线程。之后再考虑常驻与实时预览最新帧，不声称毫秒级已实现。旧签名问题未解决，不要卸载旧实验版。
 
+- GPU探针 Actions 45566558972 completed/success：NDK交叉编译llama-mtmd-cli及Vulkan后端成功，readelf证实AArch64及libvulkan.so依赖，artifact 15000174008（48654381 bytes，zip SHA256 9fd4c28082691ba821e97c2f6a77915f50bf9b9da1f1c623d70ab1bd8015f0dd）已上传。仅编译和静态检查，不是APK、不代表天玑9400 GPU实际运行或提速。下一步独立真机CPU/GPU对比，验证实际后端及正确性；保留已安装模型及正式软件。
+
 ---
 
 # 2026-11-25｜蓝星离线AI实验室 v0.1.1（速度专项，构建中）
