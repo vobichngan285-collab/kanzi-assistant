@@ -1,0 +1,48 @@
+name: Publish verified native vision v0.2.1 (retry only)
+on:
+  push:
+    branches: [exp/minicpm-native-weights-20261125]
+    paths: ['.github/workflows/minicpm-native-v021-publish-retry.yml']
+  workflow_dispatch:
+concurrency:
+  group: bluestar-native-v021-publish-only
+  cancel-in-progress: false
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: bluestar-native-vision-v021-resize-20261126
+      SOURCE: 2a0511eb4ba89eae96c38e28d1689ce209f25ff9
+    steps:
+      - name: Confirm original successful build and smoke
+        run: |
+          set -euo pipefail
+          gh api "repos/$GH_REPO/actions/runs/45650961218" | jq -e --arg sha "$SOURCE" '.head_sha == $sha'
+          for job in 139335000573 139335000903; do
+            gh api "repos/$GH_REPO/actions/jobs/$job" | jq -e '.conclusion == "success" and .run_id == 45650961218'
+          done
+          gh api "repos/$GH_REPO/actions/artifacts/15040331648" | jq -e '.expired == false and .digest == "sha256:d77ba3b252934e4967a727618e9a61be87fd726be5f8a56a1841a3d450e2bde1" and .workflow_run.id == 45650961218'
+      - uses: actions/download-artifact@v4
+        with:
+          name: bluestar-native-vision-v021
+          run-id: 45650961218
+          github-token: ${{ github.token }}
+          path: release
+      - name: Verify and publish identical APK with retries
+        run: |
+          set -euo pipefail
+          (cd release && sha256sum -c SHA256SUMS.txt)
+          retry() { for i in 1 2 3 4; do "$@" && return 0; sleep $((i*3)); done; return 1; }
+          if ! gh release view "$TAG" --json targetCommitish > existing.json; then
+            retry gh release create "$TAG" --target "$SOURCE" --title "蓝星原厂模型实验室 v0.2.1" --notes-file release/README.md --prerelease --draft
+          fi
+          gh release view "$TAG" --json targetCommitish | jq -e --arg sha "$SOURCE" '.targetCommitish == $sha'
+          retry gh release upload "$TAG" release/BlueStar_Native_Vision_Lab_0.2.1.apk release/README.md release/SHA256SUMS.txt --clobber
+          retry gh release edit "$TAG" --draft=false --prerelease
+          gh release view "$TAG" --json isDraft,assets | jq -e '.isDraft == false and any(.assets[]; .name == "BlueStar_Native_Vision_Lab_0.2.1.apk" and .size > 0)'
