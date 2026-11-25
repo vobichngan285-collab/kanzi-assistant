@@ -59,6 +59,39 @@ def inspect_and_serialize(module):
     return original_serialize(module)
 converter_v2._serialize_portable_artifact=inspect_and_serialize
 
+# Official mark_tensor.py defines mark_tensor(x, ...) as exactly return x;
+# it only annotates composite boundaries. The ordinary arithmetic between
+# the markers is already present in the graph. Preserve it, and remove only
+# verified single-input/single-result, equal-type identity markers.
+# Both official conversion paths use this lowering function.
+from litert_torch import backend
+original_lower=backend.export.exported_program_to_mlir
+def lower_without_identity_markers(*args,**kwargs):
+    lowered=original_lower(*args,**kwargs)
+    counts=Counter()
+    markers=[]
+    def visit(op):
+        if op.name=="stablehlo.custom_call" and ir.StringAttr(op.attributes["call_target_name"]).value=="mark_tensor":
+            assert len(op.operands)==1 and len(op.results)==1
+            assert op.operands[0].type==op.results[0].type
+            attr=json.loads(ir.StringAttr(op.attributes["backend_config"]).value)
+            assert isinstance(attr["name"],str) and isinstance(attr["is_input"],bool)
+            counts[attr["name"]]+=1
+            markers.append(op)
+        for region in op.regions:
+            for block in region.blocks:
+                for child in block.operations:visit(child.operation)
+    with lowered.ctx:
+        visit(lowered.module.operation)
+        for op in markers:
+            op.results[0].replace_all_uses_with(op.operands[0])
+            op.erase()
+        assert lowered.module.operation.verify()
+    print("removed identity composite markers",dict(counts),flush=True)
+    return lowered
+backend.export.exported_program_to_mlir=lower_without_identity_markers
+
+
 def export_v1_from_same_checkpoint(module,samples,path):
     """Use official direct LiteRT V1 lowering with actual QAT weights.
     Materialize only used tensors; never reinitialize unrelated language tower.
@@ -102,11 +135,12 @@ def export_v1_from_same_checkpoint(module,samples,path):
                             actual=((values^sign)-sign).to(torch.int8).reshape(old.shape)
                         assert actual.shape==old.shape,key
                         cache[ident]=actual.detach().cpu().to(old.dtype).contiguous()
-                    mapping[key]=cache[ident]
+                    mapping[key]=torch.nn.Parameter(cache[ident],requires_grad=False) if kind=="PARAMETER" else cache[ident]
                 for spec in ep.graph_signature.input_specs:
                     if spec.kind.name in ("PARAMETER","BUFFER","CONSTANT_TENSOR"):
                         val=ep.state_dict.get(spec.target,ep.constants.get(spec.target))
                         assert isinstance(val,torch.Tensor) and not val.is_meta,spec.target
+                        if spec.kind.name=="PARAMETER":assert isinstance(val,torch.nn.Parameter),spec.target
                 signatures.append(sig);programs.append(ep)
             print("V1 verified materialized tensor count",len(cache),flush=True)
             exporter=litert_converter.exported_programs_to_flatbuffer(programs,signatures,lightweight_conversion=False,runtime_constant_folding=False,converter_flags={"strict_qdq_mode":True})
@@ -125,7 +159,7 @@ for cls,name,adapter in [(vision_exportable.LiteRTExportableModuleForGemma4Visio
     except Exception as exc:
         if "stablehlo.custom_call" not in str(exc):raise
         print("V2 custom-call failure; targets",dict(seen_targets),flush=True)
-        assert seen_targets,"No source custom-call targets captured"
+        assert seen_targets,"No remaining source custom-call targets captured"
         target.unlink(missing_ok=True)
         export_v1_from_same_checkpoint(module,samples,target)
         print("official V1 fallback exported",name,flush=True)
