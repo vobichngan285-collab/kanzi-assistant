@@ -1,3 +1,11 @@
+# 最新｜560真实图片识别测试（运行中，尚未验收）
+- CI45717784389 completed/failure，job139568197319：112组逐通道修正及560特征数值复验通过；Python litert-lm==0.18.1 Engine没有max_vision_tokens_per_image显式参数，脚本在真实图像推理前主动拒绝执行。三组均无OCR结果，不是560模型识别失败。报告artifact15070397638。
+- 原独立诊断分支exp/gemma4-vision-numerics-20261126 HEAD 370b9733120822186e84648168c619780b3d8cac，修正test_corrected_ocr.py：使用0.18.1支持的接口，按实际图像patch数和模型metadata自动选签名；用1512x1512中文价格表及公告合成图，限定max_output_tokens=256，记录实际输出/CER/耗时；自动选择不能只凭ModelInfo当成560签名已证实，需结合运行日志。未改权重、正式APP或发布APK。
+- CI45718390348 job139570213658 已核实安装依赖、下载补丁及原厂模型成功，正在执行真实图片OCR对照；运行中日志接口返回404 BlobNotFound，尚不能读取实际OCR结果。完成后必须读报告，核实560文字/数字准确率与实际签名。用户已设自动跟踪任务；目标是560而非重做280。GPU真机尚未验证。
+- https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45718390348
+
+---
+
 # 最新｜560权重尺度已修复并通过数值运行，进入真实图片OCR验证
 - CI45717336793 completed/success，job139566649978，artifact15070142934。原厂112个INT8权重全量SHA256匹配转换280和560，各112/112，无遗漏；共享112个FP32缓冲区按原厂实际逐通道scale/zero point修正，临时encoder SHA256 6b8caf8e6d95837eb8f0d82ae9aefbe88313e0bb8b23be253822adcfda85dd92。280三输入余弦0.53243/0.64418/0.63836提升至0.92216/0.90580/0.86648，相对L2 0.45750/0.43490/0.50743，仍非等价，mask一致。560特征[1,560,768]全部有限、有效mask560；仅说明数值可运行，不代表OCR已正常。用户明确目标是560，不单独制作280，280仅参考。
 - 原独立诊断分支exp/gemma4-vision-numerics-20261126 新提交54711d340f2f9e2650973537ef6f2216b3dec79d，新增test_corrected_ocr.py及独立workflow，复现精确修复并校验SHA，按原有section plan重组临时完整模型，生成两张含中文、价格、号码的合成测试图，服务器CPU用LiteRT-LM Engine对比原厂280、未修560、修复560文本输出与CER、耗时，尝试显式max_vision_tokens_per_image；实际选择签名仍需日志核实。无真机GPU验证、不发布APK。新CI状态需核查，尚无真实文字识别结果。
