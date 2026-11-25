@@ -54,13 +54,14 @@ jobs:
           refenv/bin/python hd-vision-probe/probe.py reference --src source --upstream upstream --out report --size ${{ matrix.size }} --mode ${{ matrix.mode }}
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.14'
+          python-version: '3.12'
       - name: Install pinned upstream vision export environment
         run: |
           set -euxo pipefail
           python -m venv expenv
-          expenv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
-          expenv/bin/pip install litert-torch==0.9.3 litert-converter==0.4.0 ai-edge-litert==2.2.0 safetensors pillow
+          expenv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch==2.12.1
+          expenv/bin/pip install litert-torch==0.9.3 'ai-edge-litert>=2.1.6,<2.2.0' safetensors pillow
+          expenv/bin/pip check
           expenv/bin/pip freeze > report/export-versions.txt
       - name: Real model eager and TFLite parity
         run: |
