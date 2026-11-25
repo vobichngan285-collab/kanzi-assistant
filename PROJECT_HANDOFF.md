@@ -1,3 +1,10 @@
+# 最新｜v0.1.3 APK构建及校验成功，Release发布中
+- CI45719718456 export job139574683342及build job139575215830均completed/success。复现112组修复encoder SHA256 6b8caf8e6d95837eb8f0d82ae9aefbe88313e0bb8b23be253822adcfda85dd92，已校验先前两图OCR报告CER=0；重组完整模型3034159952字节 SHA256 fb4159987f3cd30aba817ded3b83a04c81a4a09991d88fafee31d1325490c2f8，各section及内置资产验证成功。
+- Android BUILD SUCCESSFUL，独立包com.vobich.bluestar.gemmalab.vision560.corrected versionCode4/versionName0.1.3，APK v2签名通过、无网络权限、arm64及资产校验通过；构建artifact15071023506。publish job139576434649仍in_progress，Release API暂未找到tag，不宣称已发布；手机560性能/GPU仍待验收。保留旧版与正式APP。
+- https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45719718456
+
+---
+
 # 最新｜560修复版真机性能实验APK构建（v0.1.3）
 - 复用已通过两张合成中文OCR的精确修复encoder SHA256 6b8caf8e6d95837eb8f0d82ae9aefbe88313e0bb8b23be253822adcfda85dd92，不重导、不重复280实验。原诊断分支 exp/gemma4-vision-numerics-20261126 HEAD f2d15ae7e47beca2f5afe3489750358c84fe66b4：新增package_corrected_560.py及独立构建workflow，先从原始补丁和原厂权重复现全部112组逐通道修正，校验精确encoder哈希及已完成OCR报告中corrected两图CER=0，再重组验证所有section与目标SHA、ModelInfo、资产完整性；之后Android单测/签名/无网络权限/arm64/内置资产哈希检查，通过才发布独立实验预发行。
 - v0.1.3独立包 com.vobich.bluestar.gemmalab.vision560.corrected，不覆盖正式APP及旧实验。保持560默认和原图、离线OCR/TTS，增加四档明确的视觉/语言组合：CPU/CPU默认正确性基准、CPU/GPU语言加速（新增，绕过已知GPU视觉编译问题）、GPU/CPU、GPU/GPU实验。各档独立缓存、保持热模型复用、记录请求后端、首字/总耗时/加载、native benchmark及失败原因。CPU/GPU语言组合是待验证方案，不保证性能；GPU视觉兼容性尚未修复，需真实MT6991日志。仅独立实验版本，不宣称最终性能通过。
