@@ -9,6 +9,9 @@
 
 - 第二轮诊断CI45586163145 completed/failure，报告artifact15008193306。MiniCPM视觉和官方参考图均成功解析、加载MediaTek编译插件并识别mt6991，均在NeuronAdapterApi加载共享库处失败（Failed to load NeuronAdapter shared library），未证实任何图算子不兼容。核查LiteRT官方main neuron_adapter_api.cc及mediatek_backend.py、SDK包__init__：Linux默认v8 host/lib路径，SDK可能存在路径/依赖/下载问题。用户要求一次完成，已提交122b9f6e48b31b57e6583ee069935914bebe754e，仅新增npu-recovery/与独立workflow；切Ubuntu24.04、固定同SDK版本、无缓存详细安装日志、定位官方v8库、ldd/真实dlopen、LD_LIBRARY_PATH及原生相对路径别名，控制图通过加载关卡才下载真实模型继续AOT；如加载仍失败则保留底层报告并停止，避免无意义下载；不重复已成功的关闭思考实验，不改模型/正式版/旧APK。CI已触发，run待核实。实际修复是否成功尚未验证，不声称已完成NPU适配。
 
+- CI45586980891 completed/failure，官方SDK v8_0_10 x86_64 libneuron_adapter.so 的ldd和独立ctypes.CDLL均成功（DL_OPEN_OK），LiteRT插件内部仍报Failed to load NeuronAdapter，已按关卡停止，未重下MiniCPM。报告artifact15009057429。AOT加载问题未解决，不能归因模型。
+- 用户明确授权本次研究→修复→编译→发布APK全流程，无需逐项确认；真机效果、权限及不可解决阻碍仍如实说明。独立真机JIT实验路线已提交bcd31a8f89bf38e641d59d1b43e024a9bc0299bf，仅新增litert-npu-lab/及独立workflow。采用固定LiteRT-LM 0.18.1 + MediaTek runtime 2.3.2（公开MT6989报告可加载，不等于本机MiniCPM兼容；v0.19.1/2.3.x ABI已知问题），核查v0.18.1 EngineConfig、ThinkingConfig、BenchmarkInfo和vision executor NPU|CPU分支。独立包com.vobich.bluestar.npulab，v0.1.4，CPU6/请求NPU视觉+CPU6，同图每组3次新conversation、关闭思考、greedy、first_nonblank/total/原生benchmark/CER/空答案/持久阶段；实际NPU未验证（可能CPU混合/回退），不静默重试CPU。内置合成图或用户图片，数值日志无照片/文本；无TTS、无网络权限。用户需浏览器下载已验证SHA的约1.70GB LiteRT模型并导入，旧GGUF不可复用，保留旧版，导入另需约1.70GB。CI自动单测/构建/签名/包版本/ARM64 JNI/MediaTek dispatch及compiler/无INTERNET权限校验，成功才发布独立实验APK，预计tag bluestar-npu-lab-v014-20261125；CI 45587771687 in_progress https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45587771687。正式蓝星不改，APK未核实发布，真机效果未验证。
+
 ---
 
 # 2026-11-25｜视觉编码器Q8量化与MT6991 NPU研究（Host实验通过，真机及NPU未验证）
