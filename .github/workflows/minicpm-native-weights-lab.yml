@@ -1,0 +1,84 @@
+name: Blue Star native weights lab v0.2.0
+on:
+  push:
+    branches: [exp/minicpm-native-weights-20261125]
+    paths: ['native-vision-lab/**', '.github/workflows/minicpm-native-weights-lab.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: tc-mb/llama.cpp-omni
+          ref: 0c0b1109f2d338acf65f28a7b0a1505da3945286
+          path: engine
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Verify upstream and Android tools
+        run: |
+          set -euo pipefail
+          test "$(git -C engine rev-parse HEAD)" = 0c0b1109f2d338acf65f28a7b0a1505da3945286
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.0.12077973' 'cmake;4.1.2'
+          echo "ENGINE_DIR=$PWD/engine" >> "$GITHUB_ENV"
+          echo CMAKE_BUILD_PARALLEL_LEVEL=2 >> "$GITHUB_ENV"
+          mkdir -p native-vision-lab/app/src/main/assets
+          cp engine/LICENSE native-vision-lab/app/src/main/assets/ENGINE_LICENSE.txt
+      - name: Build independent Blue Star APK
+        working-directory: native-vision-lab
+        run: gradle --no-daemon --max-workers=2 :app:assembleDebug
+      - name: Verify signed APK, isolated identity and native code
+        run: |
+          set -euo pipefail
+          APK=native-vision-lab/app/build/outputs/apk/debug/app-debug.apk
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/apksigner" verify --verbose --print-certs "$APK"
+          "$BT/aapt" dump badging "$APK" | tee badging.txt
+          grep -F "package: name='com.vobich.bluestar.nativelab' versionCode='1' versionName='0.2.0'" badging.txt
+          grep -F "launchable-activity: name='com.vobich.bluestar.nativelab.MainActivity'" badging.txt
+          ! grep -F "android.permission.INTERNET" badging.txt
+          unzip -p "$APK" lib/arm64-v8a/libbluestar_native.so > "$RUNNER_TEMP/native.so"
+          readelf -h "$RUNNER_TEMP/native.so" | grep AArch64
+          readelf --dyn-syms --wide "$RUNNER_TEMP/native.so" > symbols.txt
+          grep Java_com_vobich_bluestar_nativelab_MainActivity_nativeRun symbols.txt
+          grep Java_com_vobich_bluestar_nativelab_MainActivity_nativeCancel symbols.txt
+          mkdir -p release
+          cp "$APK" release/BlueStar_Native_Vision_Lab_0.2.0.apk
+          cp native-vision-lab/README.md release/
+          (cd release && sha256sum *.apk > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bluestar-native-vision-v020
+          path: release/
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: bluestar-native-vision-v020
+          path: release
+      - name: Publish verified independent APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          (cd release && sha256sum -c SHA256SUMS.txt)
+          gh release create bluestar-native-vision-v020-20261125 release/* --target "$GITHUB_SHA" --title "蓝星原厂模型实验室 v0.2.0" --notes-file release/README.md --prerelease
