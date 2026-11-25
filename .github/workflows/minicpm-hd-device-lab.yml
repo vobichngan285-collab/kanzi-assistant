@@ -1,0 +1,127 @@
+name: MiniCPM HD quantize and device lab
+on:
+  push:
+    branches: [exp/minicpm-hd-vision-20261125]
+    paths: ['hd-vision-probe/**', '.github/workflows/minicpm-hd-device-lab.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  vision:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { size: 448, mode: 4x, arm: detail448 }
+          - { size: 896, mode: 16x, arm: hd896 }
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      HF_HUB_DISABLE_XET: '1'
+      OMP_NUM_THREADS: '4'
+      MKL_NUM_THREADS: '4'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Pin upstream converter and source model
+        run: |
+          set -euxo pipefail
+          git init upstream
+          git -C upstream fetch --depth 1 https://github.com/john-rocky/hf-to-litertlm.git a395b4967fa9e879a5de548d83399b4be2487b1e
+          git -C upstream checkout --detach FETCH_HEAD
+          test "$(git -C upstream rev-parse HEAD)" = a395b4967fa9e879a5de548d83399b4be2487b1e
+          mkdir -p report source
+          free -h; df -h
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+          python -m venv refenv
+          refenv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch==2.14.1
+          refenv/bin/pip install transformers==5.19.0 pillow safetensors huggingface_hub
+          refenv/bin/python -c 'from huggingface_hub import snapshot_download; snapshot_download("openbmb/MiniCPM-V-4.7-1B",revision="984a89aafcd5160164f4f0d04b4be0f4eec03cb8",allow_patterns=["*.json","*.safetensors","*.jinja","LICENSE*","README.md"],local_dir="source")'
+          test -s source/config.json
+          refenv/bin/python -c 'import json; c=json.load(open("source/config.json")); print("model_type",c.get("model_type"),"vision_config keys",list(c["vision_config"]))'
+          test -f source/model.safetensors
+          sha256sum source/model.safetensors > report/source.sha256
+          refenv/bin/pip freeze > report/ref-versions.txt
+      - name: Original HF feature reference
+        run: |
+          set -euxo pipefail
+          refenv/bin/python hd-vision-probe/probe.py reference --src source --upstream upstream --out report --size ${{ matrix.size }} --mode ${{ matrix.mode }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned upstream vision export environment
+        run: |
+          set -euxo pipefail
+          python -m venv expenv
+          expenv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch==2.12.1
+          expenv/bin/pip install litert-torch==0.9.3 'ai-edge-litert>=2.1.6,<2.2.0' jax==0.7.2 jaxlib==0.7.2 'numpy<2.4' safetensors pillow
+          expenv/bin/pip check
+          expenv/bin/pip freeze > report/export-versions.txt
+      - name: Real model eager and TFLite parity
+        run: |
+          set -euxo pipefail
+          expenv/bin/python hd-vision-probe/probe.py export --src source --upstream upstream --out report --size ${{ matrix.size }} --mode ${{ matrix.mode }}
+      - name: Quantize visual models and validate features
+        run: |
+          set -euxo pipefail
+          expenv/bin/python hd-vision-probe/package_model.py quant --out report --upstream upstream --size ${{ matrix.size }} --mode ${{ matrix.mode }} --model candidate/BlueStar-${{ matrix.arm }}.litertlm
+          rm -f report/vision_encoder.tflite report/vision_adapter.tflite
+      - name: Repackage original decoder and verify unchanged sections
+        run: |
+          set -euxo pipefail
+          curl --fail --location --retry 3 'https://huggingface.co/litert-community/MiniCPM-V-4.7-1B/resolve/main/MiniCPM-V-4.7-1B-VL_int8vis.litertlm' -o original.litertlm
+          expenv/bin/python hd-vision-probe/package_model.py pack --out report --upstream upstream --size ${{ matrix.size }} --mode ${{ matrix.mode }} --base original.litertlm --model candidate/BlueStar-${{ matrix.arm }}.litertlm
+      - name: End-to-end OCR against original model on CPU
+        run: |
+          set -euxo pipefail
+          python -m venv runenv
+          runenv/bin/pip install litert-lm==0.20.0 pillow
+          runenv/bin/python hd-vision-probe/package_model.py smoke --out report --upstream upstream --size ${{ matrix.size }} --mode ${{ matrix.mode }} --base original.litertlm --model candidate/BlueStar-${{ matrix.arm }}.litertlm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Build isolated APK bound to exact candidate model
+        run: |
+          set -euxo pipefail
+          python hd-vision-probe/configure_apk.py --report report/bundle.json --arm ${{ matrix.arm }}
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
+          "$SDKMANAGER" 'platforms;android-36' 'build-tools;36.0.0'
+          (cd litert-npu-lab && gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug)
+          cp litert-npu-lab/app/build/outputs/apk/debug/app-debug.apk candidate/BlueStar-${{ matrix.arm }}-0.1.12.apk
+          APK=candidate/BlueStar-${{ matrix.arm }}-0.1.12.apk
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/apksigner" verify --verbose --print-certs "$APK"
+          "$BT/aapt" dump badging "$APK" | tee report/badging.txt
+          grep -F "package: name='com.vobich.bluestar.npulab.${{ matrix.arm }}' versionCode='9' versionName='0.1.12'" report/badging.txt
+          ! grep -F "uses-permission: name='android.permission.INTERNET'" report/badging.txt
+          unzip -Z1 "$APK" | grep -Fx 'lib/arm64-v8a/liblitertlm_jni.so'
+          "$BT/aapt" dump xmltree "$APK" AndroidManifest.xml | grep -F ':inference'
+          cp report/bundle.json report/smoke.json candidate/
+          cp hd-vision-probe/DEVICE_README.md candidate/README.md
+          (cd candidate && sha256sum *.apk *.litertlm > SHA256SUMS.txt)
+      - name: Upload verified APK and matching model together
+        uses: actions/upload-artifact@v4
+        with:
+          name: bluestar-${{ matrix.arm }}-device
+          path: candidate/
+          compression-level: 0
+      - name: Upload numeric reports only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hd-vision-${{ matrix.arm }}
+          path: |
+            report/*.json
+            report/*.txt
+            report/*.sha256
+            report/fixture.png
+          if-no-files-found: warn

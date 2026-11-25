@@ -2,7 +2,7 @@ name: MiniCPM HD vision conversion probe
 on:
   push:
     branches: [exp/minicpm-hd-vision-20261125]
-    paths: ['hd-vision-probe/**', '.github/workflows/minicpm-hd-vision-probe.yml']
+    paths: ['hd-vision-probe/probe.py', '.github/workflows/minicpm-hd-vision-probe.yml']
   workflow_dispatch:
 permissions:
   contents: read
