@@ -70,7 +70,9 @@ jobs:
         run: |
           set -euxo pipefail
           expenv/bin/python hd-vision-probe/package_model.py quant --out report --upstream upstream --size ${{ matrix.size }} --mode ${{ matrix.mode }} --model candidate/BlueStar-${{ matrix.arm }}.litertlm
-          rm -f report/vision_encoder.tflite report/vision_adapter.tflite
+          rm -f report/vision_encoder*.tflite report/vision_adapter*.tflite
+          rm -rf source refenv
+          df -h
       - name: Repackage original decoder and verify unchanged sections
         run: |
           set -euxo pipefail

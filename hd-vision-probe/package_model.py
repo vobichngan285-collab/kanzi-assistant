@@ -33,11 +33,12 @@ def main():
         from probe import cos_metrics
         ref=np.load(o/"native.npz")
         x=(np.asarray(Image.open(o/"fixture.png").convert("RGB").resize((a.size,a.size),Image.Resampling.BICUBIC),dtype=np.float32)/255)[None]
-        for name,fn,suffix in [("vision_encoder",v.quant_int8,"int8"),("vision_adapter",v.quant_fp16,"fp16")]:
+        def quant(name,fn,suffix):
             src=o/(name+".tflite");dst=o/(name+"_"+suffix+".tflite")
-            print("quantizing",name,flush=True)
+            print("quantizing",name,suffix,flush=True)
             fn(str(src),str(dst));assert 0<dst.stat().st_size<src.stat().st_size
             gc.collect()
+            return dst.name
         def run(name,value,shape):
             it=Interpreter(model_path=str(o/name),num_threads=4)
             it.allocate_tensors();inp=it.get_input_details()[0];out=it.get_output_details()[0]
@@ -45,11 +46,32 @@ def main():
             it.set_tensor(inp["index"],np.ascontiguousarray(value,dtype=inp["dtype"]))
             t=time.monotonic();it.invoke()
             return it.get_tensor(out["index"]).copy(),time.monotonic()-t
-        e,es=run("vision_encoder_int8.tflite",x,ref["enc"].shape)
-        f,fs=run("vision_adapter_fp16.tflite",e,ref["feat"].shape)
-        q=cos_metrics(f,ref["feat"])
-        report("quant",{"encoder":cos_metrics(e,ref["enc"]),"end_to_end":q,"encoder_seconds":es,"adapter_seconds":fs,"status":"pass" if q["cos_mean"]>=.98 and q["cos_min"]>=.90 else "failed"})
-        assert q["cos_mean"]>=.98 and q["cos_min"]>=.90,q
+        adapter=quant("vision_adapter",v.quant_fp16,"fp16")
+        # Diagnose adapter precision independently of encoder quantization.
+        af,ats=run(adapter,ref["enc"],ref["feat"].shape)
+        adapter_only=cos_metrics(af,ref["feat"])
+        candidates=[]
+        def evaluate(encoder,adp,precision):
+            e,es=run(encoder,x,ref["enc"].shape)
+            f,fs=run(adp,e,ref["feat"].shape)
+            q=cos_metrics(f,ref["feat"])
+            record={"encoder_file":encoder,"adapter_file":adp,"precision":precision,"encoder":cos_metrics(e,ref["enc"]),"end_to_end":q,"encoder_seconds":es,"adapter_seconds":fs,"bytes":(o/encoder).stat().st_size+(o/adp).stat().st_size,"status":"pass" if q["cos_mean"]>=.98 and q["cos_min"]>=.90 else "failed"}
+            candidates.append(record);report("quant_trials",{"adapter_only":adapter_only,"trials":candidates})
+            return record
+        int8=quant("vision_encoder",v.quant_int8,"int8")
+        selected=evaluate(int8,adapter,"int8/fp16")
+        if selected["status"]!="pass":
+            selected=evaluate(int8,"vision_adapter.tflite","int8/fp32")
+        if selected["status"]!="pass":
+            fp16=quant("vision_encoder",v.quant_fp16,"fp16")
+            selected=evaluate(fp16,adapter,"fp16/fp16")
+            if selected["status"]!="pass":
+                selected=evaluate(fp16,"vision_adapter.tflite","fp16/fp32")
+        report("quant",selected)
+        assert selected["status"]=="pass",selected
+        import shutil
+        shutil.copyfile(o/selected["encoder_file"],o/"selected_encoder.tflite")
+        shutil.copyfile(o/selected["adapter_file"],o/"selected_adapter.tflite")
     elif a.stage=="pack":
         from litert_lm_builder import litertlm_builder as b
         from litert_lm_builder.runtime.proto import llm_metadata_pb2
@@ -78,11 +100,11 @@ def main():
         import shutil
         keep=[s for s in sections if s not in [md,enc,adp]]
         old={s["data_path"]:sha(unpack/s["data_path"]) for s in keep}
-        shutil.copyfile(o/"vision_encoder_int8.tflite",unpack/enc["data_path"])
-        shutil.copyfile(o/"vision_adapter_fp16.tflite",unpack/adp["data_path"])
+        shutil.copyfile(o/"selected_encoder.tflite",unpack/enc["data_path"])
+        shutil.copyfile(o/"selected_adapter.tflite",unpack/adp["data_path"])
         a.model.parent.mkdir(parents=True,exist_ok=True)
         b.pack(str(toml),str(a.model),weights_in_model_graph=True)
-        assert a.model.is_file() and 0<a.model.stat().st_size<2_000_000_000
+        assert a.model.is_file() and 0<a.model.stat().st_size<3_000_000_000
         # Unpack again, independently compare all unchanged payloads by section identity.
         check=o/"check_sections";check.mkdir(exist_ok=True)
         newcfg=tomllib.loads(Path(b.unpack(str(a.model),str(check))).read_text())
@@ -92,7 +114,7 @@ def main():
             assert before.get("model_type")==after.get("model_type")
             if before["data_path"] in old:
                 assert sha(check/after["data_path"])==old[before["data_path"]],before
-        report("bundle",{"size":a.size,"mode":a.mode,"tokens":256,"bytes":a.model.stat().st_size,"sha256":sha(a.model),"unchanged_sections":old,"status":"pass"})
+        report("bundle",{"size":a.size,"mode":a.mode,"tokens":256,"precision":json.loads((o/"quant.json").read_text())["precision"],"bytes":a.model.stat().st_size,"sha256":sha(a.model),"unchanged_sections":old,"status":"pass"})
         shutil.rmtree(check);shutil.rmtree(unpack)
     else:
         import litert_lm

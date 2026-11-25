@@ -7,7 +7,7 @@ p.add_argument("--arm",choices=["detail448","hd896"],required=True)
 a=p.parse_args()
 r=json.loads(a.report.read_text())
 assert r["status"]=="pass" and r["size"]==(448 if a.arm=="detail448" else 896)
-assert len(r["sha256"])==64 and 0<r["bytes"]<2_000_000_000
+assert len(r["sha256"])==64 and 0<r["bytes"]<3_000_000_000
 root=Path("litert-npu-lab/app")
 k=root/"src/main/java/com/vobich/bluestar/npulab"
 def edit(path,old,new):
@@ -19,6 +19,7 @@ edit(m,'首次使用：下载约1.70 GB LiteRT模型后导入，旧GGUF不可复
 edit(m,'LiteRT 0.20.0；紧贴裁剪、按文字行分区及状态对照。固定448模型未更换；主文字区可能漏掉其他区域。对照不朗读。',f'LiteRT 0.20.0；底层 {r["size"]}×{r["size"]} / 256视觉Token；请先测试原图识别。主文字区可能漏掉其他区域。对照不朗读。')
 edit(m,'        button("下载指定模型（浏览器）"){runCatching{startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(URL)))}.onFailure{status.text="请从发布说明打开模型链接"}}\n','')
 edit(m,'append("v=$V phase=model_verified bytes=$bytes")',f'append("v=$V phase=model_verified bytes=$bytes vision_size={r["size"]} vision_tokens=256")')
+edit(m,'bytes<=2_000_000_000L',f'bytes<={r["bytes"]}L')
 edit(s,'1698202736L',str(r["bytes"])+"L")
 edit(s,'runtime=0.20.0 phase=loaded',f'runtime=0.20.0 vision_size={r["size"]} vision_tokens=256 phase=loaded')
 edit(root/"build.gradle.kts","npulab.detail","npulab."+a.arm)
