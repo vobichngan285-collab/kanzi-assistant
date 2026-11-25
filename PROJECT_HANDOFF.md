@@ -7,6 +7,8 @@
 - CI45581664544 completed/failure（两路分别核实）：direct_ocr job139092955579 success，三图开/关思考均CER=0（去空白），含EOG生成token on 66/86/88、off 8/11/15；prefill+generate on 7096/7814/7938ms，off 4842/4910/5036ms，均值7616/4929.3ms，下降35.3%，不含加载；视觉编码on 3776/3744/3746ms，off 3786/3741/3727ms，基本不变。Host数据不能外推手机，安卓现有闭合思考前缀需核实实际生效；此前2 token仍未证实OCR准确。artifact15006488145。npu_aot job139092955865 failure：工具litert-lm0.20.0、ai-edge-litert及mediatek sdk nightly2.5.0.dev20261123安装成功，bundle SHA校验与拆包成功，独立vision_encoder 530775664 bytes、adapter51971184 bytes；MediaTek_MT6991经过mlir_transforms后apply_plugin失败，详细错误仅在runner临时.error，首轮未保留，不能定性为算子不兼容。artifact15006592813。
 - 已提交仅NPU诊断3dc03f908e4dd31ef553d0575b07295ef2d77d59，新workflow独立，不重跑已通过思考实验；固定首轮成功安装版本及原bundle SHA，分别编译同视觉图和官方LiteRT教程selfie segmentation参考图，使用独立TMPDIR保留*.error和stdout，区分编译环境与模型图失败；参考图来源为官方教程URL，记录下载SHA，不假设必然通过。CI 45586163145 in_progress https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45586163145。无APK，无真机NPU执行，正式版不改。
 
+- 第二轮诊断CI45586163145 completed/failure，报告artifact15008193306。MiniCPM视觉和官方参考图均成功解析、加载MediaTek编译插件并识别mt6991，均在NeuronAdapterApi加载共享库处失败（Failed to load NeuronAdapter shared library），未证实任何图算子不兼容。核查LiteRT官方main neuron_adapter_api.cc及mediatek_backend.py、SDK包__init__：Linux默认v8 host/lib路径，SDK可能存在路径/依赖/下载问题。用户要求一次完成，已提交122b9f6e48b31b57e6583ee069935914bebe754e，仅新增npu-recovery/与独立workflow；切Ubuntu24.04、固定同SDK版本、无缓存详细安装日志、定位官方v8库、ldd/真实dlopen、LD_LIBRARY_PATH及原生相对路径别名，控制图通过加载关卡才下载真实模型继续AOT；如加载仍失败则保留底层报告并停止，避免无意义下载；不重复已成功的关闭思考实验，不改模型/正式版/旧APK。CI已触发，run待核实。实际修复是否成功尚未验证，不声称已完成NPU适配。
+
 ---
 
 # 2026-11-25｜视觉编码器Q8量化与MT6991 NPU研究（Host实验通过，真机及NPU未验证）
