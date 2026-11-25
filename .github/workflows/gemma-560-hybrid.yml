@@ -25,7 +25,12 @@ jobs:
           df -h
           sudo apt-get update -qq
           sudo apt-get install -y -qq git-lfs build-essential clang cmake pkg-config patchelf libssl-dev zlib1g-dev libpng-dev libcurl4-openssl-dev libfftw3-dev
-          npm install -g @bazel/bazelisk
+          if ! command -v bazelisk >/dev/null; then
+            npm install --prefix "$HOME/.local/bazelisk" @bazel/bazelisk
+            echo "$HOME/.local/bazelisk/node_modules/.bin" >> "$GITHUB_PATH"
+          else
+            command -v bazelisk
+          fi
           SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0'
