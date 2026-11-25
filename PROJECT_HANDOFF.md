@@ -1,3 +1,10 @@
+# 最新｜560视觉转换成功，修复封装（用户授权）
+- CI45679323992已成功导出encoder及adapter两档真实图，mark_tensor清除后无剩余custom_call；encoder每档清除odml.rms_norm 336、aten.gelu.default 32，adapter每档rms_norm 3。最终失败在生成的FlatBuffer Python object API LiteRTLMMetaDataT.InitFromObj→KeyValuePairT._UnPack调用不存在的VDataCreator（实际VdataCreator）。未产生完整模型或APK，视觉推理未验证。
+- 独立分支 exp/gemma4-official-560-20261126 HEAD 416717949a90a5e031eb5ca012a8c2affa7c3ed5，保留已成功视觉导出逻辑，封装改为直接保存原厂头字节，仅按官方schema SectionObject begin_offset/end_offset的vtable槽6/8修改ulong偏移；逐字段对照原getter，重新解析并反向恢复校验，确保其它头字节完全相同。metadata用上一轮已验证的等长varint唯一命中法改2520→5040，protobuf全字段比较。原有非视觉section SHA、真实签名、ModelInfo、最终重组SHA校验不变。若封装仍失败，CI另存已导出的视觉模块供后续复用，避免重复转换。模型仍由APK内置增量＋用户已有原厂2.59GB文件本地重组。
+- CI 45681289795 in_progress；尚无已验证APK；继续核查实际转换/封装/构建结果。正式蓝星、280及1120旧包不变。
+
+---
+
 # 最新｜560清除恒等标记算子（用户授权最后一轮针对性修复）
 - CI45677884628失败：真实MLIR只记录mark_tensor，280/560各368个；V2最终序列化失败；V1已实际加载211个张量，但PARAMETER需torch.nn.Parameter而非普通Tensor。
 - 官方固定转换器源码backend/composite/mark_tensor.py明确mark_tensor eager实现return x，Meta返回empty_like，lowering仅生成单输入单输出同类型标记；是融合边界注释，不是量化或实际计算。新分支HEAD c6504eb91410a484e19623765ddb0ffed7097c0a，在两条转换路径共享的MLIR lowering返回后，仅识别目标mark_tensor、校验输入输出数/类型和backend_config，替换使用关系并擦除标记、verify计算图，打印标记所属融合名称计数；不删除真实数学运算或其他custom_call。V1参数恢复torch.nn.Parameter类型，保留原数据及shape校验。融合优化减少可能影响速度，实际数值和手机性能尚未验证。
