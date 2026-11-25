@@ -36,31 +36,99 @@ assert not cfg.use_sdpa_composite_for_vision and not cfg.apply_gpu_composites
 print('vision attention: standard eager, composite disabled',flush=True)
 src=export_lib.load_model(source,cfg,task=cfg.task,trust_remote_code=False)
 src.model.set_attn_implementation("eager")
-# On failure, preserve the actual custom-call targets from the converter input.
-from litert_torch._convert import converter_v2
-original_convert=converter_v2._convert_mlir_bytecode
-def diagnose(flags,temp_dir,target_path):
-    try:
-        return original_convert(flags,temp_dir,target_path)
-    except Exception:
-        import collections,re
-        for p in Path(temp_dir).rglob("*"):
-            if p.is_file() and p.suffix in (".mlir",".mlirbc",".bc"):
-                try:
-                    raw=p.read_bytes()
-                    targets=collections.Counter(x.decode(errors="replace") for x in re.findall(rb"(?:odml|quant|stablehlo|tf|tfl)\\.[a-zA-Z0-9_]+",raw))
-                    print("MLIR diagnostic",p.name,targets.most_common(50),flush=True)
-                except Exception as exc:
-                    print("diagnostic read failure",exc,flush=True)
-        raise
-converter_v2._convert_mlir_bytecode=diagnose
+# Inspect actual StableHLO custom-call names before binary serialization.
+from collections import Counter
+import torch
+from litert_torch._convert import converter_v2, core as convert_core, litert_converter, signature as signature_lib
+from litert_torch.generative.export_hf.core import quantization_layer, weights_loader as weights_loader_lib
+from litert_converter.mlir import ir
+original_serialize=converter_v2._serialize_portable_artifact
+seen_targets=Counter()
+def inspect_and_serialize(module):
+    targets=Counter()
+    def visit(op):
+        if op.name=="stablehlo.custom_call":
+            targets[ir.StringAttr(op.attributes["call_target_name"]).value]+=1
+        for region in op.regions:
+            for block in region.blocks:
+                for child in block.operations: visit(child.operation)
+    with module.context:
+        visit(module.operation)
+    seen_targets.update(targets)
+    print("actual StableHLO custom-call targets",dict(targets),flush=True)
+    return original_serialize(module)
+converter_v2._serialize_portable_artifact=inspect_and_serialize
 
+def export_v1_from_same_checkpoint(module,samples,path):
+    """Use official direct LiteRT V1 lowering with actual QAT weights.
+    Materialize only used tensors; never reinitialize unrelated language tower.
+    """
+    import gc
+    programs=[];signatures=[];cache={}
+    with quantization_layer.prepare_quantized_export_modules(src.weights_loader,module):
+        with weights_loader_lib.prepare_for_export(src.weights_loader,module) as loader:
+            device=next(module.parameters()).device
+            for name,(inputs,_) in samples.items():
+                sig=signature_lib.Signature(name,module.eval(),(),{k:v.to(device) for k,v in inputs.items()})
+                ep=convert_core.export_torch_signature(sig,strict_export=False,run_decompositions=False)
+                converter_v2._prune_unused_parameters(ep)
+                ep=convert_core._run_convert_passes(ep)
+                for spec in ep.graph_signature.input_specs:
+                    kind=spec.kind.name
+                    if kind not in ("PARAMETER","BUFFER","CONSTANT_TENSOR"):continue
+                    key=spec.target
+                    mapping=ep.constants if kind=="CONSTANT_TENSOR" else ep.state_dict
+                    if key not in mapping:
+                        assert key in ep.constants,(kind,key)
+                        mapping=ep.constants
+                    old=mapping[key]
+                    if not isinstance(old,torch.Tensor) or not old.is_meta:continue
+                    ident=(key,tuple(old.shape),old.dtype)
+                    if ident not in cache:
+                        try:actual=loader(key)
+                        except KeyError:actual=loader(key.removeprefix("module."))
+                        assert isinstance(actual,torch.Tensor) and not actual.is_meta,key
+                        # V2 can return packed two's-complement sub-byte values.
+                        # V1 uses the equivalent signed, unpacked values.
+                        if actual.shape!=old.shape:
+                            assert actual.dtype==torch.uint8 and old.dtype==torch.int8,key
+                            assert old.numel()%actual.numel()==0,key
+                            ratio=old.numel()//actual.numel()
+                            assert ratio in (2,4),key
+                            bits=8//ratio
+                            assert converter_v2._is_prepacked_subbyte_tensor(actual,old,bits),key
+                            mask=(1<<bits)-1;sign=1<<(bits-1)
+                            values=torch.stack([((actual.to(torch.int16)>>(bits*j))&mask) for j in range(ratio)],dim=-1)
+                            actual=((values^sign)-sign).to(torch.int8).reshape(old.shape)
+                        assert actual.shape==old.shape,key
+                        cache[ident]=actual.detach().cpu().to(old.dtype).contiguous()
+                    mapping[key]=cache[ident]
+                for spec in ep.graph_signature.input_specs:
+                    if spec.kind.name in ("PARAMETER","BUFFER","CONSTANT_TENSOR"):
+                        val=ep.state_dict.get(spec.target,ep.constants.get(spec.target))
+                        assert isinstance(val,torch.Tensor) and not val.is_meta,spec.target
+                signatures.append(sig);programs.append(ep)
+            print("V1 verified materialized tensor count",len(cache),flush=True)
+            exporter=litert_converter.exported_programs_to_flatbuffer(programs,signatures,lightweight_conversion=False,runtime_constant_folding=False,converter_flags={"strict_qdq_mode":True})
+            exporter.to_file(str(path))
+    del programs,signatures,cache
+    gc.collect()
 for cls,name,adapter in [(vision_exportable.LiteRTExportableModuleForGemma4VisionEncoder,"encoder",False),(vision_exportable.LiteRTExportableModuleForGemma4VisionAdapter,"adapter",True)]:
     module=cls(src.model,cfg,src.tokenizer) if adapter else cls(src.model,cfg)
     samples=module.get_sample_inputs(src.model_config,image_processor=src.image_processor,**cfg.extra_kwargs)
     expected={("vision_adapter_" if adapter else "vision_")+str(x) for x in (280,560)}
     assert set(samples)==expected, samples.keys()
-    export_lib._convert_and_export_module(module,samples,str(work/(name+".tflite")),cfg,src.weights_loader)
+    target=work/(name+".tflite")
+    seen_targets.clear()
+    try:
+        export_lib._convert_and_export_module(module,samples,str(target),cfg,src.weights_loader)
+    except Exception as exc:
+        if "stablehlo.custom_call" not in str(exc):raise
+        print("V2 custom-call failure; targets",dict(seen_targets),flush=True)
+        assert seen_targets,"No source custom-call targets captured"
+        target.unlink(missing_ok=True)
+        export_v1_from_same_checkpoint(module,samples,target)
+        print("official V1 fallback exported",name,flush=True)
     del module,samples
     assert (work/(name+".tflite")).stat().st_size>0
     print("exported",name,flush=True)
