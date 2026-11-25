@@ -46,6 +46,25 @@ jobs:
           git -C upstream lfs pull --include="prebuilt/android_arm64/**,prebuilt/linux_x86_64/**"
           python gemma-vision-lab/tests/patch_hybrid_runtime.py upstream | tee runtime.patch.log
           test "$(git -C upstream diff --name-only)" = runtime/executor/vision_litert_compiled_model_executor.cc
+          # The later TensorFlow pin in v0.18.1 requires a newer rules_cc compatibility proxy.
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("upstream/WORKSPACE")
+          s=p.read_text()
+          assert 'TENSORFLOW_REF = "a1179d3c224967bd979950b823d5ce2a7e8f4c94"' in s
+          needle='load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")\n'
+          assert s.count(needle)==1 and 'name = "rules_cc"' not in s
+          archive='''
+          http_archive(
+              name = "rules_cc",
+              integrity = "sha256-ac60VLmyngq6fagcculuyv2B0gRL6IO0Y5ixx3yn//k=",
+              strip_prefix = "rules_cc-0.2.9",
+              url = "https://github.com/bazelbuild/rules_cc/releases/download/0.2.9/rules_cc-0.2.9.tar.gz",
+          )
+          '''
+          p.write_text(s.replace(needle,needle+archive))
+          PY
+          git -C upstream diff -- WORKSPACE | tee workspace.patch.log
       - name: Build pinned arm64 JNI from source
         working-directory: upstream
         run: |
@@ -78,6 +97,7 @@ jobs:
           name: hybrid-native-diagnostics
           path: |
             runtime.patch.log
+            workspace.patch.log
             native-build.log
             jni-outputs.txt
             jni-verify.log
