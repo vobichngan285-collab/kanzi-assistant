@@ -1,3 +1,9 @@
+# 最新｜560修复实验 v0.1.3 已发布，待真机验证
+- 已通过Release API核实 tag bluestar-gemma-v013-560-corrected-20261126 非草稿，APK BlueStar_Gemma_560_Corrected_0.1.3.apk 已上传，693122351字节，README与SHA256SUMS亦已上传。下载：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-gemma-v013-560-corrected-20261126/BlueStar_Gemma_560_Corrected_0.1.3.apk
+- 独立安装包，导入原厂280文件生成修复560，先用默认CPU/CPU验证复杂价格表，然后同图同预算切换CPU视觉/GPU语言做冷热速度对照；GPU视觉两档仅供兼容性实验。服务端识别、构建与签名已验证，手机性能与GPU尚未验收。正式APP不变。
+
+---
+
 # 最新｜v0.1.3 APK构建及校验成功，Release发布中
 - CI45719718456 export job139574683342及build job139575215830均completed/success。复现112组修复encoder SHA256 6b8caf8e6d95837eb8f0d82ae9aefbe88313e0bb8b23be253822adcfda85dd92，已校验先前两图OCR报告CER=0；重组完整模型3034159952字节 SHA256 fb4159987f3cd30aba817ded3b83a04c81a4a09991d88fafee31d1325490c2f8，各section及内置资产验证成功。
 - Android BUILD SUCCESSFUL，独立包com.vobich.bluestar.gemmalab.vision560.corrected versionCode4/versionName0.1.3，APK v2签名通过、无网络权限、arm64及资产校验通过；构建artifact15071023506。publish job139576434649仍in_progress，Release API暂未找到tag，不宣称已发布；手机560性能/GPU仍待验收。保留旧版与正式APP。
