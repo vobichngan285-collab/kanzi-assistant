@@ -1,3 +1,10 @@
+# 最新｜Gemma 视觉编码器逐层数值定位（已提交，服务器运行中）
+- CI45686173505已完成，原厂与转换280视觉编码器在零值/图案/带填充输入的特征余弦分别0.53243/0.64418/0.63836，相对L2为0.96516/1.00830/0.97410，mask完全一致。原厂编码器224137936字节，含INT8及量化/反量化；转换编码器670184208字节，全浮点。适配器同原厂特征输入相对L2约1e-7，投影权重常量4718592字节哈希相同。定位到编码器输出不等价，尚未定位首次错误算子；不能仅凭量化差异断定成因。560仅健全性测试无原厂560基准。
+- 用户授权逐层排查，独立分支 exp/gemma4-vision-numerics-20261126 HEAD fa31c2fc2efb14556f3b5c301771a03fcfeb68f5，仅新增compare_vision_layers.py和调整独立诊断workflow。复用同一原厂与已发布转换模型；按16个SOFTMAX位置及FC权重/输出形状匹配检查点，优先检查首批投影输入、输出与可解析反量化权重，后续逐组首尾投影及候选残差。临时FlatBuffer只扩充输出向量，不修改权重，比较插桩前后最终特征/掩码一致性；不一致不解释中间结果。抽样数值、结构匹配与候选残差不是逐算子严格证明，仍需依据实际报告决定下一步。
+- CI [45687221749](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45687221749) 已核实 in_progress，尚无逐层数值结果，不宣称已修复。不重新转换模型，不构建APK，不改正式蓝星向导或原厂APP。下一步核查job日志与layer_report.json，依据首个可靠偏差定位具体计算/权重差异。
+ 
+---
+
 # 最新｜560真机异常，转入数值定位实验（不改APP）
 - 用户真机v0.1.2 MT6991 SDK36：原厂输入SHA及本地重组验证成功，输出3034159952字节 SHA54ca03d8888d9d2a8284606be35165f47958b00ed548a5cab50994de34dd3952，ModelInfo 560 [280,560]。GPU vision创建conversation报Some ops are not accelerated，官方runtime executor GPU分支仅kGpu，没有kCpu兜底。CPU/CPU 560反复输出50/1/20/1，转换版280反复100/200/10/50；原厂280曾正常输出中文但错漏。故冻结560发布，不再仅修GPU，先诊断实际数值。
 - 核查固定官方转换器：实际成功V2路径无quant.* custom_call，移除的是odml.rms_norm和aten.gelu.default的恒等标记；V1备用从未用于此次成功产物，不能将其参数错误归因于已发布版本。官方vision encoder接口images/positions_xy→features/mask，adapter soft_tokens→mm_embedding。原厂文件与HF checkpoint同系列但不能仅凭名称认定内部权重/布局数值完全相同。
