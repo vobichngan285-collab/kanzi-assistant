@@ -16,6 +16,8 @@
 
 - APK第二轮CI45588214145 completed/success，job139115197966所有构建/单测/验证/发布步骤通过，BUILD SUCCESSFUL。Release tag bluestar-npu-lab-v014-20261125 实际目标800047ec50fc14f19fb2b54f2d06c3fc392637d3，已核实发布资产BlueStar_NPU_Lab_0.1.4.apk 18444531 bytes SHA256 6ab6e9a98464e524c2545f13e781009cd22e0d8edeb61adc6e43343741de9a9a，签名SHA256 d50d9715c17b08c949dfc57228914caaad6ad14350a99c5e9650547396d966d7，包com.vobich.bluestar.npulab versionCode1 versionName0.1.4；arm64 liblitertlm_jni.so、libLiteRtDispatch_MediaTek.so、libLiteRtCompilerPlugin_MediaTek.so全部确认打包。下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-npu-lab-v014-20261125/BlueStar_NPU_Lab_0.1.4.apk 。独立安装，不卸载旧版；首次需下载并导入指定LiteRT模型约1.70GB（与旧GGUF不兼容），内置测试图先做CPU6后做请求NPU视觉+CPU6或自动对比，复制数值日志。实际NPU执行、速度、识别效果均待真机验证，可能CPU回退，未证明NPU成功；无TTS，正式蓝星不改。
 
+- 用户真机回传v0.1.4 MT6991，模型SHA校验成功，1698202736 bytes，dispatch_present=true/compiler_present=true。内置448图（按实验流程推测，待用户确认）image_sha099d308e01e3：LiteRT CPU6加载11625ms，三轮session_ms1571/1/2，first_nonblank1971/1464/1433ms，total2292/1791/1710ms，chars均12、chunks均10、thought_chunks=0、CER=0.0000，native_ttft_s0.9082/0.6145/0.5943，prefill_tokens98/decode_tokens11，native_decode_tps16.50/21.58/26.59；warm首字1448.5ms、全程1750.5ms。模型加载和首次session未计入send指标，native_ttft不能当完整视觉输入首字。旧GGUF 3.42秒测试原图/输出/后端不同，不能直接宣称提速率。请求NPU视觉+CPU6开始且loaded load_ms11855，但尚无任何run完成/失败记录，实际NPU仍unverified，待用户确认界面是否卡住、闪退或仍在运行；如重新打开查看previous_incomplete_stage。不修改或发布新APK，仅记录结果。下一步同图真实密集文字CPU6对比与NPU运行阶段诊断，CPU质量不能凭单图推定。
+
 ---
 
 # 2026-11-25｜视觉编码器Q8量化与MT6991 NPU研究（Host实验通过，真机及NPU未验证）
