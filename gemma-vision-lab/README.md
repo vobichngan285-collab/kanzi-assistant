@@ -1,5 +1,3 @@
-# 蓝星 Gemma 实验室 0.1.0
-独立 Android ARM64 APK；Google LiteRT-LM 0.18.1；锁定 Gallery 1.0.23 原始 Gemma-4-E2B-it（2588147712 bytes，SHA256 181938105e0eefd105961417e8da75903eacda102c4fce9ce90f50b97139a63c）。可导入已下载的同版本文件；Gallery 私有目录不能直接共享，后续MTP更新文件不接受。浏览器下载链接固定原厂revision。
-默认GPU视觉/GPU语言、280（模型支持时）、4000上下文、TopK1、TopP1、temperature0，关闭思考和MTP；模型元数据检测预算，不伪造560/1120。后端请求不证明每个算子GPU执行。
-系统相机EXTRA_OUTPUT获取完整照片，像素由系统相机决定；相册原字节复制。正向JPEG/PNG原图不重编码，EXIF旋转/其他格式转PNG；同图1024/512长边对照不裁剪不放大。内部视觉预处理仍可能缩图。原图不等于模型最终输入分辨率。
-模型常驻、新图重置会话、追问保留上下文、离线中文音色流式朗读（记录入队非出声）。记录图片准备、首次加载、首字、总时长；无INTERNET权限。CI仅编译、策略单元测试、APK校验，真机性能和准确率待验证。
+# 蓝星 Gemma 1120 高预算实验 v0.1.1
+独立安装包 com.vobich.bluestar.gemmalab.highbudget，与原厂280实验 v0.1.0 共存，不覆盖其模型/APP。模型为第三方 Penra E2B，非谷歌原厂部署包，量化/词表可能不同，不可把任何准确率差异完全归因于视觉预算。
+固定下载 https://huggingface.co/PenraApp/penra-models/resolve/e7947bb3f9a2960713df011ebca32aedc0f271bb/penra-e2b-1120.litertlm ，1708468392 bytes，SHA256 4f52793970e74cae45b971e447cd5834dac6b9a70b687a5fe0f968c6e1c26b9e。发布前官方 LiteRT-LM Python ModelInfo 校验1120签名与元数据，APP再次校验文件SHA/实际视觉签名，不虚构560或280档；仅显示实际支持档位，默认1120。推理框架保持 Android LiteRT-LM 0.18.1、GPU/GPU、TopK1、TopP1、temperature0、context4000，关闭思考/MTP，保留原图/1024/512对照、模型常驻、追问、流式离线TTS及日志。真机GPU执行、首字和识别准确率待测。若仅有1120签名，仅测试1120。原厂高预算导出是独立路线。

@@ -1,7 +1,7 @@
-name: Blue Star Gemma original image lab v0.1.0
+name: Blue Star Gemma high budget lab v0.1.1
 on:
   push:
-    branches: [exp/gemma4-original-image-20261126]
+    branches: [exp/gemma4-high-vision-20261126]
     paths: ['gemma-vision-lab/**', '.github/workflows/gemma-vision-lab.yml']
   workflow_dispatch:
 permissions:
@@ -36,29 +36,53 @@ jobs:
           BT="$ANDROID_HOME/build-tools/36.0.0"
           "$BT/apksigner" verify --verbose --print-certs "$APK"
           "$BT/aapt" dump badging "$APK" | tee badging.txt
-          grep -F "package: name='com.vobich.bluestar.gemmalab' versionCode='1' versionName='0.1.0'" badging.txt
+          grep -F "package: name='com.vobich.bluestar.gemmalab.highbudget' versionCode='2' versionName='0.1.1'" badging.txt
           grep -F "launchable-activity: name='com.vobich.bluestar.gemmalab.MainActivity'" badging.txt
           ! grep -F "android.permission.INTERNET" badging.txt
           unzip -Z1 "$APK" > archive.txt
           grep -E '^lib/arm64-v8a/.*litert.*\.so$' archive.txt
           ! grep -E '^lib/(x86|x86_64|armeabi-v7a)/' archive.txt
           mkdir -p release
-          cp "$APK" release/BlueStar_Gemma_Lab_0.1.0.apk
+          cp "$APK" release/BlueStar_Gemma_1120_Lab_0.1.1.apk
           cp gemma-vision-lab/README.md release/
           (cd release && sha256sum *.apk > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:
-          name: bluestar-gemma-v010
+          name: bluestar-gemma-v011
           path: release/
+  model-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Download and verify model from pinned publisher revision
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --connect-timeout 30 'https://huggingface.co/PenraApp/penra-models/resolve/e7947bb3f9a2960713df011ebca32aedc0f271bb/penra-e2b-1120.litertlm' -o model.litertlm
+          test "$(stat -c %s model.litertlm)" = 1708468392
+          echo '4f52793970e74cae45b971e447cd5834dac6b9a70b687a5fe0f968c6e1c26b9e  model.litertlm' | sha256sum -c -
+      - name: Check real vision signature with official runtime
+        run: |
+          set -euo pipefail
+          python -m pip install 'litert-lm==0.18.1'
+          python - <<'PY'
+          import litert_lm
+          with litert_lm.ModelInfo('model.litertlm') as m:
+              print('llm',m.is_llm_model,'vision',m.input_modalities.vision,'max',m.max_vision_token_budget,'signatures',m.vision_signature_selection,'min_runtime',m.min_runtime_version)
+              assert m.is_llm_model and m.input_modalities.vision
+              assert m.max_vision_token_budget >= 1120 and 1120 in (m.vision_signature_selection or [])
+          PY
   publish:
-    needs: build
+    needs: [build, model-check]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: bluestar-gemma-v010
+          name: bluestar-gemma-v011
           path: release
       - name: Publish verified APK
         env:
@@ -67,10 +91,10 @@ jobs:
         run: |
           set -euo pipefail
           (cd release && sha256sum -c SHA256SUMS.txt)
-          TAG=bluestar-gemma-v010-original-image-20261126
+          TAG=bluestar-gemma-v011-1120-20261126
           retry() { for i in 1 2 3 4; do "$@" && return 0; sleep $((i*3)); done; return 1; }
           if ! gh release view "$TAG" --json targetCommitish >/dev/null 2>&1; then
-            retry gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 Gemma 实验室 v0.1.0" --notes-file release/README.md --prerelease --draft
+            retry gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 Gemma 实验室 v0.1.1" --notes-file release/README.md --prerelease --draft
           fi
           gh release view "$TAG" --json targetCommitish | jq -e --arg sha "$GITHUB_SHA" '.targetCommitish == $sha'
           retry gh release upload "$TAG" release/* --clobber

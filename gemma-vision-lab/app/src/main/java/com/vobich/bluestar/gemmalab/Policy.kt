@@ -1,8 +1,8 @@
 package com.vobich.bluestar.gemmalab
 object Policy {
- const val MODEL_SIZE=2588147712L
- const val MODEL_SHA="181938105e0eefd105961417e8da75903eacda102c4fce9ce90f50b97139a63c"
- const val MODEL_URL="https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/6e5c4f1e395deb959c494953478fa5cec4b8008f/gemma-4-E2B-it.litertlm"
+ const val MODEL_SIZE=1708468392L
+ const val MODEL_SHA="4f52793970e74cae45b971e447cd5834dac6b9a70b687a5fe0f968c6e1c26b9e"
+ const val MODEL_URL="https://huggingface.co/PenraApp/penra-models/resolve/e7947bb3f9a2960713df011ebca32aedc0f271bb/penra-e2b-1120.litertlm"
  const val OCR="请准确识别图片中的所有文字、数字和价格，按照原文顺序输出，不要总结，不要猜测。"
  fun budgets(options:IntArray?, ceiling:Int)=(options?:intArrayOf()).filter{it>0&&(ceiling<=0||it<=ceiling)}.distinct().sorted()
  fun size(w:Int,h:Int,cap:Int):Pair<Int,Int>{
