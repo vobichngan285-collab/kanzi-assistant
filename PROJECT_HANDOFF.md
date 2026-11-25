@@ -39,6 +39,8 @@
 
 - 用户批准图像质量优化从头至APK无需再次确认。核查固定LiteRT-LM v0.18.1 runtime/components/preprocessor/minicpmv_image_preprocess.cc（有MiniCPM等比切片逻辑）、support/preprocessor/stb_image_preprocessor.cc（固定目标直接缩放、无固定目标等比），Config.kt及top_p_cpu_sampler.cc（支持temperature=0及topK）；实际手机bundle走哪条尚未证明，不能将漏字直接归因于拉伸或随机采样。提交a317e44efeaf7a80af27453708d631ac308a26d3，compare确认仅litert-npu-lab及独立workflow12文件，v0.1.8；保留已验证LiteRT 0.18.1/CPU6/关闭思考/greedy/512每会话/同模型SHA/常驻与进程隔离。CPU同engine原图直传、等比448补边、长轴2-4非重叠分区（近边界搜索低视觉边缘能量位置，大方图2横带/小方图1块），ImageDecoder软件解码长边最多2400、EXIF方向由系统解码，逐区新conversation按原图顺序合并，不自动删文字；缝可能切字且总耗时可能增加，不能宣称已经提高准确率。自动original,pad,tiles,tiles,pad,original各2次；单方案1次；GPU视觉分区备用。记录图尺寸、分区坐标、预处理缓存及耗时、各区首字/总耗时、合并首字/总耗时（含session不含预处理）、CER、非空白长度、答案hash、重复行计数、空区、512上限命中、CPU/PSS/温度；可单独主动复制本批识别原文，数值日志仍无文字/图像。可填入用户提供蓝星首页正文参考（不含状态栏，状态栏识别会计作插入），不内置用户截图。独立包com.vobich.bluestar.npulab.quality code5，旧CI临时签名不可保证覆盖，导入原始已下载1.698GB模型无需重下，保留旧版。CI45597292580 https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45597292580 构建中，目标tag bluestar-npu-lab-v018-20261125，未核实发布。正式蓝星不改，无TTS，实际效果待真机。
 
+- v0.1.8 Release已核实：CI45597292580 job139146620469，构建/单测/签名/包验证/上传/发布步骤均success，tag bluestar-npu-lab-v018-20261125，目标a317e44efeaf7a80af27453708d631ac308a26d3，APK BlueStar_OCR_Quality_Lab_0.1.8.apk 18505871 bytes SHA256 06653b55773a3efe380679b90fd23422e5f5738b2df0fd1f408e38f561bca09c，下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-npu-lab-v018-20261125/BlueStar_OCR_Quality_Lab_0.1.8.apk 。独立安装，保留旧版，导入此前下载的同模型，无需重新下载；选同一首页截图，填入对应首页正文参考，自动精度对照，复制识别原文与数值日志。自动分区可能切字、额外耗时，识别率改善未验收，未确认原生预处理实际分支。正式蓝星未修改。用户授权执行至实际发布。
+
 ---
 
 # 2026-11-25｜视觉编码器Q8量化与MT6991 NPU研究（Host实验通过，真机及NPU未验证）
