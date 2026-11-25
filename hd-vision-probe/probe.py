@@ -90,7 +90,9 @@ def main():
     expected_adp=(1,tokens,1024)
     try:
         if a.stage=="reference":
-            from transformers import MiniCPMV4_7ForConditionalGeneration
+            from transformers import AutoConfig
+            from transformers.models.minicpmv4_7.modeling_minicpmv4_7 import MiniCPMV4_7VisionModel, MiniCPMV4_7Merger
+            from safetensors import safe_open
             import transformers
             fixture(a.out)
             x=sample(a.out,a.size)
@@ -100,13 +102,27 @@ def main():
             strip=mod.strip_from_image(x)
             ts=torch.tensor([[grid,grid]],dtype=torch.long)
             checkpoint("load_hf",transformers=transformers.__version__)
-            model=MiniCPMV4_7ForConditionalGeneration.from_pretrained(str(a.src),dtype=torch.float32,attn_implementation="eager").eval()
+            cfg=AutoConfig.from_pretrained(str(a.src))
+            cfg.vision_config._attn_implementation="eager"
+            # Instantiate only native vision modules on meta; assign original
+            # weights directly, without allocating text decoder or duplicate FP32 weights.
+            with torch.device("meta"):
+                vt=MiniCPMV4_7VisionModel(cfg.vision_config)
+                merger=MiniCPMV4_7Merger(cfg)
+            with safe_open(str(a.src/"model.safetensors"),framework="pt",device="cpu") as weights:
+                for prefix,module in (("model.vision_tower.",vt),("model.merger.",merger)):
+                    state={k[len(prefix):]:weights.get_tensor(k).float() for k in weights.keys() if k.startswith(prefix)}
+                    module.load_state_dict(state,strict=True,assign=True)
+                    del state
+            vt.eval();merger.eval()
+            gc.collect()
             checkpoint("native_vision")
             start=time.monotonic()
             with torch.inference_mode():
-                result=model.model.get_image_features(strip,ts,downsample_mode=a.mode)
+                result=vt(strip,target_sizes=ts,use_vit_merger=a.mode!="4x")
+                features=merger(result.last_hidden_state,ts if a.mode=="4x" else ts//2)
             enc=result.last_hidden_state.detach().float().cpu().numpy()
-            feat=result.pooler_output[0].detach().float().cpu().numpy()[None]
+            feat=features[0].detach().float().cpu().numpy()[None]
             assert enc.shape==expected_enc,(enc.shape,expected_enc)
             assert feat.shape==expected_adp,(feat.shape,expected_adp)
             assert np.isfinite(enc).all() and np.isfinite(feat).all()
