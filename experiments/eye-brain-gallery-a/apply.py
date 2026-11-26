@@ -17,9 +17,9 @@ def block(path, start, end, content):
     i = s.index(start); j = s.index(end, i)
     path.write_text(s[:i] + content + s[j:])
 gradle = app / "build.gradle.kts"
-replace(gradle, 'applicationId = "com.google.aiedge.gallery"', 'applicationId = "com.vobich.bluestar.eyebrain.gallerya"')
-replace(gradle, 'versionName = "1.0.23"', 'versionName = "0.1.0"')
-replace(gradle, 'versionCode = 52', 'versionCode = 1')
+replace(gradle, 'applicationId = "com.google.aiedge.gallery"', 'applicationId = "com.vobich.bluestar.eyebrain.galleryauto"')
+replace(gradle, 'versionName = "1.0.23"', 'versionName = "0.2.0"')
+replace(gradle, 'versionCode = 52', 'versionCode = 2')
 replace(gradle, 'dependencies {\n', 'dependencies {\n  implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")\n')
 # Native C++ runtime conflict must be resolved consistently at packaging; original LiteRT JNI unchanged.
 replace(gradle, 'pickFirsts.add("**/liblitertlm_jni.so")', 'pickFirsts.add("**/liblitertlm_jni.so"); pickFirsts.add("**/libc++_shared.so")')
@@ -30,20 +30,20 @@ replace(manifest, '<uses-native-library android:name="libedgetpu_util.so" androi
 # Unique anchor regardless of repeated native library declarations.
 if 'firebase_analytics_collection_deactivated' not in manifest.read_text():
     replace(manifest, 'tools:targetApi="31">', 'tools:targetApi="31">\n        <meta-data android:name="firebase_analytics_collection_deactivated" android:value="true" />')
-replace(manifest, 'android:scheme="com.google.ai.edge.gallery"', 'android:scheme="com.vobich.bluestar.eyebrain.gallerya"')
-replace(manifest, 'android:taskAffinity="com.google.ai.edge.gallery.glasses"', 'android:taskAffinity="com.vobich.bluestar.eyebrain.gallerya.glasses"')
+replace(manifest, 'android:scheme="com.google.ai.edge.gallery"', 'android:scheme="com.vobich.bluestar.eyebrain.galleryauto"')
+replace(manifest, 'android:taskAffinity="com.google.ai.edge.gallery.glasses"', 'android:taskAffinity="com.vobich.bluestar.eyebrain.galleryauto.glasses"')
 # Original app-level analytics is disabled; no changes to LLM inference.
 replace(pkg/"GalleryApplication.kt", 'firebaseAnalytics?.setAnalyticsCollectionEnabled(dataStoreRepository.readFirebaseAnalytics())', 'firebaseAnalytics?.setAnalyticsCollectionEnabled(false)')
 home = pkg / "ui/home/HomeScreen.kt"
 block(home, '                var selectedCategoryIndex by remember { mutableIntStateOf(0) }', '                Spacer(modifier = Modifier.height(innerPadding.calculateBottomPadding() + 10.dp))', '''                Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                   Text("眼脑协同实验室", style = MaterialTheme.typography.headlineMedium)
-                  Text("OCR v0.1.3 · 谷歌原版离线大脑")
+                  Text("OCR v0.1.3 · 自动任务实验版")
                   val chatTask = modelManagerViewModel.getTaskById(BuiltInTaskId.LLM_CHAT)
                   if (chatTask != null) {
                     TaskCard(task = chatTask, index = 0, animate = false,
                       onClick = { navigateToTaskScreen(chatTask) },
                       modifier = Modifier.fillMaxWidth(),
-                      description = "选择本地模型，识别图片文字并进行对话")
+                      description = "选图后自动识别与回答，支持多种任务")
                   }
                   TextButton(onClick = onModelsClicked) { Text("模型管理 / 下载与导入") }
                 }
@@ -51,13 +51,24 @@ block(home, '                var selectedCategoryIndex by remember { mutableIntS
 # Preserve official navigation, terms, model selection, and original chat send path.
 input_file = pkg / "ui/common/chat/MessageInputText.kt"
 replace(input_file, '              // First row: text field for input.', '''              if (task.id == com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_CHAT) {
-                EyeOcrInput(
-                  enabled = !inProgress && !isResettingSession && !modelInitializing &&
-                    !modelPreparing && !isContextLimitReached,
-                  onInsert = { recognized ->
-                    onValueChanged(if (curMessage.isBlank()) recognized else curMessage + "\\n\\n" + recognized)
-                  }
-                )
+                androidx.compose.runtime.key(selectedModel.name) {
+                  EyeOcrInput(
+                    enabled = !inProgress && !isResettingSession && !modelInitializing &&
+                      !modelPreparing && !isContextLimitReached &&
+                      pickedImages.isEmpty() && pickedAudioClips.isEmpty() && pickedTextFiles.isEmpty(),
+                    draft = curMessage,
+                    onAutoSend = { recognized ->
+                      onSendMessage(
+                        createMessagesToSend(
+                          pickedImages = emptyList(),
+                          audioClips = emptyList(),
+                          textFiles = emptyList(),
+                          text = recognized,
+                        )
+                      )
+                    }
+                  )
+                }
               }
               // First row: text field for input.''')
 # Disable non-OCR attachment UI on the main task only; leave capability flags, model
