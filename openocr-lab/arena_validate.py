@@ -1,7 +1,7 @@
 import onnxruntime as ort, numpy as np, pathlib, json
 root=pathlib.Path('openocr-lab/app/src/main/assets')
 results={}
-for name in ['yolo26n-text','yolo26s-text','yolo26m-text','yolo26l-text','yolo26x-text','repvit-db']:
+for name in ['yolo26n-text','repvit-db']:
     opt=ort.SessionOptions();opt.intra_op_num_threads=4
     session=ort.InferenceSession(str(root/(name+'.onnx')),sess_options=opt,providers=['CPUExecutionProvider'])
     inp=session.get_inputs()[0]; shape=inp.shape

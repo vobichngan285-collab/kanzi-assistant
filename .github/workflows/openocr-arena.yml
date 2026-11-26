@@ -1,7 +1,7 @@
-name: BlueStar OpenOCR Arena
+name: BlueStar OpenOCR Adaptive
 on:
   push:
-    branches: [exp/openocr-arena-20261126]
+    branches: [exp/openocr-adaptive-20261126]
     paths: ['openocr-lab/**','.github/workflows/openocr-arena.yml']
   workflow_dispatch:
 permissions:
@@ -19,41 +19,24 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
-      - name: Reuse exact verified v0.1.5 model assets
+      - name: Reuse exact Arena v0.2.0 assets and validate
         run: |
           set -euo pipefail
-          BASE=https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-openocr-yolo-tracks-v015-20261126
-          curl -fL --retry 3 "$BASE/BlueStar_OpenOCR_Tracks_0.1.5.apk" -o previous.apk
-          curl -fL --retry 3 "$BASE/openocr-report.json" -o openocr-report.json
-          curl -fL --retry 3 "$BASE/OpenOCR-LICENSE.txt" -o OpenOCR-LICENSE.txt
-          echo '84a9b5c457e973960c55736484eab1dd882ffece321dd039934ccc740cfdf6ef  previous.apk' | sha256sum -c -
+          BASE=https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-openocr-arena-v020-20261126
+          for f in BlueStar_OpenOCR_Arena_0.2.0.apk arena-assets.sha256 openocr-report.json OpenOCR-LICENSE.txt YOLO-LICENSE.txt; do curl -fL --retry 3 "$BASE/$f" -o "$f"; done
+          echo '110073c1420e1e4717f772322e310bd1a74eca1245e4bf2a16dfd58fb6f3a364  BlueStar_OpenOCR_Arena_0.2.0.apk' | sha256sum -c -
+          echo '0d3c036f062b35849bf7d8d87798cd6cff7c70ee4780651814718bd3c6e062e5  arena-assets.sha256' | sha256sum -c -
           echo 'f1d36ed055b95ffdc61f42dd9553907e5dd945030d0eae3b42d4ed8e69fc41a1  openocr-report.json' | sha256sum -c -
           echo 'c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4  OpenOCR-LICENSE.txt' | sha256sum -c -
+          echo '0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0  YOLO-LICENSE.txt' | sha256sum -c -
           mkdir -p openocr-lab/app/src/main/assets
-          for m in rep.onnx yolo26n-text.onnx chars.txt; do unzip -p previous.apk "assets/$m" > "openocr-lab/app/src/main/assets/$m"; done
-          cd openocr-lab/app/src/main/assets
-          echo "$(jq -r .rep.onnx_sha256 ../../../../../openocr-report.json)  rep.onnx" | sha256sum -c -
-          echo "$(jq -r .detector_sha256 ../../../../../openocr-report.json)  yolo26n-text.onnx" | sha256sum -c -
-          echo "$(jq -r .dict_sha256 ../../../../../openocr-report.json)  chars.txt" | sha256sum -c -
-      - name: Fetch and validate official detector assets
-        run: |
-          set -euo pipefail
-          cd openocr-lab/app/src/main/assets
-          curl -fL --retry 3 https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s-text.onnx -o yolo26s-text.onnx
-          echo '94eeb9f421086462ec96b98e6c6ee90d5a767c859f26141343501f9ed039dfce  yolo26s-text.onnx' | sha256sum -c -
-          curl -fL --retry 3 https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26m-text.onnx -o yolo26m-text.onnx
-          echo 'e091cf71b77db408ce673b0cbda8fec826a08b2250910d50c5c60ecf4729cbf3  yolo26m-text.onnx' | sha256sum -c -
-          curl -fL --retry 3 https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26l-text.onnx -o yolo26l-text.onnx
-          echo 'ad5e8b6784d5d7f126e3ace38b79359828ef76be70531b8883eb5210eae93adf  yolo26l-text.onnx' | sha256sum -c -
-          curl -fL --retry 3 https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26x-text.onnx -o yolo26x-text.onnx
-          echo '4bee5408d0e69e91f4fe928208fb683c17f32be3bd89cb90268a422fa6f5551e  yolo26x-text.onnx' | sha256sum -c -
-          curl -fL --retry 3 https://github.com/Topdu/OpenOCR/releases/download/develop0.0.1/openocr_det_model.onnx -o repvit-db.onnx
-          test "$(stat -c%s repvit-db.onnx)" = 12420719
-          sha256sum *.onnx chars.txt > ../../../../../arena-assets.sha256
-          cd ../../../../..
+          for m in rep.onnx yolo26n-text.onnx repvit-db.onnx chars.txt; do unzip -p BlueStar_OpenOCR_Arena_0.2.0.apk "assets/$m" > "openocr-lab/app/src/main/assets/$m"; done
+          mv arena-assets.sha256 original-assets.sha256
+          grep -E '  (rep\.onnx|yolo26n-text\.onnx|repvit-db\.onnx|chars\.txt)$' original-assets.sha256 > arena-assets.sha256
+          test "$(wc -l < arena-assets.sha256)" = 4
+          (cd openocr-lab/app/src/main/assets && sha256sum -c ../../../../../arena-assets.sha256)
           python -m pip install onnxruntime==1.22.0 numpy
           python openocr-lab/arena_validate.py
-          curl -fL --retry 3 https://raw.githubusercontent.com/ultralytics/ultralytics/main/LICENSE -o YOLO-LICENSE.txt
       - name: Android SDK
         run: |
           SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
@@ -69,7 +52,7 @@ jobs:
           BT="$ANDROID_HOME/build-tools/36.0.0"
           "$BT/apksigner" verify --verbose "$APK"
           "$BT/aapt" dump badging "$APK" | tee badging.txt
-          grep -F "package: name='com.vobich.bluestar.openocrlab.arena' versionCode='7' versionName='0.2.0'" badging.txt
+          grep -F "package: name='com.vobich.bluestar.openocrlab.adaptive' versionCode='8' versionName='0.3.0'" badging.txt
           ! grep -F android.permission.INTERNET badging.txt
           unzip -Z1 "$APK" > archive.txt
           grep -Fx lib/arm64-v8a/libonnxruntime.so archive.txt
@@ -80,7 +63,7 @@ jobs:
           ! grep -Fx assets/svtr.onnx archive.txt
           while read -r hash file; do unzip -p "$APK" "assets/$file" | sha256sum | grep -F "$hash"; done < arena-assets.sha256
           mkdir -p release
-          cp "$APK" release/BlueStar_OpenOCR_Arena_0.2.0.apk
+          cp "$APK" release/BlueStar_OpenOCR_Adaptive_0.3.0.apk
           cp openocr-lab/README.md openocr-report.json release/
           cp OpenOCR-LICENSE.txt YOLO-LICENSE.txt arena-assets.sha256 arena-validation.json release/
           (cd release && sha256sum *.apk > SHA256SUMS.txt)
@@ -105,8 +88,8 @@ jobs:
         run: |
           set -euo pipefail
           (cd release && sha256sum -c SHA256SUMS.txt)
-          TAG=bluestar-openocr-arena-v020-20261126
-          if ! gh release view "$TAG" >/dev/null 2>&1; then gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 OpenOCR 六模型竞技场 v0.2.0" --notes-file release/README.md --prerelease --draft; fi
+          TAG=bluestar-openocr-adaptive-v030-20261126
+          if ! gh release view "$TAG" >/dev/null 2>&1; then gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 OpenOCR 自适应裁剪 v0.3.0" --notes-file release/README.md --prerelease --draft; fi
           gh release view "$TAG" --json targetCommitish | jq -e --arg sha "$GITHUB_SHA" '.targetCommitish == $sha'
           for i in 1 2 3; do gh release upload "$TAG" release/* --clobber && break; test "$i" != 3; sleep 5; done
           gh release edit "$TAG" --draft=false --prerelease

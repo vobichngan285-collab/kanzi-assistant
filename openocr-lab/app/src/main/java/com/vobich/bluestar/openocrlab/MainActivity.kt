@@ -8,8 +8,8 @@ import kotlin.math.*
 import java.util.concurrent.Executors
 class MainActivity:Activity(){
  private val worker=Executors.newSingleThreadExecutor()
- private val names=listOf("YOLO26n-Text","YOLO26s-Text","YOLO26m-Text","YOLO26l-Text","YOLO26x-Text","OpenOCR RepViT-DB")
- private val assets=listOf("yolo26n-text.onnx","yolo26s-text.onnx","yolo26m-text.onnx","yolo26l-text.onnx","yolo26x-text.onnx")
+ private val names=listOf("YOLO26n-Text","OpenOCR RepViT-DB")
+ private val assets=listOf("yolo26n-text.onnx")
  private lateinit var model:Spinner;private lateinit var threads:Spinner;private lateinit var scan:Spinner;private lateinit var layout:Spinner;private lateinit var viewModel:Spinner
  private lateinit var preview:ImageView;private lateinit var output:TextView;private lateinit var status:TextView
  private lateinit var choose:Button;private lateinit var single:Button;private lateinit var all:Button
@@ -22,12 +22,12 @@ class MainActivity:Activity(){
   fun label(t:String)=TextView(this).apply{text=t;textSize=17f;box.addView(this)}
   fun spinner(values:List<String>)=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,values);box.addView(this)}
   fun button(t:String,action:()->Unit)=Button(this).apply{text=t;box.addView(this);setOnClickListener{action()}}
-  label("蓝星 OpenOCR Arena v0.2.0 · 六模型 · 离线")
+  label("蓝星 OpenOCR Adaptive v0.3.0 · 双模型 · 离线")
   choose=button("选择相册原图"){startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},9)}
-  model=spinner(names);threads=spinner(listOf("CPU 4线程","CPU 2线程","CPU 6线程"))
+  model=spinner(names);model.setSelection(1);threads=spinner(listOf("CPU 4线程","CPU 2线程","CPU 6线程"))
   scan=spinner(listOf("全图单次检测（默认）","全图＋四块高清检测"))
-  layout=spinner(listOf("原始框识别（默认）","v0.1.4混合排版","v0.1.5完整竖列","横排行列裁剪"))
-  single=button("单模型测试"){test(false)};all=button("六模型一键擂台"){test(true)}
+  layout=spinner(listOf("原始框识别（默认）","v0.1.4混合排版","v0.1.5完整竖列","横排行列裁剪","自适应保真裁剪（新）"));layout.setSelection(4)
+  single=button("单模型测试"){test(false)};all=button("双模型对照"){test(true)}
   status=label("请选择图片")
   label("画框预览：黄色原始框 / 青色横排 / 紫色竖排")
   viewModel=spinner(names)
@@ -50,14 +50,14 @@ class MainActivity:Activity(){
  private fun loadDetector(id:Int,nt:Int){
   if(key=="$id/$nt"&&detect!=null)return
   releaseDetector()
-  if(id==5){val d=DbLocator(this,nt);detector=d;inputDescription="DB native (max960 if dynamic)";detect={d.locate(it)}}
+  if(id==1){val d=DbLocator(this,nt);detector=d;inputDescription="DB native (max960 if dynamic)";detect={d.locate(it)}}
   else{val d=TextLocator(this,assets[id],nt);detector=d;inputDescription="${d.inputSide}x${d.inputSide}";detect={d.locate(it).boxes}}
   key="$id/$nt"
  }
  private fun test(arena:Boolean){
   val bm=source?:return;val ids=if(arena)names.indices.toList()else listOf(model.selectedItemPosition)
   val nt=listOf(4,2,6)[threads.selectedItemPosition];val tiled=scan.selectedItemPosition==1;val kind=layout.selectedItemPosition
-  busy(true);output.text="Arena v0.2.0 source=${bm.width}x${bm.height} threads=$nt tiles=$tiled layout=$kind\n"
+  busy(true);output.text="Adaptive v0.3.0 source=${bm.width}x${bm.height} threads=$nt tiles=$tiled layout=$kind\n"
   worker.execute{
    try{
     val load=now();if(reader==null||readerThreads!=nt){reader?.close();reader=null;reader=Reader(this,"rep.onnx",nt);readerThreads=nt}
@@ -78,21 +78,31 @@ class MainActivity:Activity(){
         try{raw.addAll(detect!!(tile).map{q->TextLocator.Box(q.points.mapIndexed{i,v->v+if(i%2==0)l else t}.toFloatArray(),q.score)})}finally{if(tile!==bm)tile.recycle()}
        }
        val tileMs=now()-tileStart;val planStart=now();val boxes=MixedLayout.dedup(raw)
+       val adapted=if(kind==4)AdaptiveLayout.plan(boxes,bm.width,bm.height)else null
        val blocks=when(kind){
+        4->adapted!!.blocks
         1->MixedLayout.plan(boxes,bm.width,bm.height)
         2->MixedLayout.completePlan(boxes,bm.width,bm.height)
         3->RowPlanner.plan(boxes,bm.width,bm.height,1.6f,true).rows.map{MixedLayout.Block(it,false)}
         else->boxes.sortedWith(compareBy<TextLocator.Box>{it.rect.top}.thenBy{it.rect.left}).map{MixedLayout.Block(listOf(it),it.rect.height()>it.rect.width()*2.2f)}
        }
        val planMs=now()-planStart
-       val begin=now();val lines=mutableListOf<String>();val details=mutableListOf<String>();var first=-1L;var n=0
+       val begin=now();val lines=mutableListOf<String>();val details=mutableListOf<String>();var first=-1L;var n=0;var retries=0
        for((i,block) in blocks.withIndex()){
         val parts=mutableListOf<String>()
         for(q in block.boxes){
-         val ans=if(block.vertical)MixedLayout.verticalRead(bm,q,rec,kind==2)else rec.read(bm,q,kind!=0)
-         val text=ans.text.trim();val suspect=FineRead.suspicious(ans,q.score)||text.isBlank()||ans.confidence<.4f
+         val ans=if(block.vertical)MixedLayout.verticalRead(bm,q,rec,kind==2||kind==4,kind==4)else rec.read(bm,q,kind!=0&&adapted?.raw?.contains(q)!=true)
+         val text=ans.text.trim()
+         var alternate:Reader.Answer?=null
+         val alt=adapted?.alternates?.get(q)
+         val weak=ans.confidence<.75f||ans.minConfidence<.65f
+         if(alt!=null&&retries<6&&(weak||CropPolicy.isSignedNumber(text))){
+          alternate=rec.read(bm,alt,true);retries++
+         }
+         val conflict=alternate!=null&&alternate.text.trim()!=text
+         val suspect=FineRead.suspicious(ans,q.score)||text.isBlank()||ans.confidence<.4f||(kind==4&&(weak||conflict))
          parts.add(if(suspect)"[待核:$text]"else text)
-         n++;details.add("cell=$i vertical=${block.vertical} quad=${q.points.contentToString()} det=${q.score} rec=${ans.confidence} min=${ans.minConfidence} suspect=$suspect text=$text")
+         n++;details.add("cell=$i vertical=${block.vertical} quad=${q.points.contentToString()} det=${q.score} rec=${ans.confidence} min=${ans.minConfidence} suspect=$suspect text=$text"+(alternate?.let{" retry_text=${it.text} retry_rec=${it.confidence} retry_min=${it.minConfidence} conflict=$conflict retry_quad=${alt!!.points.contentToString()}"}?:""))
         }
         lines.add(parts.joinToString(" | "));if(first<0)first=now()-begin
        }
@@ -105,7 +115,7 @@ class MainActivity:Activity(){
         paint.color=Color.YELLOW;raw.forEach{draw(it)}
         blocks.forEach{bl->paint.color=if(bl.vertical)Color.MAGENTA else Color.CYAN;bl.boxes.forEach{draw(it)}}
        }
-       val report="\n${names[id]} round=${round+1} input=$inputDescription detector_load_ms=${if(round==0)initMs else 0} global_ms=$global tile_ms=$tileMs raw_boxes=${raw.size} unique_boxes=${boxes.size} blocks=${blocks.size} crops=$n plan_ms=$planMs rec_ms=$recMs first_ms=$first total_ms=${global+tileMs+planMs+recMs} pss_kb=$mem\n"+lines.joinToString("\n")+"\n"+raw.mapIndexed{i,q->"raw=$i det=${q.score} quad=${q.points.contentToString()}"}.joinToString("\n")+"\n"+details.joinToString("\n")+"\n"
+       val report="\n${names[id]} round=${round+1} input=$inputDescription detector_load_ms=${if(round==0)initMs else 0} global_ms=$global tile_ms=$tileMs raw_boxes=${raw.size} unique_boxes=${boxes.size} blocks=${blocks.size} crops=$n retry_crops=$retries plan_ms=$planMs rec_ms=$recMs first_ms=$first total_ms=${global+tileMs+planMs+recMs} pss_kb=$mem\n"+lines.joinToString("\n")+"\n"+raw.mapIndexed{i,q->"raw=$i det=${q.score} quad=${q.points.contentToString()}"}.joinToString("\n")+"\n"+details.joinToString("\n")+"\n"
        runOnUiThread{preview.setImageBitmap(shown);previews.put(id,shown)?.recycle();viewModel.setSelection(id);output.append(report)}
       }
      }catch(t:Throwable){releaseDetector();runOnUiThread{output.append("\n${names[id]} FAILED: $t\n")}}

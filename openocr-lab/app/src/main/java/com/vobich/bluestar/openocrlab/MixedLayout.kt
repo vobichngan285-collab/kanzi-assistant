@@ -103,7 +103,7 @@ object MixedLayout {
    (0 until n).map{k->(a.first+k*len/n) until (a.first+(k+1)*len/n)}
   }.filter{it.last-it.first+1>=max(2,width/10)}
  }
- fun verticalRead(bm:Bitmap,box:TextLocator.Box,reader:Reader,refine:Boolean=false):Reader.Answer{
+ fun verticalRead(bm:Bitmap,box:TextLocator.Box,reader:Reader,refine:Boolean=false,adaptive:Boolean=false):Reader.Answer{
   val p=box.points
   // Choose the top-left corner and clockwise order so glyphs remain upright.
   val start=(0..3).minByOrNull{p[it*2]+p[it*2+1]}!!
@@ -118,8 +118,10 @@ object MixedLayout {
    Canvas(strip).apply{drawColor(Color.WHITE);drawBitmap(bm,m,Paint(Paint.FILTER_BITMAP_FLAG))}
    val pixels=IntArray(w*h);strip.getPixels(pixels,0,w,0,0,w,h)
    fun gray(c:Int)=(Color.red(c)*3+Color.green(c)*6+Color.blue(c))/10
-   val bg=pixels.map{gray(it)}.sorted().let{it[it.size*3/4]}
-   val profile=IntArray(h){y->(w/10 until w-w/10).count{x->gray(pixels[y*w+x])<bg-35}}
+   val analyzed=if(adaptive)GlyphProjection.analyze(IntArray(pixels.size){gray(pixels[it])},w,h)else null
+   val bg=analyzed?.background?:pixels.map{gray(it)}.sorted().let{it[it.size*3/4]}
+   val profile=analyzed?.profile?:IntArray(h){y->(w/10 until w-w/10).count{x->gray(pixels[y*w+x])<bg-35}}
+   val background=if(adaptive)(0 until h).flatMap{y->listOf(pixels[y*w],pixels[y*w+w-1])}.minByOrNull{abs(gray(it)-bg)}?:Color.rgb(bg,bg,bg)else Color.rgb(bg,bg,bg)
    val basic=cuts(profile,w)
    val parts=if(refine)VerticalTracks.gridCuts(profile,w,basic)else basic
    if(parts.isEmpty())return Reader.Answer("",0f,320,0f)
@@ -128,11 +130,14 @@ object MixedLayout {
    for(chunk in parts.chunked(12)){
     val line=Bitmap.createBitmap(chunk.size*64,64,Bitmap.Config.ARGB_8888)
     try{
-     val canvas=Canvas(line);canvas.drawColor(Color.rgb(bg,bg,bg))
+     val canvas=Canvas(line);canvas.drawColor(background)
      for((i,a) in chunk.withIndex()){
       val top=max(0,a.first-2);val bottom=min(h,a.last+3);val len=bottom-top
-      val destH=min(60,len);val dy=(64-destH)/2
-      canvas.drawBitmap(strip,Rect(0,top,w,bottom),Rect(i*64+2,dy,i*64+62,dy+destH),Paint(Paint.FILTER_BITMAP_FLAG))
+      val scale=if(adaptive)min(60f/w,60f/len)else 1f
+      val destW=if(adaptive)(w*scale).roundToInt().coerceIn(1,60)else 60
+      val destH=if(adaptive)(len*scale).roundToInt().coerceIn(1,60)else min(60,len)
+      val dy=(64-destH)/2;val dx=i*64+(64-destW)/2
+      canvas.drawBitmap(strip,Rect(0,top,w,bottom),Rect(dx,dy,dx+destW,dy+destH),Paint(Paint.FILTER_BITMAP_FLAG))
      }
      val ans=reader.read(line,axis(RectF(0f,0f,line.width.toFloat(),64f),box.score),true)
      out.append(ans.text);sum+=ans.confidence;minConf=min(minConf,ans.minConfidence);count++
