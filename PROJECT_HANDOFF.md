@@ -1,3 +1,13 @@
+# 最新｜2026-11-26 蓝星 OpenOCR Focus v0.4.1 原文 TTS 真机成功，用户授权冻结
+- 用户明确反馈：「实验圆满成功，反应速度特别快。我哪怕给了他一张书本的密集文字，它也能在零点几秒一秒的样子给我出结果」。随后明确授权保护、冻结该版本并写入交接文档。约零点几秒至1秒为用户主观出结果体感，未提供本轮精确OCR/TTS日志、图像真值、逐字准确率或真实扬声器首声测量，不将其宣称为严格测速或全部场景性能。
+- **冻结对象：** 独立 OpenOCR Focus TTS v0.4.1，源码分支 exp/openocr-system-tts-20261126，成功构建提交 c550509adb2997c5a009a6c5c4a461df4e7f393c，基于 Focus v0.4.0 c5e20868f61a1bf41a937d99af4df68ee913188e；CI 45796601073 completed/success（https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45796601073）。独立包名 com.vobich.bluestar.openocrlab.focustts，versionCode10/versionName0.4.1。保留正式APP与历史实验。
+- **已回读发布与固定tag：** bluestar-openocr-focus-tts-v041-20261126，非draft、prerelease；tag直接指向上述成功提交。APK BlueStar_OpenOCR_Focus_TTS_0.4.1.apk，43776133 bytes，SHA256 03882dbc9187637fd34d2359f28e18e66ced2f946da547af9cd20dd611821d62。下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-openocr-focus-tts-v041-20261126/BlueStar_OpenOCR_Focus_TTS_0.4.1.apk 。
+- **成功方案：** 原YOLO26n-Text检测、RepSVTR识别和字典、CPU4默认、Focus v0.4.0四种阅读区域模式及原行列裁剪算法不变；普通模式单轮识别，显示非空原始识别文本，按原行列顺序以空格/换行连接，完成即调用系统默认TTS，不加入诊断或待核标记，不擅自删除可疑原文字，不进行AI修饰；短文本整体入队，超过系统长度限制才无损分段，支持停止和重新朗读。同图对照保留每模式两轮且不自动朗读。记录点击至原文就绪、入队、首段及结束回调；回调不等于物理出声。APP无INTERNET权限，外部系统TTS是否真正离线取决于所选引擎和音色。
+- **整体架构不要混淆：** OCR仅是蓝星向导的眼睛，Google Gemma离线模型是独立大脑，系统TTS是嘴巴；本版只验证眼睛直达嘴巴，未接入Gemma。建议保留直接朗读快速通道，理解/推理/任务匹配另走智能通道；后者尚未集成或授权开发。此前v0.1.3为OCR识别/区域算法历史基线，不是当前成功实验APP的版本；当前冻结的是包含原v0.4.0四模式的v0.4.1。
+- **冻结规则：** 禁止在本成功分支原地继续实验、移动或删除成功tag、覆盖旧Release/APK、重新选型或擅改模型、字典、推理配置、原始阅读和TTS逻辑；后续经用户授权才从固定成功提交派生新独立分支、独立包名及新Release，保留可回退基线。此为用户授权的研发冻结约定与固定版本引用，并非已启用GitHub服务端强制分支保护或不可变Release。此次仅更新交接文档，不改实验或正式APP源码，不触发新构建，不上传照片、书本原文或私人信息。
+
+---
+
 # 最新｜v0.1.4 560混合视觉实验 APK已发布，等待真机验证
 - CI45730569587 全部成功，HEAD b96bc13b451eb421bdea04336c54b84bdeb2835b；native job139611255448：46/46 JNI接口、依赖闭包、AAR原非JNI条目逐个哈希验证通过，hybrid-maven artifact15076283612；build job139611611452：单元测试/编译成功，签名v2验证，独立包名com.vobich.bluestar.gemmalab.vision560.hybrid，versionCode5/versionName0.1.4，离线权限、两个原生库哈希和模型资产校验均成功，APK artifact15077220243；publish job139613110103成功。
 - 已回读Release，非草稿、prerelease，tag bluestar-gemma-v014-560-hybrid-20261126；APK 702063949 bytes，SHA256 e8ed82f22e1713e554211f9742d85fd9f1084bf16967b54bc6f09376884842a9，真实下载地址 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-gemma-v014-560-hybrid-20261126/BlueStar_Gemma_560_Hybrid_0.1.4.apk 。
