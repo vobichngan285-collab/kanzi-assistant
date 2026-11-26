@@ -2319,3 +2319,7 @@ OpenOCR官方移动端配套为RepViT-DB检测（configs/det/dbnet/repvit_db.yml
 
 ## 2026-11-26 — 海报DB原始框模式补测
 用户回传DB layout=0、CPU4、tiles=false、3072×4096，两轮RAW/CELL一致，与此前layout3原始12框一致；12 crops，6 vertical=true，3 suspect，0空框。global260/235ms，rec539/514ms，total800/749ms（平均774.5ms），PSS399206/488288KiB，识别器加载218ms、检测器首次84ms另计。五条长竖列独立保留，但输出不连贯，4/5未标待核，最低字符置信度部分低至0.115–0.178。源码MainActivity.kt第92行确认vertical=true走MixedLayout.verticalRead(bm,q,rec,kind==2)，layout0已有竖排重排但不启用kind2完整列增强；非单纯横向旋转。原图真值、字符分割中间结果未核验，不能断定错误只来自识别权重或分割。下一步仍优先DB同图CPU4全图layout2（v0.1.5完整竖列）两轮，与layout0比较，再YOLO26n同配置；暂不启动四块高清、改代码、构建或换正式模型。用户可自行决定何时继续；本次仅备份数值及诊断结论，不存私人OCR原文/图片。
+
+
+## 2026-11-26 — 价目表DB原始框重复验证
+用户回传Arena v0.2.0 RepViT-DB、3072×4096、CPU4、tiles=false、layout=0，两轮raw/unique/blocks/crops均51，6 suspect、3空框、0 vertical，坐标/文本/置信度两轮一致，且已知乱序及两个疑似多余金额负号等错误复现。global296/239ms，rec1266/1232ms，plan3/2ms，total1565/1473ms（均1519ms），PSS421731/509315KiB，识别器加载213ms、检测器首次57ms单计。相对六模型擂台DB平均1710.5ms耗时减少11.2%，无代码或模型变化，不能归因于优化。无需再重复layout0。未完成的重点实验：价目表DB与YOLO26n同图CPU4全图layout3横排行列裁剪；海报DB与YOLO26n同图CPU4全图layout2完整竖列，优先DB。原图真值仍未核验，不做CER或换模验收；保留v0.1.3稳定基线。未修改源码、APK或正式应用，不上传原图/OCR原文。
