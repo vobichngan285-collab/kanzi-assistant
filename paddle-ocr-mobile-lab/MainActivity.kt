@@ -13,7 +13,12 @@ import android.widget.*
 import com.paddle.ocr.PaddleOCR
 import com.paddle.ocr.PaddleOCRConfig
 import com.paddle.ocr.EngineConfig
-import com.paddle.ocr.util.OpenCVUtils
+import org.opencv.core.Core
+import org.opencv.core.Mat
+import org.opencv.core.CvType
+import android.system.Os
+import android.system.OsConstants
+import android.util.Log
 import kotlinx.coroutines.*
 
 class MainActivity: Activity() {
@@ -29,6 +34,7 @@ class MainActivity: Activity() {
  private lateinit var modes:Spinner
  private lateinit var reference:EditText
  private val logs=StringBuilder()
+ private var cvReady=false
  private fun now()=SystemClock.elapsedRealtime()
  private fun note(s:String){logs.append(s).append('\n');diagnostics.text=logs.toString()}
  private fun copy(s:String){(getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("OCR",s));Toast.makeText(this,"已复制",Toast.LENGTH_SHORT).show()}
@@ -39,7 +45,7 @@ class MainActivity: Activity() {
   setContentView(ScrollView(this).apply{addView(root)})
   fun label(s:String,size:Float=18f)=TextView(this).apply{text=s;textSize=size;setTextIsSelectable(true);root.addView(this)}
   fun button(s:String,action:()->Unit)=Button(this).apply{text=s;isAllCaps=false;setOnClickListener{action()};root.addView(this)}
-  label("蓝星 · 飞桨离线OCR实验 0.1.0",24f)
+  label("蓝星 · 飞桨离线OCR实验 0.1.1",24f)
   label("官方 PP-OCRv5 Mobile · ONNX CPU4 · 不使用大模型")
   status=label("请选择相册原图")
   pick=button("选择相册原图"){startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},11)}
@@ -61,7 +67,8 @@ class MainActivity: Activity() {
   }
   button("复制完整诊断日志"){copy(logs.toString())}
   diagnostics=label("",14f)
-  note("v=0.1.0 soc="+Build.SOC_MODEL+" sdk="+Build.VERSION.SDK_INT+" model=PP-OCRv5_mobile_det+rec threads=4")
+  note("v=0.1.1 soc="+Build.SOC_MODEL+" sdk="+Build.VERSION.SDK_INT+" model=PP-OCRv5_mobile_det+rec threads=4")
+  note("abi="+Build.SUPPORTED_ABIS.joinToString(",")+" page_size="+Os.sysconf(OsConstants._SC_PAGESIZE)+" native_dir="+applicationInfo.nativeLibraryDir)
   note(assets.open("model-sha256.txt").bufferedReader().use{it.readText()})
  }
  @Deprecated("Activity callback")
@@ -87,21 +94,33 @@ class MainActivity: Activity() {
   val cap=listOf(1280,2560,4000)[modes.selectedItemPosition]
   lock(true);output.text="";status.text="识别中..."
   scope.launch{
+   var stage="initialization"
    try{
     val start=now();val reused=engine!=null&&engineCap==cap
     var load=0L
     if(!reused){
      engine?.release();engine=null
-     val t=now();check(withContext(Dispatchers.IO){OpenCVUtils.init(this@MainActivity)})
+     val t=now()
+     stage="OpenCV native load"
+     if(!cvReady){
+      val cv=withContext(Dispatchers.IO){
+       System.loadLibrary("opencv_java4")
+       val mat=Mat.eye(2,2,CvType.CV_8UC1)
+       try{require(Core.countNonZero(mat)==2){"OpenCV native self-test failed"};Core.VERSION}finally{mat.release()}
+      }
+      cvReady=true;note("opencv_native_ok version="+cv)
+     }
+     stage="ONNX model session load";note("loading ONNX det+rec")
      engine=PaddleOCR.create(this@MainActivity,PaddleOCRConfig(detLimitSideLen=cap,detLimitType="max",detMaxSideLimit=cap,recScoreThresh=0f,recBatchSize=1),EngineConfig(numThreads=4))
-     engineCap=cap;load=now()-t
+     engineCap=cap;load=now()-t;note("model_sessions_ok load_ms="+load)
     }
+    stage="OCR detection/recognition";note("ocr_begin cap="+cap)
     val result=engine!!.recognize(image);val elapsed=now()-start
     output.text=result.results.joinToString("\n"){it.text}
     note("cap="+cap+" reused="+reused+" load_ms="+load+" detection_ms="+result.detectionTimeMs+" recognition_ms="+result.recognitionTimeMs+" sdk_total_ms="+result.totalTimeMs+" click_to_result_ms="+elapsed+" lines="+result.lineCount)
     result.results.forEachIndexed{i,v->note("line="+i+" confidence="+v.confidence+" box="+v.box.points+" text="+v.text)}
     status.text="完成 · "+elapsed+"ms · "+result.lineCount+"行"
-   }catch(t:Throwable){status.text="识别失败："+t.message;note(status.text.toString())}finally{lock(false)}
+   }catch(t:Throwable){status.text="识别失败 ["+stage+"]："+t.javaClass.simpleName+": "+t.message;note(status.text.toString());note(Log.getStackTraceString(t));try{engine?.release()}catch(e:Throwable){note("release_error="+e)};engine=null;engineCap=0}finally{lock(false)}
   }
  }
  override fun onDestroy(){scope.cancel();super.onDestroy()}

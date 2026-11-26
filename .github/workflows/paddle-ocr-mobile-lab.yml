@@ -52,6 +52,9 @@ jobs:
           cd android-lab/ppocr-sdk/src/main/assets
           sha256sum models/det/inference.onnx models/rec/inference.onnx models/rec/inference.yml > model-sha256.txt
           cat model-sha256.txt
+          echo 'a431985659dc921974177a95adcfbb90fd9e51989a5e04d70d0b75f597b6e61d  models/det/inference.onnx' | sha256sum -c -
+          echo 'da72dc72ca4dc220df0dfde68c1dedc31c58d3e76a25871122e5056227d50092  models/rec/inference.onnx' | sha256sum -c -
+          echo '5dfeb2777f6d0db8177d8128a8acfcf6e6276dc4ac73ea3bf0dc06d6a5e85d8e  models/rec/inference.yml' | sha256sum -c -
       - name: Install Android SDK and isolate accessible test UI
         run: |
           set -euo pipefail
@@ -68,7 +71,12 @@ jobs:
           p=Path("android-lab/app/build.gradle.kts")
           s=p.read_text()
           assert 'applicationId = "com.paddle.ocr.demo"' in s
-          s=s.replace('applicationId = "com.paddle.ocr.demo"','applicationId = "com.vobich.bluestar.paddlelab"').replace('versionName = "1.0.0"','versionName = "0.1.0"').replace('minSdk = 26','minSdk = 26\n        ndk { abiFilters += "arm64-v8a" }').replace('implementation(project(":ppocr-sdk"))','implementation(project(":ppocr-sdk"))\n    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")')
+          s=s.replace('applicationId = "com.paddle.ocr.demo"','applicationId = "com.vobich.bluestar.paddlelab.v011"').replace('versionName = "1.0.0"','versionName = "0.1.1"').replace('minSdk = 26','minSdk = 26\n        ndk { abiFilters += "arm64-v8a" }').replace('implementation(project(":ppocr-sdk"))','implementation(project(":ppocr-sdk"))\n    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")')
+          p.write_text(s)
+          p=Path("android-lab/gradle/libs.versions.toml")
+          s=p.read_text()
+          assert 'opencv = "4.5.3"' in s and 'onnxruntime = "1.21.1"' in s
+          s=s.replace('opencv = "4.5.3"','opencv = "4.12.0"').replace('group = "com.quickbirdstudios", name = "opencv"','group = "org.opencv", name = "opencv"').replace('onnxruntime = "1.21.1"','onnxruntime = "1.22.0"')
           p.write_text(s)
           p=Path("android-lab/settings.gradle.kts");s=p.read_text();s=s.replace('maven { url = uri("https://maven.aliyun.com/repository/google") }','').replace('maven { url = uri("https://maven.aliyun.com/repository/central") }','maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2") }').replace('maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }','');p.write_text(s)
           PY
@@ -81,8 +89,31 @@ jobs:
           APK=android-lab/app/build/outputs/apk/debug/app-debug.apk
           BT="$ANDROID_HOME/build-tools/35.0.0"
           "$BT/apksigner" verify --verbose --print-certs "$APK"
+          "$BT/zipalign" -c -P 16 -v 4 "$APK" > zipalign.txt
+          python - <<'PY'
+          import zipfile, pathlib, subprocess
+          root=pathlib.Path("native-audit");root.mkdir(exist_ok=True)
+          with zipfile.ZipFile("android-lab/app/build/outputs/apk/debug/app-debug.apk") as z:
+              names=[n for n in z.namelist() if n.startswith("lib/arm64-v8a/") and n.endswith(".so")]
+              libs={pathlib.Path(n).name for n in names}
+              assert {"libopencv_java4.so","libonnxruntime.so","libonnxruntime4j_jni.so","libc++_shared.so"} <= libs,libs
+              syslibs={"libc.so","libm.so","libdl.so","liblog.so","libandroid.so","libz.so","libjnigraphics.so","libEGL.so","libGLESv2.so","libGLESv3.so","libOpenSLES.so","libmediandk.so","libvulkan.so","libnativewindow.so","libcamera2ndk.so","libaaudio.so","libneuralnetworks.so","libatomic.so"}
+              report=[]
+              import re
+              for name in names:
+                  p=root/pathlib.Path(name).name;p.write_bytes(z.read(name))
+                  headers=subprocess.check_output(["readelf","-lW",str(p)],text=True)
+                  dynamic=subprocess.check_output(["readelf","-dW",str(p)],text=True)
+                  needed=set(re.findall(r'\(NEEDED\).*?\[(.*?)\]',dynamic))
+                  align=[int(line.split()[-1],16) for line in headers.splitlines() if line.strip().startswith("LOAD ")]
+                  assert align and min(align)>=16384,(p.name,align)
+                  assert needed <= libs|syslibs,(p.name,needed-libs-syslibs)
+                  report.append(p.name+" alignment="+str(align)+" needed="+",".join(sorted(needed)))
+              pathlib.Path("native-audit.txt").write_text("\n".join(report)+"\n")
+          PY
+          cat native-audit.txt
           "$BT/aapt" dump badging "$APK" | tee badging.txt
-          grep -F "package: name='com.vobich.bluestar.paddlelab' versionCode='1' versionName='0.1.0'" badging.txt
+          grep -F "package: name='com.vobich.bluestar.paddlelab.v011' versionCode='1' versionName='0.1.1'" badging.txt
           ! grep -F 'android.permission.INTERNET' badging.txt
           python - <<'PY'
           import zipfile,hashlib,pathlib
@@ -95,12 +126,12 @@ jobs:
                   assert hashlib.sha256(z.read("assets/"+name)).hexdigest()==hashlib.sha256((root/name).read_bytes()).hexdigest(),name
           PY
           mkdir release
-          cp "$APK" release/BlueStar_Paddle_OCR_Mobile_0.1.0.apk
-          cp paddle-ocr-mobile-lab/README.md android-lab/LICENSE android-lab/ppocr-sdk/src/main/assets/model-sha256.txt release/
+          cp "$APK" release/BlueStar_Paddle_OCR_Mobile_0.1.1.apk
+          cp paddle-ocr-mobile-lab/README.md android-lab/LICENSE android-lab/ppocr-sdk/src/main/assets/model-sha256.txt native-audit.txt release/
           (cd release && sha256sum *.apk > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:
-          name: bluestar-paddle-ocr-v010
+          name: bluestar-paddle-ocr-v011
           path: release/
   publish:
     needs: build
@@ -110,7 +141,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: bluestar-paddle-ocr-v010
+          name: bluestar-paddle-ocr-v011
           path: release
       - name: Publish verified isolated test APK
         env:
@@ -119,9 +150,9 @@ jobs:
         run: |
           set -euo pipefail
           (cd release && sha256sum -c SHA256SUMS.txt)
-          TAG=bluestar-paddle-ocr-mobile-v010-20261126
+          TAG=bluestar-paddle-ocr-mobile-v011-20261126
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 飞桨OCR独立实验 0.1.0" --notes-file release/README.md --prerelease --draft
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 飞桨OCR独立实验 0.1.1" --notes-file release/README.md --prerelease --draft
           fi
           gh release view "$TAG" --json targetCommitish | jq -e --arg sha "$GITHUB_SHA" '.targetCommitish == $sha'
           for i in 1 2 3; do gh release upload "$TAG" release/* --clobber && break; test "$i" != 3; sleep 5; done
