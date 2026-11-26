@@ -1,3 +1,10 @@
+# 最新｜v0.1.4 arm64 JNI源码编译成功，AAR下载错误修复
+- CI45723493748 native job139587382686：Bazel 4238 actions编译成功、941.304s，产出bazel-bin/kotlin/java/com/google/ai/edge/litertlm/jni/liblitertlm_jni.so；cquery成功。随后获取Maven Central原厂AAR时HTTP404，未进行JNI ABI核验，APK和发布被跳过，故不能宣称混合视觉真机成功。诊断artifact15072979948；当次JNI未独立上传。
+- 隔离分支 exp/gemma4-560-hybrid-20261126 新HEAD 57b57bef5750c300dcefe83d20f4f729a43d3498：将固定v0.18.1 AAR/POM提前通过Google Maven及Central候选源下载，校验ZIP/ELF/POM坐标，再编译；编译成功立即上传独立JNI artifact，以便后续兼容检查失败时复用。不改560模型、正式APP或数值补丁。CI45725894735 in_progress，https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45725894735 尚无APK。
+- 用户确认修复560比280识别更准，裁切/整图价格表准确率相近；若560最终速度不可接受倾向放弃Gemma OCR，讨论PP-OCR负责文字、原厂Gemma280负责理解/问答和任务匹配的组合，但尚未授权开发该组合，不修改正式APP。
+
+---
+
 # 最新｜v0.1.4 Bazel依赖冲突修复并重跑
 - CI45722867944 native job139585257935 环境准备、固定官方源码及混合补丁均成功，Bazel仓库映射失败：TensorFlow workspace1.bzl load compatibility_proxy_repo，而旧rules_cc无该符号。未进入JNI编译完成。报告artifact15072828212。
 - 核对官方v0.18.1 WORKSPACE有两组TensorFlow/LiteRT pin，后面的TF a1179d3c224967bd979950b823d5ce2a7e8f4c94实际生效，workspace1确实调用compatibility_proxy_repo；rules_cc 0.2.9源代码含此函数，并采用Bazel 7兼容native分支。BCR source.json提供固定archive integrity。隔离分支 exp/gemma4-560-hybrid-20261126 HEAD bd81240aff962f887a36f8ff1b9be1ff2572596f 仅在CI内固定rules_cc 0.2.9及完整校验，不改模型、560预算、原修复权重或正式APP；该兼容修复尚未通过完整编译。新增WORKSPACE diff诊断。
