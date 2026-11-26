@@ -1,0 +1,93 @@
+name: Blue Star YOLO26 Text + stock Gemma 280 lab
+on:
+  push:
+    branches: [exp/yolo26-text-gemma280-20261126]
+    paths: ['gemma-vision-lab/**', 'yolo26-gemma280/**', '.github/workflows/yolo26-gemma280.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Export official YOLO26n-Text and verify detector output
+        env:
+          YOLO_AUTOINSTALL: "false"
+        run: |
+          set -euo pipefail
+          python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install 'ultralytics==8.4.212' onnx onnxruntime pillow
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
+          python -u yolo26-gemma280/export.py
+      - name: Prepare Android SDK
+        run: |
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Test and build independent APK
+        working-directory: gemma-vision-lab
+        run: gradle --no-daemon --max-workers=2 :app:testReleaseUnitTest :app:assembleRelease
+      - name: Verify signature, identity, offline permission and native runtime
+        run: |
+          set -euo pipefail
+          APK=gemma-vision-lab/app/build/outputs/apk/release/app-release.apk
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/apksigner" verify --verbose --print-certs "$APK"
+          "$BT/aapt" dump badging "$APK" | tee badging.txt
+          grep -F "package: name='com.vobich.bluestar.gemmalab.yolotext' versionCode='1' versionName='0.1.0'" badging.txt
+          grep -F "launchable-activity: name='com.vobich.bluestar.gemmalab.MainActivity'" badging.txt
+          ! grep -F "android.permission.INTERNET" badging.txt
+          unzip -Z1 "$APK" > archive.txt
+          grep -E '^lib/arm64-v8a/.*litert.*\.so$' archive.txt
+          ! grep -E '^lib/(x86|x86_64|armeabi-v7a)/' archive.txt
+          grep -Fx "assets/yolo26n-text.onnx" archive.txt
+          grep -Fx "lib/arm64-v8a/libonnxruntime.so" archive.txt
+          unzip -p "$APK" assets/yolo26n-text.onnx | sha256sum | grep -F "$(jq -r .onnx_sha256 detector-report.json)"
+          mkdir -p release
+          cp "$APK" release/BlueStar_YOLO26_Text_Gemma280_0.1.0.apk
+          cp gemma-vision-lab/README.md detector-report.json release/
+          (cd release && sha256sum *.apk > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bluestar-yolo26-gemma280-v010
+          path: release/
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: bluestar-yolo26-gemma280-v010
+          path: release
+      - name: Publish verified APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          (cd release && sha256sum -c SHA256SUMS.txt)
+          TAG=bluestar-yolo26-gemma280-v010-20261126
+          retry() { for i in 1 2 3 4; do "$@" && return 0; sleep $((i*3)); done; return 1; }
+          if ! gh release view "$TAG" --json targetCommitish >/dev/null 2>&1; then
+            retry gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 YOLO26文字定位＋Gemma280 v0.1.0" --notes-file release/README.md --prerelease --draft
+          fi
+          gh release view "$TAG" --json targetCommitish | jq -e --arg sha "$GITHUB_SHA" '.targetCommitish == $sha'
+          retry gh release upload "$TAG" release/* --clobber
+          retry gh release edit "$TAG" --draft=false --prerelease

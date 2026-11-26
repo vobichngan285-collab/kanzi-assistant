@@ -32,6 +32,8 @@ class MainActivity:Activity(){
  private lateinit var backend:Spinner
  private lateinit var mode:Spinner
  private lateinit var budget:Spinner
+ private lateinit var preview:ImageView
+ private var locator:TextLocator?=null
  private lateinit var speech:CheckBox
  private lateinit var follow:Button
  private val controls=mutableListOf<View>()
@@ -69,8 +71,8 @@ class MainActivity:Activity(){
    require(m is ModelInfo.Llm){"模型非LLM"}
    val ceiling=m.maxVisionTokenBudget()
    val opts=Policy.budgets(m.visionSignatureSelection(),ceiling)
-   require(opts.isNotEmpty()){"无有效视觉签名"}
-   opts to ("max_visual="+ceiling+" options="+opts.joinToString(",")+" context="+m.maxContextTokens())
+   require(ceiling==280&&opts.contains(280)){"不是原厂280视觉模型"}
+   listOf(280) to ("max_visual="+ceiling+" options="+opts.joinToString(",")+" context="+m.maxContextTokens())
   }
   ui{options=data.first;budget.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,options.map{it.toString()});budget.setSelection(options.indexOf(280).takeIf{it>=0}?:options.lastIndex);note(data.second);status.text="模型已验证";lock(false)}
  }
@@ -78,16 +80,17 @@ class MainActivity:Activity(){
   super.onCreate(savedInstanceState)
   root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(12),dp(12),dp(24))}
   setContentView(ScrollView(this).apply{addView(root)})
-  label("蓝星 Gemma 实验室 0.1.0",24f);label("Gemma 4 E2B · LiteRT-LM 0.18.1 · 离线")
+  label("蓝星 YOLO文字定位＋Gemma 280 v0.1.0",24f);label("Gemma 4 E2B · LiteRT-LM 0.18.1 · 离线")
   status=label("请导入官方模型")
   button("浏览器下载原厂模型（2.59GB）",{try{startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(Policy.MODEL_URL)))}catch(t:Throwable){status.text="无法打开浏览器"}})
   button("导入 .litertlm 模型",{pick(11,"*/*")})
   label("推理后端（视觉 / 语言）");backend=spinner(listOf("GPU / GPU（默认）","GPU / CPU","CPU / CPU"))
   label("视觉 Token（模型实际支持）");budget=spinner(listOf("导入后显示"))
-  label("同图输入对照（保持比例、不裁剪）");mode=spinner(listOf("原图原字节（默认）","长边1024 PNG","长边512 PNG"))
+  label("同图输入对照");mode=spinner(listOf("原图（基准）","长边1024 PNG","长边512 PNG","YOLO自动定位裁剪（默认）"));mode.setSelection(3)
   button("系统相机高清拍照",{takePhoto()})
   button("选择相册原图",{pick(12,"image/*")})
   info=label("尚未选图")
+  preview=ImageView(this).apply{adjustViewBounds=true;contentDescription="文字定位框及选定裁剪区域预览";root.addView(this,LinearLayout.LayoutParams(-1,dp(260)))}
   prompt=EditText(this).apply{setText(Policy.OCR);textSize=18f;minLines=2;hint="识别或问答指令";root.addView(this);controls.add(this)}
   speech=CheckBox(this).apply{text="流式离线朗读";isChecked=true;textSize=18f;root.addView(this);controls.add(this)}
   button("开始识别 / 新图片问答",{runTurn(false)})
@@ -150,7 +153,7 @@ class MainActivity:Activity(){
  private fun bounds(f:File)=BitmapFactory.Options().apply{inJustDecodeBounds=true;BitmapFactory.decodeFile(f.absolutePath,this)}
  private fun accept(f:File,s:String){
   val b=bounds(f);if(b.outWidth<=0||b.outHeight<=0){f.delete();status.text="无效图片";return}
-  selected?.delete();selected=f;source=s;hasChat=false;follow.isEnabled=false
+  selected?.delete();selected=f;source=s;hasChat=false;follow.isEnabled=false;preview.setImageDrawable(null)
   info.text=s+" "+b.outWidth+"×"+b.outHeight+" · "+f.length()+"字节";status.text="图片已选"
  }
  private data class Input(val bytes:ByteArray,val w:Int,val h:Int,val format:String)
@@ -158,6 +161,7 @@ class MainActivity:Activity(){
   require(f.length() in 1L..(50L*1024*1024))
   val b=bounds(f);require(b.outWidth>0&&b.outHeight>0)
   require(b.outWidth.toLong()*b.outHeight<=30_000_000L){"图片超过3000万像素"}
+  if(kind==3)return prepareYolo(f)
   val rotation=try{ExifInterface(f.absolutePath).getAttributeInt(ExifInterface.TAG_ORIENTATION,1)}catch(_:Exception){1}
   val cap=when(kind){1->1024;2->512;else->0}
   if(cap==0&&(rotation==0||rotation==1)&&(b.outMimeType=="image/jpeg"||b.outMimeType=="image/png"))return Input(f.readBytes(),b.outWidth,b.outHeight,"original_bytes")
@@ -165,6 +169,35 @@ class MainActivity:Activity(){
    val p=Policy.size(i.size.width,i.size.height,cap);decoder.allocator=ImageDecoder.ALLOCATOR_SOFTWARE;decoder.setTargetSize(p.first,p.second)
   }
   try{val out=ByteArrayOutputStream();check(bitmap.compress(Bitmap.CompressFormat.PNG,100,out));return Input(out.toByteArray(),bitmap.width,bitmap.height,if(cap==0)"orientation_or_format_png" else "edge_"+cap+"_png")}finally{bitmap.recycle()}
+ }
+ private fun prepareYolo(f:File):Input{
+  val t=now()
+  val b=ImageDecoder.decodeBitmap(ImageDecoder.createSource(f)){decoder,i,_->
+   require(i.size.width.toLong()*i.size.height<=16_000_000L){"自动裁剪模式原图超过1600万像素；请使用整图模式或较小照片"}
+   decoder.allocator=ImageDecoder.ALLOCATOR_SOFTWARE
+  }
+  try{
+   val decode=now()-t
+   val d=now();if(locator==null)locator=TextLocator(this)
+   val init=now()-d;val at=now()
+   val found=locator!!.locate(b);val ms=now()-at
+   val scale=minOf(1f,720f/maxOf(b.width,b.height))
+   val overlay=Bitmap.createBitmap(maxOf(1,(b.width*scale).toInt()),maxOf(1,(b.height*scale).toInt()),Bitmap.Config.ARGB_8888)
+   val canvas=Canvas(overlay);canvas.drawBitmap(b,null,Rect(0,0,overlay.width,overlay.height),Paint(Paint.FILTER_BITMAP_FLAG))
+   canvas.scale(scale,scale)
+   val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply{style=Paint.Style.STROKE;color=Color.YELLOW;strokeWidth=2/scale}
+   for(box in found.boxes){val p=Path();p.moveTo(box.points[0],box.points[1]);for(i in 1..3)p.lineTo(box.points[2*i],box.points[2*i+1]);p.close();canvas.drawPath(p,paint)}
+   paint.color=Color.GREEN;paint.strokeWidth=4/scale
+   val roi=found.roi
+   if(roi!=null)canvas.drawRect(roi,paint)
+   ui{preview.setImageBitmap(overlay);note("yolo boxes="+found.boxes.size+" groups="+found.groups+" chosen="+found.selectedCount+" decode_ms="+decode+" detector_init_ms="+init+" detect_ms="+ms+" source="+b.width+"x"+b.height+" roi="+(roi?.toShortString()?:"NONE original fallback"))}
+   if(roi==null)return prepare(f,0)
+   val crop=Bitmap.createBitmap(b,roi.left,roi.top,roi.width(),roi.height())
+   try{
+    val out=ByteArrayOutputStream();check(crop.compress(Bitmap.CompressFormat.PNG,100,out))
+    return Input(out.toByteArray(),crop.width,crop.height,"yolo_original_roi_png")
+   }finally{if(crop!==b)crop.recycle()}
+  }finally{b.recycle()}
  }
  private fun read(chunk:String,finish:Boolean=false){
   if(!speech.isChecked||!voiceReady)return
@@ -218,5 +251,5 @@ class MainActivity:Activity(){
    finally{ExperimentalFlags.visualTokenBudget=null;ExperimentalFlags.enableSpeculativeDecoding=false}
   }
  }
- override fun onDestroy(){closed=true;tts?.stop();tts?.shutdown();worker.execute{try{release()}catch(_:Throwable){};selected?.delete();pending?.delete()};worker.shutdown();super.onDestroy()}
+ override fun onDestroy(){closed=true;tts?.stop();tts?.shutdown();worker.execute{try{release()}catch(_:Throwable){};try{locator?.close()}catch(_:Throwable){};selected?.delete();pending?.delete()};worker.shutdown();super.onDestroy()}
 }

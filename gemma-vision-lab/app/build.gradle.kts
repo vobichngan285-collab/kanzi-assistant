@@ -6,7 +6,7 @@ android {
  namespace = "com.vobich.bluestar.gemmalab"
  compileSdk = 36
  defaultConfig {
-  applicationId = "com.vobich.bluestar.gemmalab"
+  applicationId = "com.vobich.bluestar.gemmalab.yolotext"
   minSdk = 28
   targetSdk = 35
   versionCode = 1
@@ -15,11 +15,12 @@ android {
  }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
  buildTypes { getByName("release") { signingConfig = signingConfigs.getByName("debug"); isMinifyEnabled = false } }
- packaging { jniLibs { useLegacyPackaging = true } }
+ packaging { jniLibs { useLegacyPackaging = true; pickFirsts += "**/libc++_shared.so" } }
 }
 kotlin { jvmToolchain(17) }
 dependencies {
  implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.1")
+ implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
  implementation("androidx.core:core:1.15.0")
  implementation("androidx.exifinterface:exifinterface:1.4.1")
  testImplementation("junit:junit:4.13.2")
