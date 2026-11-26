@@ -2307,3 +2307,7 @@ OpenOCR官方移动端配套为RepViT-DB检测（configs/det/dbnet/repvit_db.yml
 
 ## 2026-11-26 — 最终双模型对照：YOLO26n横排模式海报基线
 用户回传Arena v0.2.0 3072×4096 CPU4 tiles=false layout=3 YOLO26n两轮；疑似此前竖排海报（原图尚未核验）。raw15 unique14 blocks10 crops11，global308/308ms，rec272/275ms，total580/584ms，均值582ms；PSS698769/649479KiB，6个suspect、3空框，全部vertical=false，两轮raw/cell输出一致。不能把速度当作识别成功，不能视为竖排算法测试。已核对发布提交5ac4b9a853a4e2eee539894ac9f76f53ccc3aaaa的openocr-lab/app/src/main/java/com/vobich/bluestar/openocrlab/MainActivity.kt第29行：0原始框、1 v0.1.4混合排版、2 v0.1.5完整竖列、3横排行列裁剪。下一步同一海报CPU4全图单次layout=2，分别测试DB与n各两轮；若均严重漏检再同等四块高清；价目表仍使用layout=3双模型对照。未选定换模，未修改代码或APP，不备份OCR原文及图片。
+
+
+## 2026-11-26 — RepViT-DB海报横排对照：发现长竖列原始框
+用户回传同尺寸3072×4096、CPU4、tiles=false、layout=3的DB两轮：raw12 unique12 blocks5 crops5，global265/254ms，rec127/129ms，total392/383ms（平均387.5ms），PSS557033/586857KiB，2 suspect/2空框，全部vertical=false，两轮raw/cell一致。与前一轮YOLO26n同配置（582ms，11 crops）比较，DB总耗时低33.4%，但正文未正确识别，速度不能视为有效阅读性能。关键新证据：DB raw5/6/7/9/10为五个近似平行竖长框，长边约995–1153px、短边63–79px、det约0.976–0.987；YOLOn最长原始竖长框约255px。DB layout3后cell1为约1624×1383px大框，rec=0，疑似多列错误聚合；需原图/预览确认覆盖及列内容，不将高det置信度当作准确率。优先立即用DB同图CPU4全图单次layout=2(v0.1.5完整竖列)测试两轮，再用n同配置对照。若DB能保留完整列并识别正文才考虑替换；否则检查现有layout2后处理，按此前停止条件决定。未修改代码、构建或正式APP，不保存私人OCR原文/图片。
