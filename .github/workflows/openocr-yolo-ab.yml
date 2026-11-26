@@ -1,0 +1,102 @@
+name: BlueStar OpenOCR YOLO A-B
+on:
+  push:
+    branches: [exp/openocr-yolo-ab-20261126]
+    paths: ['openocr-lab/**','.github/workflows/openocr-yolo-ab.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Fetch exact upstream and original weights
+        run: |
+          set -euo pipefail
+          git init upstream
+          git -C upstream remote add origin https://github.com/Topdu/OpenOCR.git
+          git -C upstream fetch --depth=1 origin 1ccfc6ee6161f7133b192e16af3a9265273997ba
+          git -C upstream checkout --detach FETCH_HEAD
+          test "$(git -C upstream rev-parse HEAD)" = 1ccfc6ee6161f7133b192e16af3a9265273997ba
+          for f in openocr_rec_model.onnx openocr_repsvtr_ch.pth openocr_svtrv2_ch.pth; do curl -fL --retry 3 "https://github.com/Topdu/OpenOCR/releases/download/develop0.0.1/$f" -o "$f"; done
+          test "$(stat -c%s openocr_rec_model.onnx)" = 25138527
+          test "$(stat -c%s openocr_repsvtr_ch.pth)" = 65279266
+          test "$(stat -c%s openocr_svtrv2_ch.pth)" = 123935649
+          BASE=https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-yolo26-gemma280-v010-20261126
+          curl -fL --retry 3 "$BASE/BlueStar_YOLO26_Text_Gemma280_0.1.0.apk" -o previous.apk
+          curl -fL --retry 3 "$BASE/detector-report.json" -o detector-report.json
+          echo '8fd48a29ba346d6079529683d43a81f01b02f0b8f48fdedba26d8367294eb9d8  previous.apk' | sha256sum -c -
+          echo '4832b67e0605ee16d5f54a829703b619e84501e49e3f8204fd03d288325c3818  detector-report.json' | sha256sum -c -
+      - name: Export and verify both recognizers
+        run: |
+          python -m pip install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install 'numpy<2' 'opencv-python-headless<4.12' onnx onnxruntime==1.22.0 pyyaml pillow timm einops lmdb pyclipper rapidfuzz regex tqdm imgaug scikit-image scipy
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
+          python -u openocr-lab/prepare.py
+      - name: Android SDK
+        run: |
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Build offline APK
+        working-directory: openocr-lab
+        run: gradle --no-daemon --max-workers=2 :app:assembleRelease
+      - name: Verify and package
+        run: |
+          set -euo pipefail
+          APK=openocr-lab/app/build/outputs/apk/release/app-release.apk
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/apksigner" verify --verbose "$APK"
+          "$BT/aapt" dump badging "$APK" | tee badging.txt
+          grep -F "package: name='com.vobich.bluestar.openocrlab' versionCode='1' versionName='0.1.0'" badging.txt
+          ! grep -F android.permission.INTERNET badging.txt
+          unzip -Z1 "$APK" > archive.txt
+          grep -Fx lib/arm64-v8a/libonnxruntime.so archive.txt
+          ! grep -E '^lib/(x86|x86_64|armeabi-v7a)/' archive.txt
+          for m in rep svtr; do unzip -p "$APK" "assets/$m.onnx" | sha256sum | grep -F "$(jq -r --arg m "$m" '.[$m].onnx_sha256' openocr-report.json)"; done
+          unzip -p "$APK" assets/yolo26n-text.onnx | sha256sum | grep -F "$(jq -r .detector_sha256 openocr-report.json)"
+          unzip -p "$APK" assets/chars.txt | sha256sum | grep -F "$(jq -r .dict_sha256 openocr-report.json)"
+          mkdir -p release
+          cp "$APK" release/BlueStar_OpenOCR_YOLO_AB_0.1.0.apk
+          cp openocr-lab/README.md openocr-report.json release/
+          cp upstream/LICENSE release/OpenOCR-LICENSE.txt
+          (cd release && sha256sum *.apk > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openocr-yolo-ab
+          path: release/
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: openocr-yolo-ab
+          path: release
+      - name: Publish verified experiment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          (cd release && sha256sum -c SHA256SUMS.txt)
+          TAG=bluestar-openocr-yolo-ab-v010-20261126
+          if ! gh release view "$TAG" >/dev/null 2>&1; then gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 OpenOCR 双模型实验 v0.1.0" --notes-file release/README.md --prerelease --draft; fi
+          gh release view "$TAG" --json targetCommitish | jq -e --arg sha "$GITHUB_SHA" '.targetCommitish == $sha'
+          for i in 1 2 3; do gh release upload "$TAG" release/* --clobber && break; test "$i" != 3; sleep 5; done
+          gh release edit "$TAG" --draft=false --prerelease
