@@ -33,10 +33,10 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           p=Path("Android/src/app/src/main/java/com/google/ai/edge/gallery")
-          def edit(file, old, new):
+          def edit(file, old, new, expected=1):
               q=p/file
               s=q.read_text()
-              assert s.count(old)==1,(file,old,s.count(old))
+              assert s.count(old)==expected,(file,old,s.count(old))
               q.write_text(s.replace(old,new))
           d="com.google.ai.edge.gallery.GpuDiagnostic"
           edit("MainActivity.kt","    super.onCreate(null)","    super.onCreate(null)\n    GpuDiagnostic.start(this)\n    GpuDiagnostic.show(this)")
@@ -46,7 +46,7 @@ jobs:
           edit("ui/llmchat/LlmChatModelHelper.kt",'        engine.initialize()',f'        {d}.mark("ENGINE initialize begin")\n        engine.initialize()\n        {d}.mark("ENGINE initialize returned")')
           edit("ui/llmchat/LlmChatModelHelper.kt",'      val errorMsg = cleanUpMediapipeTaskErrorMessage(e.message ?: "Unknown error")',f'      {d}.mark("INIT exception " + e.stackTraceToString())\n      val errorMsg = cleanUpMediapipeTaskErrorMessage(e.message ?: "Unknown error")')
           edit("ui/llmchat/LlmChatModelHelper.kt",'      instance.engine.close()',f'      {d}.mark("ENGINE close begin")\n      instance.engine.close()\n      {d}.mark("ENGINE close returned")')
-          edit("ui/llmchat/LlmChatModelHelper.kt",'      instance.conversation.close()',f'      {d}.mark("CONVERSATION close begin")\n      instance.conversation.close()\n      {d}.mark("CONVERSATION close returned")')
+          edit("ui/llmchat/LlmChatModelHelper.kt",'      instance.conversation.close()',f'      {d}.mark("CONVERSATION close begin")\n      instance.conversation.close()\n      {d}.mark("CONVERSATION close returned")', expected=2)
           (p/"GpuDiagnostic.kt").write_text('''package com.google.ai.edge.gallery
           import android.app.Activity
           import android.app.ActivityManager
@@ -81,7 +81,7 @@ jobs:
               installed = true
               mark("PROCESS start SDK=" + Build.VERSION.SDK_INT)
               if (Build.VERSION.SDK_INT >= 30) runCatching {
-                val am = context.getSystemService(ActivityManager::class.java)
+                val am = context.getSystemService(ActivityManager::class.java) ?: return@runCatching
                 am.getHistoricalProcessExitReasons(context.packageName, 0, 5).forEach {
                   mark("EXIT time=${it.timestamp} pid=${it.pid} reason=${it.reason} status=${it.status} description=${it.description}")
                 }
