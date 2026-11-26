@@ -29,3 +29,5 @@
 
 ## 最新决策：放弃 v0.2.4 修补路线
 用户明确要求从 Google AI Edge Gallery 原厂源码重新建立独立实验。先纯原厂基线，不接 OCR/ONNX、不改推理或模型配置，真机 GPU 通过后再逐项集成。旧 GPU 实验仅作为失败记录，不再继续修补。
+
+- 新原厂基线分支 exp/gallery-clean-gpu-20261127，构建配置提交 871105a27ae6b2395ff2c1515c29151b7c7725b4；直接检出原厂 9cb31cf47c21b0ed76901ff589a52b509803edfa，不执行任何 overlay，原包名版本不变。预期发布 gallery-clean-gpu-baseline-20261127，APK Gallery_Clean_GPU_Baseline.apk；尚未确认构建成功或真机通过。
