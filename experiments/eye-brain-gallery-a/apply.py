@@ -17,9 +17,9 @@ def block(path, start, end, content):
     i = s.index(start); j = s.index(end, i)
     path.write_text(s[:i] + content + s[j:])
 gradle = app / "build.gradle.kts"
-replace(gradle, 'applicationId = "com.google.aiedge.gallery"', 'applicationId = "com.vobich.bluestar.eyebrain.galleryauto"')
-replace(gradle, 'versionName = "1.0.23"', 'versionName = "0.2.0"')
-replace(gradle, 'versionCode = 52', 'versionCode = 2')
+replace(gradle, 'applicationId = "com.google.aiedge.gallery"', 'applicationId = "com.vobich.bluestar.eyebrain.gallerygpu"')
+# Keep original versionName 1.0.23 for official model catalog compatibility.
+replace(gradle, 'versionCode = 52', 'versionCode = 6')
 replace(gradle, 'dependencies {\n', 'dependencies {\n  implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")\n')
 # Native C++ runtime conflict must be resolved consistently at packaging; original LiteRT JNI unchanged.
 replace(gradle, 'pickFirsts.add("**/liblitertlm_jni.so")', 'pickFirsts.add("**/liblitertlm_jni.so"); pickFirsts.add("**/libc++_shared.so")')
@@ -30,14 +30,14 @@ replace(manifest, '<uses-native-library android:name="libedgetpu_util.so" androi
 # Unique anchor regardless of repeated native library declarations.
 if 'firebase_analytics_collection_deactivated' not in manifest.read_text():
     replace(manifest, 'tools:targetApi="31">', 'tools:targetApi="31">\n        <meta-data android:name="firebase_analytics_collection_deactivated" android:value="true" />')
-replace(manifest, 'android:scheme="com.google.ai.edge.gallery"', 'android:scheme="com.vobich.bluestar.eyebrain.galleryauto"')
-replace(manifest, 'android:taskAffinity="com.google.ai.edge.gallery.glasses"', 'android:taskAffinity="com.vobich.bluestar.eyebrain.galleryauto.glasses"')
+replace(manifest, 'android:scheme="com.google.ai.edge.gallery"', 'android:scheme="com.vobich.bluestar.eyebrain.gallerygpu"')
+replace(manifest, 'android:taskAffinity="com.google.ai.edge.gallery.glasses"', 'android:taskAffinity="com.vobich.bluestar.eyebrain.gallerygpu.glasses"')
 # Original app-level analytics is disabled; no changes to LLM inference.
 replace(pkg/"GalleryApplication.kt", 'firebaseAnalytics?.setAnalyticsCollectionEnabled(dataStoreRepository.readFirebaseAnalytics())', 'firebaseAnalytics?.setAnalyticsCollectionEnabled(false)')
 home = pkg / "ui/home/HomeScreen.kt"
 block(home, '                var selectedCategoryIndex by remember { mutableIntStateOf(0) }', '                Spacer(modifier = Modifier.height(innerPadding.calculateBottomPadding() + 10.dp))', '''                Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                   Text("眼脑协同实验室", style = MaterialTheme.typography.headlineMedium)
-                  Text("OCR v0.1.3 · 自动任务实验版")
+                  Text("GPU兼容性实验 v0.2.4 · OCR v0.1.3")
                   val chatTask = modelManagerViewModel.getTaskById(BuiltInTaskId.LLM_CHAT)
                   if (chatTask != null) {
                     TaskCard(task = chatTask, index = 0, animate = false,
