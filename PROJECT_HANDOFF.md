@@ -40,3 +40,6 @@
 
 ## 原厂重建的强制增量验收纪律（用户确认）
 先验证完整原厂+持久化诊断的GPU切换及推理。随后每个独立版本只引入一个可归因的变更：品牌外观、逐个隐藏不必要入口（保留注册/生命周期/依赖，禁止直接删组件）、已验证OCR v0.1.3（ONNX依赖、原生库打包与OCR接入应再拆为独立步骤）、眼脑协同、历史自动任务优化逐项恢复，最后才考虑删除确认无依赖的组件。每一步必须真机验证GPU切换、实际推理及已有功能，记录commit、APK、日志、验收结果；失败立即回到最后真机通过的基线，不在失败版本叠补丁。不允许仅CI成功就宣称验收。旧优化从历史提交/旧交接文档逐项核实再移植；尚未完成完整清单，不假定历史记录齐全。用户重点怀疑旧精简误删GPU相关组件，尚待对照证实。保留诊断能力及回退锚点。
+
+## 最新用户纠正：恢复已真机通过的自研版本，停止纯原厂重建路线
+用户手机已有原厂 Gallery，无需重复安装纯原厂诊断版。历史交接 e29ee62... 第2429行明确 v0.2.0 GPU运行、截图4.7s；v0.2.1/2优化和精简之后的GPU状态需重新核实。已核实原始v0.2.0 release target 08977a0f4e57d02d22a3b85901e39992e6b32b2d 及原APK https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-eye-brain-auto-v020-20261126/BlueStar_EyeBrain_Auto_0.2.0.apk 。新分支 exp/eye-brain-v020-diagnostic-20261127 从该提交派生，bccc1d16b475fed562818f497b71cc534420a86d 仅修改workflow，在原v0.2.0 overlay和资产验证后注入诊断；原包名/版本/功能不变，独立release bluestar-eye-brain-v020-diagnostic-20261127，预期 APK BlueStar_EyeBrain_0.2.0_Diagnostic.apk，尚未编译或真机验证。签名可能与旧APK不一致，不卸载旧版或删模型。旧纯原厂CI不作为交付，不再继续该路线。先验证原始v0.2.0及诊断复刻，再逐项恢复后续优化。
