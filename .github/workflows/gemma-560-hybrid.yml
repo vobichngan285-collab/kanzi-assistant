@@ -38,6 +38,29 @@ jobs:
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.1.13356709" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
           rustc --version
+      - name: Resolve exact official Android AAR before expensive native compile
+        run: |
+          set -euo pipefail
+          REL=com/google/ai/edge/litertlm/litertlm-android/0.18.1/litertlm-android-0.18.1
+          for BASE in https://dl.google.com/dl/android/maven2 https://maven.google.com https://repo.maven.apache.org/maven2 https://maven-central.storage-download.googleapis.com/maven2; do
+            if curl -fL --retry 2 "$BASE/$REL.aar" -o stock.aar && curl -fL --retry 2 "$BASE/$REL.pom" -o stock.pom; then
+              echo "Resolved official AAR from $BASE"
+              break
+            fi
+            rm -f stock.aar stock.pom
+          done
+          test -s stock.aar && test -s stock.pom
+          python - <<'PY'
+          import zipfile,xml.etree.ElementTree as ET
+          with zipfile.ZipFile("stock.aar") as z:
+              assert z.namelist().count("jni/arm64-v8a/liblitertlm_jni.so")==1
+              assert z.read("jni/arm64-v8a/liblitertlm_jni.so")[:4]==b"\x7fELF"
+          p=ET.parse("stock.pom").getroot()
+          assert p.find("{*}groupId").text=="com.google.ai.edge.litertlm"
+          assert p.find("{*}artifactId").text=="litertlm-android"
+          assert p.find("{*}version").text=="0.18.1"
+          PY
+          sha256sum stock.aar stock.pom
       - name: Checkout exact v0.18.1 source and acceleration prebuilts
         run: |
           set -euo pipefail
@@ -71,6 +94,17 @@ jobs:
           set -o pipefail
           bazelisk build --config=android_arm64 --jobs=4 --local_ram_resources=8192 //kotlin/java/com/google/ai/edge/litertlm/jni:litertlm_jni 2>&1 | tee ../native-build.log
           bazelisk cquery --config=android_arm64 --output=files //kotlin/java/com/google/ai/edge/litertlm/jni:litertlm_jni > ../jni-outputs.txt
+      - name: Preserve compiled JNI before compatibility checks
+        run: |
+          set -euo pipefail
+          mkdir -p native-output
+          cp upstream/bazel-bin/kotlin/java/com/google/ai/edge/litertlm/jni/liblitertlm_jni.so native-output/
+          sha256sum native-output/liblitertlm_jni.so
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hybrid-compiled-jni
+          path: native-output/
+          retention-days: 14
       - name: Verify JNI compatibility and replace only native runtime in official AAR
         run: |
           set -euo pipefail
@@ -82,9 +116,6 @@ jobs:
           assert len(paths)==1,paths
           pathlib.Path("jni-path.txt").write_text(str(paths[0]))
           PY
-          URL=https://maven-central.storage-download.googleapis.com/maven2/com/google/ai/edge/litertlm/litertlm-android/0.18.1/litertlm-android-0.18.1
-          curl -fL --retry 3 "$URL.aar" -o stock.aar
-          curl -fL --retry 3 "$URL.pom" -o stock.pom
           python gemma-vision-lab/tests/repack_hybrid_aar.py stock.aar "$(cat jni-path.txt)" stock.pom hybrid-maven/com/google/ai/edge/litertlm/litertlm-android/0.18.1 | tee jni-verify.log
       - uses: actions/upload-artifact@v4
         with:
