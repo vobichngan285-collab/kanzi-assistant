@@ -2400,3 +2400,7 @@ Actions 45791503828 build success，原v0.1.3资产校验、Android单测/编译
 
 ## 2026-11-26 — 用户授权眼脑协同 A 独立实验
 用户明确忽略下午空壳，重建独立实验，不改正式蓝星/蓝心。基于 Google AI Edge Gallery 1.0.23 commit 9cb31cf47c21b0ed76901ff589a52b509803edfa 原工程，保留模型/推理/会话/采样依赖，历史 Gemma-4-E2B-it GPU，模型文件由原版管理下载/导入，实际revision待核。OCR v0.1.3 commit 38df92b5bec824a2abf269e2d775e6efcd241455 五个核心文件按原blob复用，原APK与三资产SHA校验设入CI；CPU4、原ROI、完整列单轮及待核规则。新增相册OCR按钮/预览/待核/填入原聊天输入框，用户确认后用原发送入口；OCR完成释放会话，加载开销待测。仅首页隐藏演示、136项常用中文资源、禁用Firebase统计及备份，仍有原模型管理网络权限及可能的次级英文入口。包com.vobich.bluestar.eyebrain.gallerya v0.1.0；独立分支 exp/eye-brain-gallery-a-20261126，HEAD 36325b0fff33082c6e59b47c428c9f1e49107f21，回读比对仅10个新增实验/workflow文件，翻译键与主要源码锚点检查通过。Actions https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45841919918 已排队；尚未验证编译、签名、发布或真机速度、GPU/原生库兼容性。拟Release bluestar-eye-brain-gallery-a-v010-20261126。不要声称APK可下载直至回读Release。正式APP不动，不上传私人OCR文字或图片。
+
+
+## 2026-11-26 — 眼脑协同 A v0.1.0 发布成功
+Actions 45841919918 build/publish均completed/success，固定上游源码、OCR资产校验、Gradle release编译、APK签名及包名、原资产复核与发行均通过。Release bluestar-eye-brain-gallery-a-v010-20261126 回读确认非draft、prerelease、target 36325b0fff33082c6e59b47c428c9f1e49107f21。APK BlueStar_EyeBrain_Gallery_A_0.1.0.apk 430910268 bytes，SHA256 99983d59bdcf8ab45e0308beada65ff191cd45554c2fcd37db817773dc6157c7；下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-eye-brain-gallery-a-v010-20261126/BlueStar_EyeBrain_Gallery_A_0.1.0.apk 。真机安装、Gemma原模型加载、OCR到聊天传输及GPU速度尚待验证。优先完成眼脑纯文本接入；用户确认后续再研究包装艺术/潦草字体识别器与倾斜/透视招牌检测，暂不修改。正式APP不动，不上传私人照片或OCR原文。
