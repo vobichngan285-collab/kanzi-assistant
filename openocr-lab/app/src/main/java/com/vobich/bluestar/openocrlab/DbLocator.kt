@@ -4,6 +4,7 @@ import android.graphics.*
 import ai.onnxruntime.*
 import org.opencv.android.OpenCVLoader
 import org.opencv.core.*
+import org.opencv.core.Point
 import org.opencv.imgproc.Imgproc
 import kotlin.math.*
 import java.nio.ByteBuffer
