@@ -2440,3 +2440,7 @@ v0.2.2 Actions 45852848638 completed/success，Release回读非draft，target 0f
 
 ## 2026-11-27 — 实地朗读 v0.4.2 和眼脑精简 v0.2.3 发布确认
 Actions 45855950792 build/publish success，Release bluestar-openocr-field-db-v042-20261127 非draft，target e630d3e0267cd311457ffb3d7071ebdf433c4b82，BlueStar_OpenOCR_Field_DB_0.4.2.apk 65706982 bytes SHA256 9ded794aa82f543af10499b2ccf42b5eeab9eb1552606f31dfb85dd83f86e517。Actions 45854209619 build/publish success，Release bluestar-eye-brain-trim-v023-20261126 非draft，target fcd28918b5d1ad50001086d8bdf9b126c0369a05，BlueStar_EyeBrain_Trim_0.2.3.apk 211705431 bytes SHA256 2bcae88131d88fc9792766fc9d0995b28664589a8bb653e7d76c7956ded6355d。两包真机待验证。用户眼脑截图冷启动OCR1950ms/加载458ms/大脑CPU回答7.1s，选择GPU确认即退出，重启CPU；用户报告关闭OCR常驻、重启、关闭推测解码的排查方案仍不行（未单独确认每个操作），原因无崩溃日志不能确定，不能归咎OCR缓存；原v0.2.0曾GPU运行。GPU修复未实施，v0.2.3不含专门GPU修复。建议核对具体安装版、模型revision及获取系统崩溃日志。正式APP不动，未上传私人截图或OCR原文。
+
+
+## 2026-11-27 — GPU兼容性回归实验 v0.2.4
+用户授权独立修复包。基于曾真机GPU正常的v0.2.0 08977a0f4e57d02d22a3b85901e39992e6b32b2d创建exp/eye-brain-gpu-20261127，恢复原厂模型目录路径、原始ABI及任务注册、无OCR常驻的基线；保留八任务及自动提交，原模型权重和推理不改。Android versionName保留1.0.23以兼容原厂目录URL，versionCode 6，首页实验标识v0.2.4，独立包com.vobich.bluestar.eyebrain.gallerygpu。源码6d75dd44b8818787521120ab90d91ec340b15b23，构建46fcd2239c95c0d1432c701fc5b60ae8ad20cece，拟tag bluestar-eye-brain-gpu-v024-20261127。此为回归隔离而非已定位根因的修复，暂不保留v0.2.3全部精简及弹窗优化；构建、发布、真机尚未验证。正式APP不动。
