@@ -6,17 +6,17 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.*
 
-class Reader(context:Context, asset:String):AutoCloseable {
+class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
  private val env=OrtEnvironment.getEnvironment()
  private val chars=listOf("")+context.assets.open("chars.txt").bufferedReader(Charsets.UTF_8).use{it.readLines()}+listOf(" ")
  private val session:OrtSession
- init { val opt=OrtSession.SessionOptions();try{opt.setIntraOpNumThreads(4);session=env.createSession(context.assets.open(asset).use{it.readBytes()},opt)}finally{opt.close()} }
- data class Answer(val text:String,val confidence:Float,val width:Int)
- fun read(source:Bitmap,box:TextLocator.Box):Answer {
+ init { val opt=OrtSession.SessionOptions();try{opt.setIntraOpNumThreads(threads);session=env.createSession(context.assets.open(asset).use{it.readBytes()},opt)}finally{opt.close()} }
+ data class Answer(val text:String,val confidence:Float,val width:Int,val minConfidence:Float=0f)
+ fun read(source:Bitmap,box:TextLocator.Box,forceHorizontal:Boolean=false):Answer {
   val p=box.points.copyOf()
   fun len(a:Int,b:Int)=hypot(p[a*2]-p[b*2],p[a*2+1]-p[b*2+1])
   // Rotate the longer edge to the horizontal axis, choosing reading direction left to right.
-  val long01=len(0,1)>=len(1,2)
+  val long01=forceHorizontal||len(0,1)>=len(1,2)
   val start=if(long01){if(p[2]>=p[0])0 else 2}else{if(p[4]>=p[2])1 else 3}
   val q=FloatArray(8){i->p[((start+i/2)%4)*2+i%2]}
   val w=(hypot(q[2]-q[0],q[3]-q[1])+hypot(q[4]-q[6],q[5]-q[7]))/2
@@ -40,14 +40,14 @@ class Reader(context:Context, asset:String):AutoCloseable {
    session.run(mapOf(session.inputNames.single() to input)).use{result->
     val t=result[0] as OnnxTensor;val s=t.info.shape
     require(s.size==3&&s[0]==1L&&s[2]==chars.size.toLong()){"Unexpected CTC shape "+s.contentToString()}
-    val f=t.floatBuffer;f.rewind();var last=-1;val out=StringBuilder();var conf=0f;var n=0
+    val f=t.floatBuffer;f.rewind();var last=-1;val out=StringBuilder();var conf=0f;var n=0;var minConf=1f
     repeat(s[1].toInt()){
      var best=0;var v=-Float.MAX_VALUE
      repeat(chars.size){i->val a=f.get();if(a>v){best=i;v=a}}
-     if(best!=0&&best!=last){out.append(chars[best]);conf+=v;n++}
+     if(best!=0&&best!=last){out.append(chars[best]);conf+=v;minConf=min(minConf,v);n++}
      last=best
     }
-    return Answer(out.toString(),if(n>0)conf/n else 0f,width)
+    return Answer(out.toString(),if(n>0)conf/n else 0f,width,if(n>0)minConf else 0f)
    }
   }
  }
