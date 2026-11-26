@@ -2338,3 +2338,7 @@ v0.3.0 构建已触发：Actions 45788302042（https://github.com/vobichngan285-
 
 ## 2026-11-26 — v0.3.0 自适应裁剪实验发布成功
 Actions 45788302042 build/publish全部success，资产复用SHA校验、双检测器CPU推理、Android release单测/编译、APK签名/包名/无网络权限校验及发布均通过。Release tag bluestar-openocr-adaptive-v030-20261126，target ee122f9f9956955bce04b410d8e12cf15db44312，非draft、prerelease，APK BlueStar_OpenOCR_Adaptive_0.3.0.apk 65701662 bytes，SHA256 4f81822c2c79dc76ecb979ea13fd057f0aa218257bcd521df960e3c7a99529a8。下载：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-openocr-adaptive-v030-20261126/BlueStar_OpenOCR_Adaptive_0.3.0.apk 。真机准确率、速度、金额与竖排效果仍未验证。独立安装，不覆盖原版；同价目表/竖排海报分别默认DB、CPU4、全图单次layout4测试两轮，回传日志，必要时同模式YOLO对照。保留原稳定版，不上传原图及OCR原文。
+
+
+## 2026-11-26 — v0.3.0自适应裁剪价目表首次真机验证
+用户回传Adaptive v0.3.0 DB、3072×4096、CPU4、tiles=false、layout4，两轮原始51框与此前一致，24 blocks、36主crops+6 retry_crops、9 suspect、3空框、0 vertical；两轮RAW/CELL/复核结果一致。global332/277ms，plan6/4ms，rec1116/1095ms（含复核），total1454/1376ms（均1415ms），PSS420916/516163KiB；识别器加载277ms、检测器首次129ms单计。相对v0.2.0 DB layout3平均1141.5ms慢24.0%，layout0平均1519ms快6.8%；6次复核均与首读有分歧，实际复核成本未单独计时，不能把全部差异归因于复核。五组大间距短语保持完整，两组充值成功分隔，原layout3新增的两个疑似金额负号消失；原layout0另两处疑似负号重新出现，但两处均标待核，复核数字一致且无符号候选的平均/最低置信度分别0.934738/0.875366及0.987995/0.953751，高于首读0.794723/0.490742及0.902194/0.513037。不能仅凭置信度自动删除金额符号，原图真值仍需核验；小字错误/漏检未解决。当前优先用同一竖排海报DB默认layout4 CPU4全图测试两轮，不立即修改代码；若竖排无实质收益，按原决策保留v0.1.3。未来若继续优化，考虑复核优先级及独立耗时统计、符号冲突保留候选并需像素证据，非数字低风险候选亦需验证，不硬编码。正式APP、旧Release不动，本次只提交诊断汇总，不存私人OCR原文/图片。
