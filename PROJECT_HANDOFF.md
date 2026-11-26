@@ -2420,3 +2420,7 @@ Actions 45841919918 build/publish均completed/success，固定上游源码、OCR
 
 ## 2026-11-26 — 眼脑协同自动任务 v0.2.0 发布成功
 Actions 45847086626 build/publish均completed/success，固定上游及OCR资产检查、Gradle编译、APK签名及包名、资产复核与发行全部通过。Release bluestar-eye-brain-auto-v020-20261126 回读非draft、prerelease、target 08977a0f4e57d02d22a3b85901e39992e6b32b2d，APK BlueStar_EyeBrain_Auto_0.2.0.apk 430926668 bytes，SHA256 1e44374aed498e2daaf7975466832b431fd04f5279f5597d97e782f2496c34e4，下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-eye-brain-auto-v020-20261126/BlueStar_EyeBrain_Auto_0.2.0.apk 。独立包需要重新导入模型，自动提交与八任务真机表现待验证。用户另同意复用原六模型擂台 v0.2.0 排查倾斜发光招牌漏检，暂不修改模型或正式APP。无私人截图与OCR原文上传。
+
+
+## 2026-11-26 — 自动眼脑 v0.2.1 提速实验启动
+用户反馈v0.2.0正常运行但感觉慢，授权提速。新独立分支 exp/eye-brain-speed-20261126 从08977a0f4e57d02d22a3b85901e39992e6b32b2d派生，提交d9bba40c645143c722b7cc204949e67d276700dd，回读HEAD及四文件diff已确认。原OCR v0.1.3核心/权重、原Gallery推理/采样/会话、8任务及自动提交保留。适配器改串行worker持有检测与识别会话，默认90秒短时复用、低内存回调及ActivityManager检查、离开组件/关闭常驻/异常释放；可关闭常驻对照，Android回调不保证及时且真机内存待验证。显示OCR冷热/总耗时/模型加载/解码/检测/识别；短提示词，快速阅读30~80字软目标，重要内容不截断；启用原ChatPanel实时指标入口（指标可用时），未修改GPU/CPU默认值、思考、推测解码或模型权重。自动流式TTS本轮未做，保留原语音按钮。新独立包com.vobich.bluestar.eyebrain.galleryspeed v0.2.1，需导入模型，旧版/正式APP不动。Actions https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45851079682 当前in_progress，编译/签名/发行/实际提速均未验证；拟release bluestar-eye-brain-speed-v021-20261126。无私人截图/OCR原文上传。
