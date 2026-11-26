@@ -2416,3 +2416,7 @@ Actions 45841919918 build/publish均completed/success，固定上游源码、OCR
 
 ## 2026-11-26 — 用户授权眼脑全自动任务实验 v0.2.0
 用户要求取消半自动确认/填入/手动发送，增加多任务并重新制作，不重复大量手动测试。独立分支 exp/eye-brain-auto-20261126 从A v0.1.0 36325b0fff33082c6e59b47c428c9f1e49107f21 派生，提交 08977a0f4e57d02d22a3b85901e39992e6b32b2d，回读HEAD及4文件diff确认仅实验适配器/构建脚本/说明/workflow变更。默认快速阅读；另有完整朗读文本、商品信息、招牌路标、菜单价目表、通知步骤、中文翻译、自定义提问。选图后OCR结果与任务指令直接交原版createMessagesToSend/onSendMessage，保留上次OCR原文/待核/区域外/耗时；无可用文字或状态变化不自动发送，不自动执行操作或后台取图，语音仍手动播放。原OCR v0.1.3模型及源码与原谷歌推理/会话保持不变，提示词不能保证无幻觉。新包com.vobich.bluestar.eyebrain.galleryauto v0.2.0，独立安装避免CI debug签名覆盖风险，需重新导入/下载模型。Actions https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45847086626 当前in_progress。编译、签名、发行及真机尚未确认，拟Release bluestar-eye-brain-auto-v020-20261126。正式APP、原A和旧Release不动；不上传私人照片及OCR原文。
+
+
+## 2026-11-26 — 眼脑协同自动任务 v0.2.0 发布成功
+Actions 45847086626 build/publish均completed/success，固定上游及OCR资产检查、Gradle编译、APK签名及包名、资产复核与发行全部通过。Release bluestar-eye-brain-auto-v020-20261126 回读非draft、prerelease、target 08977a0f4e57d02d22a3b85901e39992e6b32b2d，APK BlueStar_EyeBrain_Auto_0.2.0.apk 430926668 bytes，SHA256 1e44374aed498e2daaf7975466832b431fd04f5279f5597d97e782f2496c34e4，下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-eye-brain-auto-v020-20261126/BlueStar_EyeBrain_Auto_0.2.0.apk 。独立包需要重新导入模型，自动提交与八任务真机表现待验证。用户另同意复用原六模型擂台 v0.2.0 排查倾斜发光招牌漏检，暂不修改模型或正式APP。无私人截图与OCR原文上传。
