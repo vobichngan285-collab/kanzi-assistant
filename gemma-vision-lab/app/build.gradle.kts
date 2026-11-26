@@ -15,7 +15,8 @@ android {
  }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
  buildTypes { getByName("release") { signingConfig = signingConfigs.getByName("debug"); isMinifyEnabled = false } }
- packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += "**/liblitertlm_jni.so" } }
+ packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += "**/liblitertlm_jni.so"
+            keepDebugSymbols += "**/libGemmaModelConstraintProvider.so" } }
 }
 kotlin { jvmToolchain(17) }
 dependencies {

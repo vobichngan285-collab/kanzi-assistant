@@ -19,25 +19,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Prepare source-build environment
-        run: |
-          set -euo pipefail
-          df -h
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq git-lfs build-essential clang cmake pkg-config patchelf libssl-dev zlib1g-dev libpng-dev libcurl4-openssl-dev libfftw3-dev
-          if ! command -v bazelisk >/dev/null; then
-            npm install --prefix "$HOME/.local/bazelisk" @bazel/bazelisk
-            echo "$HOME/.local/bazelisk/node_modules/.bin" >> "$GITHUB_PATH"
-          else
-            command -v bazelisk
-          fi
-          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0'
-          "$SDKMANAGER" 'ndk;28.1.13356709'
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.1.13356709" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
-          rustc --version
       - name: Resolve exact official Android AAR before expensive native compile
         run: |
           set -euo pipefail
@@ -61,62 +42,25 @@ jobs:
           assert p.find("{*}version").text=="0.18.1"
           PY
           sha256sum stock.aar stock.pom
-      - name: Checkout exact v0.18.1 source and acceleration prebuilts
-        run: |
-          set -euo pipefail
-          GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 --branch v0.18.1 https://github.com/google-ai-edge/LiteRT-LM.git upstream
-          test "$(git -C upstream rev-parse HEAD)" = bda624851d74be34d4e1f7fac1fc4155939539c7
-          git -C upstream lfs pull --include="prebuilt/android_arm64/**,prebuilt/linux_x86_64/**"
-          python gemma-vision-lab/tests/patch_hybrid_runtime.py upstream | tee runtime.patch.log
-          test "$(git -C upstream diff --name-only)" = runtime/executor/vision_litert_compiled_model_executor.cc
-          # The later TensorFlow pin in v0.18.1 requires a newer rules_cc compatibility proxy.
-          python - <<'PY'
-          from pathlib import Path
-          p=Path("upstream/WORKSPACE")
-          s=p.read_text()
-          assert 'TENSORFLOW_REF = "a1179d3c224967bd979950b823d5ce2a7e8f4c94"' in s
-          needle='load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")\n'
-          assert s.count(needle)==1 and 'name = "rules_cc"' not in s
-          archive='''
-          http_archive(
-              name = "rules_cc",
-              integrity = "sha256-ac60VLmyngq6fagcculuyv2B0gRL6IO0Y5ixx3yn//k=",
-              strip_prefix = "rules_cc-0.2.9",
-              url = "https://github.com/bazelbuild/rules_cc/releases/download/0.2.9/rules_cc-0.2.9.tar.gz",
-          )
-          '''
-          p.write_text(s.replace(needle,needle+archive))
-          PY
-          git -C upstream diff -- WORKSPACE | tee workspace.patch.log
-      - name: Build pinned arm64 JNI from source
-        working-directory: upstream
-        run: |
-          set -o pipefail
-          bazelisk build --config=android_arm64 --jobs=4 --local_ram_resources=8192 //kotlin/java/com/google/ai/edge/litertlm/jni:litertlm_jni 2>&1 | tee ../native-build.log
-          bazelisk cquery --config=android_arm64 --output=files //kotlin/java/com/google/ai/edge/litertlm/jni:litertlm_jni > ../jni-outputs.txt
-      - name: Preserve compiled JNI before compatibility checks
-        run: |
-          set -euo pipefail
-          mkdir -p native-output
-          cp upstream/bazel-bin/kotlin/java/com/google/ai/edge/litertlm/jni/liblitertlm_jni.so native-output/
-          sha256sum native-output/liblitertlm_jni.so
-      - uses: actions/upload-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: hybrid-compiled-jni
-          path: native-output/
-          retention-days: 14
-      - name: Verify JNI compatibility and replace only native runtime in official AAR
+          run-id: 45725894735
+          github-token: ${{ github.token }}
+          path: native-output
+      - name: Verify compiled JNI and obtain pinned official constraint provider
         run: |
           set -euo pipefail
-          python - <<'PY'
-          import pathlib, subprocess
-          root=pathlib.Path("upstream")
-          paths=[root/p.strip() for p in pathlib.Path("jni-outputs.txt").read_text().splitlines() if p.strip()]
-          paths=[p for p in paths if p.is_file() and p.open("rb").read(4)==b"\x7fELF"]
-          assert len(paths)==1,paths
-          pathlib.Path("jni-path.txt").write_text(str(paths[0]))
-          PY
-          python gemma-vision-lab/tests/repack_hybrid_aar.py stock.aar "$(cat jni-path.txt)" stock.pom hybrid-maven/com/google/ai/edge/litertlm/litertlm-android/0.18.1 | tee jni-verify.log
+          echo "f0dcf741d49a9a87a0b893513153c0e522d95b1fc679eb0fd54500c2061dafa5  native-output/liblitertlm_jni.so" | sha256sum -c -
+          GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 --branch v0.18.1 https://github.com/google-ai-edge/LiteRT-LM.git upstream
+          test "$(git -C upstream rev-parse HEAD)" = bda624851d74be34d4e1f7fac1fc4155939539c7
+          git -C upstream lfs pull --include="prebuilt/android_arm64/libGemmaModelConstraintProvider.so"
+          cp upstream/prebuilt/android_arm64/libGemmaModelConstraintProvider.so native-output/
+          echo "c7c7188b831ae75fcc7ec6fe613118365b311995805423a4ca265372f07f4783  native-output/libGemmaModelConstraintProvider.so" | sha256sum -c -
+      - name: Verify JNI compatibility and package required pinned provider
+        run: |
+          set -euo pipefail
+          python gemma-vision-lab/tests/repack_hybrid_aar.py stock.aar native-output/liblitertlm_jni.so stock.pom hybrid-maven/com/google/ai/edge/litertlm/litertlm-android/0.18.1 native-output/libGemmaModelConstraintProvider.so | tee jni-verify.log
       - uses: actions/upload-artifact@v4
         with:
           name: hybrid-maven
@@ -127,10 +71,6 @@ jobs:
         with:
           name: hybrid-native-diagnostics
           path: |
-            runtime.patch.log
-            workspace.patch.log
-            native-build.log
-            jni-outputs.txt
             jni-verify.log
           if-no-files-found: ignore
   build:
@@ -192,6 +132,7 @@ jobs:
           with zipfile.ZipFile(apk) as z:
               data=z.read("lib/arm64-v8a/liblitertlm_jni.so")
               assert hashlib.sha256(data).hexdigest()==expected and b"BLUESTAR_VISION_HYBRID_014" in data
+              assert hashlib.sha256(z.read("lib/arm64-v8a/libGemmaModelConstraintProvider.so")).hexdigest()=="c7c7188b831ae75fcc7ec6fe613118365b311995805423a4ca265372f07f4783"
           with zipfile.ZipFile(apk) as z:
               for p in pathlib.Path("gemma-vision-lab/app/src/main/assets").iterdir():
                   with z.open("assets/"+p.name) as f, p.open("rb") as src:
