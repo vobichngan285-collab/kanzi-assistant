@@ -8,14 +8,16 @@ import java.nio.ByteOrder
 import kotlin.math.*
 
 /** YOLO26-Text end-to-end OBB output, [cx,cy,w,h,score,class,angle_rad]. */
-class TextLocator(context:Context):AutoCloseable {
+class TextLocator(context:Context,asset:String="yolo26n-text.onnx",threads:Int=4):AutoCloseable {
     private val env=OrtEnvironment.getEnvironment()
     private val session:OrtSession
     init {
         val opts=OrtSession.SessionOptions()
         try {
-            opts.setIntraOpNumThreads(4)
-            session=env.createSession(context.assets.open("yolo26n-text.onnx").use{it.readBytes()},opts)
+            opts.setIntraOpNumThreads(threads)
+            val file=java.io.File(context.cacheDir,asset)
+            if(!file.exists()){val tmp=java.io.File(context.cacheDir,asset+".tmp");context.assets.open(asset).use{src->tmp.outputStream().use{src.copyTo(it)}};check(tmp.renameTo(file))}
+            session=env.createSession(file.absolutePath,opts)
         } finally {opts.close()}
         require(session.inputNames.size==1)
         val shape=(session.inputInfo.values.first().info as TensorInfo).shape
