@@ -1,2 +1,5 @@
 # 蓝星 OpenOCR 实地朗读 v0.4.2
 基于 v0.4.1 原文朗读版。默认 RepViT-DB，复用竞技场检测代码及同一发布APK权重，SHA256验证。保留YOLO26n切换，每次只运行一个检测器；原RepSVTR、字典、Reader、原阅读区算法及系统TTS保留。默认全图原框，沿用擂台去重、排序、竖框读取及待核逻辑。CPU4默认，DB及识别可选2/6线程，原YOLO固定4。复制诊断含全部原框与置信度，原文不自动纠错。ARM64，无INTERNET权限，系统TTS离线取决于设备。独立包，不修改正式APP；真机待验证。
+
+## v0.4.3 DB resolution comparison
+Independent v0.4.2 baseline. Select 960 (default), 1280 or 1600 requested DB long side and repeat the same source image with full-image raw boxes and CPU 4. Logs show actual tensor/map dimensions, model shape, contour counts and each original filter rejection. Fixed model dimensions remain unchanged; if fixed, higher requests do not increase that dimension. No model, thresholds, recognition, sorting, TTS or YOLO changes. No tiling in this experiment. Device validation pending.
