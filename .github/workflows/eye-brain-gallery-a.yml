@@ -1,8 +1,8 @@
-name: Eye Brain GPU Compatibility Lab
+name: Clean upstream Gallery GPU baseline
 on:
   push:
-    branches: [exp/eye-brain-gpu-20261127]
-    paths: ['experiments/eye-brain-gallery-a/**','.github/workflows/eye-brain-gallery-a.yml']
+    branches: [exp/gallery-clean-gpu-20261127]
+    paths: ['.github/workflows/eye-brain-gallery-a.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -12,66 +12,39 @@ jobs:
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
         with:
           repository: google-ai-edge/gallery
           ref: 9cb31cf47c21b0ed76901ff589a52b509803edfa
-          path: upstream
           persist-credentials: false
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
-      - name: Install original Android SDK
+      - name: Install SDK
         run: |
           echo y | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0"
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;36.0.0"
-      - name: Verify pinned OCR and apply isolated overlay
+      - name: Verify pristine upstream
         run: |
-          set -euo pipefail
-          test "$(git -C upstream rev-parse HEAD)" = 9cb31cf47c21b0ed76901ff589a52b509803edfa
-          python3 experiments/eye-brain-gallery-a/apply.py upstream
-          git -C upstream diff --stat
-          git -C upstream diff --exit-code -- Android/src/app/src/main/java/com/google/ai/edge/gallery/ui/llmchat/LlmChatModelHelper.kt Android/src/app/src/main/java/com/google/ai/edge/gallery/ui/llmchat/LlmChatViewModel.kt Android/src/app/src/main/java/com/google/ai/edge/gallery/ui/llmchat/LlmChatScreen.kt Android/src/app/src/main/java/com/google/ai/edge/gallery/agent Android/src/gradle/libs.versions.toml
-          BASE=https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-openocr-yolo-columns-v013-20261126
-          curl -fL --retry 3 "$BASE/BlueStar_OpenOCR_Columns_0.1.3.apk" -o ocr.apk
-          curl -fL --retry 3 "$BASE/openocr-report.json" -o openocr-report.json
-          curl -fL --retry 3 "$BASE/OpenOCR-LICENSE.txt" -o OpenOCR-LICENSE.txt
-          echo '84441c55b23f621452404df0398a04ae49d84e6e9d95987cc537f7920fa8e890  ocr.apk' | sha256sum -c -
-          echo 'f1d36ed055b95ffdc61f42dd9553907e5dd945030d0eae3b42d4ed8e69fc41a1  openocr-report.json' | sha256sum -c -
-          echo 'c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4  OpenOCR-LICENSE.txt' | sha256sum -c -
-          A=upstream/Android/src/app/src/main/assets
-          mkdir -p "$A"
-          for m in rep.onnx yolo26n-text.onnx chars.txt; do unzip -p ocr.apk "assets/$m" > "$A/$m"; done
-          echo "$(jq -r .rep.onnx_sha256 openocr-report.json)  $A/rep.onnx" | sha256sum -c -
-          echo "$(jq -r .detector_sha256 openocr-report.json)  $A/yolo26n-text.onnx" | sha256sum -c -
-          echo "$(jq -r .dict_sha256 openocr-report.json)  $A/chars.txt" | sha256sum -c -
-          cp OpenOCR-LICENSE.txt "$A/"
-      - name: Build using original Gallery Gradle wrapper
-        working-directory: upstream/Android/src
+          test "$(git rev-parse HEAD)" = 9cb31cf47c21b0ed76901ff589a52b509803edfa
+          git diff --exit-code
+      - name: Build original Gallery
+        working-directory: Android/src
         run: ./gradlew --no-daemon --max-workers=2 assembleRelease
-      - name: Verify APK and model assets
+      - name: Verify and stage
         run: |
           set -euo pipefail
-          APK=upstream/Android/src/app/build/outputs/apk/release/app-release.apk
+          APK=Android/src/app/build/outputs/apk/release/app-release.apk
           BT="$ANDROID_HOME/build-tools/36.0.0"
           "$BT/apksigner" verify --verbose "$APK"
-          "$BT/aapt" dump badging "$APK" | tee badging.txt
-          grep -F "package: name='com.vobich.bluestar.eyebrain.gallerygpu' versionCode='6' versionName='1.0.23'" badging.txt
-          unzip -Z1 "$APK" > archive.txt
-          grep -Fx lib/arm64-v8a/libonnxruntime.so archive.txt
-          grep -Fx lib/arm64-v8a/liblitertlm_jni.so archive.txt
-          unzip -p "$APK" assets/rep.onnx | sha256sum | grep -F "$(jq -r .rep.onnx_sha256 openocr-report.json)"
-          unzip -p "$APK" assets/yolo26n-text.onnx | sha256sum | grep -F "$(jq -r .detector_sha256 openocr-report.json)"
-          unzip -p "$APK" assets/chars.txt | sha256sum | grep -F "$(jq -r .dict_sha256 openocr-report.json)"
+          "$BT/aapt" dump badging "$APK"
           mkdir release
-          cp "$APK" release/BlueStar_EyeBrain_GPU_0.2.4.apk
-          cp experiments/eye-brain-gallery-a/README.md openocr-report.json OpenOCR-LICENSE.txt release/
-          cp upstream/LICENSE release/Google-Gallery-LICENSE.txt
+          cp "$APK" release/Gallery_Clean_GPU_Baseline.apk
+          cp LICENSE release/
           (cd release && sha256sum *.apk > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:
-          name: eye-brain-gallery-a
+          name: gallery-clean-gpu
           path: release/
   publish:
     needs: build
@@ -81,17 +54,13 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: eye-brain-gallery-a
+          name: gallery-clean-gpu
           path: release
-      - name: Publish independent lab
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          (cd release && sha256sum -c SHA256SUMS.txt)
-          TAG=bluestar-eye-brain-gpu-v024-20261127
-          if ! gh release view "$TAG" >/dev/null 2>&1; then gh release create "$TAG" --target "$GITHUB_SHA" --title "眼脑协同 GPU兼容性实验 v0.2.4" --notes-file release/README.md --prerelease --draft; fi
-          gh release view "$TAG" --json targetCommitish | jq -e --arg sha "$GITHUB_SHA" '.targetCommitish == $sha'
-          gh release upload "$TAG" release/* --clobber
-          gh release edit "$TAG" --draft=false --prerelease
+          TAG=gallery-clean-gpu-baseline-20261127
+          gh release create "$TAG" release/* --target "$GITHUB_SHA" --title "Clean upstream Gallery GPU baseline" --notes "Unmodified upstream 9cb31cf47c21b0ed76901ff589a52b509803edfa. No OCR overlay. Device GPU test pending." --prerelease
