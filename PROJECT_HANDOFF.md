@@ -1,3 +1,10 @@
+# 最新｜v0.1.4 560混合视觉实验 APK已发布，等待真机验证
+- CI45730569587 全部成功，HEAD b96bc13b451eb421bdea04336c54b84bdeb2835b；native job139611255448：46/46 JNI接口、依赖闭包、AAR原非JNI条目逐个哈希验证通过，hybrid-maven artifact15076283612；build job139611611452：单元测试/编译成功，签名v2验证，独立包名com.vobich.bluestar.gemmalab.vision560.hybrid，versionCode5/versionName0.1.4，离线权限、两个原生库哈希和模型资产校验均成功，APK artifact15077220243；publish job139613110103成功。
+- 已回读Release，非草稿、prerelease，tag bluestar-gemma-v014-560-hybrid-20261126；APK 702063949 bytes，SHA256 e8ed82f22e1713e554211f9742d85fd9f1084bf16967b54bc6f09376884842a9，真实下载地址 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-gemma-v014-560-hybrid-20261126/BlueStar_Gemma_560_Hybrid_0.1.4.apk 。
+- 原560修复权重不变，需重新导入原厂文件。建议同一价格表、560预算，优先GPU视觉+GPU语言（视觉允许CPU回退），对照CPU视觉+CPU语言；记录冷/热首字、总时长、识别结果及报错。BLUESTAR_VISION_HYBRID_014标记不代表实际GPU占比。构建已完成但真机加速尚未验证；不覆盖正式蓝星或旧实验。PP-OCR/Gemma组合尚未授权开发。
+
+---
+
 # 最新｜v0.1.4 JNI依赖校验通过，修复ZIP元数据复用错误
 - CI45730170959 job139609918490：复用JNI及原厂provider哈希校验成功，46/46 JNI接口匹配，provider DT_NEEDED仅libm/libc/libdl/liblog，依赖闭包通过。AAR重写后读取原ZIP失败 BadZipFile，根因writestr复用原ZipInfo修改其header_offset等属性，并非引擎或模型失败。
 - 隔离分支HEAD b96bc13b451eb421bdea04336c54b84bdeb2835b：copy.copy(ZipInfo)后写入，原条目按文件名重新读取哈希，增加testzip及条目集合检查。复用已保存JNI，不重编译，不降低校验标准。CI45730569587 in_progress。 APK及真机结果未取得。
