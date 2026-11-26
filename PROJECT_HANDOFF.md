@@ -43,3 +43,6 @@
 
 ## 最新用户纠正：恢复已真机通过的自研版本，停止纯原厂重建路线
 用户手机已有原厂 Gallery，无需重复安装纯原厂诊断版。历史交接 e29ee62... 第2429行明确 v0.2.0 GPU运行、截图4.7s；v0.2.1/2优化和精简之后的GPU状态需重新核实。已核实原始v0.2.0 release target 08977a0f4e57d02d22a3b85901e39992e6b32b2d 及原APK https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-eye-brain-auto-v020-20261126/BlueStar_EyeBrain_Auto_0.2.0.apk 。新分支 exp/eye-brain-v020-diagnostic-20261127 从该提交派生，bccc1d16b475fed562818f497b71cc534420a86d 仅修改workflow，在原v0.2.0 overlay和资产验证后注入诊断；原包名/版本/功能不变，独立release bluestar-eye-brain-v020-diagnostic-20261127，预期 APK BlueStar_EyeBrain_0.2.0_Diagnostic.apk，尚未编译或真机验证。签名可能与旧APK不一致，不卸载旧版或删模型。旧纯原厂CI不作为交付，不再继续该路线。先验证原始v0.2.0及诊断复刻，再逐项恢复后续优化。
+
+## 当前唯一眼脑研发任务：v0.2.5 增量优化（替代上述纯诊断实验）
+用户明确放弃仅诊断的安装包，要求从真机成功v0.2.0选择失败v0.2.3的小范围优化并附日志。新分支 exp/eye-brain-increment-v025-20261127 从08977a0f4e57d02d22a3b85901e39992e6b32b2d直接派生，提交660889011cb03f4f15955af8932467b2ba8f3709。CI仅在原overlay后注入精简快速阅读/招牌提示词、原厂实时指标入口、OCR解码/加载/检测/识别分段计时与自动提交日志、持久化GPU/退出诊断及首页标识v0.2.5。原包名/versionName/versionCode与v0.2.0保持（签名可能不兼容）；不改OCR核心、CPU4、会话每次释放、GPU/模型/原生库配置、ABI、任务注册、通知组件及素材。暂缓OCR常驻、取消遮挡弹窗及输入并发改造、本地allowlist、组件精简。验收GPU可选并实际回答，八任务原功能正常，同图同模型比较快速阅读回答内容及耗时；当前仅编译计划，不保证提速。预期APK BlueStar_EyeBrain_Increment_0.2.5.apk，tag bluestar-eye-brain-increment-v025-20261127。旧纯诊断任务弃用，不要求用户测试；接口无取消运行能力。以后真机失败回退最后成功源码，实验包必须有实际优化目标、持久诊断、一键复制，成功冻结，失败记录不继承失败源码；仅编译错误可修正构建。未验证新APK签名或真机，不卸载旧版。
