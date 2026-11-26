@@ -1,0 +1,52 @@
+name: Gemma 560 exact INT8 weight restoration host screen
+on:
+  push:
+    branches: [exp/gemma4-560-hybrid-20261126]
+    paths: ['gemma-560-quant-audit/**', '.github/workflows/gemma-560-quant-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  screen:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install verified runtime versions and FlatBuffer object schema
+        run: |
+          set -euo pipefail
+          python -m pip install 'litert-lm==0.18.1' 'ai-edge-litert==2.4.0' 'numpy==2.5.5' flatbuffers
+          python -m pip download --no-deps --only-binary=:all: 'tensorflow-cpu==2.20.0' -d /tmp/schema-wheel
+          unzip -p /tmp/schema-wheel/*.whl tensorflow/lite/python/schema_py_generated.py > gemma-560-quant-audit/schema_py_generated.py
+          test -s gemma-560-quant-audit/schema_py_generated.py
+          python -m py_compile gemma-560-quant-audit/restore.py
+      - name: Obtain exact published reference and corrected baseline
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/6e5c4f1e395deb959c494953478fa5cec4b8008f/gemma-4-E2B-it.litertlm' -o gallery.litertlm
+          curl -fL --retry 3 'https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-gemma-v016-560-recovery-20261126/BlueStar_Gemma_560_Recovery_0.1.6.apk' -o baseline.apk
+          echo 'e2252e18187f948eacae234ec67b5b9718db92b29a4d89f6bc9d97e40821a61e  baseline.apk' | sha256sum -c -
+          unzip -q baseline.apk assets/encoder.tflite
+          rm baseline.apk
+      - name: Restore exact original weights and benchmark
+        run: |
+          set -o pipefail
+          mkdir -p quant-report
+          python -u gemma-560-quant-audit/restore.py 2>&1 | tee quant-report/run.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gemma560-int8-screen-report
+          path: quant-report/
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: gemma560-int8-screen-candidate
+          path: candidate.tflite
+          compression-level: 0
+          retention-days: 14
