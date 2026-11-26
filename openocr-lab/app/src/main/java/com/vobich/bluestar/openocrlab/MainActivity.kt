@@ -19,10 +19,10 @@ class MainActivity:Activity(){
   val scroll=ScrollView(this);val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,48,24,32)}
   scroll.addView(box);setContentView(scroll)
   fun label(t:String)=TextView(this).apply{text=t;textSize=18f;box.addView(this)}
-  label("蓝星 OpenOCR v0.1.3 · 完全离线")
+  label("蓝星 OpenOCR v0.1.4 · 完全离线")
   choose=Button(this).apply{text="选择相册原图";box.addView(this);setOnClickListener{startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},9)}}
   preview=ImageView(this).apply{adjustViewBounds=true;maxHeight=650;box.addView(this)}
-  mode=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("完整列裁剪对照（默认）","仅完整列裁剪","仅v0.1.2基线","CPU 2/4/6线程对照"));box.addView(this)}
+  mode=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("全图高清混合排版（默认）","全图快速混合排版","v0.1.3 横排基线","CPU 2/4/6线程对照"));box.addView(this)}
   threads=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("CPU 4线程（默认）","CPU 2线程","CPU 6线程"));box.addView(this)}
   run=Button(this).apply{text="开始识别 / 同图复测";box.addView(this);setOnClickListener{test()}}
   status=label("请选择图片")
@@ -44,6 +44,7 @@ class MainActivity:Activity(){
    try{
     val start=now();if(locator==null)locator=TextLocator(this);val init=now()
     val found=locator!!.locate(bm);val detected=now()
+    if(selected<=1){mixedTest(bm,found,detected-init,init-start,chosenThreads,selected==0);return@execute}
     val roi=found.roi
     val boxes=found.boxes.filter{b->roi==null||roi.contains(b.rect.centerX().toInt(),b.rect.centerY().toInt())}
     require(boxes.isNotEmpty()){"未检测到文字"}
@@ -68,7 +69,7 @@ class MainActivity:Activity(){
     runOnUiThread{output.append("new_rows=${optimized.rows.size} new_crops=${optimized.rows.sumOf{it.size}} duplicates=${optimized.removed} plan_ms=$planMs\n")}
     runOnUiThread{output.append("fine_rows=${fine.rows.size} fine_crops=${fine.rows.sumOf{it.size}} fine_plan_ms=$fineMs\n")}
     runOnUiThread{output.append("column_rows=${columns.rows.size} column_crops=${columns.rows.sumOf{it.size}} column_plan_ms=$colMs\n")}
-    val cases=when(selected){1->listOf(true,true);2->listOf(false,false);3->listOf(true,true);else->listOf(false,true,true,false)}
+    val cases=listOf(true,true)
     val threadCases=if(selected==3)listOf(2,4,6)else listOf(chosenThreads)
     for(nt in threadCases){
      val t=now()
@@ -113,4 +114,31 @@ class MainActivity:Activity(){
    }catch(t:Throwable){runOnUiThread{output.append("\n失败："+t.toString());status.text="失败";busy(false)}}
   }
  }
+ private fun mixedTest(bm:Bitmap,found:TextLocator.Found,globalMs:Long,initMs:Long,nt:Int,tiles:Boolean){
+  val t=now();val scan=MixedLayout.scan(bm,locator!!,found.boxes,tiles);val scanMs=now()-t
+  val ps=now();val blocks=MixedLayout.plan(scan.boxes,bm.width,bm.height);val planMs=now()-ps
+  require(blocks.isNotEmpty()){"未检测到文字"}
+  val scale=min(1f,1200f/max(bm.width,bm.height));val shown=Bitmap.createScaledBitmap(bm,(bm.width*scale).toInt(),(bm.height*scale).toInt(),true).copy(Bitmap.Config.ARGB_8888,true)
+  Canvas(shown).apply{scale(scale,scale);val paint=Paint().apply{style=Paint.Style.STROKE;strokeWidth=3/scale;color=Color.YELLOW};scan.boxes.forEach{drawRect(it.rect,paint)};for(block in blocks){paint.color=if(block.vertical)Color.MAGENTA else Color.CYAN;block.boxes.forEach{drawRect(it.rect,paint)}}}
+  val load=now();if(reader==null||readerThreads!=nt){reader?.close();reader=null;reader=Reader(this,"rep.onnx",nt);readerThreads=nt};val loadMs=now()-load
+  val engine=reader!!
+  runOnUiThread{preview.setImageBitmap(shown);output.text="v0.1.4 source=${bm.width}x${bm.height} global_boxes=${found.boxes.size} global_ms=$globalMs detector_init_ms=$initMs tiles=${scan.passes} tile_ms=$scanMs all_boxes=${scan.boxes.size} blocks=${blocks.size} vertical=${blocks.count{it.vertical}} plan_ms=$planMs threads=$nt load_ms=$loadMs\n"}
+  repeat(2){round->
+   val begin=now();val lines=mutableListOf<String>();val details=mutableListOf<String>();var first=-1L;var count=0
+   for((i,block) in blocks.withIndex()){
+    val parts=mutableListOf<String>()
+    for((j,b) in block.boxes.withIndex()){
+     val ans=if(block.vertical)MixedLayout.verticalRead(bm,b,engine)else engine.read(bm,b,true)
+     val text=ans.text.trim();val suspect=FineRead.suspicious(ans,b.score)||text.isBlank()||ans.confidence<.40f
+     if(!suspect)parts.add(text)
+     count++;details.add("block=${i+1} cell=${j+1} direction=${if(block.vertical)"vertical" else "horizontal"} rect=${b.rect} det=${b.score} rec=${ans.confidence} suspect=$suspect text=$text")
+    }
+    if(parts.isNotEmpty()){lines.add(parts.joinToString(" | "));if(first<0)first=now()-begin}
+   }
+   val rec=now()-begin
+   runOnUiThread{output.append("\n混合排版 第${round+1}轮 first_valid_ms=$first rec_ms=$rec det_plus_rec_ms=${globalMs+scanMs+planMs+rec} crops=$count\n"+lines.joinToString("\n")+"\n"+details.joinToString("\n")+"\n")}
+  }
+  runOnUiThread{status.text="完成：请复制诊断和识别结果";busy(false)}
+ }
+
 }
