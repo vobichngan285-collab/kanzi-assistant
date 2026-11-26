@@ -66,3 +66,5 @@
 - v0.4.3 CI 已触发，45874870699 in_progress，https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45874870699 ，对应8800224d1e5667363fe2a4625254faddc16c48fd；APK未发布。
 
 - 同张3072×4096热干面包装补充YOLO26n原版对照(v0.4.2 mode4 CPU4)：init183ms、detect422ms、reader_load239ms、rec778ms、core1202ms、点击原文1659ms、TTS入队1685ms/首段回调1687ms；35原框、去重1、34识别框、2待核、0空白、PSS477751KiB。DB同图14框、core558ms、原文691ms、TTS首段758ms；DB主标题完整/倾斜宣传语完整，YOLO主标题只读干面味、宣传语基本漏；YOLO多识别配料棕榈油/玉米面/辣椒粉、营养2207千焦/蛋白质/9.9克/26%/17%等，但仍漏检、碎框、表格关联错误。速度对比受框数及冷热加载差异影响，框数不等于准确率。YOLO部分有效小字det低于0.3（不同模型分数不可直接等同）。维持DB v0.4.3分辨率单变量对照，不提前调整阈值或混合检测。此次仅记录对照结果。
+
+- v0.2.6 CI 45873820865 completed/success，已验证正式发布非draft，target fd31e8db2b85310b2d66bdb2409dc4ab85cd9e59，APK 430926668 bytes，SHA256 fee666544dcd53f05f68228353c615d676234d8c463eaf726f01db8afe3c3558；下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-eye-brain-config-v026-20261127/BlueStar_EyeBrain_Config_0.2.6.apk 。真机仍需验证直接选GPU、不重选视觉预算及实际推理。v0.4.3 CI 45874870699 查询仍in_progress。
