@@ -2404,3 +2404,7 @@ Actions 45791503828 build success，原v0.1.3资产校验、Android单测/编译
 
 ## 2026-11-26 — 眼脑协同 A v0.1.0 发布成功
 Actions 45841919918 build/publish均completed/success，固定上游源码、OCR资产校验、Gradle release编译、APK签名及包名、原资产复核与发行均通过。Release bluestar-eye-brain-gallery-a-v010-20261126 回读确认非draft、prerelease、target 36325b0fff33082c6e59b47c428c9f1e49107f21。APK BlueStar_EyeBrain_Gallery_A_0.1.0.apk 430910268 bytes，SHA256 99983d59bdcf8ab45e0308beada65ff191cd45554c2fcd37db817773dc6157c7；下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-eye-brain-gallery-a-v010-20261126/BlueStar_EyeBrain_Gallery_A_0.1.0.apk 。真机安装、Gemma原模型加载、OCR到聊天传输及GPU速度尚待验证。优先完成眼脑纯文本接入；用户确认后续再研究包装艺术/潦草字体识别器与倾斜/透视招牌检测，暂不修改。正式APP不动，不上传私人照片或OCR原文。
+
+
+## 2026-11-26 — 眼脑协同 A v0.1.0 首次真机反馈
+用户反馈运行挺稳定，截图显示中文离线AI对话中已产生产品信息分类与总结，支持纯文本眼脑链路初步跑通；尚无同输入原版速度对照、模型revision/后端、完整OCR原文与真值、断网及连续多轮性能日志，不宣布全面验收。截图显示数学标记未渲染，部分疑似OCR杂字进入归纳；需对照原始OCR与图片判断错误来源，不擅自改数字。另用户此前报告倾斜招牌漏读、正面较好，未来应区分检测/裁剪和识别错误；优先完成眼脑协同验证，再研究倾斜招牌检测、包装艺术及手写字体识别。仅备份脱敏结论，不存截图或产品原文，不改代码、模型、正式APP或Release。
