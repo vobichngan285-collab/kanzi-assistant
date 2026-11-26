@@ -56,3 +56,5 @@
 - v0.2.6 已获用户授权，独立分支 exp/eye-brain-config-v026-20261127，直接派生v0.2.0 08977a0f4e57d02d22a3b85901e39992e6b32b2d；提交 fd31e8db2b85310b2d66bdb2409dc4ab85cd9e59。基线原overlay后注入ConfigDialog SideEffect补新增键且保留已有编辑；ModelPageAppBar提交前以最新模型配置合并用户选择，缺失配置才用原厂默认，过滤已失效键，统一比较/保存/回调；诊断增加CONFIG_SYNC/RESOLVE/SAVED及conversation创建阶段。未继承v0.2.5提示词/指标优化，不改模型、OCR、GPU运行库。实际APK待编译，预期 BlueStar_EyeBrain_Config_0.2.6.apk；原包名系统版本沿用v0.2.0。CI [{"id":45873820865,"status":"in_progress","conclusion":null,"url":"https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45873820865"}]。验收：反复打开配置直接切GPU不闪退，等待初始化完成并实际回答；若失败重开复制日志，单独区分系统清理。当前未验证真机或签名覆盖。
 
 - 用户补充真机验证：v0.2.5 手动重新选择视觉Token预算280，再选择GPU并确认，用户反馈“可以的”。支持配置缺键/同步问题判断；尚未明确是否已完成GPU初始化及实际推理，不宣称完整GPU验收。v0.2.6仍按已提交的最小配置修复路线，不增加变量。
+
+- OpenOCR v0.4.2 RepViT-DB 新真机样本（食品包装实拍，3072×4096，CPU detector4/rec4，mode4全图原框）：detector_init109ms、detect239ms、rec318ms、core558ms、点击至原文691ms、TTS入队756ms/首段开始回调758ms（非实测出声），PSS440511KiB；14框、13非空、1空白待核、0去重。识别得到主要商品字样、生产日期/保质期标签及数字等；无原图不能核实准确率。存在同一倾斜行标签与值被分拆、跨区域阅读顺序、跨行文字碎片；raw1 rec0.509/min0.400未标疑，主标题min0.340未标疑，raw0空白。v0.4.3优先保留原四边形检测及原文TTS，做倾斜行/标签值关联、低置信度与空白诊断、核实漏检小字（需原图同图对照）；不凭文字猜补，不急于压缩速度，不接大脑。此次仅记录样本，未改源码或构建。
