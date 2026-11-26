@@ -82,8 +82,16 @@ for signature in ("vision_280","vision_560"):
         rt,rop,w=refmap[k]
         assert all(j==1 and opname(m,g.operators[ii])==s.BuiltinOperator.FULLY_CONNECTED for ii,j in uses[ti])
         assert ti not in g.inputs and ti not in g.outputs
-        assert g.tensors[op.inputs[0]].type==rg.tensors[rop.inputs[0]].type==s.TensorType.FLOAT32
-        assert g.tensors[op.outputs[0]].type==rg.tensors[rop.outputs[0]].type==s.TensorType.FLOAT32
+        src_in=rg.tensors[rop.inputs[0]].type
+        src_out=rg.tensors[rop.outputs[0]].type
+        dst_in=g.tensors[op.inputs[0]].type
+        dst_out=g.tensors[op.outputs[0]].type
+        print("fc_types",signature,i,"source",src_in,src_out,"target",dst_in,dst_out,flush=True)
+        assert dst_in==dst_out==s.TensorType.FLOAT32,(signature,i,dst_in,dst_out)
+        assert src_in in (s.TensorType.FLOAT32,s.TensorType.INT8,s.TensorType.FLOAT16) and src_out in (s.TensorType.FLOAT32,s.TensorType.INT8,s.TensorType.FLOAT16),(src_in,src_out)
+        # The converted graph has float activations. Source integer activation
+        # quantization cannot be copied without changing the surrounding graph.
+        # Use the runtime's hybrid FC path and retain the exact weight quantization.
         assert op.builtinOptionsType==rop.builtinOptionsType
         a=op.builtinOptions;z=rop.builtinOptions
         assert a is not None and z is not None
@@ -97,11 +105,14 @@ for signature in ("vision_280","vision_560"):
             buf=s.BufferT();buf.data=w.reshape(-1).view(np.uint8).copy()
             newbuf[k]=len(m.buffers);m.buffers.append(buf)
         oldbuf.add(t.buffer);t.buffer=newbuf[k];t.type=s.TensorType.INT8;t.quantization=copy.deepcopy(rt.quantization)
-        op.builtinOptions.asymmetricQuantizeInputs=rop.builtinOptions.asymmetricQuantizeInputs
+        op.builtinOptions.asymmetricQuantizeInputs=True
         source_code=ref.operatorCodes[rop.opcodeIndex]
-        version=source_code.version
+        # FC v12 supports per-channel INT8 weights with float activations.
+        # Interpreter allocation/invocation and numeric gates must pass.
+        version=12
         if version not in opcodes:
-            opcodes[version]=len(m.operatorCodes);m.operatorCodes.append(copy.deepcopy(source_code))
+            code=copy.deepcopy(source_code);code.version=version
+            opcodes[version]=len(m.operatorCodes);m.operatorCodes.append(code)
         op.opcodeIndex=opcodes[version]
 # Old float buffers must be unused before removal; preserve any other tensor/metadata references.
 used={t.buffer for g in m.subgraphs for t in g.tensors}
