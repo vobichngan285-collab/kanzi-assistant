@@ -33,3 +33,5 @@
 - 新原厂基线分支 exp/gallery-clean-gpu-20261127，构建配置提交 871105a27ae6b2395ff2c1515c29151b7c7725b4；直接检出原厂 9cb31cf47c21b0ed76901ff589a52b509803edfa，不执行任何 overlay，原包名版本不变。预期发布 gallery-clean-gpu-baseline-20261127，APK Gallery_Clean_GPU_Baseline.apk；尚未确认构建成功或真机通过。
 
 - 用户追加硬性要求：原厂重建版必须内置持久化诊断日志、软件内查看和复制；追踪配置确认、后端切换、引擎释放与初始化，尽可能读取 Android 历史进程退出原因。诊断为唯一功能改动，不继承旧补丁。当前纯原厂构建配置不含诊断，不作为最终交付。
+
+- 原厂诊断版构建配置已提交 dc4efaf0600143b5b395dbedb33a26a1cf2f061c。CI 在固定原厂源码上仅注入 MainActivity、ConfigDialog、LlmChatModelHelper 日志及 GpuDiagnostic.kt；同步落盘、启动弹窗复制、Android 11+历史退出原因、Java异常。预期 APK Gallery_GPU_Diagnostic.apk，tag gallery-gpu-diagnostic-20261127。尚未编译验证；未直接追踪配置持久化内部调用或完整 native tombstone，日志窗口仅最近64k字符。原厂包名不变，可能签名冲突。
