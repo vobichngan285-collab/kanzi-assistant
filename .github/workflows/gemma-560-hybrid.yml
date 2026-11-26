@@ -19,6 +19,25 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Prepare source-build environment
+        run: |
+          set -euo pipefail
+          df -h
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq git-lfs build-essential clang cmake pkg-config patchelf libssl-dev zlib1g-dev libpng-dev libcurl4-openssl-dev libfftw3-dev
+          if ! command -v bazelisk >/dev/null; then
+            npm install --prefix "$HOME/.local/bazelisk" @bazel/bazelisk
+            echo "$HOME/.local/bazelisk/node_modules/.bin" >> "$GITHUB_PATH"
+          else
+            command -v bazelisk
+          fi
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0'
+          "$SDKMANAGER" 'ndk;28.1.13356709'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.1.13356709" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          rustc --version
       - name: Resolve exact official Android AAR before expensive native compile
         run: |
           set -euo pipefail
@@ -42,24 +61,55 @@ jobs:
           assert p.find("{*}version").text=="0.18.1"
           PY
           sha256sum stock.aar stock.pom
-      - uses: actions/download-artifact@v4
-        with:
-          name: hybrid-compiled-jni
-          run-id: 45725894735
-          github-token: ${{ github.token }}
-          path: native-output
-      - name: Verify compiled JNI and obtain pinned official constraint provider
+      - name: Checkout exact v0.18.1 source and acceleration prebuilts
         run: |
           set -euo pipefail
-          echo "f0dcf741d49a9a87a0b893513153c0e522d95b1fc679eb0fd54500c2061dafa5  native-output/liblitertlm_jni.so" | sha256sum -c -
           GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 --branch v0.18.1 https://github.com/google-ai-edge/LiteRT-LM.git upstream
           test "$(git -C upstream rev-parse HEAD)" = bda624851d74be34d4e1f7fac1fc4155939539c7
-          git -C upstream lfs pull --include="prebuilt/android_arm64/libGemmaModelConstraintProvider.so"
-          cp upstream/prebuilt/android_arm64/libGemmaModelConstraintProvider.so native-output/
-          echo "c7c7188b831ae75fcc7ec6fe613118365b311995805423a4ca265372f07f4783  native-output/libGemmaModelConstraintProvider.so" | sha256sum -c -
+          git -C upstream lfs pull --include="prebuilt/android_arm64/**,prebuilt/linux_x86_64/**"
+          python gemma-vision-lab/tests/patch_hybrid_runtime.py upstream | tee runtime.patch.log
+          test "$(git -C upstream diff --name-only | sort | paste -sd, -)" = runtime/executor/llm_executor_settings_utils.cc,runtime/executor/vision_litert_compiled_model_executor.cc
+          # The later TensorFlow pin in v0.18.1 requires a newer rules_cc compatibility proxy.
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("upstream/WORKSPACE")
+          s=p.read_text()
+          assert 'TENSORFLOW_REF = "a1179d3c224967bd979950b823d5ce2a7e8f4c94"' in s
+          needle='load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")\n'
+          assert s.count(needle)==1 and 'name = "rules_cc"' not in s
+          archive='''
+          http_archive(
+              name = "rules_cc",
+              integrity = "sha256-ac60VLmyngq6fagcculuyv2B0gRL6IO0Y5ixx3yn//k=",
+              strip_prefix = "rules_cc-0.2.9",
+              url = "https://github.com/bazelbuild/rules_cc/releases/download/0.2.9/rules_cc-0.2.9.tar.gz",
+          )
+          '''
+          p.write_text(s.replace(needle,needle+archive))
+          PY
+          git -C upstream diff -- WORKSPACE | tee workspace.patch.log
+      - name: Build pinned arm64 JNI from source
+        working-directory: upstream
+        run: |
+          set -o pipefail
+          bazelisk build --config=android_arm64 --jobs=4 --local_ram_resources=8192 //kotlin/java/com/google/ai/edge/litertlm/jni:litertlm_jni 2>&1 | tee ../native-build.log
+          bazelisk cquery --config=android_arm64 --output=files //kotlin/java/com/google/ai/edge/litertlm/jni:litertlm_jni > ../jni-outputs.txt
+      - name: Preserve compiled JNI before compatibility checks
+        run: |
+          set -euo pipefail
+          mkdir -p native-output
+          cp upstream/bazel-bin/kotlin/java/com/google/ai/edge/litertlm/jni/liblitertlm_jni.so native-output/
+          sha256sum native-output/liblitertlm_jni.so
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hybrid-compiled-jni
+          path: native-output/
+          retention-days: 14
       - name: Verify JNI compatibility and package required pinned provider
         run: |
           set -euo pipefail
+          cp upstream/prebuilt/android_arm64/libGemmaModelConstraintProvider.so native-output/
+          echo "c7c7188b831ae75fcc7ec6fe613118365b311995805423a4ca265372f07f4783  native-output/libGemmaModelConstraintProvider.so" | sha256sum -c -
           python gemma-vision-lab/tests/repack_hybrid_aar.py stock.aar native-output/liblitertlm_jni.so stock.pom hybrid-maven/com/google/ai/edge/litertlm/litertlm-android/0.18.1 native-output/libGemmaModelConstraintProvider.so | tee jni-verify.log
       - uses: actions/upload-artifact@v4
         with:
@@ -71,6 +121,10 @@ jobs:
         with:
           name: hybrid-native-diagnostics
           path: |
+            runtime.patch.log
+            workspace.patch.log
+            native-build.log
+            jni-outputs.txt
             jni-verify.log
           if-no-files-found: ignore
   build:
@@ -110,7 +164,9 @@ jobs:
           grep -Fx "sha256=fb4159987f3cd30aba817ded3b83a04c81a4a09991d88fafee31d1325490c2f8" model.properties
       - name: Test and build independent APK
         working-directory: gemma-vision-lab
-        run: gradle --no-daemon --max-workers=2 :app:testReleaseUnitTest :app:assembleRelease
+        run: |
+          sed -i 's/versionCode = 5/versionCode = 6/;s/versionName = "0.1.4"/versionName = "0.1.5"/' app/build.gradle.kts
+          gradle --no-daemon --max-workers=2 :app:testReleaseUnitTest :app:assembleRelease
       - name: Verify signature, identity, offline permission and native runtime
         run: |
           set -euo pipefail
@@ -118,7 +174,7 @@ jobs:
           BT="$ANDROID_HOME/build-tools/36.0.0"
           "$BT/apksigner" verify --verbose --print-certs "$APK"
           "$BT/aapt" dump badging "$APK" | tee badging.txt
-          grep -F "package: name='com.vobich.bluestar.gemmalab.vision560.hybrid' versionCode='5' versionName='0.1.4'" badging.txt
+          grep -F "package: name='com.vobich.bluestar.gemmalab.vision560.hybrid' versionCode='6' versionName='0.1.5'" badging.txt
           grep -F "launchable-activity: name='com.vobich.bluestar.gemmalab.MainActivity'" badging.txt
           ! grep -F "android.permission.INTERNET" badging.txt
           unzip -Z1 "$APK" > archive.txt
@@ -132,19 +188,18 @@ jobs:
           with zipfile.ZipFile(apk) as z:
               data=z.read("lib/arm64-v8a/liblitertlm_jni.so")
               assert hashlib.sha256(data).hexdigest()==expected and b"BLUESTAR_VISION_HYBRID_014" in data
-              assert hashlib.sha256(z.read("lib/arm64-v8a/libGemmaModelConstraintProvider.so")).hexdigest()=="c7c7188b831ae75fcc7ec6fe613118365b311995805423a4ca265372f07f4783"
           with zipfile.ZipFile(apk) as z:
               for p in pathlib.Path("gemma-vision-lab/app/src/main/assets").iterdir():
                   with z.open("assets/"+p.name) as f, p.open("rb") as src:
                       assert hashlib.file_digest(f,"sha256").digest()==hashlib.file_digest(src,"sha256").digest(),p
           PY
           mkdir -p release
-          cp "$APK" release/BlueStar_Gemma_560_Hybrid_0.1.4.apk
+          cp "$APK" release/BlueStar_Gemma_560_Hybrid_0.1.5.apk
           cp gemma-vision-lab/README.md release/
           (cd release && sha256sum *.apk > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:
-          name: bluestar-gemma-v014
+          name: bluestar-gemma-v015
           path: release/
   publish:
     needs: build
@@ -154,7 +209,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: bluestar-gemma-v014
+          name: bluestar-gemma-v015
           path: release
       - name: Publish verified APK
         env:
@@ -163,10 +218,10 @@ jobs:
         run: |
           set -euo pipefail
           (cd release && sha256sum -c SHA256SUMS.txt)
-          TAG=bluestar-gemma-v014-560-hybrid-20261126
+          TAG=bluestar-gemma-v015-560-hybrid-20261126
           retry() { for i in 1 2 3 4; do "$@" && return 0; sleep $((i*3)); done; return 1; }
           if ! gh release view "$TAG" --json targetCommitish >/dev/null 2>&1; then
-            retry gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 Gemma 560 混合视觉实验 v0.1.4" --notes-file release/README.md --prerelease --draft
+            retry gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 Gemma 560 混合推理实验 v0.1.5" --notes-file release/README.md --prerelease --draft
           fi
           gh release view "$TAG" --json targetCommitish | jq -e --arg sha "$GITHUB_SHA" '.targetCommitish == $sha'
           retry gh release upload "$TAG" release/* --clobber
