@@ -63,7 +63,8 @@ jobs:
           "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0'
           rm -rf android-lab/app/src/main/java android-lab/app/src/main/kotlin
           mkdir -p android-lab/app/src/main/java/com/paddle/ocr/demo android-lab/app/src/main/assets
-          cp paddle-ocr-mobile-lab/MainActivity.kt android-lab/app/src/main/java/com/paddle/ocr/demo/
+          cp paddle-ocr-mobile-lab/MainActivity.kt paddle-ocr-mobile-lab/RowCandidates.kt android-lab/app/src/main/java/com/paddle/ocr/demo/
+          cp paddle-ocr-mobile-lab/DetectionEngine.kt android-lab/ppocr-sdk/src/main/java/com/paddle/ocr/engine/DetectionEngine.kt
           cp paddle-ocr-mobile-lab/AndroidManifest.xml android-lab/app/src/main/AndroidManifest.xml
           cp android-lab/LICENSE android-lab/app/src/main/assets/PaddleOCR-LICENSE.txt
           python - <<'PY'
@@ -71,7 +72,7 @@ jobs:
           p=Path("android-lab/app/build.gradle.kts")
           s=p.read_text()
           assert 'applicationId = "com.paddle.ocr.demo"' in s
-          s=s.replace('applicationId = "com.paddle.ocr.demo"','applicationId = "com.vobich.bluestar.paddlelab.v011"').replace('versionName = "1.0.0"','versionName = "0.1.1"').replace('minSdk = 26','minSdk = 26\n        ndk { abiFilters += "arm64-v8a" }').replace('implementation(project(":ppocr-sdk"))','implementation(project(":ppocr-sdk"))\n    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")')
+          s=s.replace('applicationId = "com.paddle.ocr.demo"','applicationId = "com.vobich.bluestar.paddlelab.v012"').replace('versionName = "1.0.0"','versionName = "0.1.2"').replace('minSdk = 26','minSdk = 26\n        ndk { abiFilters += "arm64-v8a" }').replace('implementation(project(":ppocr-sdk"))','implementation(project(":ppocr-sdk"))\n    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")')
           p.write_text(s)
           p=Path("android-lab/app/build.gradle.kts")
           s=p.read_text()
@@ -117,7 +118,7 @@ jobs:
           PY
           cat native-audit.txt
           "$BT/aapt" dump badging "$APK" | tee badging.txt
-          grep -F "package: name='com.vobich.bluestar.paddlelab.v011' versionCode='1' versionName='0.1.1'" badging.txt
+          grep -F "package: name='com.vobich.bluestar.paddlelab.v012' versionCode='1' versionName='0.1.2'" badging.txt
           ! grep -F 'android.permission.INTERNET' badging.txt
           python - <<'PY'
           import zipfile,hashlib,pathlib
@@ -130,12 +131,12 @@ jobs:
                   assert hashlib.sha256(z.read("assets/"+name)).hexdigest()==hashlib.sha256((root/name).read_bytes()).hexdigest(),name
           PY
           mkdir release
-          cp "$APK" release/BlueStar_Paddle_OCR_Mobile_0.1.1.apk
+          cp "$APK" release/BlueStar_Paddle_OCR_Mobile_0.1.2.apk
           cp paddle-ocr-mobile-lab/README.md android-lab/LICENSE android-lab/ppocr-sdk/src/main/assets/model-sha256.txt native-audit.txt release/
           (cd release && sha256sum *.apk > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:
-          name: bluestar-paddle-ocr-v011
+          name: bluestar-paddle-ocr-v012
           path: release/
   publish:
     needs: build
@@ -145,7 +146,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: bluestar-paddle-ocr-v011
+          name: bluestar-paddle-ocr-v012
           path: release
       - name: Publish verified isolated test APK
         env:
@@ -154,9 +155,9 @@ jobs:
         run: |
           set -euo pipefail
           (cd release && sha256sum -c SHA256SUMS.txt)
-          TAG=bluestar-paddle-ocr-mobile-v011-20261126
+          TAG=bluestar-paddle-ocr-mobile-v012-20261126
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 飞桨OCR独立实验 0.1.1" --notes-file release/README.md --prerelease --draft
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 飞桨OCR独立实验 0.1.2" --notes-file release/README.md --prerelease --draft
           fi
           gh release view "$TAG" --json targetCommitish | jq -e --arg sha "$GITHUB_SHA" '.targetCommitish == $sha'
           for i in 1 2 3; do gh release upload "$TAG" release/* --clobber && break; test "$i" != 3; sleep 5; done

@@ -3,3 +3,6 @@
 
 
 v0.1.0 真机报 Check failed；原代码 OpenCVUtils.init 吞掉 UnsatisfiedLinkError 后返回 false，初步定位原生初始化而非识别错误。v0.1.1 仅升级官方 OpenCV Maven 4.12.0 与 ORT 1.22.0，固定原 det/rec/config 三个 SHA256，记录页大小、OpenCV 实际 JNI 自测、ONNX 会话、识别阶段和完整异常；校验 arm64 ELF LOAD 16KB 对齐、动态依赖闭包及 APK zipalign。独立新包名避免 CI debug 签名冲突。尚未取得真机修复结果。
+
+
+v0.1.2：v0.1.1 真机 MT6991 Android16 4KB页，2560档识别成功，首次总2.763s，64框；4000档在ORT直接缓冲区申请144384019 bytes时Java堆OOM（256MiB上限）。4000档改为2048上限的原图重叠分块检测，识别仍裁自原始图像，使用中心归属消重，可能存在跨分块漏框；不增大堆、不改模型。原1280/2560档保持原逻辑。几何约束下提供高置信竖列+邻近价格横排重组候选，明确非重新识别，原始输出保留。仍需真机验证分块速度、内存、候选准确性。
