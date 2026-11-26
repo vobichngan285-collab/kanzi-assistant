@@ -9,8 +9,8 @@ android {
   applicationId = "com.vobich.bluestar.openocrlab.fielddb"
   minSdk = 28
   targetSdk = 35
-  versionCode = 11
-  versionName = "0.4.2"
+  versionCode = 12
+  versionName = "0.4.3"
   ndk { abiFilters += "arm64-v8a" }
  }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
