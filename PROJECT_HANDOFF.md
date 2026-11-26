@@ -64,3 +64,5 @@
 - v0.4.3 用户已授权实施；独立分支 exp/openocr-db-resolution-v043-20261127 从v0.4.2 e630d3e0267cd311457ffb3d7071ebdf433c4b82 派生，最终提交8800224d1e5667363fe2a4625254faddc16c48fd。DB选择960默认/1280/1600长边，保持原缩放规则及固定shape约束，日志记录实际tensor/概率图尺寸、shape动态性、轮廓数、各原过滤拒绝数及接受数。未改阈值、识别、排序、TTS、线程、YOLO，暂不分块；固定shape可能使高档位无效，尚未取得模型shape报告（release文件直接读取404）。同图全图原框CPU4分别测试三档，比较漏检/耗时而非只比较框数。包名保留fielddb，versionCode12/0.4.3，签名覆盖未确认。CI []；预期BlueStar_OpenOCR_Field_DB_0.4.3.apk，尚未验收。
 
 - v0.4.3 CI 已触发，45874870699 in_progress，https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45874870699 ，对应8800224d1e5667363fe2a4625254faddc16c48fd；APK未发布。
+
+- 同张3072×4096热干面包装补充YOLO26n原版对照(v0.4.2 mode4 CPU4)：init183ms、detect422ms、reader_load239ms、rec778ms、core1202ms、点击原文1659ms、TTS入队1685ms/首段回调1687ms；35原框、去重1、34识别框、2待核、0空白、PSS477751KiB。DB同图14框、core558ms、原文691ms、TTS首段758ms；DB主标题完整/倾斜宣传语完整，YOLO主标题只读干面味、宣传语基本漏；YOLO多识别配料棕榈油/玉米面/辣椒粉、营养2207千焦/蛋白质/9.9克/26%/17%等，但仍漏检、碎框、表格关联错误。速度对比受框数及冷热加载差异影响，框数不等于准确率。YOLO部分有效小字det低于0.3（不同模型分数不可直接等同）。维持DB v0.4.3分辨率单变量对照，不提前调整阈值或混合检测。此次仅记录对照结果。
