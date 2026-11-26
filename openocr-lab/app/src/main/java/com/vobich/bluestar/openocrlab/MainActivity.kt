@@ -133,7 +133,7 @@ class MainActivity:Activity(){
     for((j,b) in block.boxes.withIndex()){
      var ans=if(block.vertical)MixedLayout.verticalRead(bm,b,engine,refine)else engine.read(bm,b,true)
      var rotated=false
-     if(refine&&block.vertical&&ans.confidence<.75f&&ans.text.none{it in '\\u4e00'..'\\u9fff'}){
+     if(refine&&block.vertical&&ans.confidence<.75f&&ans.text.none{it.code in 0x4E00..0x9FFF}){
       val alt=engine.read(bm,b,false)
       if(alt.text.count{it.isLetter()&&it.code<128}>=2&&alt.confidence>=.88f&&alt.confidence>ans.confidence+.15f){ans=alt;rotated=true}
      }
