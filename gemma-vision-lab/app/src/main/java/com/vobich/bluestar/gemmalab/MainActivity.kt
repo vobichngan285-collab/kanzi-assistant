@@ -29,7 +29,6 @@ class MainActivity:Activity(){
  private lateinit var output:TextView
  private lateinit var logView:TextView
  private lateinit var prompt:EditText
- private lateinit var backend:Spinner
  private lateinit var mode:Spinner
  private lateinit var budget:Spinner
  private lateinit var speech:CheckBox
@@ -81,10 +80,9 @@ class MainActivity:Activity(){
   super.onCreate(savedInstanceState)
   root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(12),dp(12),dp(24))}
   setContentView(ScrollView(this).apply{addView(root)})
-  label("蓝星 Gemma 560 实验室 0.1.4",24f);label("Gemma 4 E2B · 视觉GPU+CPU混合实验 · 离线")
+  label("蓝星 Gemma 560 实验室 0.1.6",24f);label("Gemma 4 E2B · 原厂 CPU 正确性验证 · 离线")
   status=label("请导入已下载的原厂280模型")
   button("导入原厂模型（本地生成560）",{pick(11,"*/*")})
-  label("推理后端（视觉 / 语言）");backend=spinner(listOf("CPU / CPU（正确性基准）","CPU / GPU（语言加速）","GPU+CPU / CPU（混合视觉）","GPU+CPU / GPU（混合视觉）"))
   label("视觉 Token（模型实际支持）");budget=spinner(listOf("导入后显示"))
   label("同图输入对照（保持比例、不裁剪）");mode=spinner(listOf("原图原字节（默认）","长边1024 PNG","长边512 PNG"))
   button("系统相机高清拍照",{takePhoto()})
@@ -103,7 +101,7 @@ class MainActivity:Activity(){
    if(code==TextToSpeech.SUCCESS){val svc=tts;val voice=svc?.voices?.filter{!it.isNetworkConnectionRequired&&it.locale.language=="zh"}?.maxByOrNull{it.quality};if(voice!=null)voiceReady=svc?.setVoice(voice)==TextToSpeech.SUCCESS}
    note("offline_tts_ready="+voiceReady)
   }}
-  note("runtime=hybrid014 requested_gpu_cpu_partitions_unverified");note("v=0.1.4 soc="+Build.SOC_MODEL+" sdk="+Build.VERSION.SDK_INT)
+  note("runtime=litert-lm-0.18.1-stock backend=cpu_cpu");note("v=0.1.6 soc="+Build.SOC_MODEL+" sdk="+Build.VERSION.SDK_INT)
   if(ready()){lock(true);worker.execute{try{metadata()}catch(t:Throwable){ui{status.text="模型元数据错误: "+t.message;lock(false)}}}}
  }
  private fun copy(s:String){(getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("蓝星",s));Toast.makeText(this,"已复制",Toast.LENGTH_SHORT).show()}
@@ -186,7 +184,7 @@ class MainActivity:Activity(){
   if(!isFollow&&f==null){status.text="请先选择图片";return}
   if(isFollow&&!hasChat)return
   val question=prompt.text.toString().trim();if(question.isEmpty())return
-  val kind=backend.selectedItemPosition;val imageMode=mode.selectedItemPosition;val v=options[budget.selectedItemPosition];val key=kind.toString()+"/"+v
+  val imageMode=mode.selectedItemPosition;val v=options[budget.selectedItemPosition];val key="stock-cpu/"+v
   if(isFollow&&engineKey!=key){status.text="配置已改，请重新识别";return}
   val src=source
   started=now();val start=started;firstQueue=-1;speakBuffer.clear();tts?.stop();output.text="";lock(true);status.text="准备中..."
@@ -200,8 +198,8 @@ class MainActivity:Activity(){
     ExperimentalFlags.enableSpeculativeDecoding=false
     ExperimentalFlags.enableBenchmark=true
     if(!reused){
-     release();val t=now();ui{status.text="加载模型与GPU缓存..."}
-     val e=Engine(EngineConfig(modelPath=model.absolutePath,backend=if(kind==1||kind==3)Backend.GPU()else Backend.CPU(),visionBackend=if(kind>=2)Backend.GPU()else Backend.CPU(),maxNumTokens=4000,cacheDir=File(cacheDir,"hybrid014-engine-cache-"+kind+"-"+v).apply{mkdirs()}.absolutePath))
+     release();val t=now();ui{status.text="加载模型..."}
+     val e=Engine(EngineConfig(modelPath=model.absolutePath,backend=Backend.CPU(),visionBackend=Backend.CPU(),maxNumTokens=4000,cacheDir=File(cacheDir,"stock016-cpu-cache-"+v).apply{mkdirs()}.absolutePath))
      try{e.initialize();engine=e;engineKey=key}catch(t:Throwable){try{e.close()}catch(_:Throwable){};throw t};load=now()-t
     }
     if(!isFollow){val t=now();chat?.close();chat=null;chat=engine!!.createConversation(ConversationConfig(samplerConfig=SamplerConfig(1,1.0,0.0),extraContext=mapOf("enable_thinking" to false),automaticToolCalling=false));reset=now()-t}
@@ -216,8 +214,8 @@ class MainActivity:Activity(){
     done.await();error.get()?.let{throw it}
     val nativeBench=try{chat!!.getBenchmarkInfo().toString()}catch(t:Throwable){"unavailable: "+t.message}
     val elapsed=now()-start;val inf=if(first>=0)first-(dispatch-start)else -1L
-    ui{read("",true);hasChat=true;note("turn model=gallery_text_vision560 follow="+isFollow+" backend_requested="+listOf("cpu_cpu","cpu_gpu","hybrid_cpu","hybrid_gpu")[kind]+" budget="+v+" reused="+reused+" prepare_ms="+prep+" load_ms="+load+" conversation_ms="+reset+" first_text_ms="+first+" inference_first_ms="+inf+" total_ms="+elapsed+" tts_first_queue_ms="+firstQueue);note("native_benchmark "+nativeBench);status.text="完成 · 首字 "+first+"ms · 全程 "+elapsed+"ms";lock(false)}
-   }catch(t:Throwable){try{release()}catch(_:Throwable){};ui{hasChat=false;status.text="推理失败: "+t.message;note("backend_error requested="+listOf("cpu_cpu","cpu_gpu","hybrid_cpu","hybrid_gpu")[kind]+" budget="+v+" "+t.javaClass.simpleName+": "+t.message);lock(false)}}
+    ui{read("",true);hasChat=true;note("turn model=gallery_text_vision560 follow="+isFollow+" backend_requested=cpu_cpu budget="+v+" reused="+reused+" prepare_ms="+prep+" load_ms="+load+" conversation_ms="+reset+" first_text_ms="+first+" inference_first_ms="+inf+" total_ms="+elapsed+" tts_first_queue_ms="+firstQueue);note("native_benchmark "+nativeBench);status.text="完成 · 首字 "+first+"ms · 全程 "+elapsed+"ms";lock(false)}
+   }catch(t:Throwable){try{release()}catch(_:Throwable){};ui{hasChat=false;status.text="推理失败: "+t.message;note("backend_error requested=cpu_cpu budget="+v+" "+t.javaClass.simpleName+": "+t.message);lock(false)}}
    finally{ExperimentalFlags.visualTokenBudget=null;ExperimentalFlags.enableSpeculativeDecoding=false;ExperimentalFlags.enableBenchmark=false}
   }
  }

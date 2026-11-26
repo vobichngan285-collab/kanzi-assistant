@@ -2042,3 +2042,11 @@
 - **唯一当前交接文件：** `main:PROJECT_HANDOFF.md`。完整的旧长文档仅作为可追溯历史保留在 [2026-11-09 清理前 Commit](https://github.com/vobichngan285-collab/kanzi-assistant/blob/766ddb312dd6ad64ad5f66bba093def442293fbc/PROJECT_HANDOFF.md)，新对话**无需读取**。
 - **开发规则：** 不新建仓库；只在用户授权后动代码、构建或发行。实施前核对目标分支 HEAD、真实源码与 Actions；修复后审查 diff、自动测试、APK、Release，不能夸称未做的真机验证。
 - **交接更新：** 每次获授权的重要进展，在此文件**简短更新最新版本、构建 SHA、Release、已验证事实、未解决问题和下一步**；提交至 `main` 并回读核验。不要再次堆积旧实验流水账；文档-only 提交带 `[skip ci]`。不得在公开仓库写入 Key、私人照片或 OCR 原文。
+
+---
+
+## 2026-11-26｜Gemma 560 v0.1.5 真机回归与 v0.1.6 CPU 恢复验证
+
+- `main` 交接停在 v0.1.4。实验分支 v0.1.5 对应提交 `8aa29662a21d86fa102d91c9f14fbfb01d859c39`，Actions `45732392778` 的 native、build、publish 均成功，预发行 APK SHA-256 为 `1f3f74948dcefabb68e40e2f2d90bfeedb70e2e3784c1484e94227a0347df9d4`。用户真机报告随机英文、多语言乱码及 unused token，尚无同图分后端运行记录。
+- 核查模型重组计划。原厂 tokenizer、语言权重及嵌入逐段原字节复制，导入校验整包 SHA-256 `fb4159987f3cd30aba817ded3b83a04c81a4a09991d88fafee31d1325490c2f8`。此前修复的 112 组视觉权重和预处理签名保留。固定版本 Kotlin 回调的 Message.toString 直接拼接已解码内容。v0.1.5 新增语言 GPU 编译回退，但保留 GPU 张量和采样策略，仍需真机隔离 logits、采样及视觉运行才能确定根因。
+- v0.1.6 在原实验分支恢复官方 LiteRT-LM 0.18.1 Android AAR，默认 560、CPU 视觉及 CPU 语言，使用独立包名及新缓存目录。CI 从已锁定哈希的 v0.1.5 APK 提取精确模型资产，校验官方 ARM64 JNI、模型资产及签名。原厂 CPU 560 的历史服务器两张中文图 OCR CER 均为 0。Android 真机准确率与 GPU 性能仍待验证。

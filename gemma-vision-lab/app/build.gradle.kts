@@ -5,18 +5,18 @@ plugins {
 android {
  namespace = "com.vobich.bluestar.gemmalab"
  compileSdk = 36
+ buildToolsVersion = "36.0.0"
  defaultConfig {
-  applicationId = "com.vobich.bluestar.gemmalab.vision560.hybrid"
+  applicationId = "com.vobich.bluestar.gemmalab.vision560.recovery"
   minSdk = 28
   targetSdk = 35
-  versionCode = 5
-  versionName = "0.1.4"
+  versionCode = 7
+  versionName = "0.1.6"
   ndk { abiFilters += "arm64-v8a" }
  }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
  buildTypes { getByName("release") { signingConfig = signingConfigs.getByName("debug"); isMinifyEnabled = false } }
- packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += "**/liblitertlm_jni.so"
-            keepDebugSymbols += "**/libGemmaModelConstraintProvider.so" } }
+ packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += "**/liblitertlm_jni.so" } }
 }
 kotlin { jvmToolchain(17) }
 dependencies {
