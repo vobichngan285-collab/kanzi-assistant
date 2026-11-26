@@ -1,7 +1,7 @@
-name: Eye Brain Speed Lab
+name: Eye Brain Lite Lab
 on:
   push:
-    branches: [exp/eye-brain-speed-20261126]
+    branches: [exp/eye-brain-lite-20261126]
     paths: ['experiments/eye-brain-gallery-a/**','.github/workflows/eye-brain-gallery-a.yml']
   workflow_dispatch:
 permissions:
@@ -57,7 +57,11 @@ jobs:
           BT="$ANDROID_HOME/build-tools/36.0.0"
           "$BT/apksigner" verify --verbose "$APK"
           "$BT/aapt" dump badging "$APK" | tee badging.txt
-          grep -F "package: name='com.vobich.bluestar.eyebrain.galleryspeed' versionCode='3' versionName='0.2.1'" badging.txt
+          grep -F "package: name='com.vobich.bluestar.eyebrain.gallerylite' versionCode='4' versionName='0.2.2'" badging.txt
+          "$BT/aapt" dump permissions "$APK" | tee permissions.txt
+          ! grep -F 'android.permission.POST_NOTIFICATIONS' permissions.txt
+          ! grep -F 'android.permission.RECEIVE_BOOT_COMPLETED' permissions.txt
+          unzip -p "$APK" assets/eye_local_allowlist.json | cmp - experiments/eye-brain-gallery-a/eye_local_allowlist.json
           unzip -Z1 "$APK" > archive.txt
           grep -Fx lib/arm64-v8a/libonnxruntime.so archive.txt
           grep -Fx lib/arm64-v8a/liblitertlm_jni.so archive.txt
@@ -65,7 +69,7 @@ jobs:
           unzip -p "$APK" assets/yolo26n-text.onnx | sha256sum | grep -F "$(jq -r .detector_sha256 openocr-report.json)"
           unzip -p "$APK" assets/chars.txt | sha256sum | grep -F "$(jq -r .dict_sha256 openocr-report.json)"
           mkdir release
-          cp "$APK" release/BlueStar_EyeBrain_Speed_0.2.1.apk
+          cp "$APK" release/BlueStar_EyeBrain_Lite_0.2.2.apk
           cp experiments/eye-brain-gallery-a/README.md openocr-report.json OpenOCR-LICENSE.txt release/
           cp upstream/LICENSE release/Google-Gallery-LICENSE.txt
           (cd release && sha256sum *.apk > SHA256SUMS.txt)
@@ -90,8 +94,8 @@ jobs:
         run: |
           set -euo pipefail
           (cd release && sha256sum -c SHA256SUMS.txt)
-          TAG=bluestar-eye-brain-speed-v021-20261126
-          if ! gh release view "$TAG" >/dev/null 2>&1; then gh release create "$TAG" --target "$GITHUB_SHA" --title "眼脑协同提速实验 v0.2.1" --notes-file release/README.md --prerelease --draft; fi
+          TAG=bluestar-eye-brain-lite-v022-20261126
+          if ! gh release view "$TAG" >/dev/null 2>&1; then gh release create "$TAG" --target "$GITHUB_SHA" --title "眼脑协同轻量实验 v0.2.2" --notes-file release/README.md --prerelease --draft; fi
           gh release view "$TAG" --json targetCommitish | jq -e --arg sha "$GITHUB_SHA" '.targetCommitish == $sha'
           gh release upload "$TAG" release/* --clobber
           gh release edit "$TAG" --draft=false --prerelease
