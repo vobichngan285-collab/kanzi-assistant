@@ -1,0 +1,128 @@
+name: BlueStar official PaddleOCR mobile accuracy lab
+on:
+  push:
+    branches: [exp/paddle-ocr-mobile-lab-20261126]
+    paths: ['paddle-ocr-mobile-lab/**', '.github/workflows/paddle-ocr-mobile-lab.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Checkout immutable official Android SDK
+        run: |
+          set -euo pipefail
+          git init upstream
+          git -C upstream remote add origin https://github.com/PaddlePaddle/PaddleOCR.git
+          git -C upstream fetch --depth=1 origin dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf
+          git -C upstream checkout --detach FETCH_HEAD
+          test "$(git -C upstream rev-parse HEAD)" = dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf
+          cp -a upstream/deploy/ppocr-android android-lab
+          cp upstream/LICENSE android-lab/LICENSE
+      - name: Obtain official PP-OCRv5 mobile ONNX weights
+        run: |
+          set -euo pipefail
+          for part in det rec; do
+            curl -fL --retry 3 "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv5_mobile_${part}_onnx_infer.tar" -o "$part.tar"
+            mkdir -p "models-$part"
+            tar -xf "$part.tar" -C "models-$part"
+            target="android-lab/ppocr-sdk/src/main/assets/models/$part"
+            mkdir -p "$target"
+            model=$(find "models-$part" -name inference.onnx -type f)
+            test -f "$model"
+            cp "$model" "$target/inference.onnx"
+            if [ "$part" = rec ]; then
+              config=$(find "models-$part" -name inference.yml -type f)
+              test -f "$config"
+              cp "$config" "$target/inference.yml"
+            fi
+          done
+          cd android-lab/ppocr-sdk/src/main/assets
+          sha256sum models/det/inference.onnx models/rec/inference.onnx models/rec/inference.yml > model-sha256.txt
+          cat model-sha256.txt
+      - name: Install Android SDK and isolate accessible test UI
+        run: |
+          set -euo pipefail
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0'
+          rm -rf android-lab/app/src/main/java android-lab/app/src/main/kotlin
+          mkdir -p android-lab/app/src/main/java/com/paddle/ocr/demo android-lab/app/src/main/assets
+          cp paddle-ocr-mobile-lab/MainActivity.kt android-lab/app/src/main/java/com/paddle/ocr/demo/
+          cp paddle-ocr-mobile-lab/AndroidManifest.xml android-lab/app/src/main/AndroidManifest.xml
+          cp android-lab/LICENSE android-lab/app/src/main/assets/PaddleOCR-LICENSE.txt
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("android-lab/app/build.gradle.kts")
+          s=p.read_text()
+          assert 'applicationId = "com.paddle.ocr.demo"' in s
+          s=s.replace('applicationId = "com.paddle.ocr.demo"','applicationId = "com.vobich.bluestar.paddlelab"').replace('versionName = "1.0.0"','versionName = "0.1.0"').replace('minSdk = 26','minSdk = 26\n        ndk { abiFilters += "arm64-v8a" }').replace('implementation(project(":ppocr-sdk"))','implementation(project(":ppocr-sdk"))\n    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")')
+          p.write_text(s)
+          p=Path("android-lab/settings.gradle.kts");s=p.read_text();s=s.replace('maven { url = uri("https://maven.aliyun.com/repository/google") }','').replace('maven { url = uri("https://maven.aliyun.com/repository/central") }','maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2") }').replace('maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }','');p.write_text(s)
+          PY
+      - name: Build isolated Android APK
+        working-directory: android-lab
+        run: gradle --no-daemon --max-workers=2 :app:assembleDebug
+      - name: Verify APK identity, signature, offline permission and model integrity
+        run: |
+          set -euo pipefail
+          APK=android-lab/app/build/outputs/apk/debug/app-debug.apk
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          "$BT/apksigner" verify --verbose --print-certs "$APK"
+          "$BT/aapt" dump badging "$APK" | tee badging.txt
+          grep -F "package: name='com.vobich.bluestar.paddlelab' versionCode='1' versionName='0.1.0'" badging.txt
+          ! grep -F 'android.permission.INTERNET' badging.txt
+          python - <<'PY'
+          import zipfile,hashlib,pathlib
+          root=pathlib.Path("android-lab/ppocr-sdk/src/main/assets")
+          with zipfile.ZipFile("android-lab/app/build/outputs/apk/debug/app-debug.apk") as z:
+              names=z.namelist()
+              assert any(n.startswith("lib/arm64-v8a/") and "onnxruntime" in n for n in names)
+              assert not any(n.startswith(("lib/x86/","lib/x86_64/","lib/armeabi-v7a/")) for n in names)
+              for name in ("models/det/inference.onnx","models/rec/inference.onnx","models/rec/inference.yml","model-sha256.txt"):
+                  assert hashlib.sha256(z.read("assets/"+name)).hexdigest()==hashlib.sha256((root/name).read_bytes()).hexdigest(),name
+          PY
+          mkdir release
+          cp "$APK" release/BlueStar_Paddle_OCR_Mobile_0.1.0.apk
+          cp paddle-ocr-mobile-lab/README.md android-lab/LICENSE android-lab/ppocr-sdk/src/main/assets/model-sha256.txt release/
+          (cd release && sha256sum *.apk > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bluestar-paddle-ocr-v010
+          path: release/
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: bluestar-paddle-ocr-v010
+          path: release
+      - name: Publish verified isolated test APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          (cd release && sha256sum -c SHA256SUMS.txt)
+          TAG=bluestar-paddle-ocr-mobile-v010-20261126
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 飞桨OCR独立实验 0.1.0" --notes-file release/README.md --prerelease --draft
+          fi
+          gh release view "$TAG" --json targetCommitish | jq -e --arg sha "$GITHUB_SHA" '.targetCommitish == $sha'
+          for i in 1 2 3; do gh release upload "$TAG" release/* --clobber && break; test "$i" != 3; sleep 5; done
+          gh release edit "$TAG" --draft=false --prerelease
