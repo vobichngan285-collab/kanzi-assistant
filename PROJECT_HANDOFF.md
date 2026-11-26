@@ -5,7 +5,7 @@
 - 分支 exp/eye-brain-gpu-20261127；构建提交 46fcd2239c95c0d1432c701fc5b60ae8ad20cece；[CI](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45858313534) build/publish success。
 - [APK 直接下载](https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-eye-brain-gpu-v024-20261127/BlueStar_EyeBrain_GPU_0.2.4.apk)；独立包 com.vobich.bluestar.eyebrain.gallerygpu，versionName 1.0.23（兼容原厂目录），首页标识 v0.2.4。
 - 以曾真机GPU正常的 v0.2.0（08977a0f4e57d02d22a3b85901e39992e6b32b2d）为回归基线，恢复原厂目录、ABI、任务注册、无OCR常驻；保留八任务和自动提交。Google AI Edge Gallery 1.0.23 原工程、Gemma原权重与推理不改。v0.2.3 GPU选择后退出，根因尚未定位；v0.2.4 是隔离回归，不保证修复，也未保留全部精简优化。
-- 最新用户真机反馈：v0.2.4 GPU加速仍打不开，验收失败；用户明确复现：点击GPU选项并按确定后软件自动退出，重新打开仍默认CPU，与v0.2.3表现一致。用户进一步确认故障发生于模型已加载后切换GPU。待对照未加载模型时切换GPU是否同样退出；尚无logcat，不能区分主动重启、Java异常、native崩溃或配置未持久化。优先对照v0.2.0的设置确认回调、配置保存、引擎释放及GPU初始化链。停止盲目打包，优先与曾成功的v0.2.0逐项源码及运行环境对照，取得原始错误后定位根因。核对GPU初始化、实际后端、首字/总耗时、稳定性及崩溃日志；同模型同输入对照CPU/GPU。先取得真机结果再修改。
+- 最新用户真机反馈：v0.2.4 GPU加速仍打不开，验收失败；用户明确复现：点击GPU选项并按确定后软件自动退出，重新打开仍默认CPU，与v0.2.3表现一致。用户进一步确认故障发生于模型已加载后切换GPU。用户确认未加载模型时无法选择GPU，空载切换对照不可执行，不再要求重复测试；尚无logcat，不能区分主动重启、Java异常、native崩溃或配置未持久化。优先对照v0.2.0的设置确认回调、配置保存、引擎释放及GPU初始化链。停止盲目打包，优先与曾成功的v0.2.0逐项源码及运行环境对照，取得原始错误后定位根因。核对GPU初始化、实际后端、首字/总耗时、稳定性及崩溃日志；同模型同输入对照CPU/GPU。先取得真机结果再修改。
 
 ## 2. 当前任务 B：OpenOCR v0.4.3 原厂 RepViT-DB 画框工具专项
 - 尚未开发或构建 v0.4.3。当前 v0.4.2 分支 exp/openocr-field-db-20261127，构建 e630d3e0267cd311457ffb3d7071ebdf433c4b82，[CI](https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45855950792) 成功，[APK](https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-openocr-field-db-v042-20261127/BlueStar_OpenOCR_Field_DB_0.4.2.apk)。默认DB全图原框去重逐框识别，保留YOLO切换、原区域模式、原Reader、RepSVTR、字典、CPU4、原文TTS和诊断；每次只运行一个检测器。不接大脑。
