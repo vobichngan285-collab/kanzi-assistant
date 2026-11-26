@@ -73,6 +73,10 @@ jobs:
           assert 'applicationId = "com.paddle.ocr.demo"' in s
           s=s.replace('applicationId = "com.paddle.ocr.demo"','applicationId = "com.vobich.bluestar.paddlelab.v011"').replace('versionName = "1.0.0"','versionName = "0.1.1"').replace('minSdk = 26','minSdk = 26\n        ndk { abiFilters += "arm64-v8a" }').replace('implementation(project(":ppocr-sdk"))','implementation(project(":ppocr-sdk"))\n    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")')
           p.write_text(s)
+          p=Path("android-lab/app/build.gradle.kts")
+          s=p.read_text()
+          assert 'implementation(project(":ppocr-sdk"))' in s
+          p.write_text(s.replace('implementation(project(":ppocr-sdk"))','implementation(project(":ppocr-sdk"))\n    implementation(libs.opencv.android)'))
           p=Path("android-lab/gradle/libs.versions.toml")
           s=p.read_text()
           assert 'opencv = "4.5.3"' in s and 'onnxruntime = "1.21.1"' in s
