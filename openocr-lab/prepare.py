@@ -35,7 +35,12 @@ for name,fn in [("rep","openocr_repsvtr_ch.pth"),("svtr","openocr_svtrv2_ch.pth"
     model=build_model(cfg["Architecture"])
     ck=torch.load(root/fn,map_location="cpu",weights_only=False)
     sd=ck.get("state_dict",ck)
-    model.load_state_dict(sd,strict=True);model.eval()
+    # Official inference config uses only the CTC decoder. Reject all missing
+    # inference tensors and any unexpected tensor outside training-only GTC.
+    extra=set(sd)-set(model.state_dict())
+    assert all(k.startswith(("decoder.before_gtc.","decoder.gtc_head.")) for k in extra),sorted(extra)
+    print(name,"training-only keys excluded:",sorted(extra),flush=True)
+    model.load_state_dict({k:v for k,v in sd.items() if k not in extra},strict=True);model.eval()
     path=assets/(name+".onnx")
     if name=="rep":
         path.write_bytes((root/"openocr_rec_model.onnx").read_bytes())
