@@ -1,3 +1,10 @@
+# 最新｜v0.1.4 JNI已保存，补齐原厂依赖后复用打包
+- CI45725894735 native job139595545930 编译4238 actions成功，1725.988s；46个JNI导出全部匹配。新增DT_NEEDED libGemmaModelConstraintProvider.so不在原厂AAR内，依赖保护检查阻止打包，非模型推理失败。已上传JNI artifact15076515697（未过期），JNI SHA256 f0dcf741d49a9a87a0b893513153c0e522d95b1fc679eb0fd54500c2061dafa5，诊断artifact15076182202。
+- 隔离分支新HEAD 7d43eb7de17ef9d22443b8a7da49fdb580acdaa6：复用上述JNI，精确上游v0.18.1 bda624851d74be34d4e1f7fac1fc4155939539c7的原厂arm64 provider Git LFS SHA256 c7c7188b831ae75fcc7ec6fe613118365b311995805423a4ca265372f07f4783，校验ELF架构及依赖闭包，保留原AAR其余条目，APK校验两个库哈希。CI45730170959 in_progress。尚未取得APK或真机加速结果。不修改正式APP或模型权重。
+- 用户原厂Gallery文字测试：单目标科室/药店/出站口/出租车出口正确；多店铺筛选首次4真2假，严格提示词3真0假、漏沙县小吃且编号无分隔；显式步骤排序完整正确3.3秒，隐式方便面排序5,6,3,2,1,4错误。PP-OCR与Gemma组合仍仅讨论，用户对百度方案有抵触，尚未授权开发。
+
+---
+
 # 最新｜v0.1.4 arm64 JNI源码编译成功，AAR下载错误修复
 - CI45723493748 native job139587382686：Bazel 4238 actions编译成功、941.304s，产出bazel-bin/kotlin/java/com/google/ai/edge/litertlm/jni/liblitertlm_jni.so；cquery成功。随后获取Maven Central原厂AAR时HTTP404，未进行JNI ABI核验，APK和发布被跳过，故不能宣称混合视觉真机成功。诊断artifact15072979948；当次JNI未独立上传。
 - 隔离分支 exp/gemma4-560-hybrid-20261126 新HEAD 57b57bef5750c300dcefe83d20f4f729a43d3498：将固定v0.18.1 AAR/POM提前通过Google Maven及Central候选源下载，校验ZIP/ELF/POM坐标，再编译；编译成功立即上传独立JNI artifact，以便后续兼容检查失败时复用。不改560模型、正式APP或数值补丁。CI45725894735 in_progress，https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45725894735 尚无APK。
