@@ -2315,3 +2315,7 @@ OpenOCR官方移动端配套为RepViT-DB检测（configs/det/dbnet/repvit_db.yml
 
 ## 2026-11-26 — 用户要求暂停实验，保存恢复检查点
 当前暂停，待用户明确恢复实验再继续；不主动构建、修改代码或启动测试。已完成六模型价目表原始框对照及海报layout=3的YOLO26n/RepViT-DB双模型对照。海报DB平均387.5ms、YOLO26n 582ms，DB出现五个约995–1153px长竖框，YOLO最长约255px；但layout=3错误合并竖列且正文未成功识别，不能认定换模成功。下次从现有Arena v0.2.0、同一张海报原图、CPU4、全图单次、RepViT-DB、v0.1.5完整竖列（layout=2）、单模型两轮开始；然后YOLO26n同配置对照。如两者均严重漏检，再按此前方案同等开启四块高清。价目表layout=3双模型对照仍待完成；保留v0.1.3稳定横排基线，未决定替换。无需重做已完成实验。不上传私人图片及OCR原文。用户要求每次实质进展立即提交本交接文档并回读核验。
+
+
+## 2026-11-26 — 海报DB原始框模式补测
+用户回传DB layout=0、CPU4、tiles=false、3072×4096，两轮RAW/CELL一致，与此前layout3原始12框一致；12 crops，6 vertical=true，3 suspect，0空框。global260/235ms，rec539/514ms，total800/749ms（平均774.5ms），PSS399206/488288KiB，识别器加载218ms、检测器首次84ms另计。五条长竖列独立保留，但输出不连贯，4/5未标待核，最低字符置信度部分低至0.115–0.178。源码MainActivity.kt第92行确认vertical=true走MixedLayout.verticalRead(bm,q,rec,kind==2)，layout0已有竖排重排但不启用kind2完整列增强；非单纯横向旋转。原图真值、字符分割中间结果未核验，不能断定错误只来自识别权重或分割。下一步仍优先DB同图CPU4全图layout2（v0.1.5完整竖列）两轮，与layout0比较，再YOLO26n同配置；暂不启动四块高清、改代码、构建或换正式模型。用户可自行决定何时继续；本次仅备份数值及诊断结论，不存私人OCR原文/图片。
