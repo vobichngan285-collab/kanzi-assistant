@@ -2396,3 +2396,7 @@ Actions 45791503828 build success，原v0.1.3资产校验、Android单测/编译
 
 ## 2026-11-26 — 电商截图原区域基线对照及阶段性选型
 用户回传Focus v0.4.0同1260×2800电商截图CPU4 mode1第一轮（本次未提供第二轮）。detector_init0/recognizer_load0，为模型已加载；detect305ms、focus_plan2ms（不计入mode1 total）、plan2ms、rec1602ms、first_row50ms、total1909ms、PSS499537KiB。roi=null、93框全选、outside0、33行/52裁剪、去重6、3 suspect、0空框。与mode0两轮的框坐标、原始识别文本及置信度一致，旧模式隐藏3个待核框，其他11个mode0待核在mode1未标；不能将待核数降低当成识别改善。原图已核验的标题错字、说明漏字、跨模块排序、价格语义问题均未解决。mode0第一轮1979ms、第二轮2198ms，mode1仅一轮且热启动，不宣称速度算法优势。结合价目表，新旧区域在两个样本的选框和原始识别结果均相同，尚无证据证明新区域优于旧区域；建议停止在这两张图反复测试，保持v0.1.3识别核心及原区域为稳定基线，v0.4.0独立实验保留，若继续区域验收可用偏心主体及双重要区域样本一次对照；优先考虑未来按模块排序、跨行拼接与重要字段待核，保留全图入口和未读提醒，需用户授权后才修改或集成。未修改代码、未构建、未改正式APP，不上传私人收货信息、截图或原始OCR文本。
+
+
+## 2026-11-26 — 用户授权眼脑协同 A 独立实验
+用户明确忽略下午空壳，重建独立实验，不改正式蓝星/蓝心。基于 Google AI Edge Gallery 1.0.23 commit 9cb31cf47c21b0ed76901ff589a52b509803edfa 原工程，保留模型/推理/会话/采样依赖，历史 Gemma-4-E2B-it GPU，模型文件由原版管理下载/导入，实际revision待核。OCR v0.1.3 commit 38df92b5bec824a2abf269e2d775e6efcd241455 五个核心文件按原blob复用，原APK与三资产SHA校验设入CI；CPU4、原ROI、完整列单轮及待核规则。新增相册OCR按钮/预览/待核/填入原聊天输入框，用户确认后用原发送入口；OCR完成释放会话，加载开销待测。仅首页隐藏演示、136项常用中文资源、禁用Firebase统计及备份，仍有原模型管理网络权限及可能的次级英文入口。包com.vobich.bluestar.eyebrain.gallerya v0.1.0；独立分支 exp/eye-brain-gallery-a-20261126，HEAD 36325b0fff33082c6e59b47c428c9f1e49107f21，回读比对仅10个新增实验/workflow文件，翻译键与主要源码锚点检查通过。Actions https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45841919918 已排队；尚未验证编译、签名、发布或真机速度、GPU/原生库兼容性。拟Release bluestar-eye-brain-gallery-a-v010-20261126。不要声称APK可下载直至回读Release。正式APP不动，不上传私人OCR文字或图片。
