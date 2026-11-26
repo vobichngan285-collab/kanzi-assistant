@@ -2331,3 +2331,6 @@ Arena v0.2.0、3072×4096、CPU4、tiles=false、layout=3，DB两轮原始51框�
 
 ## 2026-11-26 — 用户授权优化：独立v0.3.0自适应裁剪实验
 已基于v0.2.0发布提交5ac4b9a853a4e2eee539894ac9f76f53ccc3aaaa创建隔离分支exp/openocr-adaptive-20261126，提交ee122f9f9956955bce04b410d8e12cf15db44312，回读分支HEAD一致，审阅8文件diff。新增layout4（默认DB/CPU4/全图），旧layout0–3保留；仅保留DB和YOLO26n对照，识别器RepSVTR及字典原样。横排单原框保留原四边形、多独立长文本按几何间距拆分、碎字仍使用横排行列规划；最多6次弱置信/带符号数字原框与扩框对照，保留主读并记录分歧待核，不静默改金额或符号，最低字符置信度<.65/平均<.75也待核。竖长框独立保留，双极性边缘背景对比投影、既有网格切分及保持纵横比例的字形重排；非原生竖排识别器，复杂背景/书法/错切仍可能失败。新包名com.vobich.bluestar.openocrlab.adaptive，拟Release tag bluestar-openocr-adaptive-v030-20261126；CI固定旧APK、资产清单、报告与许可证SHA，原样提取两检测器/识别器/字典并验证，新增4个纯几何/投影/符号策略单测，继续CPU检测推理、安卓单测/构建/签名/无网络权限检查。已推送独立分支，首次按head查询Actions暂无记录；APK/CI/真机尚未验证，不声称已发布或效果改善。正式APP、v0.1.3、v0.2.0 Release及原分支不动。发布通过后同两图CPU4全图layout4双模型各两轮；检查金额分歧、充值分隔、长列阅读、全图覆盖和耗时，若无明确收益保留原稳定方案。禁止上传原图及OCR原文。
+
+
+v0.3.0 构建已触发：Actions 45788302042（https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/45788302042），对应ee122f9f9956955bce04b410d8e12cf15db44312。已核实checkout、Java、Gradle准备成功，当前正在提取并校验原资产；安卓测试、编译、签名和发布尚未完成，未取得可下载安装包，不宣称构建或真机效果成功。
