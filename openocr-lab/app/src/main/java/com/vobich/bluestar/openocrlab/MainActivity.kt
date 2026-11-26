@@ -18,10 +18,10 @@ class MainActivity:Activity(){
   val scroll=ScrollView(this);val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,48,24,32)}
   scroll.addView(box);setContentView(scroll)
   fun label(t:String)=TextView(this).apply{text=t;textSize=18f;box.addView(this)}
-  label("蓝星 OpenOCR v0.1.0 · 完全离线")
+  label("蓝星 OpenOCR v0.1.1 · 完全离线")
   choose=Button(this).apply{text="选择相册原图";box.addView(this);setOnClickListener{startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},9)}}
   preview=ImageView(this).apply{adjustViewBounds=true;maxHeight=650;box.addView(this)}
-  mode=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("双模型对照（默认）","仅 RepSVTR","仅 SVTRv2"));box.addView(this)}
+  mode=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("新旧裁剪对照（默认）","仅优化整行","仅旧文字框"));box.addView(this)}
   run=Button(this).apply{text="开始识别 / 同图复测";box.addView(this);setOnClickListener{test()}}
   status=label("请选择图片")
   Button(this).apply{text="复制结果及诊断";box.addView(this);setOnClickListener{(getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("OpenOCR",output.text));Toast.makeText(this@MainActivity,"已复制",Toast.LENGTH_SHORT).show()}}
@@ -56,25 +56,26 @@ class MainActivity:Activity(){
      if(row==null)rows.add(mutableListOf(b))else row.add(b)
     }
     val ordered=rows.map{it.sortedBy{b->b.rect.left}}
+    val planStart=now();val optimized=RowPlanner.plan(boxes,bm.width,bm.height);val planMs=now()-planStart
     val scale=min(1f,1200f/max(bm.width,bm.height));val shown=Bitmap.createScaledBitmap(bm,(bm.width*scale).toInt(),(bm.height*scale).toInt(),true).copy(Bitmap.Config.ARGB_8888,true)
-    Canvas(shown).apply{scale(scale,scale);val paint=Paint().apply{color=Color.YELLOW;style=Paint.Style.STROKE;strokeWidth=3/scale};boxes.forEach{drawRect(it.rect,paint)};if(roi!=null){paint.color=Color.GREEN;drawRect(roi,paint)}}
+    Canvas(shown).apply{scale(scale,scale);val paint=Paint().apply{color=Color.YELLOW;style=Paint.Style.STROKE;strokeWidth=3/scale};boxes.forEach{drawRect(it.rect,paint)};if(roi!=null){paint.color=Color.GREEN;drawRect(roi,paint)};paint.color=Color.CYAN;optimized.rows.flatten().forEach{b->val path=Path();path.moveTo(b.points[0],b.points[1]);for(i in 1..3)path.lineTo(b.points[2*i],b.points[2*i+1]);path.close();drawPath(path,paint)}}
     runOnUiThread{preview.setImageBitmap(shown);output.text="source=${bm.width}x${bm.height} detector_init_ms=${init-start} detect_ms=${detected-init} boxes=${found.boxes.size} selected=${boxes.size} rows=${rows.size} roi=$roi\n"}
-    val models=when(selected){1->listOf("RepSVTR" to "rep.onnx");2->listOf("SVTRv2" to "svtr.onnx");else->listOf("RepSVTR" to "rep.onnx","SVTRv2" to "svtr.onnx")}
-    for((name,asset) in models){
-     runOnUiThread{status.text="$name 识别中"}
-     val t=now();Reader(this,asset).use{reader->
-      val loaded=now()
-      // Two consecutive runs, same detector boxes and same reader session.
-      repeat(2){round->
-       val begin=now();var first=-1L;var count=0;var sum=0f;val lines=mutableListOf<String>()
-       for(row in ordered){val parts=mutableListOf<String>()
-        for(b in row){val a=reader.read(bm,b);count++;sum+=a.confidence;parts.add(a.text.ifBlank{"[未识别]"});}
+    runOnUiThread{output.append("new_rows=${optimized.rows.size} new_crops=${optimized.rows.sumOf{it.size}} duplicates=${optimized.removed} plan_ms=$planMs\n")}
+    val cases=when(selected){1->listOf("优化整行" to optimized.rows,"优化整行" to optimized.rows);2->listOf("旧文字框" to ordered,"旧文字框" to ordered);else->listOf("旧文字框" to ordered,"优化整行" to optimized.rows,"优化整行" to optimized.rows,"旧文字框" to ordered)}
+    val t=now();Reader(this,"rep.onnx").use{reader->
+      val loaded=now();runOnUiThread{output.append("RepSVTR load_ms=${loaded-t}\n")}
+      for((round,case) in cases.withIndex()){
+       val (name,linesIn)=case
+       runOnUiThread{status.text="$name 识别中"}
+       val begin=now();var first=-1L;var count=0;var sum=0f;val lines=mutableListOf<String>();val widths=mutableListOf<Int>()
+       for(row in linesIn){val parts=mutableListOf<String>()
+        for(b in row){val a=reader.read(bm,b);count++;sum+=a.confidence;widths.add(a.width);parts.add(a.text.ifBlank{"[未识别]"})}
         lines.add(parts.joinToString(" "));if(first<0)first=now()-begin
        }
        val total=now()-begin
-       runOnUiThread{output.append("\n$name 第${round+1}轮 load_ms=${if(round==0)loaded-t else 0} first_row_ms=$first rec_ms=$total det_plus_rec_ms=${detected-init+total} boxes=$count mean_conf=${sum/count}\n"+lines.joinToString("\n")+"\n")}
+       val layoutMs=if(name=="优化整行")planMs else 0L
+       runOnUiThread{output.append("\n$name 第${round+1}轮 first_row_ms=$first rec_ms=$total det_plus_rec_ms=${detected-init+layoutMs+total} crops=$count mean_conf=${sum/count} widths=$widths\n"+lines.joinToString("\n")+"\n")}
       }
-     }
     }
     runOnUiThread{status.text="完成：请复制诊断和识别结果";busy(false)}
    }catch(t:Throwable){runOnUiThread{output.append("\n失败："+t.toString());status.text="失败";busy(false)}}
