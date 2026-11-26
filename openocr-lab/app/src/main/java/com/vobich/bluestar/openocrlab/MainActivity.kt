@@ -14,7 +14,7 @@ class MainActivity:Activity(){
  private lateinit var preview:ImageView;private lateinit var output:TextView;private lateinit var status:TextView
  private lateinit var choose:Button;private lateinit var single:Button;private lateinit var all:Button
  private var source:Bitmap?=null;private var reader:Reader?=null;private var readerThreads=0
- private var detector:AutoCloseable?=null;private var key="";private var detect:((Bitmap)->List<TextLocator.Box>)?=null
+ private var inputDescription="";private var detector:AutoCloseable?=null;private var key="";private var detect:((Bitmap)->List<TextLocator.Box>)?=null
  private val previews=mutableMapOf<Int,Bitmap>()
  private fun now()=SystemClock.elapsedRealtime()
  override fun onCreate(state:Bundle?){super.onCreate(state)
@@ -50,8 +50,8 @@ class MainActivity:Activity(){
  private fun loadDetector(id:Int,nt:Int){
   if(key=="$id/$nt"&&detect!=null)return
   releaseDetector()
-  if(id==5){val d=DbLocator(this,nt);detector=d;detect={d.locate(it)}}
-  else{val d=TextLocator(this,assets[id],nt);detector=d;detect={d.locate(it).boxes}}
+  if(id==5){val d=DbLocator(this,nt);detector=d;inputDescription="DB native (max960 if dynamic)";detect={d.locate(it)}}
+  else{val d=TextLocator(this,assets[id],nt);detector=d;inputDescription="${d.inputSide}x${d.inputSide}";detect={d.locate(it).boxes}}
   key="$id/$nt"
  }
  private fun test(arena:Boolean){
@@ -105,7 +105,7 @@ class MainActivity:Activity(){
         paint.color=Color.YELLOW;raw.forEach{draw(it)}
         blocks.forEach{bl->paint.color=if(bl.vertical)Color.MAGENTA else Color.CYAN;bl.boxes.forEach{draw(it)}}
        }
-       val report="\n${names[id]} round=${round+1} detector_load_ms=${if(round==0)initMs else 0} global_ms=$global tile_ms=$tileMs raw_boxes=${raw.size} unique_boxes=${boxes.size} blocks=${blocks.size} crops=$n plan_ms=$planMs rec_ms=$recMs first_ms=$first total_ms=${global+tileMs+planMs+recMs} pss_kb=$mem\n"+lines.joinToString("\n")+"\n"+raw.mapIndexed{i,q->"raw=$i det=${q.score} quad=${q.points.contentToString()}"}.joinToString("\n")+"\n"+details.joinToString("\n")+"\n"
+       val report="\n${names[id]} round=${round+1} input=$inputDescription detector_load_ms=${if(round==0)initMs else 0} global_ms=$global tile_ms=$tileMs raw_boxes=${raw.size} unique_boxes=${boxes.size} blocks=${blocks.size} crops=$n plan_ms=$planMs rec_ms=$recMs first_ms=$first total_ms=${global+tileMs+planMs+recMs} pss_kb=$mem\n"+lines.joinToString("\n")+"\n"+raw.mapIndexed{i,q->"raw=$i det=${q.score} quad=${q.points.contentToString()}"}.joinToString("\n")+"\n"+details.joinToString("\n")+"\n"
        runOnUiThread{preview.setImageBitmap(shown);previews.put(id,shown)?.recycle();viewModel.setSelection(id);output.append(report)}
       }
      }catch(t:Throwable){releaseDetector();runOnUiThread{output.append("\n${names[id]} FAILED: $t\n")}}

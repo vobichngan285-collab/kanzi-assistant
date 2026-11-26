@@ -11,6 +11,7 @@ import kotlin.math.*
 class TextLocator(context:Context,asset:String="yolo26n-text.onnx",threads:Int=4):AutoCloseable {
     private val env=OrtEnvironment.getEnvironment()
     private val session:OrtSession
+    val inputSide:Int
     init {
         val opts=OrtSession.SessionOptions()
         try {
@@ -21,14 +22,15 @@ class TextLocator(context:Context,asset:String="yolo26n-text.onnx",threads:Int=4
         } finally {opts.close()}
         require(session.inputNames.size==1)
         val shape=(session.inputInfo.values.first().info as TensorInfo).shape
-        require(shape.contentEquals(longArrayOf(1,3,1280,1280))){"Unexpected detector input "+shape.contentToString()}
+        require(shape.size==4&&shape[0]==1L&&shape[1]==3L&&shape[2]==shape[3]&&shape[2] in 320L..1920L){"Unexpected detector input "+shape.contentToString()}
+        inputSide=shape[2].toInt()
     }
     data class Box(val points:FloatArray,val score:Float){
         val rect get()=RectF(points.filterIndexed{i,_->i%2==0}.min(),points.filterIndexed{i,_->i%2==1}.min(),points.filterIndexed{i,_->i%2==0}.max(),points.filterIndexed{i,_->i%2==1}.max())
     }
     data class Found(val boxes:List<Box>,val roi:Rect?,val groups:Int,val selectedCount:Int)
     fun locate(bitmap:Bitmap):Found {
-        val side=1280
+        val side=inputSide
         val ratio=min(side.toFloat()/bitmap.width,side.toFloat()/bitmap.height)
         val w=(bitmap.width*ratio).roundToInt().coerceAtLeast(1)
         val h=(bitmap.height*ratio).roundToInt().coerceAtLeast(1)

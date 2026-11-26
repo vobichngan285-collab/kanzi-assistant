@@ -7,7 +7,7 @@ for name in ['yolo26n-text','yolo26s-text','yolo26m-text','yolo26l-text','yolo26
     inp=session.get_inputs()[0]; shape=inp.shape
     assert len(shape)==4 and shape[1]==3, (name,shape)
     if name!='repvit-db':
-        assert shape==[1,3,1280,1280], (name,shape)
+        assert shape[0]==1 and isinstance(shape[2],int) and shape[2]==shape[3] and 320<=shape[2]<=1920, (name,shape)
         dims=shape
     else:
         dims=[1,3,shape[2] if isinstance(shape[2],int) else 640,shape[3] if isinstance(shape[3],int) else 960]
