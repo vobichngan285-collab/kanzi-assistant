@@ -19,10 +19,10 @@ class MainActivity:Activity(){
   val scroll=ScrollView(this);val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,48,24,32)}
   scroll.addView(box);setContentView(scroll)
   fun label(t:String)=TextView(this).apply{text=t;textSize=18f;box.addView(this)}
-  label("蓝星 OpenOCR v0.1.3 · 完全离线")
+  label("蓝星 OpenOCR v0.4.0 · 主阅读区 · 离线")
   choose=Button(this).apply{text="选择相册原图";box.addView(this);setOnClickListener{startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},9)}}
   preview=ImageView(this).apply{adjustViewBounds=true;maxHeight=650;box.addView(this)}
-  mode=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("完整列裁剪对照（默认）","仅完整列裁剪","仅v0.1.2基线","CPU 2/4/6线程对照"));box.addView(this)}
+  mode=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("智能主阅读区（默认）","原v0.1.3区域基线","全图完整列裁剪","同图区域对照（新/旧/全图）"));box.addView(this)}
   threads=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("CPU 4线程（默认）","CPU 2线程","CPU 6线程"));box.addView(this)}
   run=Button(this).apply{text="开始识别 / 同图复测";box.addView(this);setOnClickListener{test()}}
   status=label("请选择图片")
@@ -39,74 +39,57 @@ class MainActivity:Activity(){
   }
  }
  private fun busy(v:Boolean){choose.isEnabled=!v;run.isEnabled=!v;mode.isEnabled=!v;threads.isEnabled=!v}
- private fun test(){val bm=source?:return;val selected=mode.selectedItemPosition;val chosenThreads=listOf(4,2,6)[threads.selectedItemPosition];busy(true);output.text="";status.text="YOLO 定位中"
+ private fun test(){
+  val bm=source?:return;val selected=mode.selectedItemPosition;val nt=listOf(4,2,6)[threads.selectedItemPosition]
+  busy(true);output.text="";status.text="YOLO 定位中"
   worker.execute{
    try{
     val start=now();if(locator==null)locator=TextLocator(this);val init=now()
     val found=locator!!.locate(bm);val detected=now()
-    val roi=found.roi
-    val boxes=found.boxes.filter{b->roi==null||roi.contains(b.rect.centerX().toInt(),b.rect.centerY().toInt())}
-    require(boxes.isNotEmpty()){"未检测到文字"}
-    // Same row grouping and crop geometry for both recognizers; never merge distant columns vertically.
-    val rows=mutableListOf<MutableList<TextLocator.Box>>()
-    for(b in boxes.sortedBy{it.rect.centerY()}){
-     val r=b.rect
-     val row=rows.lastOrNull()?.takeIf{rr->
-      val c=rr.map{it.rect.centerY()}.average()
-      abs(r.centerY()-c)<=max(4.0,min(r.height().toDouble(),rr.map{it.rect.height()}.average())*.55)
+    require(found.boxes.isNotEmpty()){"未检测到文字"}
+    val focusStart=now()
+    val plan=FocusPlanner.plan(found.boxes.map{q->q.rect.let{FocusPlanner.R(it.left,it.top,it.right,it.bottom,q.score)}},bm.width,bm.height)
+    val focusMs=now()-focusStart
+    val focus=plan.roi?.let{Rect(floor(it.l).toInt(),floor(it.t).toInt(),ceil(it.r).toInt(),ceil(it.b).toInt())}
+    val modes=if(selected==3)listOf(0,1,2)else listOf(selected)
+    val load=now();if(reader==null||readerThreads!=nt){reader?.close();reader=null;reader=Reader(this,"rep.onnx",nt);readerThreads=nt}
+    val engine=reader!!;val loadMs=now()-load
+    runOnUiThread{output.append("Focus v0.4.0 source=${bm.width}x${bm.height} detector_threads=4 rec_threads=$nt detector_init_ms=${init-start} detect_ms=${detected-init} recognizer_load_ms=$loadMs raw_boxes=${found.boxes.size} focus_plan_ms=$focusMs focus_reason=${plan.reason} groups=${plan.groups} best=${plan.best} rival=${plan.rival}\n")}
+    for(m in modes){
+     val name=listOf("智能主阅读区","原v0.1.3区域","全图")[m]
+     val roi=when(m){0->focus;1->found.roi;else->null}
+     val boxes=found.boxes.filter{b->roi==null||roi.contains(b.rect.centerX().toInt(),b.rect.centerY().toInt())}
+     val outside=found.boxes.filter{it !in boxes}
+     val pStart=now();val columns=RowPlanner.plan(boxes,bm.width,bm.height,1.6f,true);val pMs=now()-pStart
+     val scale=min(1f,1200f/max(bm.width,bm.height))
+     val scaled=Bitmap.createScaledBitmap(bm,(bm.width*scale).toInt(),(bm.height*scale).toInt(),true)
+     val shown=scaled.copy(Bitmap.Config.ARGB_8888,true)
+     if(scaled!==bm)scaled.recycle()
+     Canvas(shown).apply{
+      scale(scale,scale);val paint=Paint().apply{style=Paint.Style.STROKE;strokeWidth=3/scale}
+      paint.color=Color.GRAY;outside.forEach{drawRect(it.rect,paint)}
+      paint.color=Color.YELLOW;boxes.forEach{drawRect(it.rect,paint)}
+      if(roi!=null){paint.color=Color.GREEN;drawRect(roi,paint)}
+      paint.color=Color.CYAN;columns.rows.flatten().forEach{b->val path=Path();path.moveTo(b.points[0],b.points[1]);for(i in 1..3)path.lineTo(b.points[2*i],b.points[2*i+1]);path.close();drawPath(path,paint)}
      }
-     if(row==null)rows.add(mutableListOf(b))else row.add(b)
-    }
-    val ordered=rows.map{it.sortedBy{b->b.rect.left}}
-    val planStart=now();val optimized=RowPlanner.plan(boxes,bm.width,bm.height);val planMs=now()-planStart
-    // Narrower merge gap is experimental: preserve separated columns, keep old plan for comparison.
-    val fineStart=now();val fine=RowPlanner.plan(boxes,bm.width,bm.height,1.6f);val fineMs=now()-fineStart
-    val colStart=now();val columns=RowPlanner.plan(boxes,bm.width,bm.height,1.6f,true);val colMs=now()-colStart
-    val scale=min(1f,1200f/max(bm.width,bm.height));val shown=Bitmap.createScaledBitmap(bm,(bm.width*scale).toInt(),(bm.height*scale).toInt(),true).copy(Bitmap.Config.ARGB_8888,true)
-    Canvas(shown).apply{scale(scale,scale);val paint=Paint().apply{color=Color.YELLOW;style=Paint.Style.STROKE;strokeWidth=3/scale};boxes.forEach{drawRect(it.rect,paint)};if(roi!=null){paint.color=Color.GREEN;drawRect(roi,paint)};paint.color=Color.CYAN;columns.rows.flatten().forEach{b->val path=Path();path.moveTo(b.points[0],b.points[1]);for(i in 1..3)path.lineTo(b.points[2*i],b.points[2*i+1]);path.close();drawPath(path,paint)}}
-    runOnUiThread{preview.setImageBitmap(shown);output.text="source=${bm.width}x${bm.height} detector_init_ms=${init-start} detect_ms=${detected-init} boxes=${found.boxes.size} selected=${boxes.size} rows=${rows.size} roi=$roi\n"}
-    runOnUiThread{output.append("new_rows=${optimized.rows.size} new_crops=${optimized.rows.sumOf{it.size}} duplicates=${optimized.removed} plan_ms=$planMs\n")}
-    runOnUiThread{output.append("fine_rows=${fine.rows.size} fine_crops=${fine.rows.sumOf{it.size}} fine_plan_ms=$fineMs\n")}
-    runOnUiThread{output.append("column_rows=${columns.rows.size} column_crops=${columns.rows.sumOf{it.size}} column_plan_ms=$colMs\n")}
-    val cases=when(selected){1->listOf(true,true);2->listOf(false,false);3->listOf(true,true);else->listOf(false,true,true,false)}
-    val threadCases=if(selected==3)listOf(2,4,6)else listOf(chosenThreads)
-    for(nt in threadCases){
-     val t=now()
-     if(reader==null||readerThreads!=nt){reader?.close();reader=null;reader=Reader(this,"rep.onnx",nt);readerThreads=nt}
-     val engine=reader!!;val loaded=now()
-     runOnUiThread{output.append("RepSVTR threads=$nt load_ms=${loaded-t}\n")}
-     for((round,isFine) in cases.withIndex()){
-      val name=if(isFine)"完整列裁剪" else "v0.1.2基线"
-      val linesIn=if(isFine)columns.rows else fine.rows
-      runOnUiThread{status.text="$name CPU$nt 识别中"}
-      val begin=now();var first=-1L;var count=0;var sum=0f;var retries=0;var recovered=0;var uncertain=0
+     runOnUiThread{preview.setImageBitmap(shown);output.append("\nmode=$m $name roi=$roi selected=${boxes.size} outside=${outside.size} rows=${columns.rows.size} crops=${columns.rows.sumOf{it.size}} duplicates=${columns.removed} plan_ms=$pMs\n"+(if(outside.isNotEmpty())"提示：区域外${outside.size}个检测框未识别，可切换全图模式；灰框为未读区域。\n" else "")+outside.joinToString("\n"){q->"outside det=${q.score} quad=${q.points.contentToString()}"}+"\n")}
+     for(round in 1..2){
+      val begin=now();var first=-1L;var count=0;var uncertain=0;var blank=0
       val lines=mutableListOf<String>();val notes=mutableListOf<String>()
-      for((ri,row) in linesIn.withIndex()){
+      for((ri,row) in columns.rows.withIndex()){
        val parts=mutableListOf<String>()
        for((ci,b) in row.withIndex()){
-        var ans=engine.read(bm,b,true);val original=ans
-        if(!isFine&&retries<6&&FineRead.retryNeeded(ans)){
-         // Expand modestly in local coordinates, do not cross adjacent crop bounding boxes.
-         val expanded=FineRead.expand(b,1.18f,1.08f,bm.width,bm.height)
-         val er=expanded.rect
-         val overlaps=linesIn.flatten().any{other->other!==b&&android.graphics.RectF.intersects(er,other.rect)&&!android.graphics.RectF.intersects(b.rect,other.rect)}
-         if(!overlaps){val alt=engine.read(bm,expanded,true);retries++
-          if(FineRead.accept(ans,alt)){ans=alt;recovered++}
-          notes.add("retry row=${ri+1} crop=${ci+1} ${original.text}(${original.confidence}) -> ${alt.text}(${alt.confidence}) accepted=${ans===alt}")
-         }
-        }
-        count++;sum+=ans.confidence
-        val suspect=FineRead.suspicious(ans,b.score)
-        if(suspect){uncertain++;notes.add("疑似装饰 row=${ri+1} crop=${ci+1} text=${ans.text} det=${b.score} rec=${ans.confidence}")}
-        // Flag suspicious text rather than delete potentially valid short labels.
-        if(!isFine||!suspect)parts.add(if(suspect)"[待核:${ans.text}]" else ans.text.ifBlank{"[未识别]"})
-        if(isFine){val rect=b.rect;notes.add("cell row=${ri+1} col=${ci+1} xyxy=${rect.left.toInt()},${rect.top.toInt()},${rect.right.toInt()},${rect.bottom.toInt()} det=${b.score} rec=${ans.confidence} min=${ans.minConfidence} suspect=$suspect text=${ans.text}")}
+        val ans=engine.read(bm,b,true)
+        val oldSuspect=FineRead.suspicious(ans,b.score)
+        val suspect=oldSuspect||(m!=1&&(ans.text.isBlank()||ans.confidence<.75f||ans.minConfidence<.65f))
+        count++;if(suspect)uncertain++;if(ans.text.isBlank())blank++
+        if(m!=1||!oldSuspect)parts.add(if(suspect)"[待核:${ans.text}]"else ans.text.ifBlank{"[未识别]"})
+        notes.add("cell row=${ri+1} col=${ci+1} quad=${b.points.contentToString()} det=${b.score} rec=${ans.confidence} min=${ans.minConfidence} suspect=$suspect text=${ans.text}")
        }
-       if(parts.isNotEmpty())lines.add(parts.joinToString("  |  "));if(first<0)first=now()-begin
+       if(parts.isNotEmpty())lines.add(parts.joinToString(" | "));if(first<0)first=now()-begin
       }
-      val total=now()-begin
-      val layoutMs=if(isFine)colMs else fineMs
-      runOnUiThread{output.append("\n$name 第${round+1}轮 threads=$nt first_row_ms=$first rec_ms=$total det_plus_rec_ms=${detected-init+layoutMs+total} crops=$count mean_conf=${sum/count} retries=$retries accepted=$recovered suspicious=$uncertain\n"+lines.joinToString("\n")+"\n"+notes.joinToString("\n")+"\n")}
+      val rec=now()-begin;val total=detected-init+pMs+rec+(if(m==0)focusMs else 0)
+      runOnUiThread{output.append("\n$name round=$round detect_ms=${detected-init} first_row_ms=$first rec_ms=$rec total_ms=$total crops=$count suspect=$uncertain blank=$blank pss_kb=${Debug.getPss()}\n"+lines.joinToString("\n")+"\n"+notes.joinToString("\n")+"\n")}
      }
     }
     runOnUiThread{status.text="完成：请复制诊断和识别结果";busy(false)}

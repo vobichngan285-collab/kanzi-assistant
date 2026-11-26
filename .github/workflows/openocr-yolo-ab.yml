@@ -1,7 +1,7 @@
-name: BlueStar OpenOCR YOLO A-B
+name: BlueStar OpenOCR Focus
 on:
   push:
-    branches: [exp/openocr-yolo-ab-20261126]
+    branches: [exp/openocr-focus-20261126]
     paths: ['openocr-lab/**','.github/workflows/openocr-yolo-ab.yml']
   workflow_dispatch:
 permissions:
@@ -19,14 +19,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
-      - name: Reuse exact verified v0.1.2 model assets
+      - name: Reuse exact verified v0.1.3 model assets
         run: |
           set -euo pipefail
-          BASE=https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-openocr-yolo-fine-v012-20261126
-          curl -fL --retry 3 "$BASE/BlueStar_OpenOCR_Fine_0.1.2.apk" -o previous.apk
+          BASE=https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-openocr-yolo-columns-v013-20261126
+          curl -fL --retry 3 "$BASE/BlueStar_OpenOCR_Columns_0.1.3.apk" -o previous.apk
           curl -fL --retry 3 "$BASE/openocr-report.json" -o openocr-report.json
           curl -fL --retry 3 "$BASE/OpenOCR-LICENSE.txt" -o OpenOCR-LICENSE.txt
-          echo '07b0c0f76247e3756c8974ff344c640d5e56380dfab8422f134a7e9c59d36ceb  previous.apk' | sha256sum -c -
+          echo '84441c55b23f621452404df0398a04ae49d84e6e9d95987cc537f7920fa8e890  previous.apk' | sha256sum -c -
           echo 'f1d36ed055b95ffdc61f42dd9553907e5dd945030d0eae3b42d4ed8e69fc41a1  openocr-report.json' | sha256sum -c -
           echo 'c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4  OpenOCR-LICENSE.txt' | sha256sum -c -
           mkdir -p openocr-lab/app/src/main/assets
@@ -50,7 +50,7 @@ jobs:
           BT="$ANDROID_HOME/build-tools/36.0.0"
           "$BT/apksigner" verify --verbose "$APK"
           "$BT/aapt" dump badging "$APK" | tee badging.txt
-          grep -F "package: name='com.vobich.bluestar.openocrlab.columns' versionCode='4' versionName='0.1.3'" badging.txt
+          grep -F "package: name='com.vobich.bluestar.openocrlab.focus' versionCode='9' versionName='0.4.0'" badging.txt
           ! grep -F android.permission.INTERNET badging.txt
           unzip -Z1 "$APK" > archive.txt
           grep -Fx lib/arm64-v8a/libonnxruntime.so archive.txt
@@ -60,13 +60,13 @@ jobs:
           unzip -p "$APK" assets/chars.txt | sha256sum | grep -F "$(jq -r .dict_sha256 openocr-report.json)"
           ! grep -Fx assets/svtr.onnx archive.txt
           mkdir -p release
-          cp "$APK" release/BlueStar_OpenOCR_Columns_0.1.3.apk
+          cp "$APK" release/BlueStar_OpenOCR_Focus_0.4.0.apk
           cp openocr-lab/README.md openocr-report.json release/
           cp OpenOCR-LICENSE.txt release/
           (cd release && sha256sum *.apk > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:
-          name: openocr-yolo-columns
+          name: openocr-focus
           path: release/
   publish:
     needs: build
@@ -76,7 +76,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: openocr-yolo-columns
+          name: openocr-focus
           path: release
       - name: Publish verified experiment
         env:
@@ -85,8 +85,8 @@ jobs:
         run: |
           set -euo pipefail
           (cd release && sha256sum -c SHA256SUMS.txt)
-          TAG=bluestar-openocr-yolo-columns-v013-20261126
-          if ! gh release view "$TAG" >/dev/null 2>&1; then gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 OpenOCR 完整列裁剪 v0.1.3" --notes-file release/README.md --prerelease --draft; fi
+          TAG=bluestar-openocr-focus-v040-20261126
+          if ! gh release view "$TAG" >/dev/null 2>&1; then gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 OpenOCR 主阅读区 v0.4.0" --notes-file release/README.md --prerelease --draft; fi
           gh release view "$TAG" --json targetCommitish | jq -e --arg sha "$GITHUB_SHA" '.targetCommitish == $sha'
           for i in 1 2 3; do gh release upload "$TAG" release/* --clobber && break; test "$i" != 3; sleep 5; done
           gh release edit "$TAG" --draft=false --prerelease
