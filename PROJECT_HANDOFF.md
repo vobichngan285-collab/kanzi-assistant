@@ -2362,3 +2362,7 @@ Actions 45788302042 build/publish全部success，资产复用SHA校验、双检�
 
 ## 2026-11-26 — v0.4.0主阅读区实验APK发布
 Actions 45791503828 build success，原v0.1.3资产校验、Android单测/编译、APK签名/包名/无网络权限校验及上传均通过；publish步骤与Complete job均success，查询时job总体状态仍in_progress。Release已回读确认非draft、prerelease=true，tag bluestar-openocr-focus-v040-20261126，target c5e20868f61a1bf41a937d99af4df68ee913188e，APK BlueStar_OpenOCR_Focus_0.4.0.apk 43766329 bytes，SHA256 67c370be76145b8a4de192fc6ff53c239dd71122c716559da61e76fdb7116f20。下载：https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-openocr-focus-v040-20261126/BlueStar_OpenOCR_Focus_0.4.0.apk 。独立安装，旧版本及正式APP未动。下一步同价目表原图CPU4选择同图区域对照（新/旧/全图），三个模式各两轮，核对核心内容、金额、选中/区域外框数、耗时及待核，再用不同横排照片验证区域回退。真机效果仍未验证，不上传原图或OCR原文。
+
+
+## 2026-11-26 — v0.4.0智能主阅读区价目表真机首测
+用户回传Focus v0.4.0 3072×4096、检测/识别CPU4、mode0两轮。共享detect421ms、detector_init199ms、recognizer_load218ms另计；focus_plan2ms，dominant_region，groups6，best199.9536/rival46.4946；ROI(945,1051,1925,2703)，原始111框、选44、区域外67（60.4%）、16行/28裁剪、去重4、行列规划1ms。rec943/800ms，first_row62/28ms，total1367/1224ms（平均1295.5ms），PSS472444/510512KiB，3 suspect、0空框，两轮输出与置信度一致。根据此前照片人工真值，十项金额10/10、项目与金额对应、充值两组、标题及底部署名保留；一个正确的短语带前导全角空格而被待核（rec.8341/min.3367），另两个疑似装饰杂框待核（rec.1886/.3078）。不把待核直接当成错字或删除。该图主要阅读区覆盖成功，区域外仍有实际包装文字，已提示未读并保留全图入口。相对v0.3.0 YOLO全图均2371ms耗时降低45.4%，67主裁剪+6复核变28裁剪无复核；策略不同，不能将收益全部归于区域规划。v0.1.3最快1116ms亦非同次均值。当前日志仅有mode0，缺同图mode1原区域与mode2全图对照；下一步优先取得这两模式各两轮（若已跑完直接复制后半日志），再测两张不同横排图验证稀疏/多区域/偏心条件。不需要立即改代码或新构建，暂不宣布替代稳定版，不上传私人原图或OCR原文。
