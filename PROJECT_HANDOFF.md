@@ -1,3 +1,9 @@
+# 最新｜v0.1.4 JNI依赖校验通过，修复ZIP元数据复用错误
+- CI45730170959 job139609918490：复用JNI及原厂provider哈希校验成功，46/46 JNI接口匹配，provider DT_NEEDED仅libm/libc/libdl/liblog，依赖闭包通过。AAR重写后读取原ZIP失败 BadZipFile，根因writestr复用原ZipInfo修改其header_offset等属性，并非引擎或模型失败。
+- 隔离分支HEAD b96bc13b451eb421bdea04336c54b84bdeb2835b：copy.copy(ZipInfo)后写入，原条目按文件名重新读取哈希，增加testzip及条目集合检查。复用已保存JNI，不重编译，不降低校验标准。CI45730569587 in_progress。 APK及真机结果未取得。
+
+---
+
 # 最新｜v0.1.4 JNI已保存，补齐原厂依赖后复用打包
 - CI45725894735 native job139595545930 编译4238 actions成功，1725.988s；46个JNI导出全部匹配。新增DT_NEEDED libGemmaModelConstraintProvider.so不在原厂AAR内，依赖保护检查阻止打包，非模型推理失败。已上传JNI artifact15076515697（未过期），JNI SHA256 f0dcf741d49a9a87a0b893513153c0e522d95b1fc679eb0fd54500c2061dafa5，诊断artifact15076182202。
 - 隔离分支新HEAD 7d43eb7de17ef9d22443b8a7da49fdb580acdaa6：复用上述JNI，精确上游v0.18.1 bda624851d74be34d4e1f7fac1fc4155939539c7的原厂arm64 provider Git LFS SHA256 c7c7188b831ae75fcc7ec6fe613118365b311995805423a4ca265372f07f4783，校验ELF架构及依赖闭包，保留原AAR其余条目，APK校验两个库哈希。CI45730170959 in_progress。尚未取得APK或真机加速结果。不修改正式APP或模型权重。
