@@ -35,3 +35,20 @@ assert s.count(needle)==1
 s=s.replace(needle,needle+'\n    ABSL_LOG(INFO) << "BLUESTAR_VISION_HYBRID_014 encoder run complete signature_index=" << encoder_signature_index;')
 p.write_text(s)
 print(subprocess.check_output(["git","-C",str(root),"diff","--",str(p.relative_to(root))],text=True))
+
+# Experimental language fallback; retain existing GPU tensor policy for first
+# diagnostic build, so runtime failures remain distinguishable from compilation.
+p=root/"runtime/executor/llm_executor_settings_utils.cc"
+s=p.read_text()
+old="gpu_compilation_options.SetHintFullyDelegatedToSingleDelegate(true);"
+assert s.count(old)==1
+s=s.replace(old,"gpu_compilation_options.SetHintFullyDelegatedToSingleDelegate(false);")
+old="compilation_options.SetHardwareAccelerators(HwAccelerators::kGpu);"
+assert s.count(old)==1
+s=s.replace(old,"""LITERT_ASSIGN_OR_RETURN(auto& hybrid_cpu_options,
+          compilation_options.GetOptions<::litert::CpuOptions>());
+      ABSL_RETURN_IF_ERROR(SetCpuOptions(hybrid_cpu_options, 4));
+      compilation_options.SetHardwareAccelerators(HwAccelerators::kGpu |
+                                                  HwAccelerators::kCpu);""")
+p.write_text(s)
+print(subprocess.check_output(["git","-C",str(root),"diff","--",str(p.relative_to(root))],text=True))
