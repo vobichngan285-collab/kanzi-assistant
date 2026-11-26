@@ -2323,3 +2323,7 @@ OpenOCR官方移动端配套为RepViT-DB检测（configs/det/dbnet/repvit_db.yml
 
 ## 2026-11-26 — 价目表DB原始框重复验证
 用户回传Arena v0.2.0 RepViT-DB、3072×4096、CPU4、tiles=false、layout=0，两轮raw/unique/blocks/crops均51，6 suspect、3空框、0 vertical，坐标/文本/置信度两轮一致，且已知乱序及两个疑似多余金额负号等错误复现。global296/239ms，rec1266/1232ms，plan3/2ms，total1565/1473ms（均1519ms），PSS421731/509315KiB，识别器加载213ms、检测器首次57ms单计。相对六模型擂台DB平均1710.5ms耗时减少11.2%，无代码或模型变化，不能归因于优化。无需再重复layout0。未完成的重点实验：价目表DB与YOLO26n同图CPU4全图layout3横排行列裁剪；海报DB与YOLO26n同图CPU4全图layout2完整竖列，优先DB。原图真值仍未核验，不做CER或换模验收；保留v0.1.3稳定基线。未修改源码、APK或正式应用，不上传原图/OCR原文。
+
+
+## 2026-11-26 — 价目表RepViT-DB横排行列实验完成
+Arena v0.2.0、3072×4096、CPU4、tiles=false、layout=3，DB两轮原始51框与layout0一致，24 blocks、35 crops、4 suspect、0空框、0 vertical；两轮raw/cell及输出一致。global276/262ms，plan7/2ms，rec883/853ms，total1166/1117ms（平均1141.5ms），PSS360967/524545KiB；识别器加载207ms、首次检测器30ms单计。相对最新同图layout0平均1519ms、51 crops、1249ms rec，耗时降低24.9%、裁剪减少31.4%、识别耗时降低30.5%；五组大间距短语完整恢复，原两处疑似金额负号消失但另两处金额新增疑似负号（含双负号），未标suspect；充值两框误合并，背景小字仍有错误。不能将空框减少视为准确率改善，不硬编码纠错。DB最快1117ms接近历史v0.1.3最快1116ms，但ROI/后处理口径不同，非严格同条件对照。当前下一步：同价目表CPU4全图layout3切换YOLO26n两轮；随后海报DB及YOLO26n同图CPU4全图layout2各两轮，优先DB。原图真值未核验，尚未达到换模验收；保持原v0.1.3稳定基线，不改正式APP、权重、代码或构建，不上传私人原图及OCR原文。
