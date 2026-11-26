@@ -12,6 +12,8 @@ import java.nio.ByteOrder
 class DbLocator(context:Context,threads:Int):AutoCloseable {
  private val env=OrtEnvironment.getEnvironment()
  private val session:OrtSession
+ var lastDiagnostic:String=""
+  private set
  init{
   check(OpenCVLoader.initLocal()){"OpenCV unavailable"}
   val file=java.io.File(context.cacheDir,"repvit-db.onnx")
@@ -19,11 +21,14 @@ class DbLocator(context:Context,threads:Int):AutoCloseable {
   val opts=OrtSession.SessionOptions()
   try{opts.setIntraOpNumThreads(threads);session=env.createSession(file.absolutePath,opts)}finally{opts.close()}
  }
- fun locate(bm:Bitmap):List<TextLocator.Box>{
+ fun locate(bm:Bitmap,longSide:Int=960):List<TextLocator.Box>{
+  require(longSide in listOf(960,1280,1600))
+  lastDiagnostic=""
   val shape=(session.inputInfo.values.first().info as TensorInfo).shape
-  val ratio=min(1f,960f/max(bm.width,bm.height))
+  val ratio=min(1f,longSide.toFloat()/max(bm.width,bm.height))
   val w=if(shape[3]>0)shape[3].toInt()else max(32,(bm.width*ratio/32).roundToInt()*32)
   val h=if(shape[2]>0)shape[2].toInt()else max(32,(bm.height*ratio/32).roundToInt()*32)
+  lastDiagnostic="DB requested_long_side=$longSide input=${w}x${h} model_shape=${shape.contentToString()} dynamic_h=${shape[2]<=0} dynamic_w=${shape[3]<=0}"
   val resized=Bitmap.createScaledBitmap(bm,w,h,true);val pixels=IntArray(w*h)
   try{resized.getPixels(pixels,0,w,0,0,w,h)}finally{if(resized!==bm)resized.recycle()}
   val buf=ByteBuffer.allocateDirect(3*w*h*4).order(ByteOrder.nativeOrder()).asFloatBuffer()
@@ -35,6 +40,7 @@ class DbLocator(context:Context,threads:Int):AutoCloseable {
     val out=res[0] as OnnxTensor;val s=out.info.shape
     require(s.size==4&&s[0]==1L&&s[1]>=1)
     val mh=s[2].toInt();val mw=s[3].toInt();val prob=FloatArray(mh*mw);out.floatBuffer.get(prob)
+    lastDiagnostic+=" prob_map=${mw}x${mh}"
     return boxes(prob,mw,mh,bm.width,bm.height)
    }
   }
@@ -42,6 +48,7 @@ class DbLocator(context:Context,threads:Int):AutoCloseable {
  private fun boxes(prob:FloatArray,w:Int,h:Int,ow:Int,oh:Int):List<TextLocator.Box>{
   val mask=Mat(h,w,CvType.CV_8UC1);val map=Mat(h,w,CvType.CV_32FC1);val hierarchy=Mat()
   val contours=mutableListOf<MatOfPoint>();val result=mutableListOf<TextLocator.Box>()
+  var shortRejected=0;var invalidRejected=0;var scoreRejected=0;var expandedRejected=0
   try{
    mask.put(0,0,ByteArray(prob.size){if(prob[it]>.3f)255.toByte()else 0})
    map.put(0,0,prob)
@@ -50,18 +57,18 @@ class DbLocator(context:Context,threads:Int):AutoCloseable {
     val pts=MatOfPoint2f(*c.toArray())
     try{
      val rr=Imgproc.minAreaRect(pts);val rw=rr.size.width;val rh=rr.size.height
-     if(min(rw,rh)<3)continue
-     val roi=Imgproc.boundingRect(c);if(roi.width<1||roi.height<1)continue
+     if(min(rw,rh)<3){shortRejected++;continue}
+     val roi=Imgproc.boundingRect(c);if(roi.width<1||roi.height<1){invalidRejected++;continue}
      val local=MatOfPoint(*c.toArray().map{Point(it.x-roi.x,it.y-roi.y)}.toTypedArray())
      val m=Mat.zeros(roi.height,roi.width,CvType.CV_8UC1);val sub=map.submat(roi)
      val score=try{Imgproc.fillPoly(m,listOf(local),Scalar(1.0));Core.mean(sub,m).`val`[0].toFloat()}finally{local.release();m.release();sub.release()}
-     if(score<.6f)continue
+     if(score<.6f){scoreRejected++;continue}
      // For a rectangular contour, the min-area rectangle of a rounded
      // outward offset has the same orientation and adds 2d to both sides.
      // Continuous rectangle approximation, not byte-identical pyclipper.
      val d=rw*rh*1.5/(2*(rw+rh))
      val ex=RotatedRect(rr.center,Size(rw+2*d,rh+2*d),rr.angle)
-     if(min(ex.size.width,ex.size.height)<5)continue
+     if(min(ex.size.width,ex.size.height)<5){expandedRejected++;continue}
      val q=Array(4){Point()};ex.points(q)
      val left=q.sortedBy{it.x}.take(2).sortedBy{it.y}
      val right=q.sortedBy{it.x}.takeLast(2).sortedBy{it.y}
@@ -70,6 +77,7 @@ class DbLocator(context:Context,threads:Int):AutoCloseable {
     }finally{pts.release()}
    }
   }finally{contours.forEach{it.release()};mask.release();map.release();hierarchy.release()}
+  lastDiagnostic+=" contours=${contours.size} examined=${min(contours.size,1000)} cap_skipped=${max(0,contours.size-1000)} rejected_short=$shortRejected rejected_invalid=$invalidRejected rejected_score=$scoreRejected rejected_expanded=$expandedRejected accepted=${result.size} mask_threshold=0.3 box_threshold=0.6"
   return result
  }
  override fun close(){session.close()}
