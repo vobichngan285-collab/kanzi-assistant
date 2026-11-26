@@ -169,7 +169,9 @@ private fun buildEyePrompt(task: EyeTask, question: String, value: EyeResult): S
 }
 
 @Composable
-internal fun EyeOcrInput(enabled: Boolean, draft: String, onAutoSend: (String) -> Unit) {
+internal fun EyeOcrInput(enabled: Boolean, draft: String,
+    sessionIdentity: () -> String?, onBusyChanged: (Boolean) -> Unit,
+    onAutoSend: (String) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val sessions = remember(context.applicationContext) { EyeSessions(context.applicationContext) }
@@ -179,6 +181,8 @@ internal fun EyeOcrInput(enabled: Boolean, draft: String, onAutoSend: (String) -
     }
     var keepWarm by remember { mutableStateOf(true) }
     val latestSend by rememberUpdatedState(onAutoSend)
+    val latestSessionIdentity by rememberUpdatedState(sessionIdentity)
+    val latestBusyChanged by rememberUpdatedState(onBusyChanged)
     val latestDraft by rememberUpdatedState(draft)
     var selectedTask by remember { mutableStateOf(EyeTask.QUICK) }
     var menu by remember { mutableStateOf(false) }
@@ -193,7 +197,9 @@ internal fun EyeOcrInput(enabled: Boolean, draft: String, onAutoSend: (String) -
             val task = selectedTask
             val question = latestDraft
             val reuse = keepWarm
+            val initialSession = latestSessionIdentity()
             busy = true
+            latestBusyChanged(true)
             status = "正在识别…"
             scope.launch {
                 try {
@@ -204,7 +210,7 @@ internal fun EyeOcrInput(enabled: Boolean, draft: String, onAutoSend: (String) -
                     status = "OCR ${wallMs} ms · ${if (value.reused) "热启动" else "冷启动"} · 加载 ${value.loadMs} ms · 待核 ${value.uncertain.size} 项"
                     if (value.text.isBlank() && value.uncertain.none { it.isNotBlank() && it != "[未识别]" }) {
                         error = "没有识别到可用文字，请重新选图。"
-                    } else if (!latestEnabled || latestDraft != question) {
+                    } else if (!latestEnabled || latestDraft != question || initialSession == null || latestSessionIdentity() != initialSession) {
                         error = "对话状态已改变，本次未自动发送；原识别结果仍可查看。"
                     } else {
                         latestSend(buildEyePrompt(task, question, value))
@@ -213,7 +219,7 @@ internal fun EyeOcrInput(enabled: Boolean, draft: String, onAutoSend: (String) -
                 } catch (e: CancellationException) { throw e }
                 catch (e: Exception) { error = "识别失败：" + (e.message ?: e.javaClass.simpleName).take(160) }
                 catch (e: OutOfMemoryError) { error = "内存不足。请关闭其他应用或使用较小的图片。" }
-                finally { busy = false }
+                finally { busy = false; latestBusyChanged(false) }
             }
         }
     }
@@ -248,11 +254,6 @@ internal fun EyeOcrInput(enabled: Boolean, draft: String, onAutoSend: (String) -
         if (result != null) {
             TextButton(enabled = !busy, onClick = { showResult = true }) { Text("查看上次OCR原文") }
         }
-    }
-    if (busy) {
-        AlertDialog(onDismissRequest = {}, title = { Text("正在本地识别") },
-            text = { Text("识别完成将自动提交给离线大脑，无需确认。") },
-            confirmButton = {})
     }
     val value = result
     if (showResult && value != null) {

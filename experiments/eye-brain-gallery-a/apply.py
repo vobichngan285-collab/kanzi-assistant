@@ -17,21 +17,21 @@ def block(path, start, end, content):
     i = s.index(start); j = s.index(end, i)
     path.write_text(s[:i] + content + s[j:])
 gradle = app / "build.gradle.kts"
-replace(gradle, 'applicationId = "com.google.aiedge.gallery"', 'applicationId = "com.vobich.bluestar.eyebrain.gallerylite"')
-replace(gradle, 'versionName = "1.0.23"', 'versionName = "0.2.2"')
-replace(gradle, 'versionCode = 52', 'versionCode = 4')
+replace(gradle, 'applicationId = "com.google.aiedge.gallery"', 'applicationId = "com.vobich.bluestar.eyebrain.gallerytrim"')
+replace(gradle, 'versionName = "1.0.23"', 'versionName = "0.2.3"')
+replace(gradle, 'versionCode = 52', 'versionCode = 5')
 replace(gradle, 'dependencies {\n', 'dependencies {\n  implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")\n')
 # Native C++ runtime conflict must be resolved consistently at packaging; original LiteRT JNI unchanged.
 replace(gradle, 'pickFirsts.add("**/liblitertlm_jni.so")', 'pickFirsts.add("**/liblitertlm_jni.so"); pickFirsts.add("**/libc++_shared.so")')
 manifest = src / "AndroidManifest.xml"
-replace(manifest, 'android:label="Edge Gallery"', 'android:label="眼脑协同轻量版"')
+replace(manifest, 'android:label="Edge Gallery"', 'android:label="眼脑协同精简版"')
 replace(manifest, 'android:allowBackup="true"', 'android:allowBackup="false"')
 replace(manifest, '<uses-native-library android:name="libedgetpu_util.so" android:required="false" />', '<meta-data android:name="firebase_analytics_collection_deactivated" android:value="true" />\n        <uses-native-library android:name="libedgetpu_util.so" android:required="false" />') if manifest.read_text().count('<uses-native-library android:name="libedgetpu_util.so" android:required="false" />') == 1 else None
 # Unique anchor regardless of repeated native library declarations.
 if 'firebase_analytics_collection_deactivated' not in manifest.read_text():
     replace(manifest, 'tools:targetApi="31">', 'tools:targetApi="31">\n        <meta-data android:name="firebase_analytics_collection_deactivated" android:value="true" />')
-replace(manifest, 'android:scheme="com.google.ai.edge.gallery"', 'android:scheme="com.vobich.bluestar.eyebrain.gallerylite"')
-replace(manifest, 'android:taskAffinity="com.google.ai.edge.gallery.glasses"', 'android:taskAffinity="com.vobich.bluestar.eyebrain.gallerylite.glasses"')
+replace(manifest, 'android:scheme="com.google.ai.edge.gallery"', 'android:scheme="com.vobich.bluestar.eyebrain.gallerytrim"')
+replace(manifest, 'android:taskAffinity="com.google.ai.edge.gallery.glasses"', 'android:taskAffinity="com.vobich.bluestar.eyebrain.gallerytrim.glasses"')
 # Original app-level analytics is disabled; no changes to LLM inference.
 replace(pkg/"GalleryApplication.kt", 'firebaseAnalytics?.setAnalyticsCollectionEnabled(dataStoreRepository.readFirebaseAnalytics())', 'firebaseAnalytics?.setAnalyticsCollectionEnabled(false)')
 # Use a curated snapshot of the exact upstream 1.0.23 model metadata, without any startup network lookup.
@@ -97,10 +97,47 @@ block(home, '  val uiState by modelManagerViewModel.uiState.collectAsState()\n',
 }
 
 ''')
+# ARM64-only lab for the user's device; no change to the retained native libraries.
+replace(gradle, '    minSdk = 31\n', '    minSdk = 31\n    ndk { abiFilters += setOf("arm64-v8a") }\n')
+replace(manifest, '<uses-permission android:name="android.permission.READ_CALENDAR" />', '<uses-permission android:name="android.permission.READ_CALENDAR" tools:node="remove" />')
+# Do not instantiate unused demo tasks via Hilt multibinding. Keep other provider functions
+# because shared navigation and DI types still compile against them.
+for rel in [
+    "customtasks/agentchat/AgentChatTaskModule.kt",
+    "customtasks/smartalbum/SmartAlbumTaskModule.kt",
+    "customtasks/tinygarden/TinyGardenTaskModule.kt",
+    "customtasks/videomomentfinder/VideoMomentFinderTaskModule.kt",
+    "customtasks/xrlanguageteacher/XrLanguageTeacherTaskModule.kt",
+    "customtasks/scrapbook/ScrapbookTaskModule.kt",
+    "ui/llmsingleturn/LlmSingleTurnTaskModule.kt",
+]:
+    task_module = pkg / rel
+    replace(task_module, '  @Provides\n  @IntoSet\n  fun ', '  // Lite lab: demo task is not registered.\n  fun ')
+replace(manager, '    return customTasks.toList()\n', '    return customTasks.filter { it.task.id == BuiltInTaskId.LLM_CHAT || it.task.id == BuiltInTaskId.LLM_TEST }\n')
+# Only remove assets specific to unregistered demo tasks, not shared models, licenses, or speech.
+for asset_dir in ["xr", "xr_earcons", "tinygarden"]:
+    path = assets / asset_dir
+    assert path.is_dir(), path
+    shutil.rmtree(path)
 # Enable original optional UI metrics; no inference engine or sampling changes.
 replace(pkg / "ui/common/chat/ChatPanel.kt", "val isLiveMetricsFlagEnabled = false", "val isLiveMetricsFlagEnabled = task.id == com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_CHAT")
 # Preserve official navigation, terms, model selection, and original chat send path.
 input_file = pkg / "ui/common/chat/MessageInputText.kt"
+# Make OCR progress inline without allowing concurrent manual submissions. Protect session switches.
+replace(input_file, '  onAsrDictationError: () -> Unit = {},\n) {', '  onAsrDictationError: () -> Unit = {},\n  ocrSessionIdentity: () -> String? = { null },\n) {')
+replace(input_file, '  var showAddContentMenu by remember { mutableStateOf(false) }', '''  var eyeBusy by remember(selectedModel.name) { mutableStateOf(false) }
+  val manualSend: (List<ChatMessage>) -> Unit = { messages ->
+    if (!eyeBusy) onSendMessage(messages)
+  }
+  var showAddContentMenu by remember { mutableStateOf(false) }''')
+s_input = input_file.read_text()
+assert s_input.count('onSendMessage(\n') == 3
+s_input = s_input.replace('onSendMessage(\n', 'manualSend(\n')
+s_input = s_input.replace('!inProgress && !isResettingSession', '!eyeBusy && !inProgress && !isResettingSession')
+s_input = s_input.replace('!inProgress &&\n', '!eyeBusy && !inProgress &&\n')
+s_input = s_input.replace('enabled = !isResettingSession && !modelInitializing,', 'enabled = !eyeBusy && !isResettingSession && !modelInitializing,')
+input_file.write_text(s_input)
+replace(pkg / "ui/common/chat/ChatPanel.kt", '        onValueChanged = { curMessage = it },', '        ocrSessionIdentity = { runCatching { viewModel.currentSessionId }.getOrNull() },\n        onValueChanged = { curMessage = it },')
 replace(input_file, '              // First row: text field for input.', '''              if (task.id == com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_CHAT) {
                 androidx.compose.runtime.key(selectedModel.name) {
                   EyeOcrInput(
@@ -108,6 +145,8 @@ replace(input_file, '              // First row: text field for input.', '''    
                       !modelPreparing && !isContextLimitReached &&
                       pickedImages.isEmpty() && pickedAudioClips.isEmpty() && pickedTextFiles.isEmpty(),
                     draft = curMessage,
+                    sessionIdentity = ocrSessionIdentity,
+                    onBusyChanged = { eyeBusy = it },
                     onAutoSend = { recognized ->
                       onSendMessage(
                         createMessagesToSend(
