@@ -1,0 +1,92 @@
+name: BlueStar stock Gallery + YOLO crop
+on:
+  push:
+    branches: [exp/yolo26-text-gemma280-20261126]
+    paths: ['gallery-yolo-stock/**', '.github/workflows/gallery-yolo-stock.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.2.1'
+      - name: Fetch exact stock Gallery and validated YOLO asset
+        run: |
+          set -euo pipefail
+          git init upstream
+          git -C upstream remote add origin https://github.com/google-ai-edge/gallery.git
+          git -C upstream fetch --depth=1 origin 9cb31cf47c21b0ed76901ff589a52b509803edfa
+          git -C upstream checkout --detach FETCH_HEAD
+          test "$(git -C upstream rev-parse HEAD)" = 9cb31cf47c21b0ed76901ff589a52b509803edfa
+          BASE=https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-yolo26-gemma280-v010-20261126
+          curl -fL --retry 3 "$BASE/BlueStar_YOLO26_Text_Gemma280_0.1.0.apk" -o previous.apk
+          curl -fL --retry 3 "$BASE/detector-report.json" -o detector-report.json
+          echo '8fd48a29ba346d6079529683d43a81f01b02f0b8f48fdedba26d8367294eb9d8  previous.apk' | sha256sum -c -
+          echo '4832b67e0605ee16d5f54a829703b619e84501e49e3f8204fd03d288325c3818  detector-report.json' | sha256sum -c -
+          python3 gallery-yolo-stock/patch.py
+          git -C upstream diff --stat
+          git -C upstream diff --exit-code -- Android/src/app/src/main/java/com/google/ai/edge/gallery/ui/llmchat Android/src/gradle/libs.versions.toml
+      - name: Official Gallery SDK platform
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-37.0' 'build-tools;36.0.0'
+      - name: Build from stock Gallery source
+        working-directory: upstream/Android/src
+        run: ./gradlew --no-daemon --max-workers=2 assembleRelease
+      - name: Verify package and bundled detector
+        run: |
+          set -euo pipefail
+          APK=upstream/Android/src/app/build/outputs/apk/release/app-release.apk
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/apksigner" verify --verbose --print-certs "$APK"
+          "$BT/aapt" dump badging "$APK" | tee badging.txt
+          grep -F "package: name='com.vobich.bluestar.gallery.yolo' versionCode='1' versionName='1.0.23-bluestar.1'" badging.txt
+          unzip -Z1 "$APK" > archive.txt
+          grep -Fx 'lib/arm64-v8a/liblitertlm_jni.so' archive.txt
+          grep -Fx 'lib/arm64-v8a/libonnxruntime.so' archive.txt
+          ! grep -E '^lib/(x86|x86_64|armeabi-v7a)/' archive.txt
+          unzip -p "$APK" assets/yolo26n-text.onnx | sha256sum | grep -F "$(jq -r .onnx_sha256 detector-report.json)"
+          mkdir -p release
+          cp "$APK" release/BlueStar_Gallery_YOLO_1.0.23_1.apk
+          cp gallery-yolo-stock/README.md detector-report.json gallery-patch-report.json release/
+          cp upstream/LICENSE release/Gallery-LICENSE.txt
+          (cd release && sha256sum *.apk > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-gallery-yolo-1
+          path: release/
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: stock-gallery-yolo-1
+          path: release
+      - name: Publish independent experiment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          (cd release && sha256sum -c SHA256SUMS.txt)
+          TAG=bluestar-stock-gallery-yolo-v1-20261126
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 原厂Gallery＋YOLO实验1" --notes-file release/README.md --prerelease --draft
+          fi
+          gh release view "$TAG" --json targetCommitish | jq -e --arg sha "$GITHUB_SHA" '.targetCommitish == $sha'
+          for i in 1 2 3; do gh release upload "$TAG" release/* --clobber && break; test "$i" != 3; sleep 5; done
+          gh release edit "$TAG" --draft=false --prerelease
