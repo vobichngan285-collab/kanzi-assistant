@@ -1,5 +1,5 @@
 """Replace JNI and add its exact pinned upstream dependency; preserve every other original entry."""
-import pathlib, sys, zipfile, subprocess, hashlib, re, xml.etree.ElementTree as ET, shutil
+import copy, pathlib, sys, zipfile, subprocess, hashlib, re, xml.etree.ElementTree as ET, shutil
 source, binary, pom, dest=map(pathlib.Path,sys.argv[1:5])
 provider=pathlib.Path(sys.argv[5])
 provider_key="jni/arm64-v8a/libGemmaModelConstraintProvider.so"
@@ -36,12 +36,14 @@ with zipfile.ZipFile(source) as z:
     assert provider_deps <= packaged|system|{provider.name}, provider_deps-(packaged|system|{provider.name})
     orig.unlink()
     with zipfile.ZipFile(out,"w",compression=zipfile.ZIP_DEFLATED,compresslevel=1) as o:
-        for i in z.infolist():o.writestr(i,data if i.filename==key else z.read(i.filename))
+        for i in z.infolist():o.writestr(copy.copy(i),data if i.filename==key else z.read(i.filename))
         o.writestr(provider_key,provider_data)
     with zipfile.ZipFile(out) as o:
         assert o.read(key)==data and o.read(provider_key)==provider_data
         for i in z.infolist():
-            if i.filename!=key:assert hashlib.sha256(z.read(i)).digest()==hashlib.sha256(o.read(i)).digest()
+            if i.filename!=key:assert hashlib.sha256(z.read(i.filename)).digest()==hashlib.sha256(o.read(i.filename)).digest()
+        assert o.testzip() is None
+        assert set(o.namelist())==set(z.namelist())|{provider_key}
 # Preserve POM transitives. Remove Gradle metadata hint because no .module is provided.
 p=pom.read_text().replace("<!-- do_not_remove: published-with-gradle-metadata -->","")
 ET.fromstring(p)
