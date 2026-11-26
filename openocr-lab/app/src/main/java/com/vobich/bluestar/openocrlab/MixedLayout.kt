@@ -59,6 +59,29 @@ object MixedLayout {
   val top=vertical.minOf{it.rect.top};val bottom=vertical.maxOf{it.rect.bottom}
   return hr.filter{it.boxes.minOf{q->q.rect.centerY()}<top}+vr+hr.filter{it.boxes.minOf{q->q.rect.centerY()}>=top&&it.boxes.minOf{q->q.rect.centerY()}<=bottom}+hr.filter{it.boxes.minOf{q->q.rect.centerY()}>bottom}
  }
+ fun completePlan(boxes:List<TextLocator.Box>,w:Int,h:Int):List<Block>{
+  val fragments=boxes.mapIndexed{i,b->
+   val p=b.points;val a=hypot(p[2]-p[0],p[3]-p[1]);val c=hypot(p[4]-p[2],p[5]-p[3])
+   val dx=if(a>=c)p[2]-p[0] else p[4]-p[2]
+   val dy=if(a>=c)p[3]-p[1] else p[5]-p[3]
+   val r=b.rect;val tall=abs(dy)>abs(dx)*1.7f
+   val ww=if(tall)min(a,c)else r.width();val hh=if(tall)max(a,c)else r.height()
+   VerticalTracks.Fragment(i,r.centerX(),r.centerY(),ww,hh,if(tall&&abs(dy)>1f)dx/dy else 0f,b.score)
+  }
+  val tracks=VerticalTracks.build(fragments)
+  val consumed=tracks.flatMap{it.ids}.toSet()
+  val vr=tracks.map{t->
+   val pad=t.width*.10f;val top=t.top-pad;val bottom=t.bottom+pad
+   val half=t.width*.65f
+   val p=floatArrayOf(t.center+t.slope*top-half,top,t.center+t.slope*top+half,top,t.center+t.slope*bottom+half,bottom,t.center+t.slope*bottom-half,bottom)
+   for(i in p.indices)p[i]=p[i].coerceIn(0f,if(i%2==0)w.toFloat()else h.toFloat())
+   Block(listOf(TextLocator.Box(p,t.ids.maxOf{boxes[it].score})),true)
+  }
+  val hr=RowPlanner.plan(boxes.filterIndexed{i,_->i !in consumed},w,h,1.6f,true).rows.map{Block(it,false)}
+  if(vr.isEmpty())return hr
+  val top=vr.minOf{it.boxes.first().rect.top};val bottom=vr.maxOf{it.boxes.first().rect.bottom}
+  return hr.filter{it.boxes.minOf{q->q.rect.centerY()}<top}+vr+hr.filter{it.boxes.minOf{q->q.rect.centerY()} in top..bottom}+hr.filter{it.boxes.minOf{q->q.rect.centerY()}>bottom}
+ }
  fun axis(r:RectF,score:Float)=TextLocator.Box(floatArrayOf(r.left,r.top,r.right,r.top,r.right,r.bottom,r.left,r.bottom),score)
  // Find blank horizontal gaps in a rectified vertical strip. Fall back to estimated
  // character pitch only when ink runs are unusually tall; retain original pixels.
@@ -80,7 +103,7 @@ object MixedLayout {
    (0 until n).map{k->(a.first+k*len/n) until (a.first+(k+1)*len/n)}
   }.filter{it.last-it.first+1>=max(2,width/10)}
  }
- fun verticalRead(bm:Bitmap,box:TextLocator.Box,reader:Reader):Reader.Answer{
+ fun verticalRead(bm:Bitmap,box:TextLocator.Box,reader:Reader,refine:Boolean=false):Reader.Answer{
   val p=box.points
   // Choose the top-left corner and clockwise order so glyphs remain upright.
   val start=(0..3).minByOrNull{p[it*2]+p[it*2+1]}!!
@@ -97,7 +120,8 @@ object MixedLayout {
    fun gray(c:Int)=(Color.red(c)*3+Color.green(c)*6+Color.blue(c))/10
    val bg=pixels.map{gray(it)}.sorted().let{it[it.size*3/4]}
    val profile=IntArray(h){y->(w/10 until w-w/10).count{x->gray(pixels[y*w+x])<bg-35}}
-   val parts=cuts(profile,w)
+   val basic=cuts(profile,w)
+   val parts=if(refine)VerticalTracks.gridCuts(profile,w,basic)else basic
    if(parts.isEmpty())return Reader.Answer("",0f,320,0f)
    val out=StringBuilder();var sum=0f;var minConf=1f;var count=0
    // Reassemble upright glyph crops into short horizontal strips (no 90-degree glyph rotation).
