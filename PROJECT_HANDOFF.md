@@ -2295,3 +2295,7 @@
 ## 2026-11-26 — 稳定版复核及换模决策建议
 
 核对原Release v0.1.0/v0.1.1/v0.1.2/v0.1.3及v0.1.4：稳定横排基线v0.1.3为YOLO26n-Text ONNX(1280)+完整列几何裁剪+RepSVTR，CPU4；v0.1.4发布说明记录v0.1.3同价目表全部已知项目及数字正确，最快1116ms，但竖排刮痧海报失败。v0.2.0 DB+RepSVTR原始框两轮平均1710.5ms，YOLO26n原始框3175.5ms；旧版最快与新版平均、ROI/裁剪策略不一致，不能当作严格检测器A/B，也不能断言DB胜过稳定版。当前建议保留v0.1.3，不换正式部署；如用户希望最后确认，仅在既有Arena同图CPU4全图、相同横排行列策略下对照n与DB，原v0.1.3单独作为基线，另用真实竖排海报验证；比较主区域和全图覆盖、逐字/金额正确性及耗时，未见明确收益即停止本地竖排投入，按此前授权复杂排版仅联网且用户授权时走云端，离线低置信明确提示。未获新实施授权，不改代码、正式APP或Release。依据：https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-openocr-yolo-columns-v013-20261126 及 https://github.com/vobichngan285-collab/kanzi-assistant/releases/tag/bluestar-openocr-yolo-mixed-v014-20261126 。
+
+
+## 2026-11-26 — 原厂配套检测器确认
+OpenOCR官方移动端配套为RepViT-DB检测（configs/det/dbnet/repvit_db.yml）+RepSVTR识别（configs/rec/svtrv2/repsvtr_ch.yml），已在六模型Arena中测试。原稳定v0.1.3是跨项目YOLO26n+RepSVTR组合；同源配套不自动代表更准确或更快。仍建议先保留稳定版，若继续验证仅做同后处理A/B。官方来源：https://github.com/Topdu/OpenOCR/releases 。无代码变更。
