@@ -67,12 +67,12 @@ class MainActivity:Activity(){
   val scroll=ScrollView(this);val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,48,24,32)}
   scroll.addView(box);setContentView(scroll)
   fun label(t:String)=TextView(this).apply{text=t;textSize=18f;box.addView(this)}
-  label("蓝星 OpenOCR v0.4.3 · DB 小字检测对照")
+  label("蓝星 OpenOCR v0.4.4 · 自适应阅读实验")
   choose=Button(this).apply{text="选择相册原图";box.addView(this);setOnClickListener{stopSpeech();startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},9)}}
   preview=ImageView(this).apply{adjustViewBounds=true;maxHeight=650;box.addView(this)}
   detectorPicker=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("OpenOCR RepViT-DB（默认）","YOLO26n-Text（原版）"));box.addView(this)}
   dbSize=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("DB 长边 960（基线）","DB 长边 1280","DB 长边 1600"));box.addView(this)}
-  mode=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("全图原框（默认）","智能主阅读区","原v0.1.3区域基线","全图完整列裁剪","同图区域对照（新/旧/全图）"));box.addView(this)}
+  mode=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("全图原框（默认）","智能主阅读区","原v0.1.3区域基线","全图完整列裁剪","同图区域对照（新/旧/全图）","智能自适应（实验）"));box.addView(this)}
   threads=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("CPU 4线程（默认）","CPU 2线程","CPU 6线程"));box.addView(this)}
   run=Button(this).apply{text="开始识别 / 同图复测";box.addView(this);setOnClickListener{test()}}
   status=label("请选择图片")
@@ -95,7 +95,7 @@ class MainActivity:Activity(){
  }
  private fun busy(v:Boolean){choose.isEnabled=!v;run.isEnabled=!v;mode.isEnabled=!v;threads.isEnabled=!v;detectorPicker.isEnabled=!v;dbSize.isEnabled=!v}
  private fun test(){
-  val bm=source?:return;val selected=if(mode.selectedItemPosition==0)4 else mode.selectedItemPosition-1;val useDb=detectorPicker.selectedItemPosition==0;val detectorName=if(useDb)"OpenOCR RepViT-DB" else "YOLO26n-Text";val nt=listOf(4,2,6)[threads.selectedItemPosition];val longSide=listOf(960,1280,1600)[dbSize.selectedItemPosition]
+  val bm=source?:return;val selected=when(mode.selectedItemPosition){0->4;5->5;else->mode.selectedItemPosition-1};val useDb=detectorPicker.selectedItemPosition==0;val detectorName=if(useDb)"OpenOCR RepViT-DB" else "YOLO26n-Text";val nt=listOf(4,2,6)[threads.selectedItemPosition];val longSide=listOf(960,1280,1600)[dbSize.selectedItemPosition]
   stopSpeech();lastText="";raw.text="";replay.isEnabled=false;testStart=now();val clicked=testStart
   busy(true);output.text="";status.text="$detectorName 定位中"
   worker.execute{
@@ -118,17 +118,24 @@ class MainActivity:Activity(){
     val plan=FocusPlanner.plan(found.boxes.map{q->q.rect.let{FocusPlanner.R(it.left,it.top,it.right,it.bottom,q.score)}},bm.width,bm.height)
     val focusMs=now()-focusStart
     val focus=plan.roi?.let{Rect(floor(it.l).toInt(),floor(it.t).toInt(),ceil(it.r).toInt(),ceil(it.b).toInt())}
-    val modes=if(selected==3)listOf(0,1,2)else listOf(selected)
+    fun geom(b:TextLocator.Box)=b.rect.let{AdaptiveLayout.R(it.left,it.top,it.right,it.bottom)}
+    val autoStart=now()
+    val autoBoxes=if(selected==5&&focus!=null)found.boxes.filter{b->focus.contains(b.rect.centerX().toInt(),b.rect.centerY().toInt())}else emptyList()
+    val autoPlan=if(selected==5&&focus!=null&&useDb)RowPlanner.plan(autoBoxes,bm.width,bm.height,1.6f,true)else null
+    val decision=if(selected==5&&autoPlan!=null)AdaptiveLayout.decide(plan.reason,autoPlan.rows.map{row->row.map{geom(it)}},found.boxes.filter{it !in autoBoxes}.map{geom(it)})else AdaptiveLayout.Decision(false,if(useDb)"no_focus" else "non_db")
+    val autoMs=if(selected==5)now()-autoStart else 0L
+    if(selected==5)runOnUiThread{output.append("AUTO route="+(if(decision.structured)"structured" else "raw")+" reason="+decision.reason+" support="+decision.support+" route_ms="+autoMs+" focus="+focus+"\n")}
+    val modes=when(selected){3->listOf(0,1,2);5->listOf(if(decision.structured)0 else 4);else->listOf(selected)}
     val load=now();if(reader==null||readerThreads!=nt){reader?.close();reader=null;reader=Reader(this,"rep.onnx",nt);readerThreads=nt}
     val engine=reader!!;val loadMs=now()-load
-    runOnUiThread{output.append("Field TTS v0.4.3 detector=$detectorName source=${bm.width}x${bm.height} detector_threads=${if(useDb)nt else 4} rec_threads=$nt detector_init_ms=${init-start} detect_ms=${detected-init} recognizer_load_ms=$loadMs raw_boxes=${found.boxes.size} focus_plan_ms=$focusMs focus_reason=${plan.reason} groups=${plan.groups} best=${plan.best} rival=${plan.rival}\n")}
+    runOnUiThread{output.append("Field TTS v0.4.4 detector=$detectorName source=${bm.width}x${bm.height} detector_threads=${if(useDb)nt else 4} rec_threads=$nt detector_init_ms=${init-start} detect_ms=${detected-init} recognizer_load_ms=$loadMs raw_boxes=${found.boxes.size} focus_plan_ms=$focusMs focus_reason=${plan.reason} groups=${plan.groups} best=${plan.best} rival=${plan.rival}\n")}
     for(m in modes){
      val name=when(m){4->"全图原框";else->listOf("智能主阅读区","原v0.1.3区域","全图")[m]}
      val roi=when(m){0->focus;1->found.roi;else->null}
      val boxes=found.boxes.filter{b->roi==null||roi.contains(b.rect.centerX().toInt(),b.rect.centerY().toInt())}
      val outside=found.boxes.filter{it !in boxes}
      val pStart=now()
-     val columns=if(m==4)null else RowPlanner.plan(boxes,bm.width,bm.height,1.6f,true)
+     val columns=if(m==4)null else if(selected==5&&decision.structured)autoPlan else RowPlanner.plan(boxes,bm.width,bm.height,1.6f,true)
      val rows=columns?.rows?:MixedLayout.dedup(boxes).sortedWith(compareBy<TextLocator.Box>{it.rect.top}.thenBy{it.rect.left}).map{listOf(it)}
      val pMs=now()-pStart
      val scale=min(1f,1200f/max(bm.width,bm.height))
@@ -145,30 +152,46 @@ class MainActivity:Activity(){
      runOnUiThread{preview.setImageBitmap(shown);output.append("\nmode=$m $name roi=$roi selected=${boxes.size} outside=${outside.size} rows=${rows.size} crops=${rows.sumOf{it.size}} duplicates=${columns?.removed ?: (boxes.size-rows.sumOf{it.size})} plan_ms=$pMs\n"+(if(outside.isNotEmpty())"提示：区域外${outside.size}个检测框未识别，可切换全图模式；灰框为未读区域。\n" else "")+outside.joinToString("\n"){q->"outside det=${q.score} quad=${q.points.contentToString()}"}+"\n")}
      for(round in 1..(if(selected==3)2 else 1)){
       val begin=now();var first=-1L;var count=0;var uncertain=0;var blank=0
-      val lines=mutableListOf<String>();val notes=mutableListOf<String>();val rawLines=mutableListOf<String>()
+      val lines=mutableListOf<String>();val notes=mutableListOf<String>();val rawLines=mutableListOf<String>();val speechLines=mutableListOf<String>();var keptOriginal=0;var retries=0;var conflicts=0
       for((ri,row) in rows.withIndex()){
-       val parts=mutableListOf<String>();val rawParts=mutableListOf<String>()
+       val parts=mutableListOf<String>();val rawParts=mutableListOf<String>();val speechParts=mutableListOf<String>()
        for((ci,b) in row.withIndex()){
-        val ans=if(m==4&&b.rect.height()>b.rect.width()*2.2f)MixedLayout.verticalRead(bm,b,engine,false)else engine.read(bm,b,m!=4)
+        var crop=b;var cropKind="planned";var conflict=false;var alt=""
+        val originalIndex=if(selected==5&&decision.structured&&ri in decision.support&&ci==1&&row.size==2)AdaptiveLayout.originalCell(geom(b),boxes.map{geom(it)})else null
+        val ans=if(originalIndex!=null){
+         crop=boxes[originalIndex];cropKind="original_column";keptOriginal++
+         val a=engine.read(bm,crop,false)
+         if(a.text.isBlank()||a.confidence<.85f||a.minConfidence<.65f){
+          retries++;val z=engine.read(bm,b,true);alt=z.text
+          val same=a.text.filterNot{it.isWhitespace()}==z.text.filterNot{it.isWhitespace()}
+          conflict=a.text.isNotBlank()&&z.text.isNotBlank()&&!same
+          if(conflict)conflicts++
+          if(same&&z.minConfidence>a.minConfidence&&z.confidence>=a.confidence-.04f){crop=b;cropKind="same_text_retry";z}
+          else if(a.text.isBlank()&&z.text.isNotBlank()&&z.confidence>=.85f&&z.minConfidence>=.65f){crop=b;cropKind="blank_recovery";z}
+          else a
+         }else a
+        }else if(m==4&&b.rect.height()>b.rect.width()*2.2f)MixedLayout.verticalRead(bm,b,engine,false)else engine.read(bm,b,m!=4)
         if(ans.text.isNotBlank())rawParts.add(ans.text)
         val oldSuspect=FineRead.suspicious(ans,b.score)
-        val suspect=if(m==4)oldSuspect||ans.text.isBlank()||ans.confidence<.4f else oldSuspect||(m!=1&&(ans.text.isBlank()||ans.confidence<.75f||ans.minConfidence<.65f))
+        val suspect=conflict||if(m==4)oldSuspect||ans.text.isBlank()||ans.confidence<.4f||(selected==5&&ans.minConfidence<.40f) else oldSuspect||(m!=1&&(ans.text.isBlank()||ans.confidence<.75f||ans.minConfidence<.65f))
+        if(selected==5)speechParts.add(if(suspect){if(ans.text.isBlank())"有文字未识别" else "待核，"+ans.text}else ans.text)
         count++;if(suspect)uncertain++;if(ans.text.isBlank())blank++
         if(m!=1||!oldSuspect)parts.add(if(suspect)"[待核:${ans.text}]"else ans.text.ifBlank{"[未识别]"})
-        notes.add("cell row=${ri+1} col=${ci+1} quad=${b.points.contentToString()} det=${b.score} rec=${ans.confidence} min=${ans.minConfidence} suspect=$suspect text=${ans.text}")
+        notes.add("cell row=${ri+1} col=${ci+1} quad=${crop.points.contentToString()} det=${crop.score} rec=${ans.confidence} min=${ans.minConfidence} suspect=$suspect text=${ans.text} crop=$cropKind conflict=$conflict alternate=$alt")
        }
        if(rawParts.isNotEmpty())rawLines.add(rawParts.joinToString(" "))
+       if(speechParts.isNotEmpty())speechLines.add(speechParts.joinToString("，"))
        if(parts.isNotEmpty())lines.add(parts.joinToString(" | "));if(first<0)first=now()-begin
       }
-      val rec=now()-begin;val total=detected-init+pMs+rec+(if(m==0)focusMs else 0)
-      runOnUiThread{output.append("\n$name round=$round detect_ms=${detected-init} first_row_ms=$first rec_ms=$rec total_ms=$total crops=$count suspect=$uncertain blank=$blank pss_kb=${Debug.getPss()}\n"+lines.joinToString("\n")+"\n"+notes.joinToString("\n")+"\n")}
+      val rec=now()-begin;val total=detected-init+pMs+rec+(if(m==0)focusMs else 0)+autoMs
+      runOnUiThread{output.append("\n$name round=$round detect_ms=${detected-init} first_row_ms=$first rec_ms=$rec total_ms=$total crops=$count suspect=$uncertain blank=$blank pss_kb=${Debug.getPss()} original_columns=$keptOriginal retries=$retries conflicts=$conflicts\n"+lines.joinToString("\n")+"\n"+notes.joinToString("\n")+"\n")}
       if(round==1){
        val original=rawLines.joinToString("\n");val ocrDone=now()
        runOnUiThread{
         if(!isDestroyed){
          output.append("\nOCR 点击至原文就绪："+(ocrDone-clicked)+" ms\n")
          if(selected==3){raw.append(name+"\n"+original+"\n\n")}
-         else{raw.text=original;lastText=original;replay.isEnabled=original.isNotBlank();speak(original,clicked)}
+         else{raw.text=original;lastText=if(selected==5)speechLines.joinToString("\n")+(if(outside.isNotEmpty())"\n另有区域外文字未朗读，可切换全图原框。" else "") else original;replay.isEnabled=lastText.isNotBlank();speak(lastText,clicked)}
         }
        }
       }
