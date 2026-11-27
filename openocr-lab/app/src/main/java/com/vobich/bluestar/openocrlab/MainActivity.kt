@@ -1,179 +1,134 @@
 package com.vobich.bluestar.openocrlab
+
 import android.app.Activity
-import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
 import android.content.*
 import android.graphics.*
 import android.os.*
 import android.widget.*
-import android.view.View
 import org.opencv.android.Utils
 import org.opencv.core.Mat
 import org.opencv.imgproc.Imgproc
-import kotlin.math.*
 import java.util.concurrent.Executors
 
+/** Independent recognizer A/B. No routing, filtering, corrections, TTS or network. */
 class MainActivity:Activity(){
  private val worker=Executors.newSingleThreadExecutor()
- private lateinit var status:TextView;private lateinit var output:TextView;private lateinit var preview:ImageView
- private lateinit var choose:Button;private lateinit var run:Button;private lateinit var mode:Spinner
- private var source:Bitmap?=null;private var reader:Reader?=null;private var readerThreads=0
- private var db:DbLocator?=null;private var dbThreads=0
- private lateinit var threads:Spinner;private lateinit var dbSize:Spinner
- private lateinit var raw:TextView;private lateinit var voiceStatus:TextView
- private lateinit var replay:Button;private lateinit var stopVoice:Button
- private var tts:TextToSpeech?=null;private var ttsReady=false;private var ttsFailed=false
- private var serial=0;private var lastIndex=0;private var speechOrigin=0L;private var queuedAt=0L
- private var lastText="";private var pending:Pair<String,Long>?=null;private var testStart=0L
+ private lateinit var status:TextView
+ private lateinit var output:TextView
+ private lateinit var preview:ImageView
+ private lateinit var choose:Button
+ private lateinit var run:Button
+ private lateinit var threads:Spinner
+ private lateinit var order:Spinner
+ private var source:Bitmap?=null
  private fun now()=SystemClock.elapsedRealtime()
- private fun voiceNote(s:String){voiceStatus.text=s;output.append("\nTTS "+s+"\n")}
- private fun stopSpeech(){serial++;pending=null;tts?.stop();voiceStatus.text="朗读已停止"}
- private fun initSpeech(){
-  tts=TextToSpeech(this){result->runOnUiThread{
-   if(isDestroyed)return@runOnUiThread
-   ttsReady=result==TextToSpeech.SUCCESS;ttsFailed=!ttsReady
-   if(ttsReady){
-    tts?.setOnUtteranceProgressListener(object:UtteranceProgressListener(){
-     override fun onStart(id:String){val at=now();runOnUiThread{
-      if(!isDestroyed&&id==serial.toString()+":0")voiceNote("首段开始回调："+(at-speechOrigin)+" ms；入队至回调："+(at-queuedAt)+" ms")
-     }}
-     override fun onDone(id:String){val at=now();runOnUiThread{
-      if(!isDestroyed&&id==serial.toString()+":"+lastIndex)voiceNote("朗读完成回调："+(at-speechOrigin)+" ms")
-     }}
-     override fun onError(id:String){onError(id,TextToSpeech.ERROR)}
-     override fun onError(id:String,errorCode:Int){runOnUiThread{
-      if(!isDestroyed&&id.startsWith(serial.toString()+":")){stopSpeech();voiceNote("系统 TTS 错误："+errorCode)}
-     }}
-    })
-    voiceStatus.text="系统 TTS 已就绪"
-    val p=pending;pending=null;if(p!=null)speak(p.first,p.second)
-   }else{pending=null;voiceNote("系统 TTS 初始化失败，请检查手机文字转语音设置")}
+ private fun busy(v:Boolean){choose.isEnabled=!v;run.isEnabled=!v;threads.isEnabled=!v;order.isEnabled=!v}
+ private fun note(s:String){runOnUiThread{if(!isDestroyed)output.append(s+"\n")}}
+ override fun onCreate(state:Bundle?){
+  super.onCreate(state)
+  val scroll=ScrollView(this)
+  val layout=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,48,24,32)}
+  scroll.addView(layout);setContentView(scroll)
+  fun label(s:String)=TextView(this).apply{text=s;textSize=16f;layout.addView(this)}
+  label("蓝星 OCR 识别竞技场 v0.1.0")
+  label("固定 DB 1600 · 同一四边形 · 每模型两轮 · 原始识别结果")
+  choose=Button(this).apply{text="选择相册原图";layout.addView(this);setOnClickListener{
+   startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},9)
   }}
+  preview=ImageView(this).apply{adjustViewBounds=true;maxHeight=650;layout.addView(this)}
+  threads=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("CPU 4线程","CPU 6线程","CPU 2线程"));layout.addView(this)}
+  order=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("RepSVTR → SVTRv2","SVTRv2 → RepSVTR"));layout.addView(this)}
+  run=Button(this).apply{text="运行双模型对照";layout.addView(this);setOnClickListener{test()}}
+  status=label("请选择原图")
+  Button(this).apply{text="复制完整结果";layout.addView(this);setOnClickListener{
+   (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("OCR Arena",output.text))
+   Toast.makeText(this@MainActivity,"已复制",Toast.LENGTH_SHORT).show()
+  }}
+  output=label("");output.setTextIsSelectable(true)
  }
- private fun speak(text:String,origin:Long){
-  if(text.isBlank())return
-  stopSpeech()
-  if(ttsFailed){voiceNote("系统 TTS 不可用");return}
-  if(!ttsReady){pending=Pair(text,origin);voiceStatus.text="等待系统 TTS 初始化";return}
-  val engine=tts?:return
-  val chunks=SpeechChunks.split(text,TextToSpeech.getMaxSpeechInputLength())
-  if(chunks.isEmpty())return
-  speechOrigin=origin;queuedAt=now();lastIndex=chunks.lastIndex
-  voiceNote("开始入队；点击至入队："+(queuedAt-origin)+" ms；段数："+chunks.size)
-  for((i,chunk) in chunks.withIndex()){
-   val code=engine.speak(chunk,if(i==0)TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD,null,serial.toString()+":"+i)
-   if(code!=TextToSpeech.SUCCESS){stopSpeech();voiceNote("系统 TTS 入队失败："+code);break}
-  }
- }
- override fun onDestroy(){serial++;pending=null;tts?.stop();tts?.shutdown();tts=null;worker.execute{runCatching{db?.close()};runCatching{reader?.close()}};worker.shutdown();super.onDestroy()}
- override fun onCreate(state:Bundle?){super.onCreate(state)
-  val scroll=ScrollView(this);val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,48,24,32)}
-  scroll.addView(box);setContentView(scroll)
-  fun label(t:String)=TextView(this).apply{text=t;textSize=18f;box.addView(this)}
-  label("蓝星 OpenOCR v0.4.8 · 分辨率上限实验")
-  choose=Button(this).apply{text="选择相册原图";box.addView(this);setOnClickListener{stopSpeech();startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},9)}}
-  preview=ImageView(this).apply{adjustViewBounds=true;maxHeight=650;box.addView(this)}
-  dbSize=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,DbResolution.sizes.map{DbResolution.label(it)});setSelection(DbResolution.defaultIndex);box.addView(this)}
-  mode=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("官方原框（还原实验）","智能主阅读区（保留原版）"));box.addView(this)}
-  threads=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("CPU 4线程（默认）","CPU 2线程","CPU 6线程"));box.addView(this)}
-  run=Button(this).apply{text="开始识别 / 同图复测";box.addView(this);setOnClickListener{test()}}
-  status=label("请选择图片")
-  voiceStatus=label("系统 TTS 初始化中")
-  replay=Button(this).apply{text="重新朗读原文";isEnabled=false;box.addView(this);setOnClickListener{speak(lastText,now())}}
-  stopVoice=Button(this).apply{text="停止朗读";box.addView(this);setOnClickListener{stopSpeech()}}
-  Button(this).apply{text="复制结果及诊断";box.addView(this);setOnClickListener{(getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("OpenOCR",output.text));Toast.makeText(this@MainActivity,"已复制",Toast.LENGTH_SHORT).show()}}
-  raw=label("");raw.setTextIsSelectable(true)
-  output=TextView(this)
-  initSpeech()
- }
- override fun onActivityResult(req:Int,res:Int,data:Intent?){super.onActivityResult(req,res,data)
-  if(req!=9||res!=RESULT_OK)return;val uri=data?.data?:return
-  busy(true);worker.execute{
-   try{val bm=ImageDecoder.decodeBitmap(ImageDecoder.createSource(contentResolver,uri)){d,i,_->
-    require(i.size.width.toLong()*i.size.height<=16_000_000L){"图片超过1600万像素"};d.allocator=ImageDecoder.ALLOCATOR_SOFTWARE}
-    db?.clearProbability()
-    runOnUiThread{preview.setImageBitmap(bm);source?.recycle();source=bm;lastText="";raw.text="";output.text="";replay.isEnabled=false;status.text="原图 "+bm.width+"×"+bm.height;busy(false)}
-   }catch(t:Throwable){runOnUiThread{status.text=t.toString();busy(false)}}
-  }
- }
- private fun busy(v:Boolean){choose.isEnabled=!v;run.isEnabled=!v;mode.isEnabled=!v;threads.isEnabled=!v;dbSize.isEnabled=!v}
- private fun test(){
-  val bm=source?:return
-  val official=mode.selectedItemPosition==0
-  val name=if(official)"官方原框" else "智能主阅读区（原版）"
-  val nt=listOf(4,2,6)[threads.selectedItemPosition]
-  val longSide=DbResolution.sizes[dbSize.selectedItemPosition]
-  stopSpeech();lastText="";raw.text="";replay.isEnabled=false;testStart=now();val clicked=testStart
-  busy(true);output.text="";status.text="OpenOCR RepViT-DB 定位中"
+ override fun onActivityResult(req:Int,res:Int,data:Intent?){
+  super.onActivityResult(req,res,data)
+  if(req!=9||res!=RESULT_OK)return
+  val uri=data?.data?:return
+  busy(true)
   worker.execute{
    try{
-    val start=now()
-    if(db==null||dbThreads!=nt){db?.close();db=null;db=DbLocator(this,nt);dbThreads=nt}
-    val init=now();val found=db!!.locate(bm,longSide,official);val detected=now()
-    val diagnostic=db!!.lastDiagnostic
-    runOnUiThread{output.append(diagnostic+"\n"+found.mapIndexed{i,q->"raw=$i det=${q.score} quad=${q.points.contentToString()}"}.joinToString("\n")+"\n")}
-    require(found.isNotEmpty()){"未检测到文字"}
-    val focusStart=now()
-    val plan=if(official)null else FocusPlanner.plan(found.map{q->q.rect.let{FocusPlanner.R(it.left,it.top,it.right,it.bottom,q.score)}},bm.width,bm.height)
-    val focusMs=now()-focusStart
-    val roi=plan?.roi?.let{Rect(floor(it.l).toInt(),floor(it.t).toInt(),ceil(it.r).toInt(),ceil(it.b).toInt())}
-    val boxes=found.filter{b->roi==null||roi.contains(b.rect.centerX().toInt(),b.rect.centerY().toInt())}
-    val outside=found.filter{it !in boxes}
-    val pStart=now()
-    val columns=if(official)null else RowPlanner.plan(boxes,bm.width,bm.height,1.6f,true)
-    val rows=columns?.rows?:OfficialGeometry.order(boxes).map{listOf(it)}
-    val pMs=now()-pStart
-    val load=now();if(reader==null||readerThreads!=nt){reader?.close();reader=null;reader=Reader(this,"rep.onnx",nt);readerThreads=nt}
-    val engine=reader!!;val loadMs=now()-load
-    runOnUiThread{output.append("Field TTS v0.4.8 source=${bm.width}x${bm.height} detector_threads=$nt rec_threads=$nt detector_init_ms=${init-start} detect_ms=${detected-init} recognizer_load_ms=$loadMs raw_boxes=${found.size} focus_plan_ms=$focusMs focus_reason=${plan?.reason?:"official_bypass"} rec_shape=${engine.inputShape} rec_batch=${if(official)engine.officialBatchSize else 1}\nmode=$name roi=$roi selected=${boxes.size} outside=${outside.size} rows=${rows.size} crops=${rows.sumOf{it.size}} duplicates=${columns?.removed?:0} plan_ms=$pMs\n"+(if(outside.isNotEmpty())"提示：区域外${outside.size}个检测框未识别，可切换官方原框。\n" else "")+outside.joinToString("\n"){q->"outside det=${q.score} quad=${q.points.contentToString()}"}+"\n")}
-    val scale=min(1f,1200f/max(bm.width,bm.height))
-    val scaled=Bitmap.createScaledBitmap(bm,(bm.width*scale).toInt(),(bm.height*scale).toInt(),true)
-    val shown=scaled.copy(Bitmap.Config.ARGB_8888,true)
-    if(scaled!==bm)scaled.recycle()
-    Canvas(shown).apply{
-     scale(scale,scale);val paint=Paint().apply{style=Paint.Style.STROKE;strokeWidth=3/scale}
-     paint.color=Color.GRAY;outside.forEach{drawRect(it.rect,paint)}
-     paint.color=Color.YELLOW;boxes.forEach{drawRect(it.rect,paint)}
-     if(roi!=null){paint.color=Color.GREEN;drawRect(roi,paint)}
-     paint.color=Color.CYAN;rows.flatten().forEach{b->val path=Path();path.moveTo(b.points[0],b.points[1]);for(i in 1..3)path.lineTo(b.points[2*i],b.points[2*i+1]);path.close();drawPath(path,paint)}
+    val bm=ImageDecoder.decodeBitmap(ImageDecoder.createSource(contentResolver,uri)){d,i,_->
+     require(i.size.width.toLong()*i.size.height<=16_000_000L){"图片超过1600万像素"}
+     d.allocator=ImageDecoder.ALLOCATOR_SOFTWARE
     }
-    runOnUiThread{preview.setImageBitmap(shown)}
-    val begin=now();var count=0;var uncertain=0;var blank=0;var dropped=0;var first=-1L
-    val lines=mutableListOf<String>();val rawLines=mutableListOf<String>();val notes=mutableListOf<String>()
+    runOnUiThread{
+     if(isDestroyed){bm.recycle()}else{
+      preview.setImageBitmap(bm);source?.recycle();source=bm;output.text=""
+      status.text="原图 "+bm.width+"×"+bm.height;busy(false)
+     }
+    }
+   }catch(t:Throwable){runOnUiThread{if(!isDestroyed){status.text=t.toString();busy(false)}}}
+  }
+ }
+ override fun onDestroy(){worker.shutdown();super.onDestroy()}
+ private fun test(){
+  val bm=source?:return
+  val nt=listOf(4,6,2)[threads.selectedItemPosition]
+  val models=listOf("RepSVTR" to "rep.onnx","SVTRv2" to "svtr.onnx").let{if(order.selectedItemPosition==0)it else it.reversed()}
+  busy(true);output.text="";status.text="固定检测框计算中"
+  worker.execute{
+   val started=now()
+   try{
+    note("Rec Arena v0.1.0 source=${bm.width}x${bm.height} CPU=$nt DB=1600 order=${models.map{it.first}} pss_start_kib=${Debug.getPss()}")
+    val boxes=DbLocator(this,nt).use{db->
+     val init=now()-started;val t=now()
+     val result=OfficialGeometry.order(db.locate(bm,1600,true))
+     note(db.lastDiagnostic+" detector_init_ms=$init detector_ms=${now()-t}")
+     result
+    }
+    require(boxes.isNotEmpty()){"未检测到文字"}
+    note("fixed_boxes=${boxes.size} pss_after_db_close_kib=${Debug.getPss()}")
+    note(boxes.mapIndexed{i,b->"id=${i+1} det=${b.score} quad=${b.points.contentToString()}"}.joinToString("\n"))
     val rgba=Mat();val bgr=Mat()
     try{
-     if(official){Utils.bitmapToMat(bm,rgba);Imgproc.cvtColor(rgba,bgr,Imgproc.COLOR_RGBA2BGR);rgba.release()}
-     // Bounded batches preserve official ordering and avoid holding all crops in memory.
-     val batch=if(official)engine.officialBatchSize else 1
-     for(index in rows.indices step batch){
-      val chunk=rows.subList(index,min(rows.size,index+batch))
-      val answers=if(official)engine.readOfficial(bgr,chunk.flatten())else emptyList()
-      var ai=0
-      for((ri,row) in chunk.withIndex()){
-       val parts=mutableListOf<String>();val rawParts=mutableListOf<String>()
-       for((ci,b) in row.withIndex()){
-        val ans=if(official)answers[ai++]else engine.read(bm,b,true)
-        val suspect=if(official)ans.confidence<.5f else ans.text.isBlank()||ans.confidence<.75f||ans.minConfidence<.65f||(ans.text.count{!it.isWhitespace()}<=2&&b.score<.55f&&ans.confidence<.8f)
-        val keep=!official||ans.confidence>=.5f
-        if(!keep)dropped++
-        if(ans.text.isNotBlank()&&keep)rawParts.add(ans.text)
-        count++;if(suspect)uncertain++;if(ans.text.isBlank())blank++
-        parts.add(if(suspect)"[待核:${ans.text}]"else ans.text.ifBlank{"[未识别]"})
-        notes.add("cell row=${index+ri+1} col=${ci+1} quad=${b.points.contentToString()} det=${b.score} rec=${ans.confidence} min=${ans.minConfidence} width=${ans.width} suspect=$suspect keep=$keep text=${ans.text}")
+     val convertStart=now()
+     Utils.bitmapToMat(bm,rgba);Imgproc.cvtColor(rgba,bgr,Imgproc.COLOR_RGBA2BGR);rgba.release()
+     note("shared_bgr_ms=${now()-convertStart}")
+     val answers=linkedMapOf<String,List<Reader.Answer>>()
+     for((name,asset) in models){
+      runOnUiThread{if(!isDestroyed)status.text="正在测试 $name"}
+      try{
+       val loadStart=now()
+       Reader(this,asset,nt).use{engine->
+        note("$name load_ms=${now()-loadStart} shape=${engine.inputShape} batch=${engine.officialBatchSize} pss_loaded_kib=${Debug.getPss()}")
+        for(pass in 1..2){
+         val timing=Reader.Timing()
+         val result=ArrayList<Reader.Answer>(boxes.size)
+         val begin=now();var first=-1L
+         for(chunk in boxes.chunked(engine.officialBatchSize)){
+          result.addAll(engine.readOfficial(bgr,chunk,timing))
+          if(first<0)first=now()-begin
+         }
+         check(result.size==boxes.size)
+         val elapsed=now()-begin
+         note("$name pass=$pass rec_ms=$elapsed first_batch_ms=$first prep_ms=${timing.prepNs/1_000_000.0} tensor_ms=${timing.tensorNs/1_000_000.0} infer_ms=${timing.inferNs/1_000_000.0} decode_ms=${timing.decodeNs/1_000_000.0} blank=${result.count{it.text.isBlank()}} below_0.5=${result.count{it.confidence<.5f}} pss_kib=${Debug.getPss()}")
+         note(result.mapIndexed{i,a->"$name pass=$pass id=${i+1} width=${a.width} rec=${a.confidence} min=${a.minConfidence} text=${a.text}"}.joinToString("\n"))
+         if(pass==2)answers[name]=result
+        }
        }
-       if(rawParts.isNotEmpty())rawLines.add(rawParts.joinToString(" "))
-       if(parts.isNotEmpty())lines.add(parts.joinToString(" | "))
-       if(first<0)first=now()-begin
-      }
+      }catch(t:Exception){note("$name FAILED ${t.stackTraceToString()}")}
+      note("$name session_closed pss_kib=${Debug.getPss()}")
      }
+     val a=answers["RepSVTR"];val b=answers["SVTRv2"]
+     if(a!=null&&b!=null){
+      note("DIFF warm_pass; 不同输出不代表谁正确")
+      var diff=0
+      for(i in boxes.indices)if(a[i].text!=b[i].text){
+       diff++;note("id=${i+1} RepSVTR=${a[i].text} | SVTRv2=${b[i].text}")
+      }
+      note("different=$diff/${boxes.size}")
+     }else note("对照不完整：至少一个模型未完成")
+     note("arena_wall_ms=${now()-started} pss_end_kib=${Debug.getPss()} (PSS snapshots, not peak)")
+     runOnUiThread{if(!isDestroyed)status.text=if(a!=null&&b!=null)"双模型对照完成" else "对照未完整完成"}
     }finally{rgba.release();bgr.release()}
-    val rec=now()-begin;val total=detected-init+pMs+rec+focusMs
-    val original=rawLines.joinToString("\n");val done=now()
-    runOnUiThread{if(!isDestroyed){
-     output.append("\n$name detect_ms=${detected-init} first_row_ms=$first rec_ms=$rec total_ms=$total crops=$count suspect=$uncertain blank=$blank official_dropped=$dropped pss_kb=${Debug.getPss()}\n"+lines.joinToString("\n")+"\n"+notes.joinToString("\n")+"\nOCR 点击至原文就绪：${done-clicked} ms\n")
-     raw.text=original;lastText=original;replay.isEnabled=original.isNotBlank();speak(original,clicked);status.text="识别完成";busy(false)
-    }}
-   }catch(t:Throwable){runOnUiThread{output.append("\n失败："+t.toString());status.text="失败";busy(false)}}
+   }catch(t:Throwable){note("FAILED ${t.stackTraceToString()}");runOnUiThread{if(!isDestroyed)status.text="运行失败"}}
+   finally{runOnUiThread{if(!isDestroyed)busy(false)}}
   }
  }
 }

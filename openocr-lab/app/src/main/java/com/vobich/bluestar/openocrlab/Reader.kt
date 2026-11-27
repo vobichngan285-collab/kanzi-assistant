@@ -78,10 +78,14 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
  }
  val officialBatchSize:Int get(){val s=(session.inputInfo.values.first().info as TensorInfo).shape;return if(s[0]<=0)6 else 1}
  val inputShape:String get()=(session.inputInfo.values.first().info as TensorInfo).shape.contentToString()
- fun readOfficial(source:Mat,boxes:List<TextLocator.Box>):List<Answer>{
+ data class Timing(var prepNs:Long=0,var tensorNs:Long=0,var inferNs:Long=0,var decodeNs:Long=0)
+ fun readOfficial(source:Mat,boxes:List<TextLocator.Box>,timing:Timing?=null):List<Answer>{
+  val prepStart=System.nanoTime()
   val result=MutableList(boxes.size){Answer("",0f,0,0f)}
   val prepared=boxes.mapIndexedNotNull{i,b->prepareOfficial(source,b)?.let{i to it}}
+  timing?.let{it.prepNs+=System.nanoTime()-prepStart}
   for(chunk in prepared.chunked(officialBatchSize)){
+   val tensorStart=System.nanoTime()
    val width=chunk.maxOf{it.second.width}
    val n=chunk.size
    val buf=ByteBuffer.allocateDirect(n*3*48*width*4).order(ByteOrder.nativeOrder()).asFloatBuffer()
@@ -91,7 +95,11 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
    }
    buf.rewind()
    OnnxTensor.createTensor(env,buf,longArrayOf(n.toLong(),3,48,width.toLong())).use{input->
+    timing?.let{it.tensorNs+=System.nanoTime()-tensorStart}
+    val inferStart=System.nanoTime()
     session.run(mapOf(session.inputNames.single() to input)).use{res->
+     timing?.let{it.inferNs+=System.nanoTime()-inferStart}
+     val decodeStart=System.nanoTime()
      val t=res[0] as OnnxTensor;val s=t.info.shape
      require(s.size==3&&s[0]==n.toLong()&&s[2]==chars.size.toLong()){"Unexpected official CTC shape "+s.contentToString()}
      val f=t.floatBuffer;f.rewind()
@@ -104,6 +112,7 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
       }
       result[index]=Answer(out.toString(),if(count>0)conf/count else 0f,width,if(count>0)low else 0f)
      }
+     timing?.let{it.decodeNs+=System.nanoTime()-decodeStart}
     }
    }
   }
