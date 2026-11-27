@@ -1,7 +1,7 @@
-name: BlueStar OpenOCR Live Camera
+name: BlueStar OpenOCR Pixel C110
 on:
   push:
-    branches: [exp/openocr-live-v010-20261127]
+    branches: [exp/openocr-pixel-c110-v011-20261127]
     paths: ['openocr-lab/**','.github/workflows/openocr-yolo-ab.yml']
   workflow_dispatch:
 permissions:
@@ -80,8 +80,9 @@ jobs:
           BT="$ANDROID_HOME/build-tools/36.0.0"
           "$BT/apksigner" verify --verbose "$APK"
           "$BT/aapt" dump badging "$APK" | tee badging.txt
-          grep -F "package: name='com.vobich.bluestar.openocrlab.live' versionCode='1' versionName='0.1.0'" badging.txt
-          ! grep -F android.permission.INTERNET badging.txt
+          grep -F "package: name='com.vobich.bluestar.openocrlab.pixel' versionCode='1' versionName='0.1.1'" badging.txt
+          grep -F android.permission.INTERNET badging.txt
+          grep -F android.permission.ACCESS_NETWORK_STATE badging.txt
           grep -F android.permission.CAMERA badging.txt
           unzip -Z1 "$APK" > archive.txt
           grep -Fx lib/arm64-v8a/libonnxruntime.so archive.txt
@@ -93,7 +94,7 @@ jobs:
           unzip -p "$APK" assets/repvit-db.onnx | sha256sum | grep -F "$(cut -d ' ' -f1 db-asset.sha256)"
           ! grep -E '^assets/(svtr.onnx|yolo26[smlx]-text.onnx)$' archive.txt
           mkdir -p release
-          cp "$APK" release/BlueStar_OpenOCR_Live_0.1.0.apk
+          cp "$APK" release/BlueStar_OpenOCR_Pixel_C110_0.1.1.apk
           cp openocr-lab/README.md openocr-report.json OpenOCR-LICENSE.txt Clipper-Java-LICENSE.txt db-asset.sha256 release/
           (cd release && sha256sum *.apk > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
@@ -117,8 +118,8 @@ jobs:
         run: |
           set -euo pipefail
           (cd release && sha256sum -c SHA256SUMS.txt)
-          TAG=bluestar-openocr-live-v010-20261127
-          if ! gh release view "$TAG" >/dev/null 2>&1; then gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 OpenOCR 手机实时实验 v0.1.0" --notes-file release/README.md --prerelease --draft; fi
+          TAG=bluestar-openocr-pixel-c110-v011-20261127
+          if ! gh release view "$TAG" >/dev/null 2>&1; then gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 OpenOCR 像素与C110实验 v0.1.1" --notes-file release/README.md --prerelease --draft; fi
           gh release view "$TAG" --json targetCommitish | jq -e --arg sha "$GITHUB_SHA" '.targetCommitish == $sha'
           for i in 1 2 3; do gh release upload "$TAG" release/* --clobber && break; test "$i" != 3; sleep 5; done
           gh release edit "$TAG" --draft=false --prerelease

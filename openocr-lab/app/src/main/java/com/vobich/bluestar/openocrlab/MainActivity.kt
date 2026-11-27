@@ -7,6 +7,9 @@ import android.graphics.*
 import android.os.*
 import android.widget.*
 import android.view.View
+import android.view.WindowManager
+import android.provider.Settings
+import java.nio.ByteBuffer
 import org.opencv.android.Utils
 import org.opencv.core.Mat
 import org.opencv.imgproc.Imgproc
@@ -17,6 +20,9 @@ class MainActivity:Activity(){
  private val worker=Executors.newSingleThreadExecutor()
  private lateinit var status:TextView;private lateinit var output:TextView;private lateinit var preview:ImageView
  private lateinit var choose:Button;private lateinit var run:Button;private lateinit var mode:Spinner
+ private lateinit var pixels:Spinner;private lateinit var cameraStatus:TextView
+ private lateinit var watcher:C110PhysicalWatcher
+ private var photoEpoch=0;private var sourceMeta="";private var sourceKind="album"
  private var source:Bitmap?=null;private var reader:Reader?=null;private var readerThreads=0
  private var db:DbLocator?=null;private var dbThreads=0
  private lateinit var threads:Spinner;private lateinit var dbSize:Spinner
@@ -65,14 +71,29 @@ class MainActivity:Activity(){
    if(code!=TextToSpeech.SUCCESS){stopSpeech();voiceNote("系统 TTS 入队失败："+code);break}
   }
  }
- override fun onDestroy(){serial++;pending=null;tts?.stop();tts?.shutdown();tts=null;worker.execute{runCatching{db?.close()};runCatching{reader?.close()}};worker.shutdown();super.onDestroy()}
+ override fun onResume(){super.onResume();if(::watcher.isInitialized&&cameraPrefs().getBoolean(C110PhysicalPolicy.ENABLE,false)){window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);watcher.start()}}
+ override fun onPause(){if(::watcher.isInitialized)watcher.stop();window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);super.onPause()}
+ private fun cameraPrefs()=getSharedPreferences("kanzi_settings",MODE_PRIVATE)
+ override fun onDestroy(){if(::watcher.isInitialized)watcher.shutdown();serial++;pending=null;tts?.stop();tts?.shutdown();tts=null;worker.execute{runCatching{db?.close()};runCatching{reader?.close()}};worker.shutdown();super.onDestroy()}
  override fun onCreate(state:Bundle?){super.onCreate(state)
   val scroll=ScrollView(this);val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,48,24,32)}
   scroll.addView(box);setContentView(scroll)
   fun label(t:String)=TextView(this).apply{text=t;textSize=18f;box.addView(this)}
-  label("蓝星 OpenOCR 实时预览实验 v0.1.0 · 基于 v0.4.8")
-  Button(this).apply{text="手机实时识别";box.addView(this);setOnClickListener{if(choose.isEnabled){stopSpeech();startActivity(Intent(this@MainActivity,LiveActivity::class.java).putExtra("official",mode.selectedItemPosition==0).putExtra("threads",listOf(4,2,6)[threads.selectedItemPosition]).putExtra("longSide",DbResolution.sizes[dbSize.selectedItemPosition]))}}}
+  label("蓝星 OpenOCR 像素与C110实验 v0.1.1 · 基于 v0.4.8")
+  Button(this).apply{text="手机实时识别（原1080p路线）";box.addView(this);setOnClickListener{if(choose.isEnabled){stopSpeech();startActivity(Intent(this@MainActivity,LiveActivity::class.java).putExtra("official",mode.selectedItemPosition==0).putExtra("threads",listOf(4,2,6)[threads.selectedItemPosition]).putExtra("longSide",DbResolution.sizes[dbSize.selectedItemPosition]))}}}
   choose=Button(this).apply{text="选择相册原图";box.addView(this);setOnClickListener{stopSpeech();startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},9)}}
+  label("照片像素实验（相册 / C110；仅缩小，不插值放大）")
+  pixels=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,PixelInput.caps.map{if(it==0L)"原图（不缩小）" else "${it/10000}万像素上限"});setSelection(PixelInput.caps.lastIndex);box.addView(this)}
+  Button(this).apply{text="连接C110相机 Wi-Fi";box.addView(this);setOnClickListener{startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))}}
+  Button(this).apply{text="开启C110实体快门自动接收";box.addView(this);setOnClickListener{
+   cameraPrefs().edit().putBoolean(C110PhysicalPolicy.ENABLE,true).apply()
+   window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);watcher.start()
+  }}
+  Button(this).apply{text="停止C110接收";box.addView(this);setOnClickListener{
+   cameraPrefs().edit().putBoolean(C110PhysicalPolicy.ENABLE,false).apply();watcher.stop()
+   window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);cameraStatus.text="C110接收已停止"
+  }}
+  cameraStatus=label("C110：先连接相机Wi-Fi，再开启接收；保持本页前台")
   preview=ImageView(this).apply{adjustViewBounds=true;maxHeight=650;box.addView(this)}
   dbSize=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,DbResolution.sizes.map{DbResolution.label(it)});setSelection(DbResolution.defaultIndex);box.addView(this)}
   mode=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("官方原框（还原实验）","智能主阅读区（保留原版）"));box.addView(this)}
@@ -86,20 +107,47 @@ class MainActivity:Activity(){
   raw=label("");raw.setTextIsSelectable(true)
   output=TextView(this)
   initSpeech()
+  watcher=C110PhysicalWatcher(this,object:C110PhysicalWatcher.PhotoSink{
+   override fun cancelPhysicalRecognition(){photoEpoch++;stopSpeech()}
+   override fun acceptPhysicalPhoto(photo:C110WifiCamera.Photo,queryMs:Long,downloadMs:Long,eventGap:Int,voiceWaitMs:Long,onSuccess:Runnable?):Boolean{
+    if(isDestroyed||!choose.isEnabled)return false
+    val epoch=photoEpoch
+    val meta="jpeg_bytes=${photo.jpeg.size} camera_jpeg=${photo.width}x${photo.height} event_gap_ms=$eventGap query_ms=$queryMs download_ms=$downloadMs event_finish_to_download_ms=${photo.totalMs} defer_ms=$voiceWaitMs"
+    cameraStatus.text="收到C110原图 ${photo.width}×${photo.height}，自动识别"
+    loadSource("c110",meta,epoch){ImageDecoder.createSource(ByteBuffer.wrap(photo.jpeg))}
+    return true
+   }
+  },{false},{!choose.isEnabled},{stopSpeech()},{message->cameraStatus.text=message})
  }
  override fun onActivityResult(req:Int,res:Int,data:Intent?){super.onActivityResult(req,res,data)
   if(req!=9||res!=RESULT_OK)return;val uri=data?.data?:return
-  busy(true);worker.execute{
-   try{val bm=ImageDecoder.decodeBitmap(ImageDecoder.createSource(contentResolver,uri)){d,i,_->
-    require(i.size.width.toLong()*i.size.height<=16_000_000L){"图片超过1600万像素"};d.allocator=ImageDecoder.ALLOCATOR_SOFTWARE}
+  loadSource("album","",null){ImageDecoder.createSource(contentResolver,uri)}
+ }
+ private fun loadSource(kind:String,meta:String,autoEpoch:Int?,input:()->ImageDecoder.Source){
+  busy(true);val received=now()
+  worker.execute{
+   var decoded:Bitmap?=null
+   try{
+    val bm=ImageDecoder.decodeBitmap(input()){d,i,_->
+     require(i.size.width.toLong()*i.size.height<=24_000_000L){"原图超过2400万像素安全上限"};d.allocator=ImageDecoder.ALLOCATOR_SOFTWARE}
+    decoded=bm
+    val decodeMs=now()-received
     db?.clearProbability()
-    runOnUiThread{preview.setImageBitmap(bm);source?.recycle();source=bm;lastText="";raw.text="";output.text="";replay.isEnabled=false;status.text="原图 "+bm.width+"×"+bm.height;busy(false)}
-   }catch(t:Throwable){runOnUiThread{status.text=t.toString();busy(false)}}
+    runOnUiThread{
+     if(isDestroyed){bm.recycle();return@runOnUiThread}
+     preview.setImageBitmap(bm);source?.recycle();source=bm;sourceKind=kind;sourceMeta="$meta decode_ms=$decodeMs"
+     lastText="";raw.text="";output.text="";replay.isEnabled=false
+     status.text="原图 "+bm.width+"×"+bm.height;busy(false)
+     if(autoEpoch!=null&&autoEpoch==photoEpoch)test(autoEpoch,received)
+    }
+   }catch(t:Throwable){decoded?.recycle();runOnUiThread{if(!isDestroyed){status.text=t.toString();busy(false)}}}
   }
  }
- private fun busy(v:Boolean){choose.isEnabled=!v;run.isEnabled=!v;mode.isEnabled=!v;threads.isEnabled=!v;dbSize.isEnabled=!v}
- private fun test(){
-  val bm=source?:return
+ private fun busy(v:Boolean){choose.isEnabled=!v;run.isEnabled=!v;mode.isEnabled=!v;threads.isEnabled=!v;dbSize.isEnabled=!v;pixels.isEnabled=!v}
+ private fun test(autoEpoch:Int?=null,received:Long?=null){
+  val originalBitmap=source?:return
+  val cap=PixelInput.caps[pixels.selectedItemPosition]
+  val inputMeta=sourceMeta;val inputKind=sourceKind
   val official=mode.selectedItemPosition==0
   val name=if(official)"官方原框" else "智能主阅读区（原版）"
   val nt=listOf(4,2,6)[threads.selectedItemPosition]
@@ -107,10 +155,16 @@ class MainActivity:Activity(){
   stopSpeech();lastText="";raw.text="";replay.isEnabled=false;testStart=now();val clicked=testStart
   busy(true);output.text="";status.text="OpenOCR RepViT-DB 定位中"
   worker.execute{
+   var temporary:Bitmap?=null
    try{
+    val scaleAt=now()
+    val (w,h)=PixelInput.size(originalBitmap.width,originalBitmap.height,cap)
+    val bm=if(w==originalBitmap.width&&h==originalBitmap.height)originalBitmap else Bitmap.createScaledBitmap(originalBitmap,w,h,true).also{temporary=it}
+    val resizeMs=now()-scaleAt
+    runOnUiThread{output.append("PIXEL source_type=$inputKind original=${originalBitmap.width}x${originalBitmap.height} requested_cap=$cap input=${bm.width}x${bm.height} input_pixels=${bm.width.toLong()*bm.height} resize_ms=$resizeMs $inputMeta\n")}
     val start=now()
     if(db==null||dbThreads!=nt){db?.close();db=null;db=DbLocator(this,nt);dbThreads=nt}
-    val init=now();val found=db!!.locate(bm,longSide,official);val detected=now()
+    db!!.clearProbability();val init=now();val found=db!!.locate(bm,longSide,official);val detected=now()
     val diagnostic=db!!.lastDiagnostic
     runOnUiThread{output.append(diagnostic+"\n"+found.mapIndexed{i,q->"raw=$i det=${q.score} quad=${q.points.contentToString()}"}.joinToString("\n")+"\n")}
     require(found.isNotEmpty()){"未检测到文字"}
@@ -172,9 +226,13 @@ class MainActivity:Activity(){
     val original=rawLines.joinToString("\n");val done=now()
     runOnUiThread{if(!isDestroyed){
      output.append("\n$name detect_ms=${detected-init} first_row_ms=$first rec_ms=$rec total_ms=$total crops=$count suspect=$uncertain blank=$blank official_dropped=$dropped pss_kb=${Debug.getPss()}\n"+lines.joinToString("\n")+"\n"+notes.joinToString("\n")+"\nOCR 点击至原文就绪：${done-clicked} ms\n")
-     raw.text=original;lastText=original;replay.isEnabled=original.isNotBlank();speak(original,clicked);status.text="识别完成";busy(false)
+     raw.text=original;lastText=original;replay.isEnabled=original.isNotBlank()
+     if(received!=null)output.append("C110 receive_to_ocr_ready_ms=${done-received}\n")
+     if(autoEpoch==null||autoEpoch==photoEpoch)speak(original,received?:clicked)
+     else output.append("C110 stale speech suppressed\n")
+     status.text="识别完成";busy(false)
     }}
-   }catch(t:Throwable){runOnUiThread{output.append("\n失败："+t.toString());status.text="失败";busy(false)}}
+   }catch(t:Throwable){runOnUiThread{if(!isDestroyed){output.append("\n失败："+t.toString());status.text="失败";busy(false)}}}finally{temporary?.recycle()}
   }
  }
 }
