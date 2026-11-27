@@ -40,7 +40,6 @@ object HybridExperiment {
         val app=c.applicationContext
         require(Build.VERSION.SDK_INT>=28){"实时实验要求 Android 9 或以上"}
         val bm=ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(jpeg))){d,i,_->
-            require(i.size.width.toLong()*i.size.height<=16_000_000L){"照片超过1600万像素"}
             d.allocator=ImageDecoder.ALLOCATOR_SOFTWARE
         }
         val decoded=now()
@@ -75,12 +74,14 @@ object HybridExperiment {
             Scan(cells,bm.width,bm.height,now()-at,found.size,dropped,blank,decoded-at)
         }finally{db?.clearProbability();bm.recycle()}
     }
-    @JvmStatic fun run(c:Context,jpeg:ByteArray,network:Network?,cancel:CloudVisionClient.Cancellation):Result{
+    @JvmStatic fun run(c:Context,jpeg:ByteArray,network:Network?,cancel:CloudVisionClient.Cancellation):Result=runTest(c,jpeg,network,cancel,null,false)
+    internal fun runTest(c:Context,jpeg:ByteArray,network:Network?,cancel:CloudVisionClient.Cancellation,listener:CloudVisionClient.PartListener?,offline:Boolean):Result{
         val s=scan(c,jpeg,cancel)
         val texts=s.cells.map{it.text}
         val raw=texts.joinToString("\n")
         val base="jpeg_bytes="+jpeg.size+" source="+s.width+"x"+s.height+" decode_ms="+s.decodeMs+" ocr_ms="+s.elapsed+" boxes="+s.found+" kept="+texts.size+" dropped="+s.dropped+" blank="+s.blank
         if(texts.isEmpty())return Result("","","未检测到文字",false,s.elapsed,s.found,0,0,-1,-1,-1,jpeg.size,base+" no_text")
+        if(offline)return Result(raw,raw,"纯离线OCR",false,s.elapsed,s.found,0,0,-1,-1,-1,jpeg.size,base+" offline=1")
         val data=JSONArray()
         s.cells.forEach{v->
             val r=v.rect
@@ -95,12 +96,12 @@ object HybridExperiment {
             cancel.check()
             val cfg=CloudProviderStore.resolveFor(c,CloudProviderStore.VISION,profile(c),model(c))
             requestedModel=cfg.model
-            cloud=CloudVisionClient.organizeOcr(prompt,cfg,network,cancel)
+            cloud=CloudVisionClient.organizeOcr(prompt,cfg,network,cancel,listener)
             cancel.check()
             val text=cloud.text.trim()
             require(text.isNotEmpty()){"empty cloud text"}
             return Result(text,raw,"端云整理完成",true,s.elapsed,s.found,cloud.requestBytes,cloud.networkMs,cloud.firstTextMs,cloud.promptTokens,cloud.completionTokens,jpeg.size,
-                base+" model="+cloud.model+" request_bytes="+cloud.requestBytes+" upload_ms="+cloud.uploadMs+" headers_ms="+cloud.responseHeadersMs+" network_ms="+cloud.networkMs+" first_text_ms="+cloud.firstTextMs+" prompt_tokens="+cloud.promptTokens+" completion_tokens="+cloud.completionTokens+" cloud_ok=1 prompt_mode=plain")
+                base+" model="+cloud.model+" request_bytes="+cloud.requestBytes+" upload_ms="+cloud.uploadMs+" headers_ms="+cloud.responseHeadersMs+" network_ms="+cloud.networkMs+" first_text_ms="+cloud.firstTextMs+" first_speakable_ms="+cloud.firstSpeakableMs+" prompt_tokens="+cloud.promptTokens+" completion_tokens="+cloud.completionTokens+" cloud_ok=1 prompt_mode=plain")
         }catch(t:Exception){
             cancel.check()
             return Result(raw,raw,"云端未返回有效文字，已保留本地原文",false,s.elapsed,s.found,cloud?.requestBytes?:-1,cloud?.networkMs?:now()-cloudAt,cloud?.firstTextMs?:-1,cloud?.promptTokens?:-1,cloud?.completionTokens?:-1,jpeg.size,

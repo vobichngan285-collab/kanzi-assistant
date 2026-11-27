@@ -1,7 +1,7 @@
 name: Blue Star Hybrid OCR experiment
 on:
   push:
-    branches: [ 'exp/hybrid-ocr-cloud-v010-20261127' ]
+    branches: [ 'exp/hybrid-ocr-album-v012-20261127' ]
     paths:
       - 'cloud-vision-app/app/**'
       - 'cloud-vision-app/tests/**'
@@ -55,7 +55,8 @@ jobs:
           old=subprocess.check_output(['git','show','658643a9f21fc22968a6752bd03807b630e40841:'+p],text=True)
           new=Path(p).read_text()
           scan=lambda t:t[t.index('    private fun scan('):t.index('    @JvmStatic fun run(')]
-          assert scan(old)==scan(new), 'OCR scan changed'
+          old_scan=scan(old).replace('            require(i.size.width.toLong()*i.size.height<=16_000_000L){"照片超过1600万像素"}\n','')
+          assert old_scan==scan(new), 'OCR scan changed except removal of photo cap'
           assert 'HybridOrder.restore' not in new
           assert 'val text=cloud.text.trim()' in new
           assert 'put(v.confidence' not in new and 'put(i+1)' not in new
@@ -169,8 +170,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Hybrid_OCR_0.1.1.apk
-          APK=out/BlueStar_Hybrid_OCR_0.1.1.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Hybrid_OCR_Album_0.1.2.apk
+          APK=out/BlueStar_Hybrid_OCR_Album_0.1.2.apk
           test -s "$APK"
           unzip -tq "$APK" >/dev/null
           unzip -Z1 "$APK" >out/entries.txt
@@ -187,7 +188,8 @@ jobs:
           "$APKSIGNER" verify --verbose "$APK"
           "$AAPT" dump badging "$APK" >out/badging.txt
           grep -Fq "package: name='com.vobich.bluestar.hybridocr'" out/badging.txt
-          grep -Fq "versionName='0.1.1-hybrid-ocr'" out/badging.txt
+          grep -Fq "versionName='0.1.2-hybrid-ocr'" out/badging.txt
+          grep -Fq "versionCode='110'" out/badging.txt
           grep -Fq "launchable-activity: name='com.vobich.bluestar.cloudprobe.HomeActivity'" out/badging.txt
           test "$(grep -c '^launchable-activity:' out/badging.txt)" -eq 1
           "$AAPT" dump xmltree "$APK" AndroidManifest.xml >out/manifest-tree.txt
@@ -195,13 +197,13 @@ jobs:
           grep -Fq 'C110ListenService' out/manifest-tree.txt
           grep -Fq 'android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE' out/manifest-tree.txt
           ! grep -Fxq 'lib/arm64-v8a/libc110rawframe.so' out/entries.txt
-          (cd out && sha256sum BlueStar_Hybrid_OCR_0.1.1.apk >SHA256SUMS.txt)
+          (cd out && sha256sum BlueStar_Hybrid_OCR_Album_0.1.2.apk >SHA256SUMS.txt)
           cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
           BYTES=$(stat -c%s "$APK")
           echo "Hybrid OCR APK bytes: $BYTES" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: BlueStar_Hybrid_OCR_0.1.1
+          name: BlueStar_Hybrid_OCR_Album_0.1.2
           path: out/*
           retention-days: 14
       - name: Publish ONLY if every test and package verification passed
@@ -210,12 +212,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG=bluestar-hybrid-ocr-v011-20261127
+          TAG=bluestar-hybrid-ocr-album-v012-20261127
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Refusing to overwrite existing release" >&2
             exit 1
           fi
-          gh release create "$TAG" out/BlueStar_Hybrid_OCR_0.1.1.apk \
+          gh release create "$TAG" out/BlueStar_Hybrid_OCR_Album_0.1.2.apk \
             --target "$GITHUB_SHA" --prerelease \
-            --title "Blue Star Hybrid OCR v0.1.1" \
+            --title "Blue Star Hybrid OCR Album v0.1.2" \
             --notes "Independent v0.4.8 OCR + text-only cloud natural-language sorting experiment. Original vision paths preserved; real device validation required."

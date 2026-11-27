@@ -147,9 +147,12 @@ public final class CloudVisionClient {
     }
 
     static Result organizeOcr(String prompt,CloudProviderStore.Config cfg,Network network,Cancellation cancel) throws Exception {
+        return organizeOcr(prompt,cfg,network,cancel,null);
+    }
+    static Result organizeOcr(String prompt,CloudProviderStore.Config cfg,Network network,Cancellation cancel,PartListener listener) throws Exception {
         if(prompt==null||prompt.trim().isEmpty())throw new IllegalArgumentException("没有OCR文字");
         TaskCatalog.Task task=new TaskCatalog.Task("hybrid-order","端云文字整理",prompt,TaskCatalog.VISION,true,"▤");
-        return recognizeInternal(null,cfg.key,task,cfg.model,null,true,false,OcrSpeedExperiment.A,network,cfg,cancel);
+        return recognizeInternal(null,cfg.key,task,cfg.model,listener,true,false,OcrSpeedExperiment.A,network,cfg,cancel);
     }
 
     private static Result recognizeInternal(byte[] jpeg,String key,TaskCatalog.Task task,
