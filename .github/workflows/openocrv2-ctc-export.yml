@@ -1,0 +1,39 @@
+name: OpenOCRv2 CTC export gate
+on:
+  push:
+    branches: [exp/openocrv2-ctc-export-20261127]
+    paths: ['openocr-lab/export_v2_ctc.py','.github/workflows/openocrv2-ctc-export.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install isolated CPU export dependencies
+        run: |
+          python -m pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install transformers==4.53.3 safetensors==0.5.3 onnx==1.18.0 onnxruntime==1.22.0 numpy==1.26.4 pillow==11.3.0
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
+      - name: Fetch pinned official recognition-only assets
+        run: |
+          set -euo pipefail
+          HF=https://huggingface.co/Yesianrohn/OpenOCRv2/resolve/22e72eb3725290dabdc99c95ef9a72796d71e742
+          mkdir -p v2-upstream/rec_ctc
+          for f in modeling_openocrv2_rec_ctc.py rec_ctc/config.json rec_ctc/characters.json rec_ctc/model.safetensors README.md; do
+            curl -fL --retry 3 "$HF/$f" -o "v2-upstream/$f"
+          done
+          echo '6fc673c155236dcd019e93569ad42a09eebca6f657296afd8d4e61f5a925d2aa  v2-upstream/rec_ctc/model.safetensors' | sha256sum -c -
+      - name: Export and compare official PyTorch and ONNX CPU
+        run: python -u openocr-lab/export_v2_ctc.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openocrv2-ctc-validated
+          path: v2-export/
+          if-no-files-found: error
