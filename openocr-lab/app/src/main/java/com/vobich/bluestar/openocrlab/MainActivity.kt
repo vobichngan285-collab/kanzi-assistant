@@ -79,8 +79,12 @@ class MainActivity:Activity(){
   val scroll=ScrollView(this);val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,48,24,32)}
   scroll.addView(box);setContentView(scroll)
   fun label(t:String)=TextView(this).apply{text=t;textSize=18f;box.addView(this)}
-  label("蓝星 OpenOCR 原图与C110实验 v0.1.2 · 基于 v0.4.8")
-  Button(this).apply{text="手机实时识别（原1080p路线）";box.addView(this);setOnClickListener{if(choose.isEnabled){stopSpeech();startActivity(Intent(this@MainActivity,LiveActivity::class.java).putExtra("official",mode.selectedItemPosition==0).putExtra("threads",listOf(4,2,6)[threads.selectedItemPosition]).putExtra("longSide",DbResolution.sizes[dbSize.selectedItemPosition]))}}}
+  label("蓝星 OpenOCR 实时视频实验 v0.1.3 · 基于 v0.4.8")
+  Button(this).apply{text="手机实时识别（最高可用视频帧）";box.addView(this);setOnClickListener{if(choose.isEnabled){stopSpeech();startActivity(Intent(this@MainActivity,LiveActivity::class.java).putExtra("official",mode.selectedItemPosition==0).putExtra("threads",listOf(4,2,6)[threads.selectedItemPosition]).putExtra("longSide",DbResolution.sizes[dbSize.selectedItemPosition]))}}}
+  Button(this).apply{text="C110实时视频识别（原生尺寸测试）";box.addView(this);setOnClickListener{if(choose.isEnabled){stopSpeech();startActivity(Intent(this@MainActivity,LiveActivity::class.java).putExtra("c110",true).putExtra("official",mode.selectedItemPosition==0).putExtra("threads",listOf(4,2,6)[threads.selectedItemPosition]).putExtra("longSide",DbResolution.sizes[dbSize.selectedItemPosition]))}}}
+  Button(this).apply{text="复制全部视频实验日志";box.addView(this);setOnClickListener{(getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("视频实验",VideoExperimentLog.read(this@MainActivity)));Toast.makeText(this@MainActivity,"已复制累计视频日志",Toast.LENGTH_SHORT).show()}}
+  Button(this).apply{text="清空视频实验日志";box.addView(this);setOnClickListener{android.app.AlertDialog.Builder(this@MainActivity).setMessage("清空全部本地视频诊断记录？").setNegativeButton("取消",null).setPositiveButton("清空"){_,_->VideoExperimentLog.clear(this@MainActivity)}.show()}}
+
   choose=Button(this).apply{text="选择相册原图";box.addView(this);setOnClickListener{stopSpeech();startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},9)}}
   label("相册 / C110：原图分辨率识别，不缩小、不放大")
   Button(this).apply{text="连接C110相机 Wi-Fi";box.addView(this);setOnClickListener{startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))}}
