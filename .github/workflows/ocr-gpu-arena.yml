@@ -1,0 +1,172 @@
+name: BlueStar OCR GPU Arena
+on:
+  push:
+    branches: [exp/ocr-gpu-arena-v010-20261127]
+    paths: ['openocr-lab/**','.github/workflows/openocr-yolo-ab.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: lightbringer/clipper-java
+          ref: 5ef8c0a467023c495e44e582e9cbd8ca7308a590
+          path: clipper-upstream
+          persist-credentials: false
+      - name: Vendor pinned Clipper Java source
+        run: |
+          set -euo pipefail
+          test "$(git -C clipper-upstream rev-parse HEAD)" = 5ef8c0a467023c495e44e582e9cbd8ca7308a590
+          mkdir -p openocr-lab/app/src/main/java/de/lighti/clipper
+          cp clipper-upstream/Clipper/src/de/lighti/clipper/*.java openocr-lab/app/src/main/java/de/lighti/clipper/
+          cp clipper-upstream/license.txt Clipper-Java-LICENSE.txt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Reuse exact prior arena detector and RepSVTR
+        run: |
+          set -euo pipefail
+          BASE=https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-openocr-rec-arena-v010-20261127
+          curl -fL --retry 3 "$BASE/BlueStar_OpenOCR_Rec_Arena_0.1.0.apk" -o previous.apk
+          curl -fL --retry 3 "$BASE/openocr-report.json" -o openocr-report.json
+          curl -fL --retry 3 "$BASE/OpenOCR-LICENSE.txt" -o OpenOCR-LICENSE.txt
+          curl -fL --retry 3 "$BASE/db-asset.sha256" -o db-asset.sha256
+          echo 'b82994ac7f228f02ea6f33571ec5c1a998c1e8ba953fd80377d3f1bc0b5c247e  previous.apk' | sha256sum -c -
+          echo 'f1d36ed055b95ffdc61f42dd9553907e5dd945030d0eae3b42d4ed8e69fc41a1  openocr-report.json' | sha256sum -c -
+          echo 'c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4  OpenOCR-LICENSE.txt' | sha256sum -c -
+          echo '8b90739b66b085a84679917e96cdf7c04aad39ebed688c9edd1553b1922a271f  db-asset.sha256' | sha256sum -c -
+          mkdir -p openocr-lab/app/src/main/assets
+          for m in rep.onnx chars.txt repvit-db.onnx; do unzip -p previous.apk "assets/$m" > "openocr-lab/app/src/main/assets/$m"; done
+          cd openocr-lab/app/src/main/assets
+          echo "$(jq -r .rep.onnx_sha256 ../../../../../openocr-report.json)  rep.onnx" | sha256sum -c -
+          echo "$(jq -r .dict_sha256 ../../../../../openocr-report.json)  chars.txt" | sha256sum -c -
+          sha256sum -c ../../../../../db-asset.sha256
+      - uses: actions/download-artifact@v4
+        with:
+          name: openocrv2-ctc-validated
+          run-id: 45945604068
+          github-token: ${{ github.token }}
+          path: v2-export
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Generate reference preprocessing fixtures from pinned upstream
+        run: |
+          set -euo pipefail
+          python -m pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install transformers==4.53.3 safetensors==0.5.3 onnx==1.18.0 onnxruntime==1.22.0 numpy==1.26.4 pillow==11.3.0
+          HF=https://huggingface.co/Yesianrohn/OpenOCRv2/resolve/22e72eb3725290dabdc99c95ef9a72796d71e742
+          mkdir -p v2-upstream/rec_ctc
+          for f in modeling_openocrv2_rec_ctc.py rec_ctc/config.json README.md; do curl -fL --retry 3 "$HF/$f" -o "v2-upstream/$f"; done
+          python -u openocr-lab/v2_preprocess_fixtures.py
+          cp v2-export/openocrv2_ctc.onnx openocr-lab/app/src/main/assets/
+          cp v2-export/characters.json openocr-lab/app/src/main/assets/v2-characters.json
+          cp v2-upstream/README.md OpenOCRv2-MODEL-CARD.md
+          sha256sum openocr-lab/app/src/main/assets/v2-characters.json | cut -d ' ' -f1 > v2-dict.sha256
+      - name: Android SDK
+        run: |
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'platforms;android-36' 'build-tools;36.0.0'
+      - uses: actions/checkout@v4
+        with:
+          repository: alibaba/MNN
+          ref: c35f14f3ab5cb65094863b9a0e888370b027a670
+          path: mnn-src
+          persist-credentials: false
+          submodules: recursive
+      - uses: actions/download-artifact@v4
+        with:
+          name: mnn-gate-rep
+          run-id: 45951226249
+          github-token: ${{ github.token }}
+          path: mnn-artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          name: mnn-gate-v2
+          run-id: 45951226249
+          github-token: ${{ github.token }}
+          path: mnn-artifacts
+      - name: Verify exact diagnostic MNN artifacts
+        run: python openocr-lab/gpu/verify_mnn_assets.py
+      - name: Compile pinned native MNN CPU OpenCL Vulkan and JNI
+        run: |
+          set -euo pipefail
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
+          "$SDKMANAGER" 'ndk;27.2.12479018'
+          sudo apt-get update -qq
+          sudo apt-get install -y ninja-build
+          bash openocr-lab/gpu/build_android_mnn.sh
+      - name: Build offline APK
+        working-directory: openocr-lab
+        run: gradle --no-daemon --max-workers=2 :app:testReleaseUnitTest :app:assembleRelease
+      - name: Verify and package
+        run: |
+          set -euo pipefail
+          APK=openocr-lab/app/build/outputs/apk/release/app-release.apk
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/apksigner" verify --verbose "$APK"
+          "$BT/aapt" dump badging "$APK" | tee badging.txt
+          grep -F "package: name='com.vobich.bluestar.openocrlab.gpuarena' versionCode='1' versionName='0.1.0'" badging.txt
+          ! grep -F android.permission.INTERNET badging.txt
+          unzip -Z1 "$APK" > archive.txt
+          grep -Fx lib/arm64-v8a/libonnxruntime.so archive.txt
+          grep -Fx lib/arm64-v8a/libopencv_java4.so archive.txt
+          ! grep -E '^lib/(x86|x86_64|armeabi-v7a)/' archive.txt
+          unzip -p "$APK" assets/rep.onnx | sha256sum | grep -F "$(jq -r .rep.onnx_sha256 openocr-report.json)"
+          ! grep -Fx assets/yolo26n-text.onnx archive.txt
+          unzip -p "$APK" assets/chars.txt | sha256sum | grep -F "$(jq -r .dict_sha256 openocr-report.json)"
+          unzip -p "$APK" assets/repvit-db.onnx | sha256sum | grep -F "$(cut -d ' ' -f1 db-asset.sha256)"
+          unzip -p "$APK" assets/openocrv2_ctc.onnx | sha256sum | grep -F "$(jq -r .onnx_sha256 v2-export/validation.json)"
+          unzip -p "$APK" assets/v2-characters.json | sha256sum | grep -F "$(cat v2-dict.sha256)"
+          ! grep -Fx assets/svtr.onnx archive.txt
+          grep -Fx lib/arm64-v8a/libMNN.so archive.txt
+          grep -Fx lib/arm64-v8a/libocr_mnn_jni.so archive.txt
+          for name in rep v2; do
+            unzip -p "$APK" "assets/$name.mnn" | sha256sum | grep -F "$(jq -r .mnn_sha256 mnn-artifacts/$name/report.json)"
+          done
+          ! grep -E '^assets/yolo26[smlx]-text.onnx$' archive.txt
+          mkdir -p release
+          cp "$APK" release/BlueStar_OCR_GPU_Arena_0.1.0.apk
+          cp openocr-lab/README.md openocr-report.json OpenOCR-LICENSE.txt OpenOCRv2-MODEL-CARD.md Clipper-Java-LICENSE.txt db-asset.sha256 v2-dict.sha256 release/
+          cp v2-export/validation.json release/openocrv2-validation.json
+          cp MNN-LICENSE.txt MNN-diagnostics.patch release/
+          cp mnn-artifacts/rep/report.json release/mnn-rep-diagnostic.json
+          cp mnn-artifacts/v2/report.json release/mnn-v2-diagnostic.json
+          (cd release && sha256sum *.apk > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openocr-rec-arena
+          path: release/
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: openocr-rec-arena
+          path: release
+      - name: Publish verified experiment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          (cd release && sha256sum -c SHA256SUMS.txt)
+          TAG=bluestar-ocr-gpu-arena-v010-20261127
+          if ! gh release view "$TAG" >/dev/null 2>&1; then gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 OCR GPU 实验竞技场 v0.1.0" --notes-file release/README.md --prerelease --draft; fi
+          gh release view "$TAG" --json targetCommitish | jq -e --arg sha "$GITHUB_SHA" '.targetCommitish == $sha'
+          for i in 1 2 3; do gh release upload "$TAG" release/* --clobber && break; test "$i" != 3; sleep 5; done
+          gh release edit "$TAG" --draft=false --prerelease

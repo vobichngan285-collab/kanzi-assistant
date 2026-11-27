@@ -79,7 +79,7 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
  val officialBatchSize:Int get(){val s=(session.inputInfo.values.first().info as TensorInfo).shape;return if(s[0]<=0)6 else 1}
  val inputShape:String get()=(session.inputInfo.values.first().info as TensorInfo).shape.contentToString()
  data class Timing(var prepNs:Long=0,var tensorNs:Long=0,var inferNs:Long=0,var decodeNs:Long=0)
- fun readOfficial(source:Mat,boxes:List<TextLocator.Box>,timing:Timing?=null):List<Answer>{
+ fun readOfficial(source:Mat,boxes:List<TextLocator.Box>,timing:Timing?=null,capture:((java.nio.FloatBuffer,LongArray,List<Int>)->Unit)?=null):List<Answer>{
   val prepStart=System.nanoTime()
   val result=MutableList(boxes.size){Answer("",0f,0,0f)}
   val prepared=boxes.mapIndexedNotNull{i,b->prepareOfficial(source,b)?.let{i to it}}
@@ -94,6 +94,7 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
     repeat(width-p.width){buf.put(0f)}
    }
    buf.rewind()
+   if(capture!=null){capture(buf,longArrayOf(n.toLong(),3,48,width.toLong()),chunk.map{it.first});continue}
    OnnxTensor.createTensor(env,buf,longArrayOf(n.toLong(),3,48,width.toLong())).use{input->
     timing?.let{it.tensorNs+=System.nanoTime()-tensorStart}
     val inferStart=System.nanoTime()

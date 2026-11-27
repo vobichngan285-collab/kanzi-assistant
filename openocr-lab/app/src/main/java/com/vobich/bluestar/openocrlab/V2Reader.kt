@@ -37,7 +37,7 @@ class V2Reader(context:Context,threads:Int):AutoCloseable{
    return Prepared(index,shape,V2Preprocess.tensor(data,w,h,shape))
   }finally{src.release();dst.release();transform.release();crop.release();rotated.release()}
  }
- fun read(source:Mat,boxes:List<TextLocator.Box>,timing:Reader.Timing,onBatch:()->Unit):List<Reader.Answer>{
+ fun read(source:Mat,boxes:List<TextLocator.Box>,timing:Reader.Timing,onBatch:()->Unit,capture:((java.nio.FloatBuffer,LongArray,List<Int>)->Unit)?=null):List<Reader.Answer>{
   val start=System.nanoTime()
   val result=MutableList(boxes.size){Reader.Answer("",0f,0,0f)}
   val prepared=boxes.mapIndexedNotNull{i,b->prepare(source,b,i)}
@@ -53,6 +53,7 @@ class V2Reader(context:Context,threads:Int):AutoCloseable{
     val buf=ByteBuffer.allocateDirect(n*3*h*w*4).order(ByteOrder.nativeOrder()).asFloatBuffer()
     for(p in chunk)buf.put(p.pixels)
     buf.rewind()
+    if(capture!=null){capture(buf,longArrayOf(n.toLong(),3,h.toLong(),w.toLong()),chunk.map{it.index});continue}
     OnnxTensor.createTensor(env,buf,longArrayOf(n.toLong(),3,h.toLong(),w.toLong())).use{input->
      timing.tensorNs+=System.nanoTime()-tensorStart
      val inferStart=System.nanoTime()
