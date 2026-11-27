@@ -1,0 +1,53 @@
+name: OCR GPU ncnn conversion gate
+on:
+  push:
+    branches: [exp/ocr-gpu-ncnn-gate-20261127]
+    paths: ['openocr-lab/gpu/**','.github/workflows/ocr-gpu-ncnn-gate.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [rep, v2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pinned host conversion tools
+        run: |
+          python -m pip install numpy==1.26.4 onnx==1.18.0 onnxruntime==1.22.0 pillow==11.3.0
+          python -m pip download --no-deps --only-binary=:all: pnnx==20261020 ncnn==1.0.20261020 -d wheels
+          echo 'd50d921e5897293d616444191c1a2dc5366423c81bdb4bd22a985fe8071cf17c  '$(find wheels -name 'pnnx-*.whl') | sha256sum -c -
+          echo '8107eeaa269e7b725afdd5c4492109c2682de5bf2a76670ab5f8f5fbfe9c152d  '$(find wheels -name 'ncnn-*.whl') | sha256sum -c -
+          python -m pip install --no-deps wheels/*.whl
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
+      - name: Extract immutable CPU baseline assets
+        run: |
+          set -euo pipefail
+          BASE=https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-openocrv2-rec-arena-v020-20261127
+          curl -fL --retry 3 "$BASE/BlueStar_OpenOCRv2_Rec_Arena_0.2.0.apk" -o baseline.apk
+          echo '4eab459263a4819e96664759f14709edd8185cbb13cea903cbec033e4dad8058  baseline.apk' | sha256sum -c -
+          mkdir -p gpu-assets
+          for f in rep.onnx chars.txt openocrv2_ctc.onnx v2-characters.json; do unzip -p baseline.apk "assets/$f" > "gpu-assets/$f"; done
+          for f in openocr-report.json openocrv2-validation.json v2-dict.sha256; do curl -fL --retry 3 "$BASE/$f" -o "gpu-assets/$f"; done
+          cd gpu-assets
+          echo 'f1d36ed055b95ffdc61f42dd9553907e5dd945030d0eae3b42d4ed8e69fc41a1  openocr-report.json' | sha256sum -c -
+          echo 'd2ffff4f9c5b165f7d9fec302896684be7f8b251cd71e47bebde9835776fc766  openocrv2-validation.json' | sha256sum -c -
+          echo 'd651154ff4ac500d8f9c980b86f1dbfad68cb7e2f4c484b514a4dc8f75e756aa  v2-dict.sha256' | sha256sum -c -
+          echo "$(jq -r .dict_sha256 openocr-report.json)  chars.txt" | sha256sum -c -
+          echo "$(cat v2-dict.sha256)  v2-characters.json" | sha256sum -c -
+      - name: Inspect graph, convert FP32 and compare dynamic inputs on host CPU
+        run: python -u openocr-lab/gpu/ncnn_gate.py ${{ matrix.model }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ncnn-gate-${{ matrix.model }}
+          path: ncnn-report/
+          if-no-files-found: warn
