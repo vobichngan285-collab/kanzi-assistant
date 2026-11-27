@@ -74,7 +74,14 @@ def check(x,label,truth=None):
     d={"case":label,"shape":list(x.shape),"output":list(a.shape),"max_abs":maxerr,"mean_abs":float(np.mean(np.abs(a-b))),"allclose":bool(np.allclose(a,b,rtol=3e-3,atol=5e-4)),"ctc_match":ta==tb,"ort":ta,"mnn":tb,"ort_cpu_ms":round(ortms,3),"mnn_cpu_ms":round(mnnms,3)}
     if truth is not None:d["synthetic_truth"]=truth
     report["tests"].append(d);save();print(json.dumps(d,ensure_ascii=False),flush=True)
-    assert d["allclose"] and d["ctc_match"],"FP32 parity failed: "+label
+    # Keep the original strict gate, but collect every executable test before rejecting.
+    bad=np.abs(a-b)>(5e-4+3e-3*np.abs(b))
+    d["outside_tolerance_count"]=int(bad.sum())
+    d["probability_count"]=int(a.size)
+    d["argmax_step_mismatches"]=int(np.count_nonzero(a.argmax(-1)!=b.argmax(-1)))
+    d["max_argmax_score_difference"]=float(np.max(np.abs(a.max(-1)-b.max(-1))))
+    save()
+    print("PARITY_DIAGNOSTIC",json.dumps(d,ensure_ascii=False),flush=True)
 rng=np.random.default_rng(19)
 shapes=([(1,3,48,320),(6,3,48,320),(2,3,48,348),(6,3,48,759),(6,3,48,939),(1,3,48,320)] if name=="rep" else [(1,3,64,64),(6,3,64,64),(6,3,48,96),(2,3,40,112),(6,3,32,128),(1,3,32,224),(2,3,32,512),(6,3,32,640),(1,3,64,64)])
 for s in shapes:check(rng.uniform(-1,1,s),"dynamic:"+str(s))
@@ -98,5 +105,9 @@ for text in labels:
     groups[x.shape].append((text,x))
 for rows in groups.values():
     check(np.stack([x for _,x in rows]),"synthetic_text",[s for s,_ in rows])
-report["status"]="cpu_parity_passed";save()
+failed=[t["case"] for t in report["tests"] if not(t["allclose"] and t["ctc_match"])]
+report["status"]="cpu_parity_failed" if failed else "cpu_parity_passed"
+report["failed_cases"]=failed
+save()
+assert not failed, "FP32 parity failed cases: "+str(failed)
 print("MNN CPU PARITY PASSED",name,flush=True)
