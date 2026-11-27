@@ -94,3 +94,5 @@
 - 用户明确要求保留此前已真机有效的智能主阅读区及价目表行列重组成果；底层DB优化不等于撤销成功的后处理。v0.4.5基于v0.4.3，保留默认全图原框、智能主阅读区、原区域基线、全图列裁剪及同图对照、960/1280/1600和TTS；v0.4.4自适应路由独立存档，不继续叠加规则。今后底层优化须同时检查原框招牌与主区价目表回归，成功功能保留、未验证功能独立实验。此轮仅确认原则，不修改源码。
 
 - v0.4.5 CI 45928155495 completed/success，Release已核实非draft，target 42f4acf348bd78c2d15d3d39fa333a7c3530057e，APK 65718590 bytes，SHA256 f02193fb05f9021519273cbe4a67f18d18eb1af6e187f8d03ada741a0146c633；下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-openocr-field-db-v045-20261127/BlueStar_OpenOCR_Field_DB_0.4.5.apk 。五档底层参数及概率图复用待真机验证，保留原框与智能主阅读区成果。
+
+- v0.4.5真机价目表同图3072×4096 DB1600 CPU4 mode4 baseline，map_cache=hit，cached_pre149/cached_infer701ms，pre/infer0，post33/det34ms；108 contours、short拒40、accepted68、68 crops、18 suspect/2 blank，rec1518/core1553/点击原文1574/入队1594/首段1595ms，PSS815118KiB。原始框坐标、数量及主要识别输出与v0.4.3同图基线一致；缓存命中实测成功，不代表新图片检测加速。short_hist=[25,6,9,7,7,54] accepted_hist=[0,0,0,7,7,54]，2≤short<3只有9个潜在新候选，仍受扩张后4和score0.6限制，不能断言有效文字。建议同图保持1600/CPU4/全图原框，仅切换small_text 2/4；价目表再测智能主区回归，不需新构建。尚无新参数实际结果，不改源码。
