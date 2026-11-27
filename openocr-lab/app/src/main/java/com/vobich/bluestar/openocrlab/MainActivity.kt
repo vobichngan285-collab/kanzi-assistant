@@ -20,7 +20,7 @@ class MainActivity:Activity(){
  private val worker=Executors.newSingleThreadExecutor()
  private lateinit var status:TextView;private lateinit var output:TextView;private lateinit var preview:ImageView
  private lateinit var choose:Button;private lateinit var run:Button;private lateinit var mode:Spinner
- private lateinit var pixels:Spinner;private lateinit var cameraStatus:TextView
+ private lateinit var cameraStatus:TextView
  private lateinit var watcher:C110PhysicalWatcher
  private var photoEpoch=0;private var sourceMeta="";private var sourceKind="album"
  private var source:Bitmap?=null;private var reader:Reader?=null;private var readerThreads=0
@@ -79,11 +79,10 @@ class MainActivity:Activity(){
   val scroll=ScrollView(this);val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,48,24,32)}
   scroll.addView(box);setContentView(scroll)
   fun label(t:String)=TextView(this).apply{text=t;textSize=18f;box.addView(this)}
-  label("蓝星 OpenOCR 像素与C110实验 v0.1.1 · 基于 v0.4.8")
+  label("蓝星 OpenOCR 原图与C110实验 v0.1.2 · 基于 v0.4.8")
   Button(this).apply{text="手机实时识别（原1080p路线）";box.addView(this);setOnClickListener{if(choose.isEnabled){stopSpeech();startActivity(Intent(this@MainActivity,LiveActivity::class.java).putExtra("official",mode.selectedItemPosition==0).putExtra("threads",listOf(4,2,6)[threads.selectedItemPosition]).putExtra("longSide",DbResolution.sizes[dbSize.selectedItemPosition]))}}}
   choose=Button(this).apply{text="选择相册原图";box.addView(this);setOnClickListener{stopSpeech();startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},9)}}
-  label("照片像素实验（相册 / C110；仅缩小，不插值放大）")
-  pixels=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,PixelInput.caps.map{if(it==0L)"原图（不缩小）" else "${it/10000}万像素上限"});setSelection(PixelInput.caps.lastIndex);box.addView(this)}
+  label("相册 / C110：原图分辨率识别，不缩小、不放大")
   Button(this).apply{text="连接C110相机 Wi-Fi";box.addView(this);setOnClickListener{startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))}}
   Button(this).apply{text="开启C110实体快门自动接收";box.addView(this);setOnClickListener{
    cameraPrefs().edit().putBoolean(C110PhysicalPolicy.ENABLE,true).apply()
@@ -128,8 +127,7 @@ class MainActivity:Activity(){
   worker.execute{
    var decoded:Bitmap?=null
    try{
-    val bm=ImageDecoder.decodeBitmap(input()){d,i,_->
-     require(i.size.width.toLong()*i.size.height<=24_000_000L){"原图超过2400万像素安全上限"};d.allocator=ImageDecoder.ALLOCATOR_SOFTWARE}
+    val bm=ImageDecoder.decodeBitmap(input()){d,_,_->d.allocator=ImageDecoder.ALLOCATOR_SOFTWARE}
     decoded=bm
     val decodeMs=now()-received
     db?.clearProbability()
@@ -140,13 +138,12 @@ class MainActivity:Activity(){
      status.text="原图 "+bm.width+"×"+bm.height;busy(false)
      if(autoEpoch!=null&&autoEpoch==photoEpoch)test(autoEpoch,received)
     }
-   }catch(t:Throwable){decoded?.recycle();runOnUiThread{if(!isDestroyed){status.text=t.toString();busy(false)}}}
+   }catch(t:Throwable){decoded?.recycle();runOnUiThread{if(!isDestroyed){status.text=if(t is OutOfMemoryError)"原图超出当前设备可用内存，无法解码" else t.toString();busy(false)}}}
   }
  }
- private fun busy(v:Boolean){choose.isEnabled=!v;run.isEnabled=!v;mode.isEnabled=!v;threads.isEnabled=!v;dbSize.isEnabled=!v;pixels.isEnabled=!v}
+ private fun busy(v:Boolean){choose.isEnabled=!v;run.isEnabled=!v;mode.isEnabled=!v;threads.isEnabled=!v;dbSize.isEnabled=!v}
  private fun test(autoEpoch:Int?=null,received:Long?=null){
-  val originalBitmap=source?:return
-  val cap=PixelInput.caps[pixels.selectedItemPosition]
+  val bm=source?:return
   val inputMeta=sourceMeta;val inputKind=sourceKind
   val official=mode.selectedItemPosition==0
   val name=if(official)"官方原框" else "智能主阅读区（原版）"
@@ -155,13 +152,8 @@ class MainActivity:Activity(){
   stopSpeech();lastText="";raw.text="";replay.isEnabled=false;testStart=now();val clicked=testStart
   busy(true);output.text="";status.text="OpenOCR RepViT-DB 定位中"
   worker.execute{
-   var temporary:Bitmap?=null
    try{
-    val scaleAt=now()
-    val (w,h)=PixelInput.size(originalBitmap.width,originalBitmap.height,cap)
-    val bm=if(w==originalBitmap.width&&h==originalBitmap.height)originalBitmap else Bitmap.createScaledBitmap(originalBitmap,w,h,true).also{temporary=it}
-    val resizeMs=now()-scaleAt
-    runOnUiThread{output.append("PIXEL source_type=$inputKind original=${originalBitmap.width}x${originalBitmap.height} requested_cap=$cap input=${bm.width}x${bm.height} input_pixels=${bm.width.toLong()*bm.height} resize_ms=$resizeMs $inputMeta\n")}
+    runOnUiThread{output.append("PIXEL source_type=$inputKind original=${bm.width}x${bm.height} requested_cap=0 input=${bm.width}x${bm.height} input_pixels=${bm.width.toLong()*bm.height} resize_ms=0 $inputMeta\n")}
     val start=now()
     if(db==null||dbThreads!=nt){db?.close();db=null;db=DbLocator(this,nt);dbThreads=nt}
     db!!.clearProbability();val init=now();val found=db!!.locate(bm,longSide,official);val detected=now()
@@ -232,7 +224,7 @@ class MainActivity:Activity(){
      else output.append("C110 stale speech suppressed\n")
      status.text="识别完成";busy(false)
     }}
-   }catch(t:Throwable){runOnUiThread{if(!isDestroyed){output.append("\n失败："+t.toString());status.text="失败";busy(false)}}}finally{temporary?.recycle()}
+   }catch(t:Throwable){runOnUiThread{if(!isDestroyed){output.append("\n失败："+t.toString());status.text=if(t is OutOfMemoryError)"原图超出当前设备可用内存，无法识别" else "失败";busy(false)}}}
   }
  }
 }
