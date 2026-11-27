@@ -70,7 +70,8 @@ class MainActivity:Activity(){
   val scroll=ScrollView(this);val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,48,24,32)}
   scroll.addView(box);setContentView(scroll)
   fun label(t:String)=TextView(this).apply{text=t;textSize=18f;box.addView(this)}
-  label("蓝星 OpenOCR v0.4.8 · 分辨率上限实验")
+  label("蓝星 OpenOCR 实时预览实验 v0.1.0 · 基于 v0.4.8")
+  Button(this).apply{text="手机实时识别";box.addView(this);setOnClickListener{if(choose.isEnabled){stopSpeech();startActivity(Intent(this@MainActivity,LiveActivity::class.java).putExtra("official",mode.selectedItemPosition==0).putExtra("threads",listOf(4,2,6)[threads.selectedItemPosition]).putExtra("longSide",DbResolution.sizes[dbSize.selectedItemPosition]))}}}
   choose=Button(this).apply{text="选择相册原图";box.addView(this);setOnClickListener{stopSpeech();startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},9)}}
   preview=ImageView(this).apply{adjustViewBounds=true;maxHeight=650;box.addView(this)}
   dbSize=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,DbResolution.sizes.map{DbResolution.label(it)});setSelection(DbResolution.defaultIndex);box.addView(this)}
