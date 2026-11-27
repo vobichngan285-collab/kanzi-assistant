@@ -15,12 +15,12 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
 /** Beijing DashScope-compatible single-image OCR / streaming vision (no key/image logging). */
-final class CloudVisionClient {
+public final class CloudVisionClient {
     private static final String ENDPOINT="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
     interface PartListener { void onSpeakablePart(String part); }
 
     /** Per-photo cancellation: mark stale first, then disconnect its actual socket. */
-    static final class Cancellation {
+    public static final class Cancellation {
         private volatile boolean cancelled;
         private HttpURLConnection active;
         synchronized void attach(HttpURLConnection connection) throws InterruptedException {
