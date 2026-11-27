@@ -16,7 +16,7 @@ class MainActivity:Activity(){
  private lateinit var choose:Button;private lateinit var run:Button;private lateinit var mode:Spinner;private lateinit var detectorPicker:Spinner
  private var source:Bitmap?=null;private var locator:TextLocator?=null;private var reader:Reader?=null;private var readerThreads=0
  private var db:DbLocator?=null;private var dbThreads=0
- private lateinit var threads:Spinner;private lateinit var dbSize:Spinner
+ private lateinit var threads:Spinner;private lateinit var dbSize:Spinner;private lateinit var dbProfile:Spinner
  private lateinit var raw:TextView;private lateinit var voiceStatus:TextView
  private lateinit var replay:Button;private lateinit var stopVoice:Button
  private var tts:TextToSpeech?=null;private var ttsReady=false;private var ttsFailed=false
@@ -67,11 +67,12 @@ class MainActivity:Activity(){
   val scroll=ScrollView(this);val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,48,24,32)}
   scroll.addView(box);setContentView(scroll)
   fun label(t:String)=TextView(this).apply{text=t;textSize=18f;box.addView(this)}
-  label("蓝星 OpenOCR v0.4.3 · DB 小字检测对照")
+  label("蓝星 OpenOCR v0.4.5 · DB 画框性能对照")
   choose=Button(this).apply{text="选择相册原图";box.addView(this);setOnClickListener{stopSpeech();startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},9)}}
   preview=ImageView(this).apply{adjustViewBounds=true;maxHeight=650;box.addView(this)}
   detectorPicker=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("OpenOCR RepViT-DB（默认）","YOLO26n-Text（原版）"));box.addView(this)}
   dbSize=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("DB 长边 960（基线）","DB 长边 1280","DB 长边 1600"));box.addView(this)}
+  dbProfile=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("DB 原始参数（基线）","DB 小字短边 2 / 4","DB 紧框扩张 1.2","DB 概率阈值 0.25","DB 概率阈值 0.35"));box.addView(this)}
   mode=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("全图原框（默认）","智能主阅读区","原v0.1.3区域基线","全图完整列裁剪","同图区域对照（新/旧/全图）"));box.addView(this)}
   threads=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("CPU 4线程（默认）","CPU 2线程","CPU 6线程"));box.addView(this)}
   run=Button(this).apply{text="开始识别 / 同图复测";box.addView(this);setOnClickListener{test()}}
@@ -89,13 +90,14 @@ class MainActivity:Activity(){
   busy(true);worker.execute{
    try{val bm=ImageDecoder.decodeBitmap(ImageDecoder.createSource(contentResolver,uri)){d,i,_->
     require(i.size.width.toLong()*i.size.height<=16_000_000L){"图片超过1600万像素"};d.allocator=ImageDecoder.ALLOCATOR_SOFTWARE}
+    db?.clearProbability()
     runOnUiThread{preview.setImageBitmap(bm);source?.recycle();source=bm;lastText="";raw.text="";output.text="";replay.isEnabled=false;status.text="原图 "+bm.width+"×"+bm.height;busy(false)}
    }catch(t:Throwable){runOnUiThread{status.text=t.toString();busy(false)}}
   }
  }
- private fun busy(v:Boolean){choose.isEnabled=!v;run.isEnabled=!v;mode.isEnabled=!v;threads.isEnabled=!v;detectorPicker.isEnabled=!v;dbSize.isEnabled=!v}
+ private fun busy(v:Boolean){choose.isEnabled=!v;run.isEnabled=!v;mode.isEnabled=!v;threads.isEnabled=!v;detectorPicker.isEnabled=!v;dbSize.isEnabled=!v;dbProfile.isEnabled=!v}
  private fun test(){
-  val bm=source?:return;val selected=if(mode.selectedItemPosition==0)4 else mode.selectedItemPosition-1;val useDb=detectorPicker.selectedItemPosition==0;val detectorName=if(useDb)"OpenOCR RepViT-DB" else "YOLO26n-Text";val nt=listOf(4,2,6)[threads.selectedItemPosition];val longSide=listOf(960,1280,1600)[dbSize.selectedItemPosition]
+  val bm=source?:return;val selected=if(mode.selectedItemPosition==0)4 else mode.selectedItemPosition-1;val useDb=detectorPicker.selectedItemPosition==0;val detectorName=if(useDb)"OpenOCR RepViT-DB" else "YOLO26n-Text";val nt=listOf(4,2,6)[threads.selectedItemPosition];val longSide=listOf(960,1280,1600)[dbSize.selectedItemPosition];val profile=DbProfile.profiles[dbProfile.selectedItemPosition]
   stopSpeech();lastText="";raw.text="";replay.isEnabled=false;testStart=now();val clicked=testStart
   busy(true);output.text="";status.text="$detectorName 定位中"
   worker.execute{
@@ -109,7 +111,7 @@ class MainActivity:Activity(){
      if(locator==null)locator=TextLocator(this)
     }
     val init=now()
-    val found=if(useDb)TextLocator.group(db!!.locate(bm,longSide),bm.width,bm.height)else locator!!.locate(bm)
+    val found=if(useDb)TextLocator.group(db!!.locate(bm,longSide,profile),bm.width,bm.height)else locator!!.locate(bm)
     val detected=now()
     if(useDb){val diagnostic=db!!.lastDiagnostic;runOnUiThread{output.append(diagnostic+"\n")}}
     require(found.boxes.isNotEmpty()){"未检测到文字"}
@@ -121,7 +123,7 @@ class MainActivity:Activity(){
     val modes=if(selected==3)listOf(0,1,2)else listOf(selected)
     val load=now();if(reader==null||readerThreads!=nt){reader?.close();reader=null;reader=Reader(this,"rep.onnx",nt);readerThreads=nt}
     val engine=reader!!;val loadMs=now()-load
-    runOnUiThread{output.append("Field TTS v0.4.3 detector=$detectorName source=${bm.width}x${bm.height} detector_threads=${if(useDb)nt else 4} rec_threads=$nt detector_init_ms=${init-start} detect_ms=${detected-init} recognizer_load_ms=$loadMs raw_boxes=${found.boxes.size} focus_plan_ms=$focusMs focus_reason=${plan.reason} groups=${plan.groups} best=${plan.best} rival=${plan.rival}\n")}
+    runOnUiThread{output.append("Field TTS v0.4.5 detector=$detectorName source=${bm.width}x${bm.height} detector_threads=${if(useDb)nt else 4} rec_threads=$nt detector_init_ms=${init-start} detect_ms=${detected-init} recognizer_load_ms=$loadMs raw_boxes=${found.boxes.size} focus_plan_ms=$focusMs focus_reason=${plan.reason} groups=${plan.groups} best=${plan.best} rival=${plan.rival}\n")}
     for(m in modes){
      val name=when(m){4->"全图原框";else->listOf("智能主阅读区","原v0.1.3区域","全图")[m]}
      val roi=when(m){0->focus;1->found.roi;else->null}

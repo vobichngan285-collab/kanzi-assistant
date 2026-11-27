@@ -1,6 +1,8 @@
 package com.vobich.bluestar.openocrlab
 import android.content.Context
 import android.graphics.*
+import android.os.SystemClock
+import java.lang.ref.WeakReference
 import ai.onnxruntime.*
 import org.opencv.android.OpenCVLoader
 import org.opencv.core.*
@@ -12,6 +14,9 @@ import java.nio.ByteOrder
 class DbLocator(context:Context,threads:Int):AutoCloseable {
  private val env=OrtEnvironment.getEnvironment()
  private val session:OrtSession
+ private data class Probability(val source:WeakReference<Bitmap>,val generation:Int,val longSide:Int,val w:Int,val h:Int,val values:FloatArray,val diagnostic:String,val preMs:Long,val inferMs:Long)
+ private var cached:Probability?=null
+ fun clearProbability(){cached=null}
  var lastDiagnostic:String=""
   private set
  init{
@@ -21,9 +26,20 @@ class DbLocator(context:Context,threads:Int):AutoCloseable {
   val opts=OrtSession.SessionOptions()
   try{opts.setIntraOpNumThreads(threads);session=env.createSession(file.absolutePath,opts)}finally{opts.close()}
  }
- fun locate(bm:Bitmap,longSide:Int=960):List<TextLocator.Box>{
+ fun locate(bm:Bitmap,longSide:Int=960,profile:DbProfile=DbProfile.profiles[0]):List<TextLocator.Box>{
   require(longSide in listOf(960,1280,1600))
   lastDiagnostic=""
+  val old=cached
+  val hit=old!=null&&old.source.get()===bm&&old.generation==bm.generationId&&old.longSide==longSide
+  if(hit&&old!=null){
+   lastDiagnostic=old.diagnostic+" map_cache=hit cached_pre_ms="+old.preMs+" cached_infer_ms="+old.inferMs+" preprocess_ms=0 inference_ms=0"
+   val t=SystemClock.elapsedRealtime()
+   val boxes=boxes(old.values,old.w,old.h,bm.width,bm.height,profile)
+   lastDiagnostic+=" postprocess_ms="+(SystemClock.elapsedRealtime()-t)
+   return boxes
+  }
+  cached=null
+  val started=SystemClock.elapsedRealtime()
   val shape=(session.inputInfo.values.first().info as TensorInfo).shape
   val ratio=min(1f,longSide.toFloat()/max(bm.width,bm.height))
   val w=if(shape[3]>0)shape[3].toInt()else max(32,(bm.width*ratio/32).roundToInt()*32)
@@ -35,50 +51,61 @@ class DbLocator(context:Context,threads:Int):AutoCloseable {
   val mean=floatArrayOf(.485f,.456f,.406f);val std=floatArrayOf(.229f,.224f,.225f)
   for(c in 0..2)for(v in pixels)buf.put((((v shr (c*8)) and 255)/255f-mean[c])/std[c])
   buf.rewind()
+  val preMs=SystemClock.elapsedRealtime()-started
+  val inferStart=SystemClock.elapsedRealtime()
   OnnxTensor.createTensor(env,buf,longArrayOf(1,3,h.toLong(),w.toLong())).use{input->
    session.run(mapOf(session.inputNames.single() to input)).use{res->
     val out=res[0] as OnnxTensor;val s=out.info.shape
     require(s.size==4&&s[0]==1L&&s[1]>=1)
     val mh=s[2].toInt();val mw=s[3].toInt();val prob=FloatArray(mh*mw);out.floatBuffer.get(prob)
     lastDiagnostic+=" prob_map=${mw}x${mh}"
-    return boxes(prob,mw,mh,bm.width,bm.height)
+    val inferMs=SystemClock.elapsedRealtime()-inferStart
+    cached=Probability(WeakReference(bm),bm.generationId,longSide,mw,mh,prob,lastDiagnostic,preMs,inferMs)
+    lastDiagnostic+=" map_cache=miss preprocess_ms=$preMs inference_ms=$inferMs"
+    val t=SystemClock.elapsedRealtime()
+    val result=boxes(prob,mw,mh,bm.width,bm.height,profile)
+    lastDiagnostic+=" postprocess_ms="+(SystemClock.elapsedRealtime()-t)
+    return result
    }
   }
  }
- private fun boxes(prob:FloatArray,w:Int,h:Int,ow:Int,oh:Int):List<TextLocator.Box>{
+ private fun boxes(prob:FloatArray,w:Int,h:Int,ow:Int,oh:Int,profile:DbProfile):List<TextLocator.Box>{
   val mask=Mat(h,w,CvType.CV_8UC1);val map=Mat(h,w,CvType.CV_32FC1);val hierarchy=Mat()
   val contours=mutableListOf<MatOfPoint>();val result=mutableListOf<TextLocator.Box>()
   var shortRejected=0;var invalidRejected=0;var scoreRejected=0;var expandedRejected=0
+  val shortHistogram=IntArray(6);val acceptedHistogram=IntArray(6)
   try{
-   mask.put(0,0,ByteArray(prob.size){if(prob[it]>.3f)255.toByte()else 0})
+   mask.put(0,0,ByteArray(prob.size){if(prob[it]>profile.mask)255.toByte()else 0})
    map.put(0,0,prob)
    Imgproc.findContours(mask,contours,hierarchy,Imgproc.RETR_LIST,Imgproc.CHAIN_APPROX_SIMPLE)
    for(c in contours.take(1000)){
     val pts=MatOfPoint2f(*c.toArray())
     try{
      val rr=Imgproc.minAreaRect(pts);val rw=rr.size.width;val rh=rr.size.height
-     if(min(rw,rh)<3){shortRejected++;continue}
+     val short=min(rw,rh);val bucket=DbProfile.shortBucket(short);shortHistogram[bucket]++
+     if(short<profile.minShort){shortRejected++;continue}
      val roi=Imgproc.boundingRect(c);if(roi.width<1||roi.height<1){invalidRejected++;continue}
      val local=MatOfPoint(*c.toArray().map{Point(it.x-roi.x,it.y-roi.y)}.toTypedArray())
      val m=Mat.zeros(roi.height,roi.width,CvType.CV_8UC1);val sub=map.submat(roi)
      val score=try{Imgproc.fillPoly(m,listOf(local),Scalar(1.0));Core.mean(sub,m).`val`[0].toFloat()}finally{local.release();m.release();sub.release()}
-     if(score<.6f){scoreRejected++;continue}
+     if(score<profile.score){scoreRejected++;continue}
      // For a rectangular contour, the min-area rectangle of a rounded
      // outward offset has the same orientation and adds 2d to both sides.
      // Continuous rectangle approximation, not byte-identical pyclipper.
-     val d=rw*rh*1.5/(2*(rw+rh))
+     val d=rw*rh*profile.unclip/(2*(rw+rh))
      val ex=RotatedRect(rr.center,Size(rw+2*d,rh+2*d),rr.angle)
-     if(min(ex.size.width,ex.size.height)<5){expandedRejected++;continue}
+     if(min(ex.size.width,ex.size.height)<profile.minExpanded){expandedRejected++;continue}
      val q=Array(4){Point()};ex.points(q)
      val left=q.sortedBy{it.x}.take(2).sortedBy{it.y}
      val right=q.sortedBy{it.x}.takeLast(2).sortedBy{it.y}
      val ordered=listOf(left[0],right[0],right[1],left[1])
+     acceptedHistogram[bucket]++
      result.add(TextLocator.Box(FloatArray(8){i->if(i%2==0)(ordered[i/2].x*ow/w).toFloat().coerceIn(0f,ow.toFloat())else(ordered[i/2].y*oh/h).toFloat().coerceIn(0f,oh.toFloat())},score))
     }finally{pts.release()}
    }
   }finally{contours.forEach{it.release()};mask.release();map.release();hierarchy.release()}
-  lastDiagnostic+=" contours=${contours.size} examined=${min(contours.size,1000)} cap_skipped=${max(0,contours.size-1000)} rejected_short=$shortRejected rejected_invalid=$invalidRejected rejected_score=$scoreRejected rejected_expanded=$expandedRejected accepted=${result.size} mask_threshold=0.3 box_threshold=0.6"
+  lastDiagnostic+=" contours=${contours.size} examined=${min(contours.size,1000)} cap_skipped=${max(0,contours.size-1000)} rejected_short=$shortRejected rejected_invalid=$invalidRejected rejected_score=$scoreRejected rejected_expanded=$expandedRejected accepted=${result.size} mask_threshold=${profile.mask} box_threshold=${profile.score} profile=${profile.id} min_short=${profile.minShort} min_expanded=${profile.minExpanded} unclip=${profile.unclip} short_hist_0_1_2_3_4_5plus=${shortHistogram.contentToString()} accepted_hist=${acceptedHistogram.contentToString()}"
   return result
  }
- override fun close(){session.close()}
+ override fun close(){clearProbability();session.close()}
 }
