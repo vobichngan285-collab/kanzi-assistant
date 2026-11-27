@@ -65,12 +65,12 @@ class MainActivity:Activity(){
    if(code!=TextToSpeech.SUCCESS){stopSpeech();voiceNote("系统 TTS 入队失败："+code);break}
   }
  }
- override fun onDestroy(){serial++;pending=null;tts?.stop();tts?.shutdown();tts=null;worker.execute{runCatching{db?.close()};runCatching{reader?.close()}};worker.shutdown();super.onDestroy()}
+ override fun onDestroy(){serial++;pending=null;tts?.stop();tts?.shutdown();tts=null;worker.execute{runCatching{db?.close()};db=null;runCatching{reader?.close()};reader=null};worker.shutdown();preview.setImageDrawable(null);source=null;super.onDestroy()}
  override fun onCreate(state:Bundle?){super.onCreate(state)
   val scroll=ScrollView(this);val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,48,24,32)}
   scroll.addView(box);setContentView(scroll)
   fun label(t:String)=TextView(this).apply{text=t;textSize=18f;box.addView(this)}
-  label("蓝星 OpenOCR v0.4.8 · 分辨率上限实验")
+  label("蓝星 OpenOCR v0.4.9 · 性能稳定性对照")
   choose=Button(this).apply{text="选择相册原图";box.addView(this);setOnClickListener{stopSpeech();startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},9)}}
   preview=ImageView(this).apply{adjustViewBounds=true;maxHeight=650;box.addView(this)}
   dbSize=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,DbResolution.sizes.map{DbResolution.label(it)});setSelection(DbResolution.defaultIndex);box.addView(this)}
@@ -92,7 +92,7 @@ class MainActivity:Activity(){
    try{val bm=ImageDecoder.decodeBitmap(ImageDecoder.createSource(contentResolver,uri)){d,i,_->
     require(i.size.width.toLong()*i.size.height<=16_000_000L){"图片超过1600万像素"};d.allocator=ImageDecoder.ALLOCATOR_SOFTWARE}
     db?.clearProbability()
-    runOnUiThread{preview.setImageBitmap(bm);source?.recycle();source=bm;lastText="";raw.text="";output.text="";replay.isEnabled=false;status.text="原图 "+bm.width+"×"+bm.height;busy(false)}
+    runOnUiThread{if(isDestroyed){bm.recycle();return@runOnUiThread};preview.setImageBitmap(bm);source=bm;lastText="";raw.text="";output.text="";replay.isEnabled=false;status.text="原图 "+bm.width+"×"+bm.height;busy(false)}
    }catch(t:Throwable){runOnUiThread{status.text=t.toString();busy(false)}}
   }
  }
@@ -125,7 +125,7 @@ class MainActivity:Activity(){
     val pMs=now()-pStart
     val load=now();if(reader==null||readerThreads!=nt){reader?.close();reader=null;reader=Reader(this,"rep.onnx",nt);readerThreads=nt}
     val engine=reader!!;val loadMs=now()-load
-    runOnUiThread{output.append("Field TTS v0.4.8 source=${bm.width}x${bm.height} detector_threads=$nt rec_threads=$nt detector_init_ms=${init-start} detect_ms=${detected-init} recognizer_load_ms=$loadMs raw_boxes=${found.size} focus_plan_ms=$focusMs focus_reason=${plan?.reason?:"official_bypass"} rec_shape=${engine.inputShape} rec_batch=${if(official)engine.officialBatchSize else 1}\nmode=$name roi=$roi selected=${boxes.size} outside=${outside.size} rows=${rows.size} crops=${rows.sumOf{it.size}} duplicates=${columns?.removed?:0} plan_ms=$pMs\n"+(if(outside.isNotEmpty())"提示：区域外${outside.size}个检测框未识别，可切换官方原框。\n" else "")+outside.joinToString("\n"){q->"outside det=${q.score} quad=${q.points.contentToString()}"}+"\n")}
+    runOnUiThread{output.append("Field TTS v0.4.9 source=${bm.width}x${bm.height} detector_threads=$nt rec_threads=$nt detector_init_ms=${init-start} detect_ms=${detected-init} recognizer_load_ms=$loadMs raw_boxes=${found.size} focus_plan_ms=$focusMs focus_reason=${plan?.reason?:"official_bypass"} rec_shape=${engine.inputShape} rec_batch=${if(official)engine.officialBatchSize else 1}\nmode=$name roi=$roi selected=${boxes.size} outside=${outside.size} rows=${rows.size} crops=${rows.sumOf{it.size}} duplicates=${columns?.removed?:0} plan_ms=$pMs\n"+(if(outside.isNotEmpty())"提示：区域外${outside.size}个检测框未识别，可切换官方原框。\n" else "")+outside.joinToString("\n"){q->"outside det=${q.score} quad=${q.points.contentToString()}"}+"\n")}
     val scale=min(1f,1200f/max(bm.width,bm.height))
     val scaled=Bitmap.createScaledBitmap(bm,(bm.width*scale).toInt(),(bm.height*scale).toInt(),true)
     val shown=scaled.copy(Bitmap.Config.ARGB_8888,true)
@@ -137,7 +137,8 @@ class MainActivity:Activity(){
      if(roi!=null){paint.color=Color.GREEN;drawRect(roi,paint)}
      paint.color=Color.CYAN;rows.flatten().forEach{b->val path=Path();path.moveTo(b.points[0],b.points[1]);for(i in 1..3)path.lineTo(b.points[2*i],b.points[2*i+1]);path.close();drawPath(path,paint)}
     }
-    runOnUiThread{preview.setImageBitmap(shown)}
+    runOnUiThread{if(isDestroyed)shown.recycle()else preview.setImageBitmap(shown)}
+    engine.resetTiming()
     val begin=now();var count=0;var uncertain=0;var blank=0;var dropped=0;var first=-1L
     val lines=mutableListOf<String>();val rawLines=mutableListOf<String>();val notes=mutableListOf<String>()
     val rgba=Mat();val bgr=Mat()
@@ -169,9 +170,15 @@ class MainActivity:Activity(){
     }finally{rgba.release();bgr.release()}
     val rec=now()-begin;val total=detected-init+pMs+rec+focusMs
     val original=rawLines.joinToString("\n");val done=now()
+    val timing=engine.timing
+    val perf="rec_prep_ms=${timing.prepNs/1e6} rec_infer_host_ms=${timing.inferNs/1e6} rec_decode_ms=${timing.decodeNs/1e6} ${engine.scratchDiagnostic()} ${db!!.scratchDiagnostic()}"
+    val summary="\n$name detect_ms=${detected-init} first_row_ms=$first rec_ms=$rec total_ms=$total crops=$count suspect=$uncertain blank=$blank official_dropped=$dropped"
+    val detail=lines.joinToString("\n")+"\n"+notes.joinToString("\n")+"\nOCR 点击至原文就绪：${done-clicked} ms\n"
     runOnUiThread{if(!isDestroyed){
-     output.append("\n$name detect_ms=${detected-init} first_row_ms=$first rec_ms=$rec total_ms=$total crops=$count suspect=$uncertain blank=$blank official_dropped=$dropped pss_kb=${Debug.getPss()}\n"+lines.joinToString("\n")+"\n"+notes.joinToString("\n")+"\nOCR 点击至原文就绪：${done-clicked} ms\n")
-     raw.text=original;lastText=original;replay.isEnabled=original.isNotBlank();speak(original,clicked);status.text="识别完成";busy(false)
+     // Dispatch original text before expensive PSS/log formatting; callbacks still use original click clock.
+     raw.text=original;lastText=original;replay.isEnabled=original.isNotBlank();speak(original,clicked)
+     output.append(summary+" pss_kb=${Debug.getPss()} (after TTS enqueue, snapshot)\n"+perf+"\n"+detail)
+     status.text="识别完成";busy(false)
     }}
    }catch(t:Throwable){runOnUiThread{output.append("\n失败："+t.toString());status.text="失败";busy(false)}}
   }

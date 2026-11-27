@@ -15,6 +15,8 @@ import java.nio.ByteOrder
 class DbLocator(context:Context,threads:Int):AutoCloseable {
  private val env=OrtEnvironment.getEnvironment()
  private val session:OrtSession
+ private val scratch=FloatScratch(32*1024*1024)
+ fun scratchDiagnostic()="db_scratch_allocations=${scratch.allocations} db_scratch_reuses=${scratch.reuses} db_scratch_retained_bytes=${scratch.retainedBytes}"
  private data class Probability(val source:WeakReference<Bitmap>,val generation:Int,val longSide:Int,val official:Boolean,val w:Int,val h:Int,val values:FloatArray,val diagnostic:String,val preMs:Long,val inferMs:Long)
  private var cached:Probability?=null
  fun clearProbability(){cached=null}
@@ -49,7 +51,7 @@ class DbLocator(context:Context,threads:Int):AutoCloseable {
   val w=if(shape[3]>0)shape[3].toInt()else if(official)OfficialGeometry.dimension(sw,officialRatio)else max(32,(bm.width*ratio/32).roundToInt()*32)
   val h=if(shape[2]>0)shape[2].toInt()else if(official)OfficialGeometry.dimension(sh,officialRatio)else max(32,(bm.height*ratio/32).roundToInt()*32)
   lastDiagnostic="DB requested_long_side=$longSide input=${w}x${h} model_shape=${shape.contentToString()} dynamic_h=${shape[2]<=0} dynamic_w=${shape[3]<=0}"
-  val buf=ByteBuffer.allocateDirect(3*w*h*4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+  val buf=scratch.acquire(Math.multiplyExact(Math.multiplyExact(3,w),h))
   val mean=floatArrayOf(.485f,.456f,.406f);val std=floatArrayOf(.229f,.224f,.225f)
   if(official){
    val rgba=Mat();val bgr=Mat();val pad=Mat();val resized=Mat()
@@ -136,5 +138,5 @@ class DbLocator(context:Context,threads:Int):AutoCloseable {
   val r=if(p[3].y>p[2].y)listOf(p[2],p[3])else listOf(p[3],p[2])
   return listOf(l[0],r[0],r[1],l[1])
  }
- override fun close(){clearProbability();session.close()}
+ override fun close(){clearProbability();try{session.close()}finally{scratch.clear()}}
 }

@@ -1,0 +1,104 @@
+name: BlueStar OpenOCR v0.4.9 Performance Candidate
+on:
+  push:
+    branches: [exp/openocr-field-perf-v049-20261127]
+    paths: ['openocr-lab/**','.github/workflows/openocr-field-perf.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: lightbringer/clipper-java
+          ref: 5ef8c0a467023c495e44e582e9cbd8ca7308a590
+          path: clipper-upstream
+          persist-credentials: false
+      - name: Vendor pinned Clipper Java source
+        run: |
+          set -euo pipefail
+          test "$(git -C clipper-upstream rev-parse HEAD)" = 5ef8c0a467023c495e44e582e9cbd8ca7308a590
+          mkdir -p openocr-lab/app/src/main/java/de/lighti/clipper
+          cp clipper-upstream/Clipper/src/de/lighti/clipper/*.java openocr-lab/app/src/main/java/de/lighti/clipper/
+          cp clipper-upstream/license.txt Clipper-Java-LICENSE.txt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Reuse immutable v0.4.8 baseline assets
+        run: |
+          set -euo pipefail
+          BASE=https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-openocr-field-db-v048-20261127
+          curl -fL --retry 3 "$BASE/BlueStar_OpenOCR_Field_DB_0.4.8.apk" -o baseline.apk
+          echo '84103dbd7020b53fd2dcb99a6b4b7a0e96ed45b7ab238e80b74f2b3edd7cf1fa  baseline.apk' | sha256sum -c -
+          for f in openocr-report.json OpenOCR-LICENSE.txt db-asset.sha256; do curl -fL --retry 3 "$BASE/$f" -o "$f"; done
+          echo 'f1d36ed055b95ffdc61f42dd9553907e5dd945030d0eae3b42d4ed8e69fc41a1  openocr-report.json' | sha256sum -c -
+          mkdir -p openocr-lab/app/src/main/assets
+          for m in rep.onnx chars.txt repvit-db.onnx; do unzip -p baseline.apk "assets/$m" > "openocr-lab/app/src/main/assets/$m"; done
+          cd openocr-lab/app/src/main/assets
+          echo "$(jq -r .rep.onnx_sha256 ../../../../../openocr-report.json)  rep.onnx" | sha256sum -c -
+          echo "$(jq -r .dict_sha256 ../../../../../openocr-report.json)  chars.txt" | sha256sum -c -
+          sha256sum -c ../../../../../db-asset.sha256
+      - name: Android SDK
+        run: |
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Build offline APK
+        working-directory: openocr-lab
+        run: gradle --no-daemon --max-workers=2 :app:testReleaseUnitTest :app:assembleRelease
+      - name: Verify and package
+        run: |
+          set -euo pipefail
+          APK=openocr-lab/app/build/outputs/apk/release/app-release.apk
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/apksigner" verify --verbose "$APK"
+          "$BT/aapt" dump badging "$APK" | tee badging.txt
+          grep -F "package: name='com.vobich.bluestar.openocrlab.fieldperf' versionCode='18' versionName='0.4.9'" badging.txt
+          ! grep -F android.permission.INTERNET badging.txt
+          unzip -Z1 "$APK" > archive.txt
+          grep -Fx lib/arm64-v8a/libonnxruntime.so archive.txt
+          grep -Fx lib/arm64-v8a/libopencv_java4.so archive.txt
+          ! grep -E '^lib/(x86|x86_64|armeabi-v7a)/' archive.txt
+          unzip -p "$APK" assets/rep.onnx | sha256sum | grep -F "$(jq -r .rep.onnx_sha256 openocr-report.json)"
+          ! grep -Fx assets/yolo26n-text.onnx archive.txt
+          unzip -p "$APK" assets/chars.txt | sha256sum | grep -F "$(jq -r .dict_sha256 openocr-report.json)"
+          unzip -p "$APK" assets/repvit-db.onnx | sha256sum | grep -F "$(cut -d ' ' -f1 db-asset.sha256)"
+          ! grep -E '^assets/(svtr.onnx|yolo26[smlx]-text.onnx)$' archive.txt
+          mkdir -p release
+          cp "$APK" release/BlueStar_OpenOCR_Field_Perf_0.4.9.apk
+          cp openocr-lab/README.md openocr-report.json OpenOCR-LICENSE.txt Clipper-Java-LICENSE.txt db-asset.sha256 release/
+          (cd release && sha256sum *.apk > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openocr-field-perf
+          path: release/
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: openocr-field-perf
+          path: release
+      - name: Publish verified experiment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          (cd release && sha256sum -c SHA256SUMS.txt)
+          TAG=bluestar-openocr-field-perf-v049-20261127
+          if ! gh release view "$TAG" >/dev/null 2>&1; then gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 OpenOCR 性能候选 v0.4.9" --notes-file release/README.md --prerelease --draft; fi
+          gh release view "$TAG" --json targetCommitish | jq -e --arg sha "$GITHUB_SHA" '.targetCommitish == $sha'
+          for i in 1 2 3; do gh release upload "$TAG" release/* --clobber && break; test "$i" != 3; sleep 5; done
+          gh release edit "$TAG" --draft=false --prerelease

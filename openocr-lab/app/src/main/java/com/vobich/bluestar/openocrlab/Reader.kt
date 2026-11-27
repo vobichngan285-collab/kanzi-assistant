@@ -13,9 +13,20 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
  private val env=OrtEnvironment.getEnvironment()
  private val chars=listOf("")+context.assets.open("chars.txt").bufferedReader(Charsets.UTF_8).use{it.readLines()}+listOf(" ")
  private val session:OrtSession
+ private val scratch=FloatScratch(8*1024*1024)
+ private var pixelsScratch=IntArray(0)
+ private var cropBitmap:Bitmap?=null
+ private val paint=Paint(Paint.FILTER_BITMAP_FLAG)
+ data class Timing(var prepNs:Long=0,var inferNs:Long=0,var decodeNs:Long=0)
+ var timing=Timing()
+  private set
+ fun resetTiming(){timing=Timing()}
+ fun scratchDiagnostic()="rec_scratch_allocations=${scratch.allocations} rec_scratch_reuses=${scratch.reuses} rec_scratch_retained_bytes=${scratch.retainedBytes}"
+ private val inputName:String get()=session.inputNames.single()
  init { val opt=OrtSession.SessionOptions();try{opt.setIntraOpNumThreads(threads);session=env.createSession(context.assets.open(asset).use{it.readBytes()},opt)}finally{opt.close()} }
  data class Answer(val text:String,val confidence:Float,val width:Int,val minConfidence:Float=0f)
  fun read(source:Bitmap,box:TextLocator.Box,forceHorizontal:Boolean=false):Answer {
+  val started=System.nanoTime()
   val p=box.points.copyOf()
   fun len(a:Int,b:Int)=hypot(p[a*2]-p[b*2],p[a*2+1]-p[b*2+1])
   // Rotate the longer edge to the horizontal axis, choosing reading direction left to right.
@@ -27,29 +38,35 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
   require(w>=1&&h>=1)
   val actual=ceil(48*w/h).toInt().coerceIn(1,960)
   val width=max(320,actual)
-  val bm=Bitmap.createBitmap(actual,48,Bitmap.Config.ARGB_8888)
-  val pixels=IntArray(actual*48)
-  try {
-   val m=Matrix()
-   check(m.setPolyToPoly(q,0,floatArrayOf(0f,0f,actual.toFloat(),0f,actual.toFloat(),48f,0f,48f),0,4))
-   Canvas(bm).apply{drawColor(Color.WHITE);drawBitmap(source,m,Paint(Paint.FILTER_BITMAP_FLAG))}
-   bm.getPixels(pixels,0,actual,0,0,actual,48)
-  } finally {bm.recycle()}
-  val buf=ByteBuffer.allocateDirect(3*48*width*4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+  val bm=cropBitmap?.takeIf{it.width==actual}?:run{
+   cropBitmap?.recycle();cropBitmap=null
+   Bitmap.createBitmap(actual,48,Bitmap.Config.ARGB_8888).also{cropBitmap=it}
+  }
+  if(pixelsScratch.size<actual*48)pixelsScratch=IntArray(actual*48)
+  val pixels=pixelsScratch
+  val m=Matrix()
+  check(m.setPolyToPoly(q,0,floatArrayOf(0f,0f,actual.toFloat(),0f,actual.toFloat(),48f,0f,48f),0,4))
+  Canvas(bm).apply{drawColor(Color.WHITE);drawBitmap(source,m,paint)}
+  bm.getPixels(pixels,0,actual,0,0,actual,48)
+  val buf=scratch.acquire(3*48*width)
   // Official BGR input, normalized to [-1,1], zero right padding.
   for(shift in intArrayOf(0,8,16))for(y in 0 until 48)for(x in 0 until width)buf.put(if(x<actual)(((pixels[y*actual+x] shr shift) and 255)/127.5f-1f)else 0f)
   buf.rewind()
+  timing.prepNs+=System.nanoTime()-started
+  val inferStart=System.nanoTime()
   OnnxTensor.createTensor(env,buf,longArrayOf(1,3,48,width.toLong())).use{input->
-   session.run(mapOf(session.inputNames.single() to input)).use{result->
+   session.run(mapOf(inputName to input)).use{result->
     val t=result[0] as OnnxTensor;val s=t.info.shape
     require(s.size==3&&s[0]==1L&&s[2]==chars.size.toLong()){"Unexpected CTC shape "+s.contentToString()}
-    val f=t.floatBuffer;f.rewind();var last=-1;val out=StringBuilder();var conf=0f;var n=0;var minConf=1f
+    val f=t.floatBuffer;f.rewind();timing.inferNs+=System.nanoTime()-inferStart
+    val decodeStart=System.nanoTime();var last=-1;val out=StringBuilder();var conf=0f;var n=0;var minConf=1f
     repeat(s[1].toInt()){
      var best=0;var v=-Float.MAX_VALUE
      repeat(chars.size){i->val a=f.get();if(a>v){best=i;v=a}}
      if(best!=0&&best!=last){out.append(chars[best]);conf+=v;minConf=min(minConf,v);n++}
      last=best
     }
+    timing.decodeNs+=System.nanoTime()-decodeStart
     return Answer(out.toString(),if(n>0)conf/n else 0f,width,if(n>0)minConf else 0f)
    }
   }
@@ -80,21 +97,27 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
  val inputShape:String get()=(session.inputInfo.values.first().info as TensorInfo).shape.contentToString()
  fun readOfficial(source:Mat,boxes:List<TextLocator.Box>):List<Answer>{
   val result=MutableList(boxes.size){Answer("",0f,0,0f)}
+  val prepStart=System.nanoTime()
   val prepared=boxes.mapIndexedNotNull{i,b->prepareOfficial(source,b)?.let{i to it}}
+  timing.prepNs+=System.nanoTime()-prepStart
   for(chunk in prepared.chunked(officialBatchSize)){
+   val packStart=System.nanoTime()
    val width=chunk.maxOf{it.second.width}
    val n=chunk.size
-   val buf=ByteBuffer.allocateDirect(n*3*48*width*4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+   val buf=scratch.acquire(Math.multiplyExact(Math.multiplyExact(n,3*48),width))
    for((_,p) in chunk)for(c in 0..2)for(y in 0 until 48){
     buf.put(p.pixels,(c*48+y)*p.width,p.width)
     repeat(width-p.width){buf.put(0f)}
    }
    buf.rewind()
+   timing.prepNs+=System.nanoTime()-packStart
+   val inferStart=System.nanoTime()
    OnnxTensor.createTensor(env,buf,longArrayOf(n.toLong(),3,48,width.toLong())).use{input->
-    session.run(mapOf(session.inputNames.single() to input)).use{res->
+    session.run(mapOf(inputName to input)).use{res->
      val t=res[0] as OnnxTensor;val s=t.info.shape
      require(s.size==3&&s[0]==n.toLong()&&s[2]==chars.size.toLong()){"Unexpected official CTC shape "+s.contentToString()}
-     val f=t.floatBuffer;f.rewind()
+     val f=t.floatBuffer;f.rewind();timing.inferNs+=System.nanoTime()-inferStart
+     val decodeStart=System.nanoTime()
      for((index,_) in chunk){
       var last=-1;val out=StringBuilder();var conf=0f;var count=0;var low=1f
       repeat(s[1].toInt()){
@@ -104,10 +127,11 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
       }
       result[index]=Answer(out.toString(),if(count>0)conf/count else 0f,width,if(count>0)low else 0f)
      }
+     timing.decodeNs+=System.nanoTime()-decodeStart
     }
    }
   }
   return result
  }
- override fun close(){session.close()}
+ override fun close(){try{session.close()}finally{scratch.clear();pixelsScratch=IntArray(0);cropBitmap?.recycle();cropBitmap=null}}
 }
