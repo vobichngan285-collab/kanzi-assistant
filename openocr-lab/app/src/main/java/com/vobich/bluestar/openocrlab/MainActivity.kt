@@ -30,14 +30,14 @@ class MainActivity:Activity(){
   val layout=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,48,24,32)}
   scroll.addView(layout);setContentView(scroll)
   fun label(s:String)=TextView(this).apply{text=s;textSize=16f;layout.addView(this)}
-  label("蓝星 OCR 识别竞技场 v0.1.0")
+  label("蓝星 OCR 识别竞技场 v0.2.0")
   label("固定 DB 1600 · 同一四边形 · 每模型两轮 · 原始识别结果")
   choose=Button(this).apply{text="选择相册原图";layout.addView(this);setOnClickListener{
    startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},9)
   }}
   preview=ImageView(this).apply{adjustViewBounds=true;maxHeight=650;layout.addView(this)}
   threads=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("CPU 4线程","CPU 6线程","CPU 2线程"));layout.addView(this)}
-  order=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("RepSVTR → SVTRv2","SVTRv2 → RepSVTR"));layout.addView(this)}
+  order=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("RepSVTR → OpenOCRv2 CTC","OpenOCRv2 CTC → RepSVTR"));layout.addView(this)}
   run=Button(this).apply{text="运行双模型对照";layout.addView(this);setOnClickListener{test()}}
   status=label("请选择原图")
   Button(this).apply{text="复制完整结果";layout.addView(this);setOnClickListener{
@@ -70,12 +70,12 @@ class MainActivity:Activity(){
  private fun test(){
   val bm=source?:return
   val nt=listOf(4,6,2)[threads.selectedItemPosition]
-  val models=listOf("RepSVTR" to "rep.onnx","SVTRv2" to "svtr.onnx").let{if(order.selectedItemPosition==0)it else it.reversed()}
+  val models=listOf("RepSVTR" to "rep.onnx","OpenOCRv2 CTC" to "openocrv2_ctc.onnx").let{if(order.selectedItemPosition==0)it else it.reversed()}
   busy(true);output.text="";status.text="固定检测框计算中"
   worker.execute{
    val started=now()
    try{
-    note("Rec Arena v0.1.0 source=${bm.width}x${bm.height} CPU=$nt DB=1600 order=${models.map{it.first}} pss_start_kib=${Debug.getPss()}")
+    note("Rec Arena v0.2.0 source=${bm.width}x${bm.height} CPU=$nt DB=1600 order=${models.map{it.first}} pss_start_kib=${Debug.getPss()}")
     val boxes=DbLocator(this,nt).use{db->
      val init=now()-started;val t=now()
      val result=OfficialGeometry.order(db.locate(bm,1600,true))
@@ -95,16 +95,12 @@ class MainActivity:Activity(){
       runOnUiThread{if(!isDestroyed)status.text="正在测试 $name"}
       try{
        val loadStart=now()
-       Reader(this,asset,nt).use{engine->
-        note("$name load_ms=${now()-loadStart} shape=${engine.inputShape} batch=${engine.officialBatchSize} pss_loaded_kib=${Debug.getPss()}")
+       fun runPasses(shape:String,batch:Int,recognize:(Reader.Timing,()->Unit)->List<Reader.Answer>){
+        note("$name load_ms=${now()-loadStart} shape=$shape batch=$batch pss_loaded_kib=${Debug.getPss()}")
         for(pass in 1..2){
          val timing=Reader.Timing()
-         val result=ArrayList<Reader.Answer>(boxes.size)
          val begin=now();var first=-1L
-         for(chunk in boxes.chunked(engine.officialBatchSize)){
-          result.addAll(engine.readOfficial(bgr,chunk,timing))
-          if(first<0)first=now()-begin
-         }
+         val result=recognize(timing){if(first<0)first=now()-begin}
          check(result.size==boxes.size)
          val elapsed=now()-begin
          note("$name pass=$pass rec_ms=$elapsed first_batch_ms=$first prep_ms=${timing.prepNs/1_000_000.0} tensor_ms=${timing.tensorNs/1_000_000.0} infer_ms=${timing.inferNs/1_000_000.0} decode_ms=${timing.decodeNs/1_000_000.0} blank=${result.count{it.text.isBlank()}} below_0.5=${result.count{it.confidence<.5f}} pss_kib=${Debug.getPss()}")
@@ -112,15 +108,32 @@ class MainActivity:Activity(){
          if(pass==2)answers[name]=result
         }
        }
+       if(asset=="rep.onnx"){
+        Reader(this,asset,nt).use{engine->
+         runPasses(engine.inputShape,engine.officialBatchSize){timing,onBatch->
+          val result=ArrayList<Reader.Answer>(boxes.size)
+          for(chunk in boxes.chunked(engine.officialBatchSize)){
+           result.addAll(engine.readOfficial(bgr,chunk,timing));onBatch()
+          }
+          result
+         }
+        }
+       }else{
+        V2Reader(this,nt).use{engine->
+         note("OpenOCRv2 CTC shape buckets, full-page preprocessing before first inference; batch cap=6")
+         runPasses(engine.inputShape,6){timing,onBatch->engine.read(bgr,boxes,timing,onBatch)}
+         note("OpenOCRv2 CTC input_shapes="+engine.lastShapes.joinToString(","))
+        }
+       }
       }catch(t:Exception){note("$name FAILED ${t.stackTraceToString()}")}
       note("$name session_closed pss_kib=${Debug.getPss()}")
      }
-     val a=answers["RepSVTR"];val b=answers["SVTRv2"]
+     val a=answers["RepSVTR"];val b=answers["OpenOCRv2 CTC"]
      if(a!=null&&b!=null){
       note("DIFF warm_pass; 不同输出不代表谁正确")
       var diff=0
       for(i in boxes.indices)if(a[i].text!=b[i].text){
-       diff++;note("id=${i+1} RepSVTR=${a[i].text} | SVTRv2=${b[i].text}")
+       diff++;note("id=${i+1} RepSVTR=${a[i].text} | OpenOCRv2 CTC=${b[i].text}")
       }
       note("different=$diff/${boxes.size}")
      }else note("对照不完整：至少一个模型未完成")
