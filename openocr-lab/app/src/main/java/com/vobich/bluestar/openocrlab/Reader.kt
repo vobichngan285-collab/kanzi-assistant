@@ -2,6 +2,9 @@ package com.vobich.bluestar.openocrlab
 import android.content.Context
 import android.graphics.*
 import ai.onnxruntime.*
+import org.opencv.core.*
+import org.opencv.core.Point
+import org.opencv.imgproc.Imgproc
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.*
@@ -50,6 +53,61 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
     return Answer(out.toString(),if(n>0)conf/n else 0f,width,if(n>0)minConf else 0f)
    }
   }
+ }
+ /** Official E2E crop: original-size cubic perspective transform, replicate border,
+  * tall rotation >=1.5, then official dynamic BGR normalization and right padding. */
+ private data class Prepared(val width:Int,val pixels:FloatArray)
+ private fun prepareOfficial(source:Mat,box:TextLocator.Box):Prepared?{
+  val p=box.points;val cw=OfficialGeometry.cropWidth(p);val ch=OfficialGeometry.cropHeight(p)
+  if(cw<1||ch<1)return null
+  val src=MatOfPoint2f(*Array(4){i->Point(p[2*i].toDouble(),p[2*i+1].toDouble())})
+  val dst=MatOfPoint2f(Point(0.0,0.0),Point(cw.toDouble(),0.0),Point(cw.toDouble(),ch.toDouble()),Point(0.0,ch.toDouble()))
+  val crop=Mat();val rotated=Mat();val resized=Mat()
+  val transform=Imgproc.getPerspectiveTransform(src,dst)
+  try{
+   Imgproc.warpPerspective(source,crop,transform,Size(cw.toDouble(),ch.toDouble()),Imgproc.INTER_CUBIC,Core.BORDER_REPLICATE)
+   val view=if(ch.toDouble()/cw>=1.5){Core.rotate(crop,rotated,Core.ROTATE_90_COUNTERCLOCKWISE);rotated}else crop
+   val width=OfficialGeometry.recWidth(view.cols(),view.rows())
+   val actual=min(width,ceil(48.0*view.cols()/view.rows()).toInt()).coerceAtLeast(1)
+   Imgproc.resize(view,resized,Size(actual.toDouble(),48.0),0.0,0.0,Imgproc.INTER_LINEAR)
+   val bytes=ByteArray(actual*48*3);resized.get(0,0,bytes)
+   val data=FloatArray(3*48*width)
+   for(c in 0..2)for(y in 0 until 48)for(x in 0 until actual)data[(c*48+y)*width+x]=((bytes[(y*actual+x)*3+c].toInt() and 255)/255f-.5f)/.5f
+   return Prepared(width,data)
+  }finally{src.release();dst.release();transform.release();crop.release();rotated.release();resized.release()}
+ }
+ val officialBatchSize:Int get(){val s=(session.inputInfo.values.first().info as TensorInfo).shape;return if(s[0]<=0)6 else 1}
+ val inputShape:String get()=(session.inputInfo.values.first().info as TensorInfo).shape.contentToString()
+ fun readOfficial(source:Mat,boxes:List<TextLocator.Box>):List<Answer>{
+  val result=MutableList(boxes.size){Answer("",0f,0,0f)}
+  val prepared=boxes.mapIndexedNotNull{i,b->prepareOfficial(source,b)?.let{i to it}}
+  for(chunk in prepared.chunked(officialBatchSize)){
+   val width=chunk.maxOf{it.second.width}
+   val n=chunk.size
+   val buf=ByteBuffer.allocateDirect(n*3*48*width*4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+   for((_,p) in chunk)for(c in 0..2)for(y in 0 until 48){
+    buf.put(p.pixels,(c*48+y)*p.width,p.width)
+    repeat(width-p.width){buf.put(0f)}
+   }
+   buf.rewind()
+   OnnxTensor.createTensor(env,buf,longArrayOf(n.toLong(),3,48,width.toLong())).use{input->
+    session.run(mapOf(session.inputNames.single() to input)).use{res->
+     val t=res[0] as OnnxTensor;val s=t.info.shape
+     require(s.size==3&&s[0]==n.toLong()&&s[2]==chars.size.toLong()){"Unexpected official CTC shape "+s.contentToString()}
+     val f=t.floatBuffer;f.rewind()
+     for((index,_) in chunk){
+      var last=-1;val out=StringBuilder();var conf=0f;var count=0;var low=1f
+      repeat(s[1].toInt()){
+       var best=0;var v=-Float.MAX_VALUE
+       repeat(chars.size){i->val a=f.get();if(a>v){best=i;v=a}}
+       if(best!=0&&best!=last){out.append(chars[best]);conf+=v;low=min(low,v);count++};last=best
+      }
+      result[index]=Answer(out.toString(),if(count>0)conf/count else 0f,width,if(count>0)low else 0f)
+     }
+    }
+   }
+  }
+  return result
  }
  override fun close(){session.close()}
 }

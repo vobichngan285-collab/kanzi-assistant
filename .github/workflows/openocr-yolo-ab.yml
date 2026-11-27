@@ -1,7 +1,7 @@
-name: BlueStar OpenOCR DB Detector Profiles
+name: BlueStar OpenOCR Official Port
 on:
   push:
-    branches: [exp/openocr-db-detector-v045-20261127]
+    branches: [exp/openocr-official-v046-20261127]
     paths: ['openocr-lab/**','.github/workflows/openocr-yolo-ab.yml']
   workflow_dispatch:
 permissions:
@@ -12,6 +12,19 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: lightbringer/clipper-java
+          ref: 5ef8c0a467023c495e44e582e9cbd8ca7308a590
+          path: clipper-upstream
+          persist-credentials: false
+      - name: Vendor pinned Clipper Java source
+        run: |
+          set -euo pipefail
+          test "$(git -C clipper-upstream rev-parse HEAD)" = 5ef8c0a467023c495e44e582e9cbd8ca7308a590
+          mkdir -p openocr-lab/app/src/main/java/de/lighti/clipper
+          cp clipper-upstream/Clipper/src/de/lighti/clipper/*.java openocr-lab/app/src/main/java/de/lighti/clipper/
+          cp clipper-upstream/license.txt Clipper-Java-LICENSE.txt
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -36,12 +49,11 @@ jobs:
           echo '110073c1420e1e4717f772322e310bd1a74eca1245e4bf2a16dfd58fb6f3a364  arena.apk' | sha256sum -c -
           echo '0d3c036f062b35849bf7d8d87798cd6cff7c70ee4780651814718bd3c6e062e5  arena-assets.sha256' | sha256sum -c -
           mkdir -p openocr-lab/app/src/main/assets
-          for m in rep.onnx yolo26n-text.onnx chars.txt; do unzip -p previous.apk "assets/$m" > "openocr-lab/app/src/main/assets/$m"; done
+          for m in rep.onnx chars.txt; do unzip -p previous.apk "assets/$m" > "openocr-lab/app/src/main/assets/$m"; done
           unzip -p arena.apk assets/repvit-db.onnx > openocr-lab/app/src/main/assets/repvit-db.onnx
           grep -E '  repvit-db.onnx$' arena-assets.sha256 > db-asset.sha256
           cd openocr-lab/app/src/main/assets
           echo "$(jq -r .rep.onnx_sha256 ../../../../../openocr-report.json)  rep.onnx" | sha256sum -c -
-          echo "$(jq -r .detector_sha256 ../../../../../openocr-report.json)  yolo26n-text.onnx" | sha256sum -c -
           echo "$(jq -r .dict_sha256 ../../../../../openocr-report.json)  chars.txt" | sha256sum -c -
           sha256sum -c ../../../../../db-asset.sha256
       - name: Android SDK
@@ -59,20 +71,20 @@ jobs:
           BT="$ANDROID_HOME/build-tools/36.0.0"
           "$BT/apksigner" verify --verbose "$APK"
           "$BT/aapt" dump badging "$APK" | tee badging.txt
-          grep -F "package: name='com.vobich.bluestar.openocrlab.fielddb' versionCode='14' versionName='0.4.5'" badging.txt
+          grep -F "package: name='com.vobich.bluestar.openocrlab.fielddb' versionCode='15' versionName='0.4.6'" badging.txt
           ! grep -F android.permission.INTERNET badging.txt
           unzip -Z1 "$APK" > archive.txt
           grep -Fx lib/arm64-v8a/libonnxruntime.so archive.txt
           grep -Fx lib/arm64-v8a/libopencv_java4.so archive.txt
           ! grep -E '^lib/(x86|x86_64|armeabi-v7a)/' archive.txt
           unzip -p "$APK" assets/rep.onnx | sha256sum | grep -F "$(jq -r .rep.onnx_sha256 openocr-report.json)"
-          unzip -p "$APK" assets/yolo26n-text.onnx | sha256sum | grep -F "$(jq -r .detector_sha256 openocr-report.json)"
+          ! grep -Fx assets/yolo26n-text.onnx archive.txt
           unzip -p "$APK" assets/chars.txt | sha256sum | grep -F "$(jq -r .dict_sha256 openocr-report.json)"
           unzip -p "$APK" assets/repvit-db.onnx | sha256sum | grep -F "$(cut -d ' ' -f1 db-asset.sha256)"
           ! grep -E '^assets/(svtr.onnx|yolo26[smlx]-text.onnx)$' archive.txt
           mkdir -p release
-          cp "$APK" release/BlueStar_OpenOCR_Field_DB_0.4.5.apk
-          cp openocr-lab/README.md openocr-report.json OpenOCR-LICENSE.txt YOLO-LICENSE.txt db-asset.sha256 release/
+          cp "$APK" release/BlueStar_OpenOCR_Field_DB_0.4.6.apk
+          cp openocr-lab/README.md openocr-report.json OpenOCR-LICENSE.txt Clipper-Java-LICENSE.txt db-asset.sha256 release/
           (cd release && sha256sum *.apk > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:
@@ -95,8 +107,8 @@ jobs:
         run: |
           set -euo pipefail
           (cd release && sha256sum -c SHA256SUMS.txt)
-          TAG=bluestar-openocr-field-db-v045-20261127
-          if ! gh release view "$TAG" >/dev/null 2>&1; then gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 OpenOCR 实地朗读 v0.4.5" --notes-file release/README.md --prerelease --draft; fi
+          TAG=bluestar-openocr-field-db-v046-20261127
+          if ! gh release view "$TAG" >/dev/null 2>&1; then gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 OpenOCR 实地朗读 v0.4.6" --notes-file release/README.md --prerelease --draft; fi
           gh release view "$TAG" --json targetCommitish | jq -e --arg sha "$GITHUB_SHA" '.targetCommitish == $sha'
           for i in 1 2 3; do gh release upload "$TAG" release/* --clobber && break; test "$i" != 3; sleep 5; done
           gh release edit "$TAG" --draft=false --prerelease
