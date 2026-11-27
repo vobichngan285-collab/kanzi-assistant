@@ -236,3 +236,5 @@
 
 ## 2026-11-27 用户授权启动独立像素+C110实验
 用户明确终止端云流水线讨论。按截图的实时预览 v0.1.0（864bd859fd902b45535fabbbb42603f8886cb544）派生独立分支 exp/openocr-pixel-c110-v011-20261127，提交 0deb1f5e2b706c6d91035173e8a39bc797ae997e，CI https://github.com/vobichngan285-collab/kanzi-assistant/actions/runs/46020346820 已触发，尚未确认成功。独立包 com.vobich.bluestar.openocrlab.pixel，预期 release bluestar-openocr-pixel-c110-v011-20261127/BlueStar_OpenOCR_Pixel_C110_0.1.1.apk。相册/C110照片七档2/4/8/10/12/16/20MP上限+原图档，原图解码安全上限24MP，等比缩小不放大，每次重跑DB（不复用概率图）；手机实时预览原1080p优先路径不动。固定v0.4.8核心、模型、默认DB1600 CPU4官方原框。C110采用已验证的事件监听/只读下载代码移植，系统Wi-Fi手动连接、前台监听、实体快门自动接收并本地朗读，不云传、不删除SD照片、不修改相机拍照分辨率。原图与缩放输入尺寸、相机事件/下载、缩放、DB/REC/TTS/PSS及识别文本诊断。原版与正式版不改。先验证CI及真机连接，再做同图各档对照，不把软件缩放等同于硬件拍摄分辨率。
+
+- 像素+C110 v0.1.1 CI 46020346820 已确认 completed/success，Release 非草稿、target 0deb1f5e2b706c6d91035173e8a39bc797ae997e，APK uploaded 57053180 bytes，SHA256 afbbca3c2fa30559aaeed46e652052237829c2bdc89eedc2f084d3406697441b。下载 https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-openocr-pixel-c110-v011-20261127/BlueStar_OpenOCR_Pixel_C110_0.1.1.apk 。待真机验证实体快门接收及各像素档位效果。
