@@ -1,11 +1,11 @@
-name: Blue Star v1.0.98 Event Listener
+name: Blue Star Hybrid OCR experiment
 on:
   push:
-    branches: [ 'exp/c110-event-listener-v0198-20261125' ]
+    branches: [ 'exp/hybrid-ocr-cloud-v010-20261127' ]
     paths:
       - 'cloud-vision-app/app/**'
       - 'cloud-vision-app/tests/**'
-      - 'cloud-vision-app/docs/C110_EVENT_LISTENER_V0198.md'
+      - 'cloud-vision-app/docs/HYBRID_OCR_EXPERIMENT.md'
       - '.github/workflows/c110-event-listener-v0198.yml'
   workflow_dispatch:
 permissions:
@@ -27,39 +27,30 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Verify event-only acquisition and removal of camera deletion
+      - uses: actions/checkout@v4
+        with:
+          repository: lightbringer/clipper-java
+          ref: 5ef8c0a467023c495e44e582e9cbd8ca7308a590
+          path: clipper-upstream
+          persist-credentials: false
+      - name: Verify frozen OCR source and reuse exact v0.4.8 assets
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import subprocess
-          base='10410e60ca1103ab8799a3ec12a555f45529e525'
-          root='cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe/'
-          read=lambda n:Path(root+n+'.java').read_text()
-          prev=lambda n:subprocess.check_output(['git','show',base+':'+root+n+'.java'],text=True)
-          for n in ['HomeActivity','C110BatteryPolicy','C110HomeStatus','C110QuickShotController','C110CameraActivity','MainActivity','HomeVoiceAssistant','C110WifiBootstrap','TargetVisionClient','C110DeferredPhoto','CaptureDingFeedback']:
-              assert read(n)==prev(n),n
-          w=read('C110PhysicalWatcher')
-          assert 'getSocketFactory().createSocket()' in w and '3333' in w and 'getInputStream()' in w
-          assert 'getOutputStream' not in w and 'C110PhysicalPolicy.INTERVAL' not in w
-          assert w.count('physicalSnapshot(')==2 and 'for(int attempt=0;attempt<3' in w
-          monitor=w[w.index('private void monitorLocalState'):w.index('private void open(')]
-          assert 'physicalSnapshot' not in monitor and 'physicalDownload' not in monitor
-          assert 's.policy.finish(cmd,status,now)' in w and 's.queued=new Shot' in w
-          assert 'deferred.takeIfReady(voiceBusy.getAsBoolean())' in w
-          assert 'prefs.edit().putBoolean(C110PhysicalPolicy.ENABLE,false)' in w
-          assert not Path(root+'C110DeletePolicy.java').exists()
-          for p in Path(root).glob('*.java'):
-              t=p.read_text()
-              for forbidden in ['enqueueAcquiredDelete','physicalDelete(', 'oneFileDeleteEndpoint','cmd=4003','c110_physical_delete','C110DeletePolicy','C110PhysicalPolicy.INTERVAL','C110PhysicalPolicy.DELETE']:
-                  assert forbidden not in t,(p,forbidden)
-          assert '监听间隔 ·' not in read('BlueStarSettingsScreen')
-          assert '自动删除相机原图' not in read('BlueStarSettingsScreen')
-          assert 'event_capture_ms' in read('C110FrameReader')
-          assert 'versionCode 107' in Path('cloud-vision-app/app/build.gradle').read_text()
-          print('PASS passive event gate, bounded fetch, no deletion, unchanged other features')
-          PY
+          test "$(git -C clipper-upstream rev-parse HEAD)" = 5ef8c0a467023c495e44e582e9cbd8ca7308a590
+          mkdir -p cloud-vision-app/app/src/main/java/de/lighti/clipper cloud-vision-app/app/src/main/assets
+          cp clipper-upstream/Clipper/src/de/lighti/clipper/*.java cloud-vision-app/app/src/main/java/de/lighti/clipper/
+          cp clipper-upstream/license.txt cloud-vision-app/app/src/main/assets/Clipper-Java-LICENSE.txt
+          BASE=https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-openocr-field-db-v048-20261127
+          curl -fL --retry 3 "$BASE/BlueStar_OpenOCR_Field_DB_0.4.8.apk" -o baseline.apk
+          echo '84103dbd7020b53fd2dcb99a6b4b7a0e96ed45b7ab238e80b74f2b3edd7cf1fa  baseline.apk' | sha256sum -c -
+          for m in rep.onnx chars.txt repvit-db.onnx; do unzip -p baseline.apk "assets/$m" > "cloud-vision-app/app/src/main/assets/$m"; done
+          curl -fL --retry 3 "$BASE/OpenOCR-LICENSE.txt" -o cloud-vision-app/app/src/main/assets/OpenOCR-LICENSE.txt
+          for f in DbLocator.kt DbResolution.kt Reader.kt TextLocator.kt OfficialGeometry.kt FocusPlanner.kt RowPlanner.kt ColumnPlanner.kt SpeechChunks.kt; do git show 4b52f658a9ec28f564b4ed77f14a97a60b477a63:openocr-lab/app/src/main/java/com/vobich/bluestar/openocrlab/"$f" | cmp - "cloud-vision-app/app/src/main/java/com/vobich/bluestar/openocrlab/$f"; done
+          BASEDIR=cloud-vision-app/app/src/main/java/com/vobich/bluestar/cloudprobe
+          mkdir -p /tmp/hybrid-order
+          javac -d /tmp/hybrid-order "$BASEDIR/HybridOrder.java" cloud-vision-app/tests/HybridOrderTest.java
+          java -cp /tmp/hybrid-order com.vobich.bluestar.cloudprobe.HybridOrderTest
       - name: Test voice gate and latest physical JPEG handoff without losing baseline
         shell: bash
         run: |
@@ -166,22 +157,25 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Guide_Event_Listener_1.0.98.apk
-          APK=out/BlueStar_Guide_Event_Listener_1.0.98.apk
+          cp cloud-vision-app/app/build/outputs/apk/debug/app-debug.apk out/BlueStar_Hybrid_OCR_0.1.0.apk
+          APK=out/BlueStar_Hybrid_OCR_0.1.0.apk
           test -s "$APK"
           unzip -tq "$APK" >/dev/null
           unzip -Z1 "$APK" >out/entries.txt
           grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
           grep -Fxq 'lib/arm64-v8a/libvlc.so' out/entries.txt
           grep -Fxq 'lib/arm64-v8a/libvlcjni.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libonnxruntime.so' out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libopencv_java4.so' out/entries.txt
+          for m in rep.onnx chars.txt repvit-db.onnx; do unzip -p "$APK" "assets/$m" | cmp - "cloud-vision-app/app/src/main/assets/$m"; done
           grep -Fxq 'res/raw/c_metal_clack_ding.mp3' out/entries.txt
           grep -Fxq 'res/raw/voice_send_whoosh.wav' out/entries.txt
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
           "$APKSIGNER" verify --verbose "$APK"
           "$AAPT" dump badging "$APK" >out/badging.txt
-          grep -Fq "package: name='com.vobich.bluestar.c110plusquick159'" out/badging.txt
-          grep -Fq "versionName='1.0.98-event-listener'" out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.hybridocr'" out/badging.txt
+          grep -Fq "versionName='0.1.0-hybrid-ocr'" out/badging.txt
           grep -Fq "launchable-activity: name='com.vobich.bluestar.cloudprobe.HomeActivity'" out/badging.txt
           test "$(grep -c '^launchable-activity:' out/badging.txt)" -eq 1
           "$AAPT" dump xmltree "$APK" AndroidManifest.xml >out/manifest-tree.txt
@@ -189,13 +183,13 @@ jobs:
           grep -Fq 'C110ListenService' out/manifest-tree.txt
           grep -Fq 'android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE' out/manifest-tree.txt
           ! grep -Fxq 'lib/arm64-v8a/libc110rawframe.so' out/entries.txt
-          (cd out && sha256sum BlueStar_Guide_Event_Listener_1.0.98.apk >SHA256SUMS.txt)
+          (cd out && sha256sum BlueStar_Hybrid_OCR_0.1.0.apk >SHA256SUMS.txt)
           cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
           BYTES=$(stat -c%s "$APK")
-          echo "v1.0.98 APK bytes: $BYTES" >> "$GITHUB_STEP_SUMMARY"
+          echo "Hybrid OCR APK bytes: $BYTES" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: BlueStar_Guide_Event_Listener_1.0.98
+          name: BlueStar_Hybrid_OCR_0.1.0
           path: out/*
           retention-days: 14
       - name: Publish ONLY if every test and package verification passed
@@ -204,12 +198,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG=bluestar-c110-event-listener-20261125-v0198
+          TAG=bluestar-hybrid-ocr-v010-20261127
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Refusing to overwrite existing release" >&2
             exit 1
           fi
-          gh release create "$TAG" out/BlueStar_Guide_Event_Listener_1.0.98.apk \
+          gh release create "$TAG" out/BlueStar_Hybrid_OCR_0.1.0.apk \
             --target "$GITHUB_SHA" --prerelease \
-            --title "Blue Star v1.0.98 Event Listener" \
-            --notes "v1.0.98: passive C110 3020 19/20 events, no idle SD polling, no automatic deletion, bounded read-only acquisition. Real device validation required."
+            --title "Blue Star Hybrid OCR v0.1.0" \
+            --notes "Independent v0.4.8 OCR + text-only cloud ID ordering experiment. Original vision paths preserved; real device validation required."

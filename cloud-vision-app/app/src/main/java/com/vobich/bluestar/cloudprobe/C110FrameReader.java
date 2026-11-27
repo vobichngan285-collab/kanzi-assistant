@@ -604,6 +604,32 @@ final class C110FrameReader {
             if(selected==null)selected=TaskCatalog.defaults()[0];
             final TaskCatalog.Task task=selected;
             boolean ocr=TaskCatalog.OCR.equals(task.engine);
+            if(ocr&&"ocr".equals(task.id)&&HybridExperiment.enabled(activity)){
+                RecentPhotoSession.captured(jpeg,cellular,"端云OCR实验");
+                HybridExperiment.Result h=HybridExperiment.run(activity,jpeg,cellular,cancel);
+                main.post(()->{
+                    if(closed||id!=request.get())return;
+                    if(photoDiag!=null){
+                        photoDiag.event("hybrid","ocr_ms",h.getOcrMs(),"ok");
+                        photoDiag.event("hybrid","boxes",h.getBoxes(),"ok");
+                        photoDiag.event("hybrid","request_bytes",h.getRequestBytes(),"ok");
+                        photoDiag.event("hybrid","network_ms",h.getNetworkMs(),"ok");
+                        photoDiag.event("hybrid","first_text_ms",h.getFirstTextMs(),"ok");
+                        photoDiag.event("hybrid","prompt_tokens",h.getPromptTokens(),"ok");
+                        photoDiag.event("hybrid","completion_tokens",h.getCompletionTokens(),"ok");
+                        photoDiag.event("hybrid","valid_order",h.getValid()?1:0,"ok");
+                        photoDiag.event("capture","total_ms",SystemClock.elapsedRealtime()-started,"ok");
+                    }
+                    busy=false;lastText=h.getText();
+                    RecentPhotoSession.analyzed(jpeg,lastText);
+                    HybridExperiment.record(h);
+                    report(h.getLabel()+" · "+(SystemClock.elapsedRealtime()-started)+"ms");
+                    // Preserve numeric text; do not apply optional speech filters to this experiment.
+                    speak(lastText.isEmpty()?"当前画面未识别到文字":lastText);
+                    if(!lastText.isEmpty())notifyPhysicalSuccess(id);
+                });
+                return;
+            }
             String model=ocr?
                 OcrModelCatalog.normalize(prefs.getString("cloud_ocr_model_v1",OcrModelCatalog.DEFAULT)):
                 VisionModelCatalog.normalize(prefs.getString("cloud_vision_model",VisionModelCatalog.DEFAULT));

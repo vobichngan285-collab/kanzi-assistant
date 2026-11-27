@@ -48,6 +48,8 @@ final class CloudVisionClient {
         final long networkMs, uploadMs, firstTextMs, firstSpeakableMs;
         final long firstLineReadyMs, responseHeadersMs;
         final int promptTokens, completionTokens;
+        int requestBytes=-1;
+        Result withRequestBytes(int bytes){requestBytes=bytes;return this;}
         Result(String text,String model,String serverModel,long networkMs,long uploadMs,
                long firstTextMs,long firstSpeakableMs,long firstLineReadyMs,
                long responseHeadersMs,int promptTokens,int completionTokens){
@@ -144,6 +146,12 @@ final class CloudVisionClient {
             OcrSpeedExperiment.A,network,cfg);
     }
 
+    static Result organizeOcr(String prompt,CloudProviderStore.Config cfg,Network network,Cancellation cancel) throws Exception {
+        if(prompt==null||prompt.trim().isEmpty())throw new IllegalArgumentException("没有OCR文字");
+        TaskCatalog.Task task=new TaskCatalog.Task("hybrid-order","端云编号整理",prompt,TaskCatalog.VISION,true,"▤");
+        return recognizeInternal(null,cfg.key,task,cfg.model,null,true,false,OcrSpeedExperiment.A,network,cfg,cancel);
+    }
+
     private static Result recognizeInternal(byte[] jpeg,String key,TaskCatalog.Task task,
                                String visionModel,PartListener listener,
                                boolean textOnly,boolean allowSearch,String ocrSpeedMode,
@@ -178,6 +186,7 @@ final class CloudVisionClient {
         }
         boolean isBook=isOcr&&ReadingRules.TASK_ID.equals(task.id);
         boolean connectionTest="model-probe".equals(task.id);
+        boolean hybrid=textOnly&&"hybrid-order".equals(task.id);
         // Default Bailian behavior is intentionally byte-for-byte unchanged.
         // Other vendors start non-streaming unless the user explicitly enables SSE.
         boolean custom=cfg!=null&&cfg.custom;
@@ -238,7 +247,7 @@ final class CloudVisionClient {
         }
         // Fast Max follows the same concise token ceilings as Flash.
         boolean fastMax=VisionModelCatalog.isEmergencyMax(model);
-        int maxOutput=isOcr?(isBook?3800:1200):(connectionTest?64:
+        int maxOutput=hybrid?3800:isOcr?(isBook?3800:1200):(connectionTest?64:
             (textOnly?550:("menu".equals(task.id)?550:((task.custom||customPreset)?650:350))));
         JSONObject body=new JSONObject().put("model",model).put("stream",streaming)
             .put("max_tokens",maxOutput).put("messages",new JSONArray().put(
@@ -246,10 +255,10 @@ final class CloudVisionClient {
         // Only allow-listed official vendor APIs receive reasoning parameters.
         // Each model has its own persisted switch; default remains OFF.
         if(cfg!=null&&CloudThinkingPolicy.QWEN.equals(cfg.thinkingStyle))
-            body.put("enable_thinking",cfg.thinking);
+            body.put("enable_thinking",!hybrid&&cfg.thinking);
         else if(cfg!=null&&CloudThinkingPolicy.ZHIPU.equals(cfg.thinkingStyle))
             body.put("thinking",new JSONObject().put("type",
-                cfg.thinking?"enabled":"disabled"));
+                !hybrid&&cfg.thinking?"enabled":"disabled"));
         else if(!custom&&(VisionModelCatalog.isBudgetFlash(model)||fastMax))
             body.put("enable_thinking",false);
         // For unknown/unsupported vendors: NO guessed thinking parameters.
@@ -282,7 +291,7 @@ final class CloudVisionClient {
             byte[] request=body.toString().getBytes(StandardCharsets.UTF_8);
             // Images are large: avoid HttpURLConnection's extra full-body buffer.
             // Text-only followups retain their existing transport behavior.
-            if(!textOnly)connection.setFixedLengthStreamingMode(request.length);
+            if(!textOnly||hybrid)connection.setFixedLengthStreamingMode(request.length);
             try(OutputStream out=connection.getOutputStream()){out.write(request);}
             if(cancel!=null)cancel.check();
             // Includes connection establishment and request-body upload, not model execution.
@@ -328,7 +337,7 @@ final class CloudVisionClient {
                     SystemClock.elapsedRealtime()-started,
                     uploadMs,-1,-1,-1,headersMs,
                     usage==null?-1:usage.optInt("prompt_tokens",-1),
-                    usage==null?-1:usage.optInt("completion_tokens",-1));
+                    usage==null?-1:usage.optInt("completion_tokens",-1)).withRequestBytes(request.length);
             }
 
             StringBuilder all=new StringBuilder();
@@ -405,7 +414,7 @@ final class CloudVisionClient {
             keepAliveEligible=trialZhipuOcr;
             return new Result(answer,model,serverModel,SystemClock.elapsedRealtime()-started,
                 uploadMs,firstText,firstSpeakable[0],firstLineReady[0],headersMs,
-                promptTokens,completionTokens);
+                promptTokens,completionTokens).withRequestBytes(request.length);
         }finally{
             if(cancel!=null)cancel.detach(connection);
             if(!keepAliveEligible||(cancel!=null&&cancel.isCancelled()))connection.disconnect();

@@ -124,7 +124,7 @@ public final class HomeActivity extends Activity {
         LinearLayout second=tileRow(content);
         tile(second,3,"阅读模式",this::openReading);
         tile(second,5,"设置",this::openSettings);
-        second.addView(new View(this),new LinearLayout.LayoutParams(0,1,1f));
+        tile(second,2,"端云OCR实验",()->{prepareOtherScreenSpeech();startActivity(new Intent(this,HybridActivity.class));});
         if(cameraStatus!=null)showCameraStatus(cameraStatus.state());
         LinearLayout dock=new LinearLayout(this);
         dock.setGravity(Gravity.CENTER);
