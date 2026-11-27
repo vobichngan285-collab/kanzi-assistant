@@ -28,7 +28,7 @@ class DbLocator(context:Context,threads:Int):AutoCloseable {
   try{opts.setIntraOpNumThreads(threads);session=env.createSession(file.absolutePath,opts)}finally{opts.close()}
  }
  fun locate(bm:Bitmap,longSide:Int=960,official:Boolean=true):List<TextLocator.Box>{
-  require(longSide in listOf(960,1280,1600))
+  DbResolution.validate(longSide)
   lastDiagnostic=""
   val old=cached
   val hit=old!=null&&old.source.get()===bm&&old.generation==bm.generationId&&old.longSide==longSide&&old.official==official
