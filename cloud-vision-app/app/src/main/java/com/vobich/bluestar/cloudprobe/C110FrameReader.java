@@ -617,14 +617,14 @@ final class C110FrameReader {
                         photoDiag.event("hybrid","first_text_ms",h.getFirstTextMs(),"ok");
                         photoDiag.event("hybrid","prompt_tokens",h.getPromptTokens(),"ok");
                         photoDiag.event("hybrid","completion_tokens",h.getCompletionTokens(),"ok");
-                        photoDiag.event("hybrid","valid_order",h.getValid()?1:0,"ok");
+                        photoDiag.event("hybrid","cloud_ok",h.getCloudOk()?1:0,"ok");
                         photoDiag.event("capture","total_ms",SystemClock.elapsedRealtime()-started,"ok");
                     }
                     busy=false;lastText=h.getText();
                     RecentPhotoSession.analyzed(jpeg,lastText);
                     HybridExperiment.record(h);
                     report(h.getLabel()+" · "+(SystemClock.elapsedRealtime()-started)+"ms");
-                    // Preserve numeric text; do not apply optional speech filters to this experiment.
+                    // Direct cloud text; do not apply optional speech filters to this experiment.
                     speak(lastText.isEmpty()?"当前画面未识别到文字":lastText);
                     if(!lastText.isEmpty())notifyPhysicalSuccess(id);
                 });

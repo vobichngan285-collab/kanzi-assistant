@@ -35,8 +35,8 @@ class HybridActivity:Activity(){
         scroll.addView(root);setContentView(scroll)
         fun label(s:String)=TextView(this).apply{text=s;textSize=18f;root.addView(this)}
         fun button(s:String,action:()->Unit)=Button(this).apply{text=s;root.addView(this);setOnClickListener{action()}}
-        label("端云OCR独立实验 v0.1.0")
-        label("仅文字框坐标和识别原文发送云端。启用后快捷拍照的朗读文字任务走实验通道；寻找物品和其他任务不变。")
+        label("端云OCR独立实验 v0.1.1")
+        label("仅文字框坐标和识别原文发送云端，直接返回整理后的文字。启用后快捷拍照的朗读文字任务走实验通道；寻找物品和其他任务不变。")
         switch=Switch(this).apply{text="启用端云OCR拍照通道";isChecked=HybridExperiment.enabled(this@HybridActivity);root.addView(this)}
         profiles=CloudProviderStore.list(this).filter{it.protocol==CloudProviderStore.CHAT}
         provider=Spinner(this).apply{
@@ -45,7 +45,7 @@ class HybridActivity:Activity(){
         }
         model=Spinner(this).apply{
             adapter=ArrayAdapter(this@HybridActivity,android.R.layout.simple_spinner_dropdown_item,VisionModelCatalog.IDS.toList())
-            setSelection(VisionModelCatalog.indexOf(HybridExperiment.model(this@HybridActivity)).let{if(it<0)2 else it});root.addView(this)
+            setSelection(VisionModelCatalog.indexOf(HybridExperiment.model(this@HybridActivity)).let{if(it<0)0 else it});root.addView(this)
         }
         label("百炼模型选择仅适用于原有百炼API；自定义服务使用自己的模型。API Key在原蓝星设置中配置。")
         button("保存实验设置"){save();Toast.makeText(this,"已保存",Toast.LENGTH_SHORT).show()}

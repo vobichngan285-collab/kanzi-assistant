@@ -148,7 +148,7 @@ public final class CloudVisionClient {
 
     static Result organizeOcr(String prompt,CloudProviderStore.Config cfg,Network network,Cancellation cancel) throws Exception {
         if(prompt==null||prompt.trim().isEmpty())throw new IllegalArgumentException("没有OCR文字");
-        TaskCatalog.Task task=new TaskCatalog.Task("hybrid-order","端云编号整理",prompt,TaskCatalog.VISION,true,"▤");
+        TaskCatalog.Task task=new TaskCatalog.Task("hybrid-order","端云文字整理",prompt,TaskCatalog.VISION,true,"▤");
         return recognizeInternal(null,cfg.key,task,cfg.model,null,true,false,OcrSpeedExperiment.A,network,cfg,cancel);
     }
 
