@@ -24,5 +24,5 @@ TOOL="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
 cp "$TOOL/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$DST/"
 "$TOOL/bin/llvm-readelf" -d "$DST/libocr_mnn_jni.so"
 "$TOOL/bin/llvm-nm" -D "$DST/libMNN.so" | grep -E 'ocr_trace_reset|ocr_trace_get|ocr_device_get'
-cp mnn-src/LICENSE MNN-LICENSE.txt
+cp mnn-src/LICENSE.txt MNN-LICENSE.txt
 git -C mnn-src diff > MNN-diagnostics.patch
