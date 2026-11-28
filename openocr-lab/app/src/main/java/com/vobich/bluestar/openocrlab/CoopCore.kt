@@ -66,12 +66,29 @@ internal enum class CoopMode(val fixedWidth:Boolean,val fixedBatch:Boolean,val m
  GPU_FIXED(true,true,false,false),
  CPU_FIXED(true,true,false,true),
  GPU_EXACT(false,false,false,false),
- GPU_TAIL_FIXED(false,true,false,false);
+ GPU_TAIL_FIXED(false,true,false,false),
+ MIXED_EXACT(false,false,true,false),
+ GPU_TAIL_FIRST(false,true,false,false);
  fun targetShape(original:LongArray,pageWidth:Int,batch:Int):LongArray{
   require(original.size==4&&original[0] in 1L..6L&&original[1]==3L&&original[2]==48L)
   val n=if(fixedBatch)batch.toLong()else original[0]
   val w=if(fixedWidth)pageWidth.toLong()else original[3]
   require(n in original[0]..6L&&w in original[3]..4096L)
   return longArrayOf(n,3,48,w)
+ }
+}
+
+/** Keep original group membership/order within each batch. Reserve an incomplete
+ * last batch for ORT in the cooperative candidate; do not pad it for GPU.
+ * Tail-first is a strict diagnostic: send the formerly failing shape first. */
+internal object ExactBatchOrder{
+ fun order(mode:CoopMode,count:Int,partialTail:Boolean):List<Int>{
+  require(count>0)
+  val ids=(0 until count).toList()
+  return when{
+   mode==CoopMode.GPU_TAIL_FIRST->listOf(ids.last())+ids.dropLast(1)
+   mode==CoopMode.MIXED_EXACT&&partialTail&&count>1->listOf(0,count-1)+(1 until count-1).toList()
+   else->ids
+  }
  }
 }
