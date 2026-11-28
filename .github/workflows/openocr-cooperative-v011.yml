@@ -82,7 +82,24 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y fonts-noto-cjk ninja-build
       - name: Verify compact projection and host MNN numerical behavior
-        run: python -u openocr-lab/gpu/compact_gate.py
+        run: |
+          set -euo pipefail
+          BASE=https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-openocr-cooperative-v010-20261128
+          curl -fL --retry 3 "$BASE/BlueStar_OpenOCR_Cooperative_0.1.0.apk" -o cooperative-v010.apk
+          echo '989839856a3ee6f8adae973540407cc2cc85c94d412486c786e053e6da79672f  cooperative-v010.apk' | sha256sum -c -
+          unzip -p cooperative-v010.apk assets/rep-compact.mnn > openocr-lab/app/src/main/assets/rep-compact.mnn
+          echo '576805263c70e6832af51ba6c63bb6813ba381103a2baafdceadb219bded4300  openocr-lab/app/src/main/assets/rep-compact.mnn' | sha256sum -c -
+          python - <<'PY'
+          from pathlib import Path
+          s=Path("openocr-lab/gpu/compact_gate.py").read_text()
+          lines=s.splitlines()
+          matches=[i for i,line in enumerate(lines) if line.startswith('subprocess.run(["mnnconvert",')]
+          assert len(matches)==1
+          lines[matches[0]]='assert sha(target) == "576805263c70e6832af51ba6c63bb6813ba381103a2baafdceadb219bded4300"'
+          Path("compact_gate_pinned.py").write_text("\n".join(lines)+"\n")
+          PY
+          python -u compact_gate_pinned.py
+          echo '576805263c70e6832af51ba6c63bb6813ba381103a2baafdceadb219bded4300  openocr-lab/app/src/main/assets/rep-compact.mnn' | sha256sum -c -
       - uses: actions/checkout@v4
         with:
           repository: alibaba/MNN
