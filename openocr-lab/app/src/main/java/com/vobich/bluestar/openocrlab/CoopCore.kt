@@ -58,3 +58,20 @@ internal object FixedGpuInput {
   return if(real==shape[0])values else values.copyOf(real*shape[1]*2)
  }
 }
+
+/** The first two modes preserve v0.1.2 behavior. Diagnostic modes do not
+ * silently substitute another engine or change the original crop. */
+internal enum class CoopMode(val fixedWidth:Boolean,val fixedBatch:Boolean,val mixed:Boolean,val cpuOnly:Boolean){
+ MIXED_FIXED(true,true,true,false),
+ GPU_FIXED(true,true,false,false),
+ CPU_FIXED(true,true,false,true),
+ GPU_EXACT(false,false,false,false),
+ GPU_TAIL_FIXED(false,true,false,false);
+ fun targetShape(original:LongArray,pageWidth:Int,batch:Int):LongArray{
+  require(original.size==4&&original[0] in 1L..6L&&original[1]==3L&&original[2]==48L)
+  val n=if(fixedBatch)batch.toLong()else original[0]
+  val w=if(fixedWidth)pageWidth.toLong()else original[3]
+  require(n in original[0]..6L&&w in original[3]..4096L)
+  return longArrayOf(n,3,48,w)
+ }
+}
