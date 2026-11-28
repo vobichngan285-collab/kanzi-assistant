@@ -163,7 +163,7 @@ class LiveService:Service(){
  private fun log(s:String)=LiveLog.append(this,s)
  private fun status(s:String){LiveLog.status=s}
  private fun notification():Notification{
-  val nm=getSystemService(NotificationManager::class.java)
+  val nm=(getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
   nm.createNotificationChannel(NotificationChannel("live_ocr","蓝星实时离线识别",NotificationManager.IMPORTANCE_LOW))
   val stop=PendingIntent.getService(this,3,Intent(this,LiveService::class.java).setAction("stop"),PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
   val open=PendingIntent.getActivity(this,4,Intent(this,LiveActivity::class.java),PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
@@ -181,9 +181,9 @@ class LiveService:Service(){
   if(ds.size!=1||!usb.hasPermission(ds.single())){status("USB未授权");stopSelf();return START_NOT_STICKY}
   try{
    startForeground(41,notification())
-   selected=ds.single();official=i.getBooleanExtra("official",true)
+   selected=ds.single();official=i!!.getBooleanExtra("official",true)
    active=true;LiveLog.running=true;LiveLog.raw="";launchedAt=clock()
-   val pm=getSystemService(PowerManager::class.java)
+   val pm=(getSystemService(POWER_SERVICE) as PowerManager)
    wake=pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,packageName+":live").apply{setReferenceCounted(false);acquire()}
    previousInteractive=pm.isInteractive
    log("START mode="+(if(official)"official" else "focus")+" db=1600 cpu=4 source=2560x1440 MJPEG no_surface=1 no_network=1")
@@ -270,6 +270,7 @@ class LiveService:Service(){
   try{
    val init=clock()
    val d=DbLocator(this,4);detector=d
+   if(!active)return
    val r=Reader(this,"rep.onnx",4);reader=r
    log("MODELS_READY init_ms="+(clock()-init)+" batch="+r.officialBatchSize)
    while(active){
@@ -360,7 +361,7 @@ class LiveService:Service(){
  private val tick=object:Runnable{
   override fun run(){
    if(!active)return
-   val now=clock();val interactive=getSystemService(PowerManager::class.java).isInteractive
+   val now=clock();val interactive=(getSystemService(POWER_SERVICE) as PowerManager).isInteractive
    synchronized(gate){
     if(interactive!=previousInteractive){previousInteractive=interactive;log("SCREEN interactive="+interactive+" frames="+frameCount)}
     if(now-lastStats>=5000){lastStats=now;log("HEARTBEAT interactive="+interactive+" frames="+frameCount+" mismatch="+badFrames+" accepted="+accepted+" cancel_requested="+cancelled+" pending_replaced="+replaced+" completed="+completed+" last_frame_age_ms="+(if(lastFrame==0L)-1 else now-lastFrame)+" max_gap_ms="+maxGap)}
@@ -378,6 +379,8 @@ class LiveService:Service(){
   cameraWorker.execute{
    runCatching{camera?.destroy()};camera=null
    runCatching{monitor?.destroy()};monitor=null
+   ocrWorker.shutdown()
+   runCatching{ocrWorker.awaitTermination(30,java.util.concurrent.TimeUnit.SECONDS)}
    main.post{
     voiceReady=false;runCatching{tts?.shutdown()};tts=null
     wake?.let{if(it.isHeld)it.release()};wake=null
@@ -385,7 +388,7 @@ class LiveService:Service(){
     stopForeground(STOP_FOREGROUND_REMOVE);stopSelf()
    }
   }
-  cameraWorker.shutdown();ocrWorker.shutdown()
+  cameraWorker.shutdown()
  }
  override fun onDestroy(){if(!closing)halt("SERVICE_DESTROY");super.onDestroy()}
 }
