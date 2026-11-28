@@ -27,11 +27,11 @@ android {
     namespace 'com.vobich.bluestar.uvclab'
     compileSdk 36
     defaultConfig {
-        applicationId 'com.vobich.bluestar.uvccapability'
+        applicationId 'com.vobich.bluestar.uvcnative'
         minSdk 26
         targetSdk 35
-        versionCode 2
-        versionName '0.1.1'
+        versionCode 3
+        versionName '0.1.2'
         ndk { abiFilters 'arm64-v8a' }
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
@@ -49,7 +49,7 @@ write(app/"src/main/AndroidManifest.xml",'''<manifest xmlns:android="http://sche
 <uses-feature android:name="android.hardware.usb.host" android:required="true"/>
 <uses-feature android:name="android.hardware.camera" android:required="false"/>
 <uses-permission android:name="android.permission.CAMERA"/>
-<application android:allowBackup="false" android:label="蓝星 UVC 深度探测" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+<application android:allowBackup="false" android:label="蓝星 UVC 原生探测" android:theme="@android:style/Theme.Material.Light.NoActionBar">
 <activity android:name=".UvcActivity" android:exported="true" android:screenOrientation="portrait">
 <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
 </activity></application></manifest>''')
@@ -116,14 +116,14 @@ public class UvcActivity extends Activity {
         logFile=new File(getFilesDir(),"uvc-diagnostic.txt");
         try{if(logFile.exists()){byte[] b=java.nio.file.Files.readAllBytes(logFile.toPath());log.append(new String(b,java.nio.charset.StandardCharsets.UTF_8));}}catch(Exception ignored){}
         LinearLayout root=new LinearLayout(this);root.setOrientation(1);root.setPadding(12,12,12,12);
-        status=new TextView(this);status.setTextSize(19);status.setText("蓝星 UVC v0.1.1 — 连接C110后点击深度探测");
+        status=new TextView(this);status.setTextSize(19);status.setText("蓝星 UVC v0.1.2 — 连接C110后点击原生探测");
         root.addView(status);
         preview=new TextureView(this);root.addView(preview,new LinearLayout.LayoutParams(-1,0,1));
         LinearLayout buttons=new LinearLayout(this);
         start=new Button(this);start.setText("测试最高像素");buttons.addView(start,new LinearLayout.LayoutParams(0,-2,1));
         stop=new Button(this);stop.setText("停止");buttons.addView(stop,new LinearLayout.LayoutParams(0,-2,1));root.addView(buttons);
-        Button deep=new Button(this);deep.setText("只读深度探测（无需预览）");root.addView(deep);
-        deep.setOnClickListener(v->{if(!active){deepOnly=true;begin();}});
+        Button deep=new Button(this);deep.setText("原生只读探测（无需预览）");root.addView(deep);
+        deep.setOnClickListener(v->{if(active){show("请先停止当前测试，再点击原生探测");say("BUSY_DEEP_REQUEST");}else{deepOnly=true;begin();}});
         LinearLayout actions=new LinearLayout(this);
         Button copy=new Button(this);copy.setText("复制完整日志");actions.addView(copy,new LinearLayout.LayoutParams(0,-2,1));
         Button clear=new Button(this);clear.setText("清空日志");actions.addView(clear,new LinearLayout.LayoutParams(0,-2,1));root.addView(actions);
@@ -149,7 +149,7 @@ public class UvcActivity extends Activity {
             public void onCancel(UsbDevice d){if(active)cancel("USB_PERMISSION_DENIED");}
         });
         monitor.register();
-        say("APP v0.1.1 model="+android.os.Build.MODEL+" sdk="+android.os.Build.VERSION.SDK_INT+" unthrottled_native_callback=1");
+        say("APP v0.1.2 model="+android.os.Build.MODEL+" sdk="+android.os.Build.VERSION.SDK_INT+" unthrottled_native_callback=1");
     }
     private boolean valid(int t){return active&&!destroyed&&epoch.get()==t;}
     private void show(String s){runOnUiThread(()->{if(!destroyed)status.setText(s);});}
@@ -218,9 +218,23 @@ public class UvcActivity extends Activity {
         boolean keep=false;
         try{
             if(deepOnly){
-                show("正在读取USB底层能力");
-                UvcProbe.run(b, selected, this::say, ()->valid(token));
-                if(valid(token))show("深度探测完成，请复制完整日志");
+                show("正在原生只读探测");
+                if(selected.getVendorId()!=0x0603||selected.getProductId()!=0x8612){
+                    say("NATIVE_SKIP unexpected_device");show("此实验仅支持C110");return;
+                }
+                byte[] raw=b.getRawDescriptors();
+                UvcProbe.Parsed p=new UvcProbe.Parsed();
+                say("NATIVE_DESCRIPTOR bytes="+raw.length+" hex="+UvcProbe.hex(raw,0,raw.length));
+                UvcProbe.parse(raw,p,this::say,true);
+                if(p.uvcVersion!=0x0100||p.xus!=1||p.vsHeaders!=1||!p.interfaces.contains(0)||!p.interfaces.contains(1)||!p.queries.containsKey("0:5:16")||!p.queries.containsKey("1:0:1")){
+                    say("NATIVE_SKIP unexpected_descriptor");show("设备描述符与已验证C110不符");return;
+                }
+                say("NATIVE_BEGIN GET_ONLY no_SET_CUR no_stream no_vendor_type");
+                camera=new UVCCamera();camera.openReadOnly(b);
+                say("NATIVE_OPEN_OK");
+                for(String line:camera.readOnlyC110Report().split("\\n"))if(!line.isEmpty())say(line);
+                say("NATIVE_END");
+                if(valid(token))show("原生探测完成，请复制完整日志");
                 return;
             }
             List<Mode> modes=descriptors(b.getRawDescriptors());
@@ -419,3 +433,108 @@ final class UvcProbe {
     }
 }
 ''')
+
+# Isolated JNI read-only route. Existing preview open() still behaves identically.
+java=uvc/"src/main/java/com/jiangdg/uvc/UVCCamera.java"
+patch(java,"public synchronized void open(final UsbControlBlock ctrlBlock) {",'''public synchronized void open(final UsbControlBlock ctrlBlock) {
+        openInternal(ctrlBlock, false);
+    }
+
+    public synchronized void openReadOnly(final UsbControlBlock ctrlBlock) {
+        openInternal(ctrlBlock, true);
+    }
+
+    public synchronized String readOnlyC110Report() {
+        if (mNativePtr == 0) return "NATIVE_NO_HANDLE";
+        return nativeReadOnlyC110Report(mNativePtr);
+    }
+    private native String nativeReadOnlyC110Report(long ptr);
+
+    private void openInternal(final UsbControlBlock ctrlBlock, boolean readOnly) {''')
+patch(java,"\t\tmCurrentFrameFormat = FRAME_FORMAT_MJPEG;","\t\tif (readOnly) return;\n\t\tmCurrentFrameFormat = FRAME_FORMAT_MJPEG;")
+header=uvc/"src/main/jni/UVCCamera/UVCCamera.h"
+patch(header,"public:\n\tUVCCamera();","public:\n\tvoid readOnlyC110Report(char *out, int capacity);\n\tUVCCamera();")
+cpp=uvc/"src/main/jni/UVCCamera/UVCCamera.cpp"
+with cpp.open("a") as f: f.write(r'''
+#include <stdio.h>
+#include <stdarg.h>
+namespace {
+struct C110ReadLog {
+    char *buf; int capacity; int used;
+    C110ReadLog(char *p,int n):buf(p),capacity(n),used(0){if(n>0)buf[0]=0;}
+    void line(const char *fmt, ...) {
+        if(used>=capacity-1)return;
+        va_list ap;va_start(ap,fmt);
+        int n=vsnprintf(buf+used,capacity-used,fmt,ap);
+        va_end(ap);
+        if(n>0)used+=(n<capacity-used?n:capacity-used-1);
+    }
+    int get(libusb_device_handle *h,const char *name,int iface,int unit,int selector,int req,int len) {
+        // All transfers here are class/interface/device-to-host GETs.
+        if((req!=0x81&&req!=0x82&&req!=0x83&&req!=0x84&&req!=0x85&&req!=0x86&&req!=0x87)||len<1||len>48)return -99;
+        unsigned char data[48]={0};
+        int rc=libusb_control_transfer(h,0xa1,req,selector<<8,(unit<<8)|iface,data,len,500);
+        line("NATIVE_GET %s iface=%d unit=%d selector=%d req=0x%02x expected=%d rc=%d hex=",name,iface,unit,selector,req,len,rc);
+        if(rc>=0){for(int k=0;k<rc&&k<len;k++)line("%02x",data[k]);}else line("ERROR");
+        line("\n");
+        if(rc==26&&iface==1&&unit==0&&(selector==1||selector==2)){
+            unsigned long interval=(unsigned long)data[4]|((unsigned long)data[5]<<8)|((unsigned long)data[6]<<16)|((unsigned long)data[7]<<24);
+            unsigned long frame=(unsigned long)data[18]|((unsigned long)data[19]<<8)|((unsigned long)data[20]<<16)|((unsigned long)data[21]<<24);
+            unsigned long payload=(unsigned long)data[22]|((unsigned long)data[23]<<8)|((unsigned long)data[24]<<16)|((unsigned long)data[25]<<24);
+            line("NATIVE_STREAM_FIELDS selector=%d req=0x%02x format=%u frame=%u interval_100ns=%lu max_frame_bytes=%lu max_payload_bytes=%lu\n",selector,req,data[2],data[3],interval,frame,payload);
+        }
+        if(unit==5&&rc==1&&req==0x86)line("XU_INFO selector=%d get=%d set=%d raw=0x%02x\n",selector,data[0]&1,(data[0]>>1)&1,data[0]);
+        if(unit==5&&rc==2&&req==0x85)line("XU_LENGTH selector=%d bytes=%u\n",selector,(unsigned)(data[0]|(data[1]<<8)));
+        return rc;
+    }
+};
+}
+void UVCCamera::readOnlyC110Report(char *out,int capacity) {
+    C110ReadLog l(out,capacity);
+    if(!mDeviceHandle){l.line("NATIVE_NO_DEVICE\n");return;}
+    libusb_device_handle *h=uvc_get_libusb_handle(mDeviceHandle);
+    if(!h){l.line("NATIVE_NO_USB_HANDLE\n");return;}
+    libusb_device *dev=libusb_get_device(h);
+    struct libusb_device_descriptor desc;
+    int dr=dev?libusb_get_device_descriptor(dev,&desc):-1;
+    if(dr!=0||desc.idVendor!=0x0603||desc.idProduct!=0x8612){l.line("NATIVE_SKIP wrong_device rc=%d\n",dr);return;}
+    l.line("NATIVE_LINK_SPEED_ENUM=%d (0 unknown,1 low,2 full,3 high,4 super)\n",libusb_get_device_speed(dev));
+    // UVC open already owns the control interface (0). Known descriptor advertises brightness and AE mode.
+    int b=l.get(h,"BRIGHTNESS",0,4,2,0x81,2);
+    int ae=l.get(h,"AE_MODE",0,1,2,0x81,1);
+    bool vc=(b==2||ae==1);
+    l.line("NATIVE_VC_POSITIVE_CONTROL=%d\n",vc?1:0);
+    // Claim streaming interface using the same helper as the actual streaming implementation.
+    int claim=uvc_claim_if(mDeviceHandle,1);
+    l.line("NATIVE_CLAIM_VS rc=%d\n",claim);
+    bool vs=false;
+    if(claim==0){
+        const int reqs[]={0x81,0x82,0x83,0x87};
+        for(int i=0;i<4;i++){int n=l.get(h,"VS_PROBE",1,0,1,reqs[i],26);if(n==26)vs=true;}
+        l.get(h,"VS_COMMIT",1,0,2,0x81,26);
+        l.line("NATIVE_RELEASE_VS rc=%d\n",uvc_release_if(mDeviceHandle,1));
+    }
+    l.line("NATIVE_VS_POSITIVE_CONTROL=%d\n",vs?1:0);
+    // Unknown XU payloads may be firmware-specific; only request standardized capability/length metadata.
+    if(vc){
+        int info=0,len=0;
+        for(int s=1;s<=16;s++){
+            if(l.get(h,"XU",0,5,s,0x86,1)==1)info++;
+            if(l.get(h,"XU",0,5,s,0x85,2)==2)len++;
+        }
+        l.line("XU_METADATA_SUMMARY info_ok=%d len_ok=%d total=16\n",info,len);
+    }else l.line("XU_SKIPPED no_positive_vc_control\n");
+    l.line("NATIVE_REPORT_DONE no_SET_CUR no_XU_payload no_firmware_command no_stream\n");
+}
+''')
+jni=uvc/"src/main/jni/UVCCamera/serenegiant_usb_UVCCamera.cpp"
+patch(jni,"static JNINativeMethod methods[] = {",'''static jstring nativeReadOnlyC110Report(JNIEnv *env, jobject thiz, ID_TYPE id_camera) {
+    UVCCamera *camera = reinterpret_cast<UVCCamera *>(id_camera);
+    char report[16384] = {0};
+    if(camera) camera->readOnlyC110Report(report, sizeof(report));
+    else strcpy(report,"NATIVE_NO_CAMERA");
+    return env->NewStringUTF(report);
+}
+
+static JNINativeMethod methods[] = {
+    { "nativeReadOnlyC110Report", "(J)Ljava/lang/String;", (void *) nativeReadOnlyC110Report },''')
