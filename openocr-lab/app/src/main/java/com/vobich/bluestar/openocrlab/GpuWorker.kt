@@ -13,14 +13,14 @@ import java.util.concurrent.TimeUnit
 
 // Native GPU lives in a separate process: previous RepSVTR OpenCL crashed.
 // Every handle stays on the same service HandlerThread.
-internal class NativeMnn(path:String,backend:Int,threads:Int):AutoCloseable{
+internal class NativeMnn(path:String,backend:Int,threads:Int,cachePath:String):AutoCloseable{
  companion object { init{System.loadLibrary("ocr_mnn_jni")} }
- private external fun open(path:String,backend:Int,threads:Int):Long
+ private external fun open(path:String,backend:Int,threads:Int,cachePath:String):Long
  private external fun run(handle:Long,input:FloatBuffer,shape:LongArray):FloatArray
  private external fun info(handle:Long):String
  private external fun outputShape(handle:Long):IntArray
  private external fun close(handle:Long)
- private val handle=open(path,backend,threads).also{check(it!=0L)}
+ private val handle=open(path,backend,threads,cachePath).also{check(it!=0L)}
  fun infer(input:FloatBuffer,shape:LongArray)=run(handle,input,shape)
  fun details()=info(handle)
  fun shape()=outputShape(handle)
@@ -45,8 +45,10 @@ class GpuWorker:Service(){
       val f=File.createTempFile("rep-compact-", ".mnn",cacheDir);file=f
       assets.open("rep-compact.mnn").use{src->f.outputStream().use{src.copyTo(it)}}
       val loaded=SystemClock.elapsedRealtime()
-      engine=NativeMnn(f.absolutePath,3,m.arg1)
-      b.putString("detail","stage_ms="+(loaded-stage)+" load_ms="+(SystemClock.elapsedRealtime()-loaded)+" "+engine!!.details())
+      val cache=File(cacheDir,"rep-576805263c70-mnn350-opencl-high-fast-v012.cache")
+      val before=cache.length()
+      engine=NativeMnn(f.absolutePath,3,m.arg1,cache.absolutePath)
+      b.putString("detail","stage_ms="+(loaded-stage)+" load_ms="+(SystemClock.elapsedRealtime()-loaded)+" cache_before_bytes="+before+" "+engine!!.details())
      }
      2->{
       val e=engine?:error("GPU not initialized")
@@ -64,7 +66,7 @@ class GpuWorker:Service(){
         val details=e.details()
         val commands=Regex("executed_commands_by_backend=([^ ]*)").find(details)?.groupValues?.get(1).orEmpty()
         check(Regex("(?:^|,)3:[1-9][0-9]*(?:,|$)").containsMatchIn(commands)){"OpenCL did not execute any traced command: "+details}
-        b.putFloatArray("values",out);b.putIntArray("dims",dims);b.putString("detail",details)
+        b.putFloatArray("values",out);b.putIntArray("dims",dims);b.putString("detail",details+" cache_bytes="+File(cacheDir,"rep-576805263c70-mnn350-opencl-high-fast-v012.cache").length())
         b.putLong("pss",Debug.getPss())
        }finally{SharedMemory.unmap(bytes)}
       }finally{mem.close()}
