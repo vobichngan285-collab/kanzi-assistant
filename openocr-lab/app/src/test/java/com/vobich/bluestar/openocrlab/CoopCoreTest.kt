@@ -65,4 +65,15 @@ class CoopCoreTest{
   val values=floatArrayOf(Float.NaN,.9f,1f,.8f)
   try{CompactCtc.decode(FixedGpuInput.realPrefix(values,intArrayOf(2,1,2),1),intArrayOf(1,1,2),listOf("","甲"));fail("invalid real value accepted")}catch(e:IllegalArgumentException){assertTrue(e.message!!.contains("row=0 step=0"))}
  }
+
+ @Test fun precisionModesIsolateWidthAndTail(){
+  val original=longArrayOf(4,3,48,421)
+  val fixed=longArrayOf(6,3,48,704)
+  assertArrayEquals(fixed,CoopMode.CPU_FIXED.targetShape(original,704,6))
+  assertArrayEquals(fixed,CoopMode.GPU_FIXED.targetShape(original,704,6))
+  assertArrayEquals(original,CoopMode.GPU_EXACT.targetShape(original,0,6))
+  assertArrayEquals(longArrayOf(6,3,48,421),CoopMode.GPU_TAIL_FIXED.targetShape(original,0,6))
+  val full=longArrayOf(6,3,48,503)
+  assertArrayEquals(full,CoopMode.GPU_TAIL_FIXED.targetShape(full,0,6))
+ }
 }
