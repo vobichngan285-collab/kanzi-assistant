@@ -11,6 +11,11 @@ import android.os.*
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.widget.*
+import android.view.Surface
+import android.view.SurfaceHolder
+import android.view.SurfaceView
+import android.view.View
+import android.view.WindowInsets
 import ai.onnxruntime.OrtSession
 import com.jiangdg.usb.USBMonitor
 import com.jiangdg.uvc.IFrameCallback
@@ -28,27 +33,28 @@ import kotlin.math.*
 private fun clock()=SystemClock.elapsedRealtime()
 private fun isC110(d:UsbDevice)=d.vendorId==0x0603&&d.productId==0x8612
 
-// Only a coarse luminance comparison gates OCR. Original 2560x1440 YUYV
-// is copied and converted for OCR; the signature is never used as OCR input.
-internal object SceneGate {
- const val W=2560; const val H=1440
- fun signature(b:ByteBuffer):IntArray {
-  val origin=b.position()
-  return IntArray(64*36){i->
-   val x=(i%64)*40+20;val y=(i/64)*40+20
-   val p=origin+2*(y*W+x)
-   ((b.get(p-2).toInt() and 255)+(b.get(p).toInt() and 255)+(b.get(p+2).toInt() and 255))/3
-  }
+// Native display is optional, independent of the full-resolution callback.
+internal object FrameSize { const val W=2560; const val H=1440; const val BYTES=W*H*2 }
+internal object PreviewLink {
+ private var surface:Surface?=null
+ private var camera:UVCCamera?=null
+ @Synchronized fun setSurface(value:Surface?){
+  if(surface===value)return
+  surface=value
+  camera?.setPreviewDisplay(value?.takeIf{it.isValid})
  }
- fun changed(a:IntArray?,b:IntArray):Boolean {
-  if(a==null)return true
-  var sum=0;var large=0
-  for(i in b.indices){val d=abs(a[i]-b[i]);sum+=d;if(d>=24)large++}
-  return sum>=8*b.size||large*100>=12*b.size
+ @Synchronized fun bind(value:UVCCamera){
+  camera=value
+  value.setPreviewDisplay(surface?.takeIf{it.isValid})
+ }
+ @Synchronized fun unbind(value:UVCCamera){
+  if(camera===value){value.setPreviewDisplay(null as Surface?);camera=null}
  }
 }
 internal object LiveLog {
  @Volatile var running=false
+ @Volatile var automatic=false
+ @Volatile var hasFrame=false
  @Volatile var status="未启动"
  @Volatile var raw=""
  private val lock=Any()
@@ -68,6 +74,11 @@ class LiveActivity:Activity(){
  private lateinit var text:TextView
  private lateinit var mode:Spinner
  private lateinit var start:Button
+ private lateinit var manual:Button
+ private lateinit var auto:Button
+ private lateinit var preview:SurfaceView
+ private lateinit var previewToggle:Button
+ private var previewWanted=true
  private var receiverRegistered=false
  private var asking=false
  private val permissionAction get()=packageName+".USB_PERMISSION_LIVE"
@@ -82,18 +93,38 @@ class LiveActivity:Activity(){
   }
  }
  private val refresh=object:Runnable{
-  override fun run(){state.text=LiveLog.status;text.text=LiveLog.raw;start.isEnabled=!LiveLog.running&&!asking;mode.isEnabled=!LiveLog.running;main.postDelayed(this,500)}
+  override fun run(){state.text=LiveLog.status;text.text=LiveLog.raw;start.isEnabled=!LiveLog.running&&!asking;mode.isEnabled=!LiveLog.running;manual.isEnabled=LiveLog.running&&LiveLog.hasFrame;auto.isEnabled=LiveLog.running&&LiveLog.hasFrame;auto.text=if(LiveLog.automatic)"关闭自动识别" else "启动自动识别（实验）";main.postDelayed(this,250)}
  }
  override fun onCreate(b:Bundle?){
   super.onCreate(b)
   val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,32,24,24)}
   val scroll=ScrollView(this);scroll.addView(root);setContentView(scroll)
+  if(Build.VERSION.SDK_INT>=30)root.setOnApplyWindowInsetsListener{v,i->val bars=i.getInsets(WindowInsets.Type.systemBars());v.setPadding(24+bars.left,16+bars.top,24+bars.right,16+bars.bottom);i}
   fun label(s:String)=TextView(this).apply{text=s;textSize=18f;root.addView(this)}
-  label("蓝星 C110 实时离线OCR v0.1.0\n原始1440P · 无预览 · 锁屏专项")
+  label("蓝星 C110 实时离线OCR v0.1.2\n原生1440P · 手动截帧优先")
+  preview=SurfaceView(this).apply{
+   contentDescription="C110实时预览，仅显示，不参与OCR取图"
+   val width=(resources.displayMetrics.widthPixels-48).coerceAtLeast(160)
+   layoutParams=LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,width*9/16)
+   holder.addCallback(object:SurfaceHolder.Callback{
+    override fun surfaceCreated(h:SurfaceHolder){PreviewLink.setSurface(h.surface)}
+    override fun surfaceChanged(h:SurfaceHolder,format:Int,w:Int,ht:Int){}
+    override fun surfaceDestroyed(h:SurfaceHolder){PreviewLink.setSurface(null)}
+   })
+   root.addView(this)
+  }
+  previewToggle=Button(this).apply{text="关闭预览显示";root.addView(this);setOnClickListener{
+   previewWanted=!previewWanted
+   preview.visibility=if(previewWanted)View.VISIBLE else View.GONE
+   text=if(previewWanted)"关闭预览显示" else "开启预览显示"
+  }}
+  label("原始取帧固定 2560×1440（368.64万像素）")
+
   mode=Spinner(this).apply{adapter=ArrayAdapter(this@LiveActivity,android.R.layout.simple_spinner_dropdown_item,listOf("官方原框（全画面）","智能主阅读区（冻结原版）"));root.addView(this)}
-  start=Button(this).apply{text="启动实时识别";root.addView(this);setOnClickListener{begin()}}
-  Button(this).apply{text="重新识别当前画面";root.addView(this);setOnClickListener{if(LiveLog.running)startService(Intent(this@LiveActivity,LiveService::class.java).setAction("rescan"))}}
-  Button(this).apply{text="停止识别与朗读";root.addView(this);setOnClickListener{if(LiveLog.running)startService(Intent(this@LiveActivity,LiveService::class.java).setAction("stop"))}}
+  start=Button(this).apply{text="启动相机";root.addView(this);setOnClickListener{begin()}}
+  manual=Button(this).apply{text="手动截帧识别";isEnabled=false;root.addView(this);setOnClickListener{if(LiveLog.running)startService(Intent(this@LiveActivity,LiveService::class.java).setAction("rescan").putExtra("tap_at",clock()))}}
+  auto=Button(this).apply{text="启动自动识别（实验）";isEnabled=false;root.addView(this);setOnClickListener{if(LiveLog.running)startService(Intent(this@LiveActivity,LiveService::class.java).setAction(if(LiveLog.automatic)"auto_off" else "auto_on"))}}
+  Button(this).apply{text="停止相机与朗读";root.addView(this);setOnClickListener{if(LiveLog.running)startService(Intent(this@LiveActivity,LiveService::class.java).setAction("stop"))}}
   Button(this).apply{text="复制诊断日志";root.addView(this);setOnClickListener{copy(LiveLog.read(this@LiveActivity))}}
   Button(this).apply{text="复制当前原文";root.addView(this);setOnClickListener{copy(LiveLog.raw)}}
   Button(this).apply{text="清空诊断（停止后）";root.addView(this);setOnClickListener{LiveLog.clear(this@LiveActivity)}}
@@ -102,11 +133,11 @@ class LiveActivity:Activity(){
   if(Build.VERSION.SDK_INT>=33)registerReceiver(permissionReceiver,IntentFilter(permissionAction),Context.RECEIVER_NOT_EXPORTED)
   else registerReceiver(permissionReceiver,IntentFilter(permissionAction))
   receiverRegistered=true
-  LiveLog.append(this,"APP v0.1.0 model="+Build.MODEL+" sdk="+Build.VERSION.SDK_INT)
+  LiveLog.append(this,"APP v0.1.2 model="+Build.MODEL+" sdk="+Build.VERSION.SDK_INT)
  }
  private fun copy(s:String){(getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("蓝星",s));Toast.makeText(this,"已复制",Toast.LENGTH_SHORT).show()}
- override fun onResume(){super.onResume();main.removeCallbacks(refresh);main.post(refresh)}
- override fun onPause(){main.removeCallbacks(refresh);super.onPause()}
+ override fun onResume(){super.onResume();preview.visibility=if(previewWanted)View.VISIBLE else View.GONE;main.removeCallbacks(refresh);main.post(refresh)}
+ override fun onPause(){preview.visibility=View.GONE;main.removeCallbacks(refresh);super.onPause()}
  override fun onDestroy(){main.removeCallbacks(refresh);if(receiverRegistered)unregisterReceiver(permissionReceiver);super.onDestroy()}
  private fun begin(){
   if(LiveLog.running||asking)return
@@ -141,8 +172,14 @@ class LiveService:Service(){
  private var wake:PowerManager.WakeLock?=null
  private var tts:TextToSpeech?=null
  @Volatile private var voiceReady=false
- private var signature:IntArray?=null
- private var force=false
+ private val latest=ByteArray(FrameSize.BYTES)
+ private var latestAt=0L
+ private var latestSeq=0L
+ private var lastConsumed=0L
+ private var automatic=false
+ private var lastSpoken=""
+ private var invalidatedId=0L
+ private var invalidatedAt=0L
  private var generation=0L
  private var pending:Frame?=null
  private var runningOptions:OrtSession.RunOptions?=null
@@ -158,7 +195,7 @@ class LiveService:Service(){
  private var launchedAt=0L
  private var maxGap=0L
  private var previousInteractive=true
- private data class Frame(val id:Long,val at:Long,val bytes:ByteArray)
+ private data class Frame(val id:Long,val at:Long,val bytes:ByteArray,val requested:Long,val manual:Boolean,val seq:Long)
  override fun onBind(i:Intent?)=null
  private fun log(s:String)=LiveLog.append(this,s)
  private fun status(s:String){LiveLog.status=s}
@@ -172,7 +209,9 @@ class LiveService:Service(){
  override fun onStartCommand(i:Intent?,flags:Int,startId:Int):Int{
   when(i?.action){
    "stop"->{halt("USER_STOP");return START_NOT_STICKY}
-   "rescan"->{synchronized(gate){force=true};return START_NOT_STICKY}
+   "rescan"->{if(active)synchronized(gate){captureManual(i.getLongExtra("tap_at",clock()))};return START_NOT_STICKY}
+   "auto_on"->{if(active)synchronized(gate){invalidateLocked();automatic=true;LiveLog.automatic=true;lastSpoken="";lastConsumed=0;gate.notifyAll();status("自动识别运行中");log("AUTO_ON no_motion_gate=1")};return START_NOT_STICKY}
+   "auto_off"->{if(active)synchronized(gate){automatic=false;LiveLog.automatic=false;invalidateLocked();status("手动模式 · 点击截帧");log("AUTO_OFF")};return START_NOT_STICKY}
    "start"->{if(active||closing)return START_NOT_STICKY}
    else->{stopSelf();return START_NOT_STICKY}
   }
@@ -182,11 +221,11 @@ class LiveService:Service(){
   try{
    startForeground(41,notification())
    selected=ds.single();official=i!!.getBooleanExtra("official",true)
-   active=true;LiveLog.running=true;LiveLog.raw="";launchedAt=clock()
+   active=true;LiveLog.running=true;LiveLog.raw="";LiveLog.automatic=false;LiveLog.hasFrame=false;launchedAt=clock()
    val pm=(getSystemService(POWER_SERVICE) as PowerManager)
    wake=pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,packageName+":live").apply{setReferenceCounted(false);acquire()}
    previousInteractive=pm.isInteractive
-   log("START mode="+(if(official)"official" else "focus")+" db=1600 cpu=4 source=2560x1440 MJPEG no_surface=1 no_network=1")
+   log("START mode="+(if(official)"official" else "focus")+" db=1600 cpu=4 source=2560x1440 MJPEG optional_surface=1 no_network=1 manual_default=1")
    status("初始化离线OCR与TTS")
    initTts()
    ocrWorker.execute{ocrLoop()}
@@ -204,7 +243,7 @@ class LiveService:Service(){
    val v=local.firstOrNull{it.locale.country=="CN"}?:local.firstOrNull()
    if(v==null||e.setVoice(v)!=TextToSpeech.SUCCESS){log("TTS_NO_LOCAL_ZH_VOICE");return@post}
    e.setOnUtteranceProgressListener(object:UtteranceProgressListener(){
-    override fun onStart(id:String){val p=id.split(':');if(p.size==4&&p[3]=="0")log("TTS_FIRST id="+p[0]+" frame_to_callback_ms="+(clock()-(p[1].toLongOrNull()?:clock()))+" enqueue_to_callback_ms="+(clock()-(p[2].toLongOrNull()?:clock()))+" callback_only=1")}
+    override fun onStart(id:String){val p=id.split(':');if(p.size==5&&p[3]=="0")log("TTS_FIRST id="+p[0]+" frame_to_callback_ms="+(clock()-(p[1].toLongOrNull()?:clock()))+" enqueue_to_callback_ms="+(clock()-(p[2].toLongOrNull()?:clock()))+" trigger_to_callback_ms="+(clock()-(p[4].toLongOrNull()?:clock()))+" callback_only=1")}
     override fun onDone(id:String){}
     override fun onError(id:String){log("TTS_ERROR id="+id)}
    })
@@ -226,12 +265,12 @@ class LiveService:Service(){
       if(!active)return@execute
       try{
        val c=UVCCamera();camera=c;c.open(b)
-       c.setPreviewSize(SceneGate.W,SceneGate.H,30,31,UVCCamera.FRAME_FORMAT_MJPEG,1.0f)
+       c.setPreviewSize(FrameSize.W,FrameSize.H,30,31,UVCCamera.FRAME_FORMAT_MJPEG,1.0f)
        c.setFrameCallback(object:IFrameCallback{
         override fun onFrame(f:ByteBuffer){}
         override fun onFrame(f:ByteBuffer,w:Int,h:Int){receive(f,w,h)}
        },UVCCamera.PIXEL_FORMAT_YUV)
-       c.startPreview();log("STREAM_START no_window=1")
+       PreviewLink.bind(c);c.startPreview();log("STREAM_START optional_window=1")
       }catch(e:Throwable){log("STREAM_ERROR "+e);main.post{halt("STREAM_ERROR")}}
      }
     }
@@ -243,26 +282,40 @@ class LiveService:Service(){
   val o=runningOptions
   if(o!=null){try{o.setTerminate(true)}catch(e:Exception){log("TERMINATE_ERROR "+e)}}
  }
+ // Called under gate. Explicit requests, not pixel jitter, invalidate work.
+ private fun invalidateLocked(){
+  generation++
+  if(processing!=0L&&invalidatedId!=processing){
+   cancelled++;invalidatedId=processing;invalidatedAt=clock();cancelLocked()
+  }
+  if(pending!=null){pending=null;replaced++}
+  tts?.stop()
+ }
+ private fun captureManual(tap:Long){
+  val now=clock()
+  if(latestSeq==0L||now-latestAt>500){log("MANUAL_NO_FRESH_FRAME age_ms="+(now-latestAt));status("暂无新鲜帧，请检查相机");return}
+  automatic=false;LiveLog.automatic=false
+  invalidateLocked();LiveLog.raw=""
+  val id=++generation;accepted++
+  pending=Frame(id,latestAt,latest.copyOf(),tap,true,latestSeq)
+  log("MANUAL_CAPTURE id="+id+" seq="+latestSeq+" source=2560x1440 pixels=3686400 bytes="+FrameSize.BYTES+" frame_age_ms="+(now-latestAt)+" tap_to_capture_ms="+(now-tap)+" no_preview_capture=1 no_jpeg=1")
+  status("手动识别中 · 原始1440P")
+  gate.notifyAll()
+ }
  private fun receive(f:ByteBuffer,w:Int,h:Int){
   if(!active)return
   val now=clock()
   synchronized(gate){
    if(!active)return
-   if(w!=SceneGate.W||h!=SceneGate.H||f.remaining()!=w*h*2){badFrames++;return}
+   if(w!=FrameSize.W||h!=FrameSize.H||f.remaining()!=FrameSize.BYTES){badFrames++;return}
    frameCount++;if(lastFrame>0)maxGap=max(maxGap,now-lastFrame);lastFrame=now
-   val sig=SceneGate.signature(f)
-   if(!force&&!SceneGate.changed(signature,sig))return
-   force=false;signature=sig
-   val id=++generation;accepted++
-   if(processing!=0L){cancelled++;cancelLocked()}
-   if(pending!=null)replaced++
-   tts?.stop();LiveLog.raw=""
-   val bytes=ByteArray(f.remaining());f.duplicate().get(bytes)
-   pending=Frame(id,now,bytes)
-   log("NEW id="+id+" replaced="+replaced+" cancel_requested="+(if(processing!=0L)1 else 0))
-   gate.notifyAll()
+   // Reuse one full-size cache. No allocation or OCR task for each frame.
+   f.duplicate().get(latest);latestAt=now;latestSeq++
+   if(!LiveLog.hasFrame){LiveLog.hasFrame=true;status("相机已连接 · 手动截帧就绪");log("FIRST_FRAME source=2560x1440 bytes="+FrameSize.BYTES)}
+   if(automatic)gate.notifyAll()
   }
  }
+ private fun autoReady()=automatic&&latestSeq>lastConsumed&&clock()-latestAt<=500
  private fun alive(id:Long):Boolean=synchronized(gate){active&&generation==id}
  private fun ensure(id:Long){if(!alive(id))throw InterruptedException("stale frame")}
  private fun ocrLoop(){
@@ -275,9 +328,9 @@ class LiveService:Service(){
    log("MODELS_READY init_ms="+(clock()-init)+" batch="+r.officialBatchSize)
    while(active){
     val work=synchronized(gate){
-     while(active&&pending==null)gate.wait()
+     while(active&&pending==null&&!autoReady())gate.wait()
      if(!active)null else {
-      val f=pending!!;pending=null
+      val f=pending?:Frame(++generation,latestAt,latest.copyOf(),clock(),false,latestSeq).also{accepted++;lastConsumed=it.seq;log("AUTO_CAPTURE id="+it.id+" seq="+it.seq+" source=2560x1440 bytes="+FrameSize.BYTES)};pending=null
       val o=OrtSession.RunOptions();runningOptions=o;processing=f.id
       f to o
      }
@@ -288,7 +341,7 @@ class LiveService:Service(){
      if(!alive(frame.id))log("ABORT id="+frame.id+" work_ms="+(clock()-begin)+" frame_age_ms="+(clock()-frame.at))
      else {log("OCR_ERROR id="+frame.id+" "+e);status("识别失败，见日志")}
     }finally{
-     synchronized(gate){runningOptions=null;processing=0;options.close()}
+     synchronized(gate){if(invalidatedId==frame.id){log("CANCEL_DONE id="+frame.id+" cancel_to_release_ms="+(clock()-invalidatedAt));invalidatedId=0};runningOptions=null;processing=0;options.close()}
     }
    }
   }catch(e:Throwable){log("MODEL_ERROR "+e);main.post{halt("MODEL_ERROR")}}
@@ -296,13 +349,15 @@ class LiveService:Service(){
  }
  private fun recognize(d:DbLocator,r:Reader,f:Frame,o:OrtSession.RunOptions){
   val start=clock();ensure(f.id)
-  val rgba=Mat();val yuyv=Mat(SceneGate.H,SceneGate.W,CvType.CV_8UC2)
+  val rgba=Mat();val yuyv=Mat(FrameSize.H,FrameSize.W,CvType.CV_8UC2)
   var bm:Bitmap?=null
   val bgr=Mat()
   try{
    yuyv.put(0,0,f.bytes);Imgproc.cvtColor(yuyv,rgba,Imgproc.COLOR_YUV2RGBA_YUY2)
-   val image=Bitmap.createBitmap(SceneGate.W,SceneGate.H,Bitmap.Config.ARGB_8888);bm=image
+   val image=Bitmap.createBitmap(FrameSize.W,FrameSize.H,Bitmap.Config.ARGB_8888);bm=image
    Utils.matToBitmap(rgba,image);yuyv.release();rgba.release()
+   check(image.width==FrameSize.W&&image.height==FrameSize.H)
+   if(f.manual)log("OCR_INPUT id="+f.id+" bitmap="+image.width+"x"+image.height+" pixels="+(image.width*image.height)+" source_bytes="+f.bytes.size+" trigger_ms="+(clock()-f.requested))
    ensure(f.id);val decoded=clock()
    d.clearProbability()
    val found=d.locate(image,1600,official,o);val detected=clock();ensure(f.id)
@@ -335,15 +390,15 @@ class LiveService:Service(){
       if(!active||generation!=f.id)throw InterruptedException("stale speech")
       val speech=newLines.joinToString("\n")
       LiveLog.raw=lines.joinToString("\n")
-      if(part==0)log("FIRST_TEXT id="+f.id+" frame_ms="+(clock()-f.at)+" chars="+speech.length)
-      if(voiceReady){
+      if(part==0)log("FIRST_TEXT id="+f.id+" frame_ms="+(clock()-f.at)+" trigger_ms="+(clock()-f.requested)+" chars="+speech.length)
+      if(f.manual&&voiceReady){
        val queued=clock()
        val chunks=SpeechChunks.split(speech,TextToSpeech.getMaxSpeechInputLength())
        for((idx,s) in chunks.withIndex()){
-        val rc=tts?.speak(s,if(part==0&&idx==0)TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD,null,f.id.toString()+":"+f.at+":"+queued+":"+(part+idx))
+        val rc=tts?.speak(s,if(part==0&&idx==0)TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD,null,f.id.toString()+":"+f.at+":"+queued+":"+(part+idx)+":"+f.requested)
         if(rc!=TextToSpeech.SUCCESS)log("TTS_ENQUEUE_ERROR id="+f.id+" rc="+rc)
        }
-       if(part==0)log("TTS_ENQUEUE id="+f.id+" frame_ms="+(queued-f.at))
+       if(part==0)log("TTS_ENQUEUE id="+f.id+" frame_ms="+(queued-f.at)+" trigger_ms="+(queued-f.requested))
       }
       part=lines.size
      }
@@ -352,8 +407,25 @@ class LiveService:Service(){
    synchronized(gate){
     if(!active||generation!=f.id)throw InterruptedException("stale completion")
     completed++;LiveLog.raw=lines.joinToString("\n")
-    status("运行中 · 最近识别 "+(clock()-f.at)+" ms · "+lines.size+" 行")
-    log("OCR_DONE id="+f.id+" source=2560x1440 wait_ms="+(start-f.at)+" convert_ms="+(decoded-start)+" detect_ms="+(detected-decoded)+" total_ms="+(clock()-start)+" frame_ms="+(clock()-f.at)+" boxes="+found.size+" crops="+count+" dropped="+dropped+" lines="+lines.size+" pss_kb="+Debug.getPss())
+    if(!f.manual&&voiceReady){
+     // Experimental automatic path: exact normalized full-text duplicate
+     // check. Never infer that a changed price is merely OCR noise.
+     val current=LiveLog.raw
+     val key=current.replace(Regex("\\s+"),"")
+     if(key.isNotEmpty()&&key!=lastSpoken){
+      val queued=clock()
+      val chunks=SpeechChunks.split(current,TextToSpeech.getMaxSpeechInputLength())
+      var ok=true
+      for((idx,partText) in chunks.withIndex()){
+       val rc=tts?.speak(partText,if(idx==0)TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD,null,f.id.toString()+":"+f.at+":"+queued+":"+idx+":"+f.requested)
+       if(rc!=TextToSpeech.SUCCESS){ok=false;log("TTS_ENQUEUE_ERROR id="+f.id+" rc="+rc)}
+      }
+      if(ok&&chunks.isNotEmpty())lastSpoken=key
+      log("AUTO_SPEECH id="+f.id+" chars="+current.length+" trigger_ms="+(queued-f.requested))
+     }else log("AUTO_SKIP id="+f.id+" empty="+key.isEmpty())
+    }
+    status((if(f.manual)"手动识别完成" else "自动识别中")+" · "+(clock()-f.requested)+" ms · "+lines.size+" 行")
+    log("OCR_DONE id="+f.id+" source=2560x1440 wait_ms="+(start-f.at)+" convert_ms="+(decoded-start)+" detect_ms="+(detected-decoded)+" total_ms="+(clock()-start)+" frame_ms="+(clock()-f.at)+" trigger_ms="+(clock()-f.requested)+" manual="+f.manual+" boxes="+found.size+" crops="+count+" dropped="+dropped+" lines="+lines.size+" pss_kb="+Debug.getPss())
     log(d.lastDiagnostic)
    }
   }finally{bm?.recycle();yuyv.release();rgba.release();bgr.release();d.clearProbability()}
@@ -373,11 +445,11 @@ class LiveService:Service(){
  private fun halt(reason:String){
   if(closing)return
   closing=true;active=false
-  synchronized(gate){generation++;pending=null;cancelLocked();tts?.stop();gate.notifyAll()}
+  synchronized(gate){automatic=false;LiveLog.automatic=false;LiveLog.hasFrame=false;invalidateLocked();gate.notifyAll()}
   main.removeCallbacks(tick)
   status("已停止："+reason);log("STOP "+reason)
   cameraWorker.execute{
-   runCatching{camera?.destroy()};camera=null
+   runCatching{camera?.let{PreviewLink.unbind(it);it.destroy()}};camera=null
    runCatching{monitor?.destroy()};monitor=null
    ocrWorker.shutdown()
    runCatching{ocrWorker.awaitTermination(30,java.util.concurrent.TimeUnit.SECONDS)}
