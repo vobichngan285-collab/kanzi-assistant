@@ -27,11 +27,11 @@ android {
     namespace 'com.vobich.bluestar.uvclab'
     compileSdk 36
     defaultConfig {
-        applicationId 'com.vobich.bluestar.uvclab'
+        applicationId 'com.vobich.bluestar.uvccapability'
         minSdk 26
         targetSdk 35
-        versionCode 1
-        versionName '0.1.0'
+        versionCode 2
+        versionName '0.1.1'
         ndk { abiFilters 'arm64-v8a' }
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
@@ -49,7 +49,7 @@ write(app/"src/main/AndroidManifest.xml",'''<manifest xmlns:android="http://sche
 <uses-feature android:name="android.hardware.usb.host" android:required="true"/>
 <uses-feature android:name="android.hardware.camera" android:required="false"/>
 <uses-permission android:name="android.permission.CAMERA"/>
-<application android:allowBackup="false" android:label="蓝星 UVC 分辨率实验" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+<application android:allowBackup="false" android:label="蓝星 UVC 深度探测" android:theme="@android:style/Theme.Material.Light.NoActionBar">
 <activity android:name=".UvcActivity" android:exported="true" android:screenOrientation="portrait">
 <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
 </activity></application></manifest>''')
@@ -82,7 +82,7 @@ public class UvcActivity extends Activity {
     private Button start, stop;
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final AtomicInteger epoch=new AtomicInteger();
-    private volatile boolean active=false, destroyed=false;
+    private volatile boolean active=false, destroyed=false, deepOnly=true;
     private volatile USBMonitor.UsbControlBlock block;
     private volatile UVCCamera camera;
     private volatile UsbDevice selected;
@@ -116,19 +116,21 @@ public class UvcActivity extends Activity {
         logFile=new File(getFilesDir(),"uvc-diagnostic.txt");
         try{if(logFile.exists()){byte[] b=java.nio.file.Files.readAllBytes(logFile.toPath());log.append(new String(b,java.nio.charset.StandardCharsets.UTF_8));}}catch(Exception ignored){}
         LinearLayout root=new LinearLayout(this);root.setOrientation(1);root.setPadding(12,12,12,12);
-        status=new TextView(this);status.setTextSize(19);status.setText("蓝星 UVC v0.1.0 — 连接C110后点击开始");
+        status=new TextView(this);status.setTextSize(19);status.setText("蓝星 UVC v0.1.1 — 连接C110后点击深度探测");
         root.addView(status);
         preview=new TextureView(this);root.addView(preview,new LinearLayout.LayoutParams(-1,0,1));
         LinearLayout buttons=new LinearLayout(this);
         start=new Button(this);start.setText("测试最高像素");buttons.addView(start,new LinearLayout.LayoutParams(0,-2,1));
         stop=new Button(this);stop.setText("停止");buttons.addView(stop,new LinearLayout.LayoutParams(0,-2,1));root.addView(buttons);
+        Button deep=new Button(this);deep.setText("只读深度探测（无需预览）");root.addView(deep);
+        deep.setOnClickListener(v->{if(!active){deepOnly=true;begin();}});
         LinearLayout actions=new LinearLayout(this);
         Button copy=new Button(this);copy.setText("复制完整日志");actions.addView(copy,new LinearLayout.LayoutParams(0,-2,1));
         Button clear=new Button(this);clear.setText("清空日志");actions.addView(clear,new LinearLayout.LayoutParams(0,-2,1));root.addView(actions);
         ScrollView sv=new ScrollView(this);logView=new TextView(this);logView.setTextSize(12);logView.setText(log.toString());sv.addView(logView);root.addView(sv,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
         copy.setOnClickListener(v->{synchronized(log){((android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("UVC log",log.toString()));}Toast.makeText(this,"日志已复制",Toast.LENGTH_SHORT).show();});
         clear.setOnClickListener(v->{if(active)return;synchronized(log){log.setLength(0);logFile.delete();}logView.setText("");});
-        start.setOnClickListener(v->begin());stop.setOnClickListener(v->cancel("USER_STOP"));
+        start.setOnClickListener(v->{if(!active){deepOnly=false;begin();}});stop.setOnClickListener(v->cancel("USER_STOP"));
         preview.setSurfaceTextureListener(new TextureView.SurfaceTextureListener(){
             public void onSurfaceTextureAvailable(SurfaceTexture s,int w,int h){}
             public void onSurfaceTextureSizeChanged(SurfaceTexture s,int w,int h){}
@@ -147,7 +149,7 @@ public class UvcActivity extends Activity {
             public void onCancel(UsbDevice d){if(active)cancel("USB_PERMISSION_DENIED");}
         });
         monitor.register();
-        say("APP v0.1.0 model="+android.os.Build.MODEL+" sdk="+android.os.Build.VERSION.SDK_INT+" unthrottled_native_callback=1");
+        say("APP v0.1.1 model="+android.os.Build.MODEL+" sdk="+android.os.Build.VERSION.SDK_INT+" unthrottled_native_callback=1");
     }
     private boolean valid(int t){return active&&!destroyed&&epoch.get()==t;}
     private void show(String s){runOnUiThread(()->{if(!destroyed)status.setText(s);});}
@@ -215,6 +217,12 @@ public class UvcActivity extends Activity {
         if(!valid(token))return;
         boolean keep=false;
         try{
+            if(deepOnly){
+                show("正在读取USB底层能力");
+                UvcProbe.run(b, selected, this::say, ()->valid(token));
+                if(valid(token))show("深度探测完成，请复制完整日志");
+                return;
+            }
             List<Mode> modes=descriptors(b.getRawDescriptors());
             camera=new UVCCamera();camera.open(b);
             say("LIBUVC_FORMATS "+camera.getSupportedSize());
@@ -258,3 +266,156 @@ public class UvcActivity extends Activity {
 }
 ''')
 print("Generated isolated UVC diagnostic module; no OCR or network dependency")
+
+write(app/"src/main/java/com/vobich/bluestar/uvclab/UvcProbe.java",'''package com.vobich.bluestar.uvclab;
+import android.hardware.usb.*;
+import com.jiangdg.usb.USBMonitor;
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import java.util.function.*;
+
+final class UvcProbe {
+    static int u(byte[] b,int p){return b[p]&255;}
+    static int w(byte[] b,int p){return u(b,p)|(u(b,p+1)<<8);}
+    static long d(byte[] b,int p){return (long)u(b,p)|((long)u(b,p+1)<<8)|((long)u(b,p+2)<<16)|((long)u(b,p+3)<<24);}
+    static String hex(byte[] b,int a,int n){
+        StringBuilder s=new StringBuilder();for(int i=a;i<a+n;i++)s.append(String.format(Locale.US,"%02x",u(b,i)));return s.toString();
+    }
+    static String guid(byte[] b,int p){return String.format(Locale.US,"%08x-%04x-%04x-%s-%s",d(b,p),w(b,p+4),w(b,p+6),hex(b,p+8,2),hex(b,p+10,6));}
+    static String four(byte[] b,int p){StringBuilder s=new StringBuilder();for(int i=0;i<4;i++){int c=u(b,p+i);s.append(c>=32&&c<=126?(char)c:'.');}return s.toString();}
+    static final class Query {
+        final String name; final int iface,unit,selector,knownLength; final boolean xu;
+        Query(String n,int i,int e,int s,int len,boolean x){name=n;iface=i;unit=e;selector=s;knownLength=len;xu=x;}
+        String key(){return iface+":"+unit+":"+selector;}
+    }
+    static final class Parsed {
+        final Map<String,Query> queries=new LinkedHashMap<>();
+        final Set<Integer> interfaces=new LinkedHashSet<>();
+        int uvcVersion=0,stillHeaders=0,stillDescriptors=0,xus=0,vsHeaders=0;long maxStill=0,maxVideo=0;
+        void add(Query q){queries.putIfAbsent(q.key(),q);}
+    }
+    static byte[] read(UsbDeviceConnection c,int type,int request,int value,int index,int len){
+        if((type&0x80)==0||len<=0||len>16384)throw new IllegalArgumentException("read only");
+        byte[] a=new byte[len];int n=c.controlTransfer(type,request,value,index,a,len,500);return n<0?null:Arrays.copyOf(a,n);
+    }
+    static byte[] get(UsbDeviceConnection c,Query q,int request,int n,Consumer<String> out){
+        byte[] a=read(c,0xa1,request,q.selector<<8,(q.unit<<8)|q.iface,n);
+        out.accept("GET "+q.name+" iface="+q.iface+" unit="+q.unit+" selector="+q.selector+" req=0x"+Integer.toHexString(request)+" expected="+n+" returned="+(a==null?-1:a.length)+" hex="+(a==null?"STALL_OR_ERROR":hex(a,0,a.length)));return a;
+    }
+    static void parse(byte[] b,Parsed p,Consumer<String> out,boolean collect){
+        int iface=-1,cls=-1,sub=-1,alt=-1,format=-1;
+        for(int i=0;i+2<=b.length;){
+            int n=u(b,i),t=u(b,i+1);if(n<2||i+n>b.length){out.accept("DESCRIPTOR_MALFORMED offset="+i);break;}
+            if(t==1&&n>=18)out.accept("DEVICE bcdUSB=0x"+Integer.toHexString(w(b,i+2))+" bcdDevice=0x"+Integer.toHexString(w(b,i+12))+" configurations="+u(b,i+17)+" (USB version not negotiated speed)");
+            if(t==2&&n>=9)out.accept("CONFIG value="+u(b,i+5)+" total="+w(b,i+2)+" interfaces="+u(b,i+4)+" bmAttributes=0x"+Integer.toHexString(u(b,i+7))+" bMaxPower_raw="+u(b,i+8));
+            if(t==4&&n>=9){iface=u(b,i+2);alt=u(b,i+3);cls=u(b,i+5);sub=u(b,i+6);format=-1;out.accept("INTERFACE "+iface+" alt="+alt+" class="+cls+" subclass="+sub+" protocol="+u(b,i+7));if(collect&&cls==14&&alt==0)p.interfaces.add(iface);}
+            if(t==5&&n>=7){int raw=w(b,i+4);out.accept("ENDPOINT iface="+iface+" alt="+alt+" address=0x"+Integer.toHexString(u(b,i+2))+" transfer_type="+(u(b,i+3)&3)+" wMaxPacketSize_raw="+raw+" packet_bytes="+(raw&2047)+" high_speed_transactions_code="+((raw>>11)&3)+" interval="+u(b,i+6));}
+            if(t==48&&n>=6)out.accept("SS_COMPANION iface="+iface+" alt="+alt+" maxBurst="+u(b,i+2)+" attributes="+u(b,i+3)+" bytesPerInterval="+w(b,i+4));
+            if(t==36&&cls==14&&n>=3){
+                int st=u(b,i+2);
+                if(sub==1){
+                    if(st==1&&n>=12){int v=w(b,i+3);if(collect)p.uvcVersion=v;out.accept("VC_HEADER uvc=0x"+Integer.toHexString(v)+" total="+w(b,i+5));}
+                    if(st==2&&n>=8){int terminal=w(b,i+4);out.accept("INPUT_TERMINAL id="+u(b,i+3)+" type=0x"+Integer.toHexString(terminal));if(terminal==0x0201&&n>=15&&15+u(b,i+14)<=n)out.accept("CAMERA_TERMINAL bmControls="+hex(b,i+15,u(b,i+14)));}
+                    if(st==5&&n>=8&&8+u(b,i+7)<=n)out.accept("PROCESSING_UNIT id="+u(b,i+3)+" bmControls="+hex(b,i+8,u(b,i+7)));
+                    if(st==6&&n>=24){
+                        int unit=u(b,i+3),pins=u(b,i+21),o=22+pins;
+                        if(o<n){int size=u(b,i+o);if(o+1+size<n){
+                            if(collect)p.xus++;
+                            out.accept("EXTENSION_UNIT iface="+iface+" unit="+unit+" guid="+guid(b,i+4)+" numControls="+u(b,i+20)+" bmControls="+hex(b,i+o+1,size));
+                            if(collect)for(int k=0;k<size*8&&k<255;k++)if((u(b,i+o+1+k/8)&(1<<(k%8)))!=0)p.add(new Query("XU",iface,unit,k+1,0,true));
+                        }else out.accept("XU_INVALID_BITMAP");}
+                    }
+                }else if(sub==2){
+                    if(st==1&&n>=13){
+                        int method=u(b,i+9),trigger=u(b,i+10);
+                        if(collect){p.vsHeaders++;if(method>0)p.stillHeaders++;int streamLen=p.uvcVersion>=0x0150?48:p.uvcVersion>=0x0110?34:26;
+                            p.add(new Query("VS_PROBE",iface,0,1,streamLen,false));p.add(new Query("VS_COMMIT",iface,0,2,streamLen,false));
+                            if(method==2||method==3){p.add(new Query("STILL_PROBE",iface,0,3,11,false));p.add(new Query("STILL_COMMIT",iface,0,4,11,false));}}
+                        out.accept("VS_HEADER iface="+iface+" formats="+u(b,i+3)+" endpoint=0x"+Integer.toHexString(u(b,i+6))+" still_method="+method+" trigger_support="+trigger+" trigger_usage="+u(b,i+11));
+                    }
+                    if(st==3&&n>=6){
+                        int count=u(b,i+4),end=5+4*count;if(end<n){if(collect)p.stillDescriptors++;out.accept("STILL_DESCRIPTOR iface="+iface+" endpoint=0x"+Integer.toHexString(u(b,i+3))+" patterns="+count);
+                            for(int k=0;k<count;k++){int ww=w(b,i+5+k*4),hh=w(b,i+7+k*4);long px=(long)ww*hh;if(collect)p.maxStill=Math.max(p.maxStill,px);out.accept("STILL_SIZE index="+(k+1)+" "+ww+"x"+hh+" pixels="+px);}
+                            int c=u(b,i+end);if(end+1+c<=n)out.accept("STILL_COMPRESSION indices="+hex(b,i+end+1,c));
+                        }else out.accept("STILL_DESCRIPTOR_INVALID");
+                    }
+                    if((st==4||st==16)&&n>=27){format=u(b,i+3);out.accept("VIDEO_FORMAT index="+format+" subtype="+st+" guid="+guid(b,i+5)+" fourcc="+four(b,i+5)+" frames="+u(b,i+4)+" bitsPerPixel="+u(b,i+21));}
+                    if(st==6&&n>=11){format=u(b,i+3);out.accept("VIDEO_FORMAT index="+format+" MJPEG frames="+u(b,i+4));}
+                    if((st==5||st==7||st==17)&&n>=26){
+                        int ww=w(b,i+5),hh=w(b,i+7),k=u(b,i+(st==17?21:25));long px=(long)ww*hh;if(collect)p.maxVideo=Math.max(p.maxVideo,px);
+                        List<Long> intervals=new ArrayList<>();for(int z=0;z<(k==0?3:k)&&26+4*z+4<=n;z++)intervals.add(d(b,i+26+4*z));
+                        out.accept("VIDEO_FRAME format_index="+format+" frame_index="+u(b,i+3)+" "+ww+"x"+hh+" pixels="+px+" caps="+u(b,i+4)+" min_bps="+d(b,i+9)+" max_bps="+d(b,i+13)+" default_interval="+d(b,i+(st==17?17:21))+" intervals_100ns="+intervals+" continuous="+(k==0));
+                    }
+                }
+            }
+            i+=n;
+        }
+    }
+    static String speed(UsbDevice dev){
+        try{
+            String[] parts=dev.getDeviceName().split("/");int bus=Integer.parseInt(parts[parts.length-2]),num=Integer.parseInt(parts[parts.length-1]);
+            File[] files=new File("/sys/bus/usb/devices").listFiles();if(files!=null)for(File f:files){
+                try{if(Integer.parseInt(txt(f,"busnum"))==bus&&Integer.parseInt(txt(f,"devnum"))==num)return txt(f,"speed")+" Mbps (sysfs)";}catch(Exception ignored){}
+            }
+        }catch(Exception ignored){}
+        return "UNKNOWN (Android sysfs unavailable; not inferred from bcdUSB)";
+    }
+    static String txt(File f,String name)throws IOException{return new String(java.nio.file.Files.readAllBytes(new File(f,name).toPath()),StandardCharsets.US_ASCII).trim();}
+    static void run(USBMonitor.UsbControlBlock block,UsbDevice dev,Consumer<String> out,BooleanSupplier running){
+        UsbDeviceConnection c=block.getConnection();
+        if(c==null){out.accept("NO_USB_CONNECTION");return;}
+        byte[] raw=block.getRawDescriptors();out.accept("DEEP_BEGIN GET_ONLY no_vendor_requests no_SET_CUR no_stream");
+        out.accept("LINK_SPEED "+speed(dev));
+        out.accept("RAW_DESCRIPTOR bytes="+raw.length+" hex="+hex(raw,0,raw.length));
+        Parsed p=new Parsed();parse(raw,p,out,true);
+        // Read all standard configuration descriptors, including inactive configurations.
+        // Only query class controls from the raw active descriptor view.
+        try{
+            byte[] device=read(c,0x80,6,0x0100,0,18);
+            if(device!=null&&device.length>=18){
+                out.accept("GET_DEVICE_DESCRIPTOR "+hex(device,0,device.length));
+                for(int k=0;k<u(device,17)&&running.getAsBoolean();k++){
+                    byte[] hdr=read(c,0x80,6,0x0200|k,0,9);
+                    if(hdr==null||hdr.length<9){out.accept("GET_CONFIG "+k+" unavailable");continue;}
+                    int len=w(hdr,2);if(len<9||len>16384){out.accept("GET_CONFIG "+k+" size_out_of_bound="+len);continue;}
+                    byte[] full=read(c,0x80,6,0x0200|k,0,len);
+                    if(full!=null){out.accept("GET_CONFIG "+k+" bytes="+full.length+" expected="+len+" hex="+hex(full,0,full.length));Parsed other=new Parsed();parse(full,other,out,true);out.accept("CONFIG_SUMMARY index="+k+" max_video_px="+other.maxVideo+" max_still_px="+other.maxStill+" still_headers="+other.stillHeaders+" xu="+other.xus);}
+                }
+            }
+        }catch(Exception e){out.accept("CONFIG_READ_ERROR "+e);}
+        out.accept("ACTIVE_SUMMARY max_video_px="+p.maxVideo+" max_still_px="+p.maxStill+" vs_headers="+p.vsHeaders+" still_headers="+p.stillHeaders+" still_descriptors="+p.stillDescriptors+" extension_units="+p.xus+" declared_queries="+p.queries.size());
+        List<UsbInterface> claimed=new ArrayList<>();
+        try{
+            for(int k=0;k<dev.getInterfaceCount()&&running.getAsBoolean();k++){
+                UsbInterface f=dev.getInterface(k);
+                if(f.getAlternateSetting()==0&&p.interfaces.contains(f.getId())){
+                    boolean ok=c.claimInterface(f,false);out.accept("CLAIM_NONFORCE iface="+f.getId()+" ok="+ok);if(ok)claimed.add(f);
+                }
+            }
+            int count=0;
+            for(Query q:p.queries.values()){
+                if(!running.getAsBoolean())break;
+                if(++count>128){out.accept("QUERY_LIMIT_REACHED");break;}
+                try{
+                    byte[] info=get(c,q,0x86,1,out);
+                    byte[] len=get(c,q,0x85,2,out);
+                    int l=len!=null&&len.length==2?w(len,0):q.knownLength;
+                    boolean readable=info!=null&&info.length==1&&(u(info,0)&1)!=0;
+                    // Standard streaming controls are defined by UVC; some devices stall GET_INFO.
+                    // For unknown vendor extension payloads only read if GET is explicitly advertised.
+                    if(l<1||l>256||(!readable&&q.xu)){out.accept("SKIP_VALUE "+q.name+" length="+l+" read_bit="+readable);continue;}
+                    if(!readable&&info!=null&&info.length==1){out.accept("SKIP_VALUE "+q.name+" GET_not_advertised");continue;}
+                    int[] reqs=q.xu||q.name.endsWith("PROBE")?new int[]{0x81,0x82,0x83,0x84,0x87}:new int[]{0x81};
+                    for(int req:reqs){if(!running.getAsBoolean())break;byte[] a=get(c,q,req,l,out);
+                        if(a==null)continue;
+                        if(q.name.startsWith("VS_")&&a.length>=26)out.accept("STREAM_FIELDS "+q.name+" req="+req+" format_index="+u(a,2)+" frame_index="+u(a,3)+" interval_100ns="+d(a,4)+" max_frame_bytes="+d(a,18)+" max_payload_bytes="+d(a,22));
+                        if(q.name.startsWith("STILL_")&&a.length>=11)out.accept("STILL_FIELDS "+q.name+" req="+req+" format_index="+u(a,0)+" frame_index="+u(a,1)+" compression_index="+u(a,2)+" max_frame_bytes="+d(a,3)+" max_payload_bytes="+d(a,7));
+                    }
+                }catch(Exception e){out.accept("QUERY_ERROR "+q.name+" "+e);}
+            }
+        }finally{for(UsbInterface f:claimed)try{c.releaseInterface(f);}catch(Exception ignored){}}
+        out.accept("DEEP_END completed="+running.getAsBoolean()+" no_SET_CUR no_vendor_type_requests no_capture_trigger");
+    }
+}
+''')
