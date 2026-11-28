@@ -17,6 +17,38 @@ import java.util.concurrent.Executors
 
 class MainActivity:Activity(){
  private val worker=Executors.newSingleThreadExecutor()
+ private val gpuStartupExecutor=Executors.newSingleThreadExecutor()
+ private var gpuStartup:java.util.concurrent.Future<GpuStartupResult>?=null
+ private var startupKey=""
+ private fun drainGpuStartup(){gpuStartup?.get();gpuStartup=null;startupKey=""}
+ private fun startGpuAsync(nt:Int,tuning:GpuTuning,input:java.nio.FloatBuffer,shape:LongArray,runId:String):java.util.concurrent.Future<GpuStartupResult>{
+  val key="$nt/$tuning"
+  val previous=gpuStartup
+  if(previous!=null&&!previous.isDone&&startupKey==key)return previous
+  val requested=now()
+  val submitted=gpuStartupExecutor.submit(java.util.concurrent.Callable<GpuStartupResult>{
+   val log=StringBuilder()
+   fun append(s:String){log.append(s).append("\n")}
+   val result=try{
+    val existing=ensureGpu(nt,tuning,::append)
+    if(!existing){
+     val at=now()
+     val out=gpu!!.infer(input,shape)
+     require(out.shape.size==3&&out.shape[0].toLong()==shape[0]&&out.shape[2]==2)
+     append("GPU_WARMUP real_input=1 shape="+shape.contentToString()+" elapsed_ms="+(now()-at)+" discarded_output=1 "+out.detail)
+    }
+    append("GPU_STARTUP ready_ms="+(now()-requested)+" reused=$existing")
+    GpuStartupResult(gpu,log.toString())
+   }catch(t:Exception){
+    append("GPU_STARTUP failed="+t.message+" explicit_cpu_only=1")
+    runCatching{gpu?.close()};gpu=null
+    GpuStartupResult(null,log.toString())
+   }
+   runCatching{history.append("GPU_STARTUP_ASYNC run=$runId\n"+result.log)}
+   result
+  })
+  gpuStartup=submitted;startupKey=key;return submitted
+ }
  private lateinit var status:TextView;private lateinit var output:TextView;private lateinit var preview:ImageView
  private lateinit var choose:Button;private lateinit var run:Button;private lateinit var mode:Spinner
  private var source:Bitmap?=null;private var reader:Reader?=null;private var readerThreads=0
@@ -121,21 +153,21 @@ class MainActivity:Activity(){
    if(code!=TextToSpeech.SUCCESS){stopSpeech();voiceNote("系统 TTS 入队失败："+code);break}
   }
  }
- override fun onDestroy(){serial++;pending=null;tts?.stop();tts?.shutdown();tts=null;worker.execute{runCatching{db?.close()};runCatching{reader?.close()};runCatching{gpu?.close()}};worker.shutdown();super.onDestroy()}
+ override fun onDestroy(){serial++;pending=null;tts?.stop();tts?.shutdown();tts=null;worker.execute{runCatching{db?.close()};runCatching{reader?.close()};gpuStartupExecutor.execute{runCatching{gpu?.close()};gpu=null};gpuStartupExecutor.shutdown()};worker.shutdown();super.onDestroy()}
  override fun onCreate(state:Bundle?){super.onCreate(state)
   val scroll=ScrollView(this);val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,48,24,32)}
   scroll.addView(box);setContentView(scroll)
   history=ExperimentHistory(this)
   if(Build.VERSION.SDK_INT>=30)box.setOnApplyWindowInsetsListener{v,i->val bars=i.getInsets(WindowInsets.Type.systemBars());v.setPadding(24+bars.left,16+bars.top,24+bars.right,16+bars.bottom);i}
   fun label(t:String)=TextView(this).apply{text=t;textSize=18f;box.addView(this)}
-  label("蓝星 OpenOCR CPU＋GPU v0.1.6\n静态照片GPU冷启动实验 · 基于v0.4.8")
+  label("蓝星 OpenOCR CPU＋GPU v0.1.7\n静态照片CPU优先异步GPU预热实验 · 基于v0.4.8")
   choose=Button(this).apply{text="选择相册原图";box.addView(this);setOnClickListener{stopSpeech();startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},9)}}
   preview=ImageView(this).apply{adjustViewBounds=true;maxHeight=650;box.addView(this)}
   dbSize=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,DbResolution.sizes.map{DbResolution.label(it)});setSelection(DbResolution.defaultIndex);box.addView(this)}
   mode=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("官方原框（还原实验）","智能主阅读区（保留原版）"));box.addView(this)}
   threads=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("CPU 4线程","CPU 2线程","CPU 6线程（默认）"));setSelection(2);box.addView(this)}
-  backend=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("原版 ORT CPU（原宽度对照）","CPU＋GPU 协同（固定宽度）","GPU单独识别（固定宽度）","ORT CPU（固定宽度精度对照）","GPU原始形状（精度诊断）","GPU原宽度（仅尾批补齐）","CPU＋GPU协同（原始宽度，尾批CPU）","GPU尾批优先（新会话诊断）"));setSelection(6);box.addView(this)}
-  tuningChoice=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("GPU FAST（v0.1.5基线）","GPU NONE（关闭调优实验）"));setSelection(0);box.addView(this)}
+  backend=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("原版 ORT CPU（原宽度对照）","CPU＋GPU 协同（固定宽度）","GPU单独识别（固定宽度）","ORT CPU（固定宽度精度对照）","GPU原始形状（精度诊断）","GPU原宽度（仅尾批补齐）","CPU＋GPU协同（原始宽度，尾批CPU）","GPU尾批优先（新会话诊断）","CPU优先＋GPU异步预热（原宽度）"));setSelection(8);box.addView(this)}
+  tuningChoice=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("GPU FAST（v0.1.5基线）","GPU NONE（默认）"));setSelection(1);box.addView(this)}
   run=Button(this).apply{text="开始识别 / 同图复测";box.addView(this);setOnClickListener{test()}}
   status=label("请选择图片")
   voiceStatus=label("系统 TTS 初始化中")
@@ -188,9 +220,10 @@ class MainActivity:Activity(){
   val longSide=DbResolution.sizes[dbSize.selectedItemPosition]
   val selected=backend.selectedItemPosition
   val tuning=GpuTuning.fromWire(tuningChoice.selectedItemPosition)
-  val backendName=listOf("ORT_CPU","CPU_GPU","GPU_ONLY","ORT_CPU_FIXED","GPU_EXACT","GPU_TAIL_FIXED","CPU_GPU_EXACT","GPU_TAIL_FIRST")[selected]
-  val coopMode=when(selected){1->CoopMode.MIXED_FIXED;2->CoopMode.GPU_FIXED;3->CoopMode.CPU_FIXED;4->CoopMode.GPU_EXACT;5->CoopMode.GPU_TAIL_FIXED;6->CoopMode.MIXED_EXACT;7->CoopMode.GPU_TAIL_FIRST;else->null}
+  val backendName=listOf("ORT_CPU","CPU_GPU","GPU_ONLY","ORT_CPU_FIXED","GPU_EXACT","GPU_TAIL_FIXED","CPU_GPU_EXACT","GPU_TAIL_FIRST","CPU_GPU_ADAPTIVE")[selected]
+  val coopMode=when(selected){1->CoopMode.MIXED_FIXED;2->CoopMode.GPU_FIXED;3->CoopMode.CPU_FIXED;4->CoopMode.GPU_EXACT;5->CoopMode.GPU_TAIL_FIXED;6->CoopMode.MIXED_EXACT;7->CoopMode.GPU_TAIL_FIRST;8->CoopMode.MIXED_EXACT;else->null}
   val needsGpu=coopMode!=null&&!coopMode.cpuOnly
+  val adaptive=selected==8
   val runId=UUID.randomUUID().toString();currentRun=runId;speechRun=""
   val sample=sampleId
   val header="BEGIN run=$runId sample_sha256=$sample backend=$backendName mode=$name source=${bm.width}x${bm.height} db=$longSide cpu_threads=$nt device=${Build.MODEL} sdk=${Build.VERSION.SDK_INT} time_ms=${System.currentTimeMillis()} db_cache=forced_miss gpu_tuning=${if(needsGpu)tuning.name else "NA"} thermal_start="+(if(Build.VERSION.SDK_INT>=29)(getSystemService(POWER_SERVICE) as PowerManager).currentThermalStatus else -1)
@@ -220,7 +253,7 @@ class MainActivity:Activity(){
     val pMs=now()-pStart
     val load=now();if(reader==null||readerThreads!=nt){reader?.close();reader=null;reader=Reader(this,"rep.onnx",nt);readerThreads=nt}
     val engine=reader!!;val loadMs=now()-load
-    note("Field CPU_GPU v0.1.6 source=${bm.width}x${bm.height} detector_threads=$nt rec_threads=$nt detector_init_ms=${init-start} detect_ms=${detected-init} recognizer_load_ms=$loadMs raw_boxes=${found.size} focus_plan_ms=$focusMs focus_reason=${plan?.reason?:"official_bypass"} rec_shape=${engine.inputShape} rec_batch=${if(official)engine.officialBatchSize else 1}\nmode=$name roi=$roi selected=${boxes.size} outside=${outside.size} rows=${rows.size} crops=${rows.sumOf{it.size}} duplicates=${columns?.removed?:0} plan_ms=$pMs\n"+(if(outside.isNotEmpty())"提示：区域外${outside.size}个检测框未识别，可切换官方原框。\n" else "")+outside.joinToString("\n"){q->"outside det=${q.score} quad=${q.points.contentToString()}"}+"\n")
+    note("Field CPU_GPU v0.1.7 source=${bm.width}x${bm.height} detector_threads=$nt rec_threads=$nt detector_init_ms=${init-start} detect_ms=${detected-init} recognizer_load_ms=$loadMs raw_boxes=${found.size} focus_plan_ms=$focusMs focus_reason=${plan?.reason?:"official_bypass"} rec_shape=${engine.inputShape} rec_batch=${if(official)engine.officialBatchSize else 1}\nmode=$name roi=$roi selected=${boxes.size} outside=${outside.size} rows=${rows.size} crops=${rows.sumOf{it.size}} duplicates=${columns?.removed?:0} plan_ms=$pMs\n"+(if(outside.isNotEmpty())"提示：区域外${outside.size}个检测框未识别，可切换官方原框。\n" else "")+outside.joinToString("\n"){q->"outside det=${q.score} quad=${q.points.contentToString()}"}+"\n")
     val scale=min(1f,1200f/max(bm.width,bm.height))
     val scaled=Bitmap.createScaledBitmap(bm,(bm.width*scale).toInt(),(bm.height*scale).toInt(),true)
     val shown=scaled.copy(Bitmap.Config.ARGB_8888,true)
@@ -233,12 +266,14 @@ class MainActivity:Activity(){
      paint.color=Color.CYAN;rows.flatten().forEach{b->val path=Path();path.moveTo(b.points[0],b.points[1]);for(i in 1..3)path.lineTo(b.points[2*i],b.points[2*i+1]);path.close();drawPath(path,paint)}
     }
     runOnUiThread{if(!isDestroyed)preview.setImageBitmap(shown)else shown.recycle()}
-    if(needsGpu){
+    if(needsGpu&&!adaptive){
+     drainGpuStartup()
      val existing=ensureGpu(nt,tuning,::note)
      if(coopMode==CoopMode.GPU_TAIL_FIRST&&existing)note("GPU_SESSION_RESET "+gpu!!.resetSession(nt))
      if(coopMode==CoopMode.GPU_TAIL_FIRST)note("GPU_TAIL_FIRST fresh_session=1 same_process_possible=1")
      note("HOST_PROJECTION "+assets.open("compact-report.json").bufferedReader().use{it.readText()}.replace("\n"," "))
-    }else note("GPU_RESIDENT="+(gpu?.unavailableReason()==null&&gpu!=null))
+    }else if(adaptive){note("GPU_ADAPTIVE pending_previous="+(gpuStartup?.isDone==false));note("HOST_PROJECTION "+assets.open("compact-report.json").bufferedReader().use{it.readText()}.replace("\n"," "))}
+    else note("GPU_RESIDENT="+(gpuStartup?.isDone!=false&&gpu?.unavailableReason()==null&&gpu!=null))
     val begin=now();var count=0;var uncertain=0;var blank=0;var dropped=0;var first=-1L
     val lines=mutableListOf<String>();val rawLines=mutableListOf<String>();val notes=mutableListOf<String>()
     val compared=mutableListOf<Reader.Answer>();val keepFlags=mutableListOf<Boolean>()
@@ -248,6 +283,8 @@ class MainActivity:Activity(){
      // Bounded batches preserve official ordering and avoid holding all crops in memory.
      val batch=if(official)engine.officialBatchSize else 1
      val parallel=coopMode?.let{selectedMode->
+      if(adaptive)engine.cooperate(bm,bgr,rows.flatten(),official,null,selectedMode,::note){input,shape->startGpuAsync(nt,tuning,input,shape,runId)}
+      else {
       val client=gpu
       val before=client?.completedInferences?:0L
       try{engine.cooperate(bm,bgr,rows.flatten(),official,client,selectedMode,::note)}
@@ -258,6 +295,7 @@ class MainActivity:Activity(){
        note("GPU_PRE_DISPATCH_RECOVERY attempt=1 discarded_partial_results=1 reason="+t.message)
        ensureGpu(nt,tuning,::note,forceNew=true)
        engine.cooperate(bm,bgr,rows.flatten(),official,gpu,selectedMode,::note)
+      }
       }
      }
      var cooperativeIndex=0
@@ -317,7 +355,7 @@ class MainActivity:Activity(){
      output.text=details.toString();raw.text=original;lastText=original;replay.isEnabled=original.isNotBlank();speechRun=runId;speak(original,clicked);status.text="识别完成 · 历史日志 "+history.size()+" bytes";busy(false)
     }}
    }catch(t:Throwable){
-    if(needsGpu){
+    if(needsGpu&&(!adaptive||gpuStartup?.isDone==true)){
      gpuExitInfo(gpu,::note)
      note("GPU_SESSION_CLOSE reason=failed_run");runCatching{gpu?.close()};gpu=null
     }

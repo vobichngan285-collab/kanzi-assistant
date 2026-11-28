@@ -1,3 +1,6 @@
+# v0.1.7 CPU优先与异步GPU首次预热实验
+从 v0.1.6 ec04494ff3d098b282cd65694389938dbdc80687 独立派生。默认第9项 CPU_GPU_ADAPTIVE、NONE、CPU6、DB1600。保留第7项原始协同与其余对照。CPU先执行真实第0批、尾批仍留CPU；GPU独立线程建立会话，冷会话以第0批真实张量预热（结果丢弃，不计为协同任务），CPU同时继续；健康驻留会话跳过预热。若CPU先完成，不等待预热；下一次同配置可复用尚未完成的预热。仅在GPU就绪后领取未分配批次。已派发GPU任务仍需完成，其他新形状仍可能慢；不宣称消除所有resize阻塞。预热失败明确记录CPU独立完成；已派发GPU批次异常仍失败，不发布部分原文。无持续后台预热或固定形状填充，不改检测、裁切、识别模型、原始CPU解码、JNI和TTS。单独安装包cooperative017，旧版缓存不共享。真实设备验证前不宣称提速/精度等价。测试同图第9项首次和复测，再换图，比较旧v016日志；关注GPU_WARMUP、GPU_STARTUP、GPU_ADAPTIVE、COOP_SUMMARY、complete_ms。
+
 # v0.1.6 GPU冷启动专项实验
 从已真机通过17/17、三次低内存GPU死亡自动恢复成功的v0.1.5发布源码0a32d43d69df5d27fc549dfe9b95e606d2fa76e1直接派生，见 BASELINE_V015_20261128.md。v0.1.4/v0.1.5 APK及日志不覆盖。
 仅增加GPU调优选项：FAST（原v0.1.5策略，默认）/NONE（候选）。固定MNN3.5.0源码 c35f14f3ab5cb65094863b9a0e888370b027a670 的 include/MNN/MNNForwardType.h 及 source/backend/opencl/core/OpenCLBackend.cpp 已核对：OpenCL支持两种独占调优标志，NONE禁用调优，可能降低运行性能。两种均使用 Precision_High、BUFFER、原始shape/模型/解码与协同调度不变。禁用调优不等于免内核编译、不承诺冷态加速或识别完全一致。FAST缓存名称延续旧版，NONE使用独立文件，切换策略关闭旧会话后创建新会话，不清空任何缓存、不并存两个GPU引擎；本包为独立安装，不能访问v0.1.5私有缓存。原Binder死亡处理、BIND_IMPORTANT、受限首批前恢复政策、GPU真实命令校验均保留。新增请求时缓存字节数/文件名、实际调优策略、切换原因/恢复区分及原批次日志。没有后台预热、隐藏计时、CPU替代或更改固定宽度模式；默认仍第7项6线程DB1600。

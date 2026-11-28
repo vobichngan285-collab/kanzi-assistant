@@ -143,10 +143,10 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
    }
   }
  }
- internal fun cooperate(source:Bitmap,bgr:Mat,boxes:List<TextLocator.Box>,official:Boolean,gpu:GpuClient?,mode:CoopMode,note:(String)->Unit):List<Answer>{
+ internal fun cooperate(source:Bitmap,bgr:Mat,boxes:List<TextLocator.Box>,official:Boolean,gpu:GpuClient?,mode:CoopMode,note:(String)->Unit,asyncGpu:((FloatBuffer,LongArray)->java.util.concurrent.Future<GpuStartupResult>)?=null):List<Answer>{
   if(boxes.isEmpty())return emptyList()
   val mixed=mode.mixed
-  require(mode.cpuOnly||gpu!=null)
+  require(mode.cpuOnly||gpu!=null||(asyncGpu!=null&&mode==CoopMode.MIXED_EXACT))
   val began=System.nanoTime()
   val lock=Any();val results=arrayOfNulls<Answer>(boxes.size)
   val groups=boxes.indices.toList().chunked(if(official)officialBatchSize else 1)
@@ -173,7 +173,7 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
   val partialTail=official&&groups.last().size<officialBatchSize
   val order=ExactBatchOrder.order(mode,groups.size,partialTail)
   val singleCpu=mode==CoopMode.MIXED_EXACT&&!useCpu
-  note("BATCH_ORDER ordinals=$order cpu_reserved="+(if(useCpu)order[1] else if(singleCpu)order[0] else -1)+" partial_tail=$partialTail single_cpu=$singleCpu")
+  note("BATCH_ORDER ordinals=$order cpu_reserved="+(if(asyncGpu!=null&&useCpu)"${order[0]},${order[1]}" else if(useCpu)order[1] else if(singleCpu)order[0] else -1)+" partial_tail=$partialTail single_cpu=$singleCpu")
   val dispatch=BatchDispatch(groups.size,if(useCpu)2 else 1)
   val aborted=AtomicBoolean(false)
   val finished=mutableListOf<String>()
@@ -199,10 +199,15 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
     Job(id,group,buf,longArrayOf(1,3,48,w.toLong()),ms(System.nanoTime()-at))
    }
   }
+  val adaptive=asyncGpu!=null
+  val initial=if(adaptive)take(0) else null
+  val startup=if(adaptive&&useCpu&&initial!=null&&initial.ids.isNotEmpty())asyncGpu!!(initial.input.duplicate().apply{rewind()},initial.shape.copyOf()) else null
+  val cpuDone=AtomicBoolean(false)
   val pool=Executors.newFixedThreadPool(if(mixed)2 else 1)
-  fun lane(name:String,reserved:Int){
+  fun lane(name:String,reserved:Int?,firstJob:Job?=null,client:GpuClient?=gpu){
    try{
-    var job=take(reserved)
+    var job=firstJob?:take(reserved)
+    var reservedTail=adaptive&&name=="CPU"&&useCpu
     while(job!=null){
      val j=job
      if(aborted.get())break
@@ -217,7 +222,7 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
        details="gpu_shape="+gpuShape.contentToString()+" gpu_pad_ms="+padMs+" real_rows="+j.ids.size+" dummy_rows="+(gpuShape[0]-j.ids.size)
        var actualOutputShape="unavailable"
        try{
-        val o=gpu!!.infer(padded,gpuShape)
+        val o=client!!.infer(padded,gpuShape)
         actualOutputShape=o.shape.contentToString()
         details=o.detail+" compact_bytes="+o.values.size*4+" "+details
         require(o.shape[0].toLong()==gpuShape[0])
@@ -243,14 +248,27 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
        finished.add("BATCH ordinal="+j.ordinal+" lane="+name+" ids="+j.ids+" shape="+j.shape.contentToString()+" prep_ms="+j.prepMs+" start_ms="+ms(at-began)+" finish_ms="+ms(end-began)+" host_ms="+ms(end-at)+" "+details)
       }
      }
-     job=take()
+     job=if(reservedTail){reservedTail=false;take(1)}else take()
     }
-   }catch(t:Throwable){aborted.set(true);throw t}
+   }catch(t:Throwable){aborted.set(true);throw t}finally{if(adaptive&&name=="CPU")cpuDone.set(true)}
   }
   val futures=ArrayList<java.util.concurrent.Future<Unit>>()
   try{
-   futures.add(pool.submit(Callable<Unit>{lane(if(mode.cpuOnly||singleCpu)"CPU" else "GPU",0)}))
-   if(useCpu)futures.add(pool.submit(Callable<Unit>{lane("CPU",1)}))
+   if(adaptive){
+    note("GPU_ADAPTIVE start=cpu_first warmup=real_first_batch asynchronous=1")
+    futures.add(pool.submit(Callable<Unit>{lane("CPU",0,initial)}))
+    if(startup!=null)futures.add(pool.submit(Callable<Unit>{
+     while(!startup.isDone&&!cpuDone.get()&&!aborted.get())Thread.sleep(5)
+     if(!cpuDone.get()&&!aborted.get()&&startup.isDone){
+      val ready=startup.get()
+      synchronized(lock){finished.add(ready.log);finished.add("GPU_ADAPTIVE ready="+(ready.client!=null)+" elapsed_ms="+ms(System.nanoTime()-began))}
+      if(ready.client!=null)lane("GPU",null,client=ready.client)
+     }else synchronized(lock){finished.add("GPU_ADAPTIVE cpu_finished_before_gpu_ready="+(!startup.isDone)+" no_wait=1")}
+    }))
+   }else{
+    futures.add(pool.submit(Callable<Unit>{lane(if(mode.cpuOnly||singleCpu)"CPU" else "GPU",0)}))
+    if(useCpu)futures.add(pool.submit(Callable<Unit>{lane("CPU",1)}))
+   }
    // Wait for both workers, including after error, before releasing bitmap/model.
    var failure:Throwable?=null
    for(f in futures)try{f.get()}catch(t:Throwable){aborted.set(true);if(failure==null)failure=t.cause?:t}
