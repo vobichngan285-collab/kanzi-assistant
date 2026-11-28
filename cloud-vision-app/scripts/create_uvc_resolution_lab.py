@@ -532,7 +532,7 @@ patch(jni,"static JNINativeMethod methods[] = {",'''static jstring nativeReadOnl
     UVCCamera *camera = reinterpret_cast<UVCCamera *>(id_camera);
     char report[16384] = {0};
     if(camera) camera->readOnlyC110Report(report, sizeof(report));
-    else strcpy(report,"NATIVE_NO_CAMERA");
+    else return env->NewStringUTF("NATIVE_NO_CAMERA");
     return env->NewStringUTF(report);
 }
 
