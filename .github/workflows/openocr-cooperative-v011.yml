@@ -4,6 +4,9 @@ on:
     branches: [exp/openocr-cooperative-v011-20261128]
     paths: ['openocr-lab/**','.github/workflows/openocr-cooperative-v011.yml']
   workflow_dispatch:
+concurrency:
+  group: openocr-cooperative-v011-${{ github.ref }}
+  cancel-in-progress: false
 permissions:
   contents: read
 jobs:
