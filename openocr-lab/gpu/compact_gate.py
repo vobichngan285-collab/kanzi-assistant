@@ -16,7 +16,7 @@ def sha(f):return hashlib.sha256(f.read_bytes()).hexdigest()
 g=onnx.load(p); onnx.checker.check_model(g)
 assert len(g.graph.output)==1 and len(g.graph.input)==1
 old=g.graph.output[0]; name=old.name; dims=old.type.tensor_type.shape.dim
-assert len(dims)==3 and dims[2].dim_value==6625
+assert len(dims)==3 and dims[2].dim_value in (0,6625)
 opset=next(x.version for x in g.opset_import if not x.domain)
 assert opset>=11
 before=[x.SerializeToString() for x in g.graph.initializer]
@@ -46,6 +46,7 @@ def save():Path("compact-report.json").write_text(json.dumps(report,indent=2,ens
 def test(x,label):
  x=np.ascontiguousarray(x,np.float32)
  full=ref.run(None,{inp:x})[0]
+ assert full.ndim==3 and full.shape[2]==6625 and np.isfinite(full).all()
  expected=np.stack([full.argmax(-1),full.max(-1)],axis=-1).astype(np.float32)
  y=compact.run(None,{inp:x})[0]
  assert y.shape==expected.shape and np.array_equal(y[:,:,0],expected[:,:,0])
