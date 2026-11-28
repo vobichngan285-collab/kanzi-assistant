@@ -21,6 +21,7 @@ struct State{
  MNN::Session* session=nullptr;
  std::vector<int> shape,output;
  int requested=0;
+ int tuning=0;
  std::string info, probe;
  MNN::BackendConfig cfg;
  ~State(){if(net){if(session)net->releaseSession(session);MNN::Interpreter::destroy(net);}}
@@ -83,12 +84,13 @@ static void requireRequestedGpu(State* s,const char* phase){
 }
 static void fail(JNIEnv* e,const char* s){e->ThrowNew(e->FindClass("java/lang/IllegalStateException"),s);}
 static State* state(jlong h){auto s=reinterpret_cast<State*>(h);check(s!=nullptr,"null native handle");return s;}
-extern "C" JNIEXPORT jlong JNICALL Java_com_vobich_bluestar_openocrlab_NativeMnn_open(JNIEnv* e,jobject,jstring path,jint backend,jint threads,jstring cachePath){
+extern "C" JNIEXPORT jlong JNICALL Java_com_vobich_bluestar_openocrlab_NativeMnn_open(JNIEnv* e,jobject,jstring path,jint backend,jint threads,jstring cachePath,jint tuning){
  try{
   check(backend==0||backend==3||backend==7,"invalid backend");
+  check(tuning==0||tuning==1,"invalid OpenCL tuning selection");
   const char* p=e->GetStringUTFChars(path,nullptr);check(p!=nullptr,"path");
   std::string file(p);e->ReleaseStringUTFChars(path,p);
-  auto s=std::make_unique<State>();s->requested=backend;
+  auto s=std::make_unique<State>();s->requested=backend;s->tuning=tuning;
   if(backend==3)s->probe=probeOpenCL();
   ocr_device_reset();
   s->net=MNN::Interpreter::createFromFile(file.c_str());check(s->net,"createFromFile failed");
@@ -102,12 +104,12 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_vobich_bluestar_openocrlab_NativeMnn
   MNN::ScheduleConfig sc;sc.type=static_cast<MNNForwardType>(backend);sc.backupType=MNN_FORWARD_CPU;
   s->cfg.precision=MNN::BackendConfig::Precision_High;sc.backendConfig=&s->cfg;
   if(backend==0)sc.numThread=threads;
-  else if(backend==3)sc.mode=MNN_GPU_TUNING_FAST|MNN_GPU_MEMORY_BUFFER;
+  else if(backend==3)sc.mode=(tuning==0?MNN_GPU_TUNING_FAST:MNN_GPU_TUNING_NONE)|MNN_GPU_MEMORY_BUFFER;
   else sc.mode=MNN_GPU_TUNING_NONE;
   s->session=s->net->createSession(sc);
   if(!s->session)throw std::runtime_error("GPU_SESSION_CREATE_FAILED "+s->probe);
   requireRequestedGpu(s.get(),"createSession");
-  s->info="requested="+std::to_string(backend)+" actual="+std::to_string(primaryBackend(s.get()))+" MNN="+MNN::getVersion()+" device="+ocr_device_get()+" "+s->probe;
+  s->info="requested="+std::to_string(backend)+" actual="+std::to_string(primaryBackend(s.get()))+" gpu_tuning="+(tuning==0?"FAST":"NONE")+" MNN="+MNN::getVersion()+" device="+ocr_device_get()+" "+s->probe;
   return reinterpret_cast<jlong>(s.release());
  }catch(const std::exception& x){fail(e,x.what());return 0;}
 }
@@ -157,7 +159,7 @@ extern "C" JNIEXPORT jfloatArray JNICALL Java_com_vobich_bluestar_openocrlab_Nat
   float memory=-1;s->net->getSessionInfo(s->session,MNN::Interpreter::MEMORY,&memory);
   std::ostringstream log;
   log<<"requested="<<s->requested<<" reported_primary="<<(backendOK?types[0]:-1)<<" selected_device="<<ocr_device_get()
-     <<" resized="<<resized<<" resize_ms="<<resize<<" input_copy_ms="<<upload<<" run_submit_ms="<<execute
+     <<" gpu_tuning="<<(s->tuning==0?"FAST":"NONE")<<" resized="<<resized<<" resize_ms="<<resize<<" input_copy_ms="<<upload<<" run_submit_ms="<<execute
      <<" output_copy_sync_jni_ms="<<download<<" cache_update_ms="<<cacheMs<<" cache_update_rc="<<cacheRc<<" runtime_reported_memory_mb="<<memory<<" "<<trace;
   s->info=log.str();
   return values;
