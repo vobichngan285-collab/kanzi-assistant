@@ -122,18 +122,8 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
  // crop lock, and executes independently. No duplicated inference or reordering.
  private data class Job(val ordinal:Int,val ids:List<Int>,val input:FloatBuffer,val shape:LongArray,val prepMs:Double)
  private fun ms(ns:Long)=ns/1e6
- private fun decodeCompact(values:FloatArray,shape:IntArray,width:Int):List<Answer>{
-  require(shape.size==3&&shape[2]==2&&shape.fold(1L){a,b->a*b}==values.size.toLong())
-  return List(shape[0]){row->
-   var last=-1;var sum=0f;var n=0;var low=1f;val text=StringBuilder()
-   repeat(shape[1]){step->
-    val at=(row*shape[1]+step)*2;val raw=values[at];val score=values[at+1];val id=raw.toInt()
-    require(raw.isFinite()&&raw==id.toFloat()&&id in chars.indices&&score.isFinite()){"invalid compact output"}
-    if(id!=0&&id!=last){text.append(chars[id]);sum+=score;low=min(low,score);n++};last=id
-   }
-   Answer(text.toString(),if(n>0)sum/n else 0f,width,if(n>0)low else 0f)
-  }
- }
+ private fun decodeCompact(values:FloatArray,shape:IntArray,width:Int):List<Answer> =
+  CompactCtc.decode(values,shape,chars).map{Answer(it.text,it.confidence,width,it.minConfidence)}
  private fun runCpu(j:Job):List<Answer>{
   val buf=j.input.duplicate().apply{rewind()}
   OnnxTensor.createTensor(env,buf,j.shape).use{input->
@@ -158,7 +148,8 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
   val began=System.nanoTime()
   val lock=Any();val results=arrayOfNulls<Answer>(boxes.size)
   val groups=boxes.indices.toList().chunked(if(official)officialBatchSize else 1)
-  var next=0
+  val useCpu=mixed&&groups.size>1
+  val dispatch=BatchDispatch(groups.size,if(useCpu)2 else 1)
   val aborted=AtomicBoolean(false)
   val finished=mutableListOf<String>()
   val starts=mutableListOf<Triple<String,Long,Long>>()
@@ -166,8 +157,7 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
   // This tests both lanes even when one starts much faster than the other.
   fun take(reserved:Int?=null):Job?=synchronized(lock){
    if(aborted.get())return@synchronized null
-   val id=reserved?:next++
-   if(id>=groups.size)return@synchronized null
+   val id=if(reserved!=null)dispatch.first(reserved) else dispatch.next()?:return@synchronized null
    val at=System.nanoTime()
    val group=groups[id]
    if(official){
@@ -184,8 +174,6 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
    }
   }
   val pool=Executors.newFixedThreadPool(if(mixed)2 else 1)
-  val useCpu=mixed&&groups.size>1
-  next=if(useCpu)2 else 1
   fun lane(name:String,reserved:Int){
    try{
     var job=take(reserved)
