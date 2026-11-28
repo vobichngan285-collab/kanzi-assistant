@@ -1,3 +1,17 @@
+# C110 原生1440P手动截帧实验 v0.1.2
+
+从已验证原始1440P采集及短文字OCR的 v0.1.0 (264e47874131743df914ce2272eda0dd01518fda) 派生。不继承v0.1.1失败门控。独立包 com.vobich.bluestar.uvcliveocr012，不覆盖旧版。
+
+默认启动相机仅预览与缓存，不自动OCR。16:9 SurfaceView 原生显示，可以关闭；Activity暂停时隐藏，服务继续运行。手动按钮复制最近一帧完整2560×1440 YUYV（7372800 bytes），拒绝超过500ms的陈旧缓存；没有屏幕截图、JPEG重编码或应用层缩图。再次点击取消旧推理、清除旧队列，识别当前快照并从首批文字开始朗读。原始Bitmap为3686400px；冻结DB内部长边1600，REC从原始图裁切。保持CPU4、两种阅读模式和模型资产不变。手动默认关闭自动识别，互不干扰。
+
+自动识别为独立对照：不等稳定、不做亮度门控、单worker识别完成即取最新帧，完整原文仅按去空白后精确相等去重；有差异则立即抢读。不是最终实时抢占设计：自动画面改变不取消正在运行的OCR，小字变化需下一次识别确认，OCR错字抖动仍可能重复播报，持续运行会增加功耗。手动点击/关闭自动/停止可取消旧推理。用户此次优先要求建立手动原始帧基准，先不继续叠加场景门控。
+
+日志 PREVIEW_ATTACHED/DETACHED、FIRST_FRAME、MANUAL_CAPTURE (真实帧序号、尺寸、字节、帧年龄及点击至复制完成)、OCR_INPUT (实际Bitmap尺寸)、FIRST_TEXT、TTS_FIRST (点击至回调非扬声器出声)、OCR_DONE、CANCEL_DONE、HEARTBEAT。帧率及预览、锁屏稳定性待真机，缓存每帧复制约221MB/s理论数据量并非实测功耗。先停止其他USB实验再启动相机，手动静止招牌/价目表，核对预览文字与识别结果，然后切换画面重复测试。自动实验另测，不把结果混为手动基准。
+
+---
+
+## 原冻结OCR说明
+
 # 蓝星 OpenOCR v0.4.8 分辨率入口修复
 v0.4.7 device failure: DbLocator retained old 960/1280/1600 require list, rejecting new settings before inference. Single shared DbResolution list for UI and locator; default1600; all seven settings validated in JVM test. No OCR model/algorithm changes. Higher resolutions still unverified on device.
 
