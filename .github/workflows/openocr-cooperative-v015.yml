@@ -1,0 +1,201 @@
+name: BlueStar Static Photo CPU GPU Lifecycle Recovery v0.1.5
+on:
+  push:
+    branches: [exp/openocr-cooperative-v015-20261128]
+    paths: ['openocr-lab/**','.github/workflows/openocr-cooperative-v015.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: lightbringer/clipper-java
+          ref: 5ef8c0a467023c495e44e582e9cbd8ca7308a590
+          path: clipper-upstream
+          persist-credentials: false
+      - name: Vendor pinned Clipper Java source
+        run: |
+          set -euo pipefail
+          test "$(git -C clipper-upstream rev-parse HEAD)" = 5ef8c0a467023c495e44e582e9cbd8ca7308a590
+          mkdir -p openocr-lab/app/src/main/java/de/lighti/clipper
+          cp clipper-upstream/Clipper/src/de/lighti/clipper/*.java openocr-lab/app/src/main/java/de/lighti/clipper/
+          cp clipper-upstream/license.txt Clipper-Java-LICENSE.txt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Verify frozen geometry, detector and original CPU inference
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin 4b52f658a9ec28f564b4ed77f14a97a60b477a63
+          P=openocr-lab/app/src/main/java/com/vobich/bluestar/openocrlab
+          git diff --exit-code FETCH_HEAD -- "$P/DbLocator.kt" "$P/DbResolution.kt" "$P/ColumnPlanner.kt" "$P/FocusPlanner.kt" "$P/OfficialGeometry.kt" "$P/RowPlanner.kt" "$P/SpeechChunks.kt" "$P/TextLocator.kt"
+          git show FETCH_HEAD:"$P/Reader.kt" > frozen-reader.kt
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("openocr-lab/app/src/main/java/com/vobich/bluestar/openocrlab")
+          old=Path("frozen-reader.kt").read_text();new=(p/"Reader.kt").read_text()
+          a=old.index("  val p=box.points.copyOf()");b=old.index("  OnnxTensor.createTensor",a)
+          assert old[a:b] in new
+          a=old.index("  OnnxTensor.createTensor",a);b=old.index(" override fun close()")
+          assert old[a:b] in new
+          assert 'android:process=":gpu_worker"' in Path("openocr-lab/app/src/main/AndroidManifest.xml").read_text()
+          print("FROZEN PREPROCESS, CPU DECODER, DETECTOR AND PLANNERS VERIFIED")
+          PY
+      - name: Verify original CPU path and model projection
+        run: |
+          git fetch --no-tags --depth=1 origin 375b51ecde1a5b1dc669f4e9e40ce5307b22c47e
+          P=openocr-lab/app/src/main/java/com/vobich/bluestar/openocrlab
+          git diff --exit-code FETCH_HEAD -- "$P/ExperimentHistory.kt" openocr-lab/gpu/compact_gate.py openocr-lab/gpu/instrument_mnn.py
+          git show FETCH_HEAD:"$P/Reader.kt" > previous-coop-reader.kt
+          python - <<'PY'
+          from pathlib import Path
+          old=Path("previous-coop-reader.kt").read_text()
+          new=Path("openocr-lab/app/src/main/java/com/vobich/bluestar/openocrlab/Reader.kt").read_text()
+          marker=" internal fun cooperate("
+          assert old.split(marker)[0]==new.split(marker)[0], "CPU path/crop/decoder changed"
+          print("ORIGINAL CPU PATH AND CROP VERIFIED")
+          PY
+      - name: Verify frozen GPU native runtime and model tools
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin 5c914abfe42ef1d28decca0fac3170f5a5e4924f
+          P=openocr-lab/app/src/main/java/com/vobich/bluestar/openocrlab
+          git diff --exit-code FETCH_HEAD -- "$P/ExperimentHistory.kt" openocr-lab/gpu/ocr_mnn_jni.cpp openocr-lab/gpu/instrument_mnn.py openocr-lab/gpu/compact_gate.py openocr-lab/app/src/main/AndroidManifest.xml
+      - name: Verify complete v0.1.4 success baseline
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin 425ee3986e6d962d166eaf27e63c3b7b3dbfbdf1
+          P=openocr-lab/app/src/main/java/com/vobich/bluestar/openocrlab
+          git diff --exit-code FETCH_HEAD -- "$P/Reader.kt" "$P/CoopCore.kt" "$P/DbLocator.kt" "$P/DbResolution.kt" "$P/ColumnPlanner.kt" "$P/FocusPlanner.kt" "$P/OfficialGeometry.kt" "$P/RowPlanner.kt" "$P/SpeechChunks.kt" "$P/TextLocator.kt" "$P/ExperimentHistory.kt" openocr-lab/gpu openocr-lab/app/src/main/AndroidManifest.xml openocr-lab/app/src/test/java/com/vobich/bluestar/openocrlab/CoopCoreTest.kt
+          echo 'V014 EXACT READER, SCHEDULING, MODEL TOOLS AND GEOMETRY VERIFIED'
+      - name: Extract exact immutable v0.4.8 model assets
+        run: |
+          set -euo pipefail
+          BASE=https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-openocr-field-db-v048-20261127
+          curl -fL --retry 3 "$BASE/BlueStar_OpenOCR_Field_DB_0.4.8.apk" -o frozen.apk
+          for f in openocr-report.json OpenOCR-LICENSE.txt db-asset.sha256; do curl -fL --retry 3 "$BASE/$f" -o "$f"; done
+          echo '84103dbd7020b53fd2dcb99a6b4b7a0e96ed45b7ab238e80b74f2b3edd7cf1fa  frozen.apk' | sha256sum -c -
+          echo 'f1d36ed055b95ffdc61f42dd9553907e5dd945030d0eae3b42d4ed8e69fc41a1  openocr-report.json' | sha256sum -c -
+          echo 'c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4  OpenOCR-LICENSE.txt' | sha256sum -c -
+          mkdir -p openocr-lab/app/src/main/assets
+          for f in rep.onnx chars.txt repvit-db.onnx; do unzip -p frozen.apk "assets/$f" > "openocr-lab/app/src/main/assets/$f"; done
+          cd openocr-lab/app/src/main/assets
+          echo "$(jq -r .rep.onnx_sha256 ../../../../../openocr-report.json)  rep.onnx" | sha256sum -c -
+          echo "$(jq -r .dict_sha256 ../../../../../openocr-report.json)  chars.txt" | sha256sum -c -
+          sha256sum -c ../../../../../db-asset.sha256
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pinned host conversion tools
+        run: |
+          python -m pip install numpy==1.26.4 onnx==1.18.0 onnxruntime==1.22.0 pillow==11.3.0
+          python -m pip download --no-deps --only-binary=:all: MNN==3.5.0 -d wheels
+          echo 'ab8ccf74359dec7e9c56e90d0f11a8b589ccebc4ead03bf7e6565558666831a8  '$(find wheels -name '*.whl') | sha256sum -c -
+          python -m pip install wheels/*.whl
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk ninja-build
+      - name: Verify compact projection and host MNN numerical behavior
+        run: |
+          set -euo pipefail
+          BASE=https://github.com/vobichngan285-collab/kanzi-assistant/releases/download/bluestar-openocr-cooperative-v010-20261128
+          curl -fL --retry 3 "$BASE/BlueStar_OpenOCR_Cooperative_0.1.0.apk" -o cooperative-v010.apk
+          echo '989839856a3ee6f8adae973540407cc2cc85c94d412486c786e053e6da79672f  cooperative-v010.apk' | sha256sum -c -
+          unzip -p cooperative-v010.apk assets/rep-compact.mnn > openocr-lab/app/src/main/assets/rep-compact.mnn
+          echo '576805263c70e6832af51ba6c63bb6813ba381103a2baafdceadb219bded4300  openocr-lab/app/src/main/assets/rep-compact.mnn' | sha256sum -c -
+          python - <<'PY'
+          from pathlib import Path
+          s=Path("openocr-lab/gpu/compact_gate.py").read_text()
+          lines=s.splitlines()
+          matches=[i for i,line in enumerate(lines) if line.startswith('subprocess.run(["mnnconvert",')]
+          assert len(matches)==1
+          lines[matches[0]]='assert sha(target) == "576805263c70e6832af51ba6c63bb6813ba381103a2baafdceadb219bded4300"'
+          Path("compact_gate_pinned.py").write_text("\n".join(lines)+"\n")
+          PY
+          python -u compact_gate_pinned.py
+          echo '576805263c70e6832af51ba6c63bb6813ba381103a2baafdceadb219bded4300  openocr-lab/app/src/main/assets/rep-compact.mnn' | sha256sum -c -
+      - uses: actions/checkout@v4
+        with:
+          repository: alibaba/MNN
+          ref: c35f14f3ab5cb65094863b9a0e888370b027a670
+          path: mnn-src
+          persist-credentials: false
+          submodules: recursive
+      - name: Android SDK
+        run: |
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.2.12479018'
+      - name: Build pinned OpenCL runtime and JNI
+        run: bash openocr-lab/gpu/build_android_mnn.sh
+      - name: Build offline APK
+        working-directory: openocr-lab
+        run: gradle --no-daemon --max-workers=2 :app:testReleaseUnitTest :app:assembleRelease
+      - name: Verify and package
+        run: |
+          set -euo pipefail
+          APK=openocr-lab/app/build/outputs/apk/release/app-release.apk
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/apksigner" verify --verbose "$APK"
+          "$BT/aapt" dump badging "$APK" | tee badging.txt
+          grep -F "package: name='com.vobich.bluestar.openocrlab.cooperative015' versionCode='6' versionName='0.1.5'" badging.txt
+          ! grep -F android.permission.INTERNET badging.txt
+          unzip -Z1 "$APK" > archive.txt
+          grep -Fx lib/arm64-v8a/libonnxruntime.so archive.txt
+          grep -Fx lib/arm64-v8a/libopencv_java4.so archive.txt
+          ! grep -E '^lib/(x86|x86_64|armeabi-v7a)/' archive.txt
+          unzip -p "$APK" assets/rep.onnx | sha256sum | grep -F "$(jq -r .rep.onnx_sha256 openocr-report.json)"
+          ! grep -Fx assets/yolo26n-text.onnx archive.txt
+          unzip -p "$APK" assets/chars.txt | sha256sum | grep -F "$(jq -r .dict_sha256 openocr-report.json)"
+          unzip -p "$APK" assets/repvit-db.onnx | sha256sum | grep -F "$(cut -d ' ' -f1 db-asset.sha256)"
+          ! grep -E '^assets/(svtr.onnx|yolo26[smlx]-text.onnx)$' archive.txt
+          grep -Fx lib/arm64-v8a/libMNN.so archive.txt
+          grep -Fx lib/arm64-v8a/libocr_mnn_jni.so archive.txt
+          unzip -p "$APK" assets/rep-compact.mnn | sha256sum | grep -F "$(jq -r .mnn_sha256 compact-report.json)"
+          unzip -p "$APK" assets/compact-report.json | cmp - compact-report.json
+          "$BT/aapt" dump xmltree "$APK" AndroidManifest.xml > manifest-tree.txt
+          grep -F ':gpu_worker' manifest-tree.txt
+          grep -F 'libOpenCL.so' manifest-tree.txt
+          grep -F 'E: uses-native-library' manifest-tree.txt
+          unzip -p "$APK" assets/rep-compact.mnn | sha256sum | grep -F "576805263c70e6832af51ba6c63bb6813ba381103a2baafdceadb219bded4300"
+          mkdir -p release
+          cp "$APK" release/BlueStar_OpenOCR_Cooperative_0.1.5.apk
+          cp openocr-lab/README.md openocr-lab/BASELINE_V014_20261128.md openocr-report.json OpenOCR-LICENSE.txt Clipper-Java-LICENSE.txt db-asset.sha256 compact-report.json MNN-LICENSE.txt MNN-diagnostics.patch release/
+          (cd release && sha256sum *.apk > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openocr-cooperative
+          path: release/
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: openocr-cooperative
+          path: release
+      - name: Publish verified experiment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          (cd release && sha256sum -c SHA256SUMS.txt)
+          TAG=bluestar-openocr-cooperative-v015-20261128
+          if ! gh release view "$TAG" >/dev/null 2>&1; then gh release create "$TAG" --target "$GITHUB_SHA" --title "蓝星 OpenOCR CPU GPU GPU生命周期修复实验 v0.1.5" --notes-file release/README.md --prerelease --draft; fi
+          gh release view "$TAG" --json targetCommitish | jq -e --arg sha "$GITHUB_SHA" '.targetCommitish == $sha'
+          for i in 1 2 3; do gh release upload "$TAG" release/* && break; test "$i" != 3; sleep 5; done
+          gh release edit "$TAG" --draft=false --prerelease
+          cat release/SHA256SUMS.txt
+          gh release view "$TAG" --json isDraft,targetCommitish,assets | tee published-release.json
+          jq -e --arg sha "$GITHUB_SHA" '.isDraft == false and .targetCommitish == $sha and any(.assets[]; .name == "BlueStar_OpenOCR_Cooperative_0.1.5.apk" and .size > 0)' published-release.json
