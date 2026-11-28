@@ -451,7 +451,7 @@ patch(java,"public synchronized void open(final UsbControlBlock ctrlBlock) {",''
     private native String nativeReadOnlyC110Report(long ptr);
 
     private void openInternal(final UsbControlBlock ctrlBlock, boolean readOnly) {''')
-patch(java,"\t\tmCurrentFrameFormat = FRAME_FORMAT_MJPEG;","\t\tif (readOnly) return;\n\t\tmCurrentFrameFormat = FRAME_FORMAT_MJPEG;")
+patch(java,"\t\tmCurrentFrameFormat = FRAME_FORMAT_MJPEG;\n    \tif (mNativePtr != 0 && TextUtils.isEmpty(mSupportedSize)) {","\t\tif (readOnly) return;\n\t\tmCurrentFrameFormat = FRAME_FORMAT_MJPEG;\n    \tif (mNativePtr != 0 && TextUtils.isEmpty(mSupportedSize)) {")
 header=uvc/"src/main/jni/UVCCamera/UVCCamera.h"
 patch(header,"public:\n\tUVCCamera();","public:\n\tvoid readOnlyC110Report(char *out, int capacity);\n\tUVCCamera();")
 cpp=uvc/"src/main/jni/UVCCamera/UVCCamera.cpp"
