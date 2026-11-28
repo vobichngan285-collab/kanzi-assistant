@@ -1,6 +1,6 @@
-# 蓝星 OpenOCR 静态照片 CPU＋GPU 协同实验 v0.1.0
+# 蓝星 OpenOCR 静态照片 CPU＋GPU 协同实验 v0.1.1
 
-独立包 com.vobich.bluestar.openocrlab.cooperative，从冻结 v0.4.8 (4b52f658a9ec28f564b4ed77f14a97a60b477a63) 派生；保持原CPU对照、原始RepSVTR/DB/字典、原图导入上限1600万像素、DB1600默认、官方原框/智能主阅读区、CPU线程选择、裁切/顺序/置信度与全文TTS规则。主目标是静态照片完整OCR速度，为未来端云只传文字服务。本包无云端/视频功能，不更改正式版、端云实验或冻结版。
+独立包 com.vobich.bluestar.openocrlab.cooperative011，从冻结 v0.4.8 (4b52f658a9ec28f564b4ed77f14a97a60b477a63) 派生；保持原CPU对照、原始RepSVTR/DB/字典、原图导入上限1600万像素、DB1600默认、官方原框/智能主阅读区、CPU线程选择、裁切/顺序/置信度与全文TTS规则。主目标是静态照片完整OCR速度，为未来端云只传文字服务。本包无云端/视频功能，不更改正式版、端云实验或冻结版。
 
 ## 三种模式
 - 原版 ORT CPU：原v0.4.8路径。为公平同图完整OCR比较，每次清除DB概率缓存，模型会话仍复用；日志区分模型加载、热态、GPU是否驻留。
@@ -32,3 +32,6 @@ Fork frozen v0.4.5 42f4acf348bd78c2d15d3d39fa333a7c3530057e. No change to previo
 Two manual modes only: official-oriented raw (default) and verified region (legacy v0.4.3 geometry/reader preserved). DB defaults .30/.60/min3/expanded5/unclip1.5/cap1000 fixed; 960 official baseline, 1280,1600 (default) remain. No auto routing, YOLO, custom vertical segmentation, raw dedup or parameter experiments active. No semantic correction.
 Official port uses OpenCV INTER_LINEAR detection resize with Python rounding, round Clipper Java polygon offset (pinned 5ef8c0a467023c495e44e582e9cbd8ca7308a590 Boost license), refit and integer coordinate mapping; official sort, original resolution cubic perspective replicate border, rotate >=1.5, dynamic 48-high BGR normalization, official CTC greedy, batch six where ONNX batch dynamic (fixed batch 1 uses single), official recognition drop score .5 for display/TTS, all candidates in copied diagnostics. Verified region mode retains original Bitmap/continuous rectangle/Reader and FocusPlanner/RowPlanner/ColumnPlanner semantics; cache keyed by mode, original bitmap, generation, resolution and session. Existing CPU4/2/6 and offline TTS remain. No YOLO asset in release.
 Reference: Topdu/OpenOCR 1ccfc6ee6161f7133b192e16af3a9265273997ba, configs/det/dbnet/repvit_db.yml, opendet/preprocess/db_resize_for_test.py, opendet/postprocess/db_postprocess.py, tools/infer/utility.py, tools/infer_e2e.py, tools/infer_rec.py, configs/rec/svtrv2/repsvtr_ch.yml, openrec/preprocess/resize.py, openrec/postprocess/ctc_postprocess.py. Android port, not claimed byte-identical to official Python (Java Clipper, Android image decode, float precision, runtime); weights and dictionary reused and verified against prior release, not freshly compared to upstream assets. JVM geometry tests; device parity and batch support/accuracy not yet verified. Compare official mode 1600 to v0.4.5 baseline on same images; legacy region regression with menu. Only evaluate actual recognized text, not confidence alone.
+
+## v0.1.1 定向修复（v0.1.0 首次真机 GPU 全部回退 CPU）
+恢复旧GPU竞技场已使用的可选厂商库声明 libOpenCL.so；独立GPU进程在创建MNN会话前只读探测 dlopen、OpenCL符号、平台和GPU设备名称/驱动版本；MNN会话创建后以及每次推理之前拒绝非请求主后端，保留原实际执行命令追踪门槛。探测本身不运行推理，设备能枚举不代表模型能在GPU运行。此次不修改模型、裁切、阅读顺序、置信度、任务分配或累计日志机制。新包独立安装，原版日志仍留在旧包。历史MNN概率及精简置信度严格门槛失败仍有效，Rep OpenCL此前闪退尚待实机验证。
