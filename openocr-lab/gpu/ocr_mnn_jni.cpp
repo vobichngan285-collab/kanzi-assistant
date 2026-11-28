@@ -2,6 +2,9 @@
 #include <MNN/Interpreter.hpp>
 #include <MNN/Tensor.hpp>
 #include <chrono>
+#include <cmath>
+#include <algorithm>
+#include <limits>
 #include <cstring>
 #include <cstdint>
 #include <dlfcn.h>
@@ -14,6 +17,8 @@ extern "C" void ocr_trace_reset();
 extern "C" const char* ocr_trace_get();
 extern "C" void ocr_device_reset();
 extern "C" const char* ocr_device_get();
+extern "C" void ocr_io_reset();
+extern "C" const char* ocr_io_get();
 using Clock=std::chrono::steady_clock;
 static double ms(Clock::time_point t){return std::chrono::duration<double,std::milli>(Clock::now()-t).count();}
 struct State{
@@ -133,7 +138,7 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_vobich_bluestar_openocrlab_NativeMnn
 }
 extern "C" JNIEXPORT jfloatArray JNICALL Java_com_vobich_bluestar_openocrlab_NativeMnn_run(JNIEnv* e,jobject,jlong handle,jobject input,jlongArray dims){
  try{
-  auto s=state(handle);check(e->GetArrayLength(dims)==4,"expected rank4");
+  auto s=state(handle);ocr_io_reset();check(e->GetArrayLength(dims)==4,"expected rank4");
   jlong raw[4];e->GetLongArrayRegion(dims,0,4,raw);
   std::vector<int> shape;size_t count=1;
   for(auto x:raw){check(x>0&&x<=4096,"invalid input dimension");shape.push_back((int)x);count*=x;}
@@ -175,7 +180,7 @@ extern "C" JNIEXPORT jfloatArray JNICALL Java_com_vobich_bluestar_openocrlab_Nat
    MNN::Tensor ids(idx,MNN::Tensor::CAFFE);
    check(idx->copyToHostTensor(&ids)&&ids.elementSize()*2==length&&ids.host<int32_t>(),"integer compact index copy failed");
    std::vector<float> exact(result.host<float>(),result.host<float>()+length);
-   for(int i=0;i<ids.elementSize();i++){int32_t id=ids.host<int32_t>()[i];check(id>=0&&id<6625,"invalid int32 character index");exact[2*i]=static_cast<float>(id);}
+   for(int i=0;i<ids.elementSize();i++){int32_t id=ids.host<int32_t>()[i];if(id<0||id>=6625){std::ostringstream err;err<<"invalid int32 character index step="<<i<<" actual="<<id<<" compact_float_index="<<exact[2*i]<<" compact_score="<<exact[2*i+1];throw std::runtime_error(err.str());}exact[2*i]=static_cast<float>(id);}
    e->SetFloatArrayRegion(values,0,length,exact.data());
   }else e->SetFloatArrayRegion(values,0,length,result.host<float>());
   double download=ms(t);
@@ -188,10 +193,10 @@ extern "C" JNIEXPORT jfloatArray JNICALL Java_com_vobich_bluestar_openocrlab_Nat
   std::ostringstream log;
   log<<"requested="<<s->requested<<" reported_primary="<<(backendOK?types[0]:-1)<<" selected_device="<<ocr_device_get()
      <<" gpu_tuning="<<(s->tuning==0?"FAST":"NONE")<<" precision_policy="<<(s->tuning==2?"NORMAL_FP16_STORAGE":s->tuning==3?"LOW_FP16_COMPUTE":"HIGH_FP32")<<" integer_index_readback="<<(s->tuning>=2?1:0)<<" resized="<<resized<<" resize_ms="<<resize<<" input_copy_ms="<<upload<<" run_submit_ms="<<execute
-     <<" output_copy_sync_jni_ms="<<download<<" cache_update_ms="<<cacheMs<<" cache_update_rc="<<cacheRc<<" runtime_reported_memory_mb="<<memory<<" "<<trace;
+     <<" output_copy_sync_jni_ms="<<download<<" cache_update_ms="<<cacheMs<<" cache_update_rc="<<cacheRc<<" runtime_reported_memory_mb="<<memory<<" "<<trace<<" "<<ocr_io_get();
   s->info=log.str();
   return values;
- }catch(const std::exception& x){if(!e->ExceptionCheck())fail(e,x.what());return nullptr;}
+ }catch(const std::exception& x){if(!e->ExceptionCheck()){std::string why=std::string(x.what())+" "+ocr_io_get();fail(e,why.c_str());}return nullptr;}
 }
 extern "C" JNIEXPORT jstring JNICALL Java_com_vobich_bluestar_openocrlab_NativeMnn_info(JNIEnv* e,jobject,jlong h){
  try{return e->NewStringUTF(state(h)->info.c_str());}catch(const std::exception& x){fail(e,x.what());return nullptr;}
@@ -200,3 +205,67 @@ extern "C" JNIEXPORT jintArray JNICALL Java_com_vobich_bluestar_openocrlab_Nativ
  try{auto& v=state(h)->output;auto r=e->NewIntArray(v.size());if(r)e->SetIntArrayRegion(r,0,v.size(),v.data());return r;}catch(const std::exception& x){fail(e,x.what());return nullptr;}
 }
 extern "C" JNIEXPORT void JNICALL Java_com_vobich_bluestar_openocrlab_NativeMnn_close(JNIEnv*,jobject,jlong h){delete reinterpret_cast<State*>(h);}
+
+ // Synchronous diagnostic replay, deliberately not used for normal performance.
+ // Host-copy sentinel distinguishes unwritten buffers from observed NaN/Inf.
+ static std::string tensorStats(MNN::Tensor* t,bool& bad){
+  std::ostringstream s;
+  if(!t){s<<"null_tensor";return s.str();}
+  auto sh=t->shape();s<<"shape=[";for(int d:sh)s<<d<<",";s<<"] type="<<int(t->getType().code)<<":"<<int(t->getType().bits);
+  if(t->usize()==0||t->usize()>32u*1024u*1024u){s<<" skip_size="<<t->usize();return s.str();}
+  auto type=t->getType();
+  if(type.bits!=32||(type.code!=halide_type_float&&type.code!=halide_type_int)){s<<" skip_dtype=1";return s.str();}
+  std::unique_ptr<MNN::Tensor> host;
+  const MNN::Tensor* v=t;
+  if(!t->buffer().host){
+   host.reset(new MNN::Tensor(t,MNN::Tensor::CAFFE));
+   if(!host->buffer().host){s<<" host_alloc_failed";bad=true;return s.str();}
+   std::memset(host->buffer().host,0xA5,host->size());
+   ocr_io_reset();
+   bool ok=t->copyToHostTensor(host.get());
+   s<<" copied="<<ok<<" "<<ocr_io_get();
+   if(!ok){bad=true;return s.str();}
+   v=host.get();
+  }else{s<<" host_resident=1";}
+  int n=v->elementSize(),sentinel=0,nonfinite=0,zero=0;
+  double mn=std::numeric_limits<double>::infinity(),mx=-mn;
+  for(int i=0;i<n;i++){
+   uint32_t bits;std::memcpy(&bits,v->buffer().host+4*i,4);
+   if(bits==0xA5A5A5A5u){sentinel++;continue;}
+   double x=type.code==halide_type_float?double(v->host<float>()[i]):double(v->host<int32_t>()[i]);
+   if(!std::isfinite(x)){nonfinite++;continue;}
+   mn=std::min(mn,x);mx=std::max(mx,x);if(x==0)zero++;
+  }
+  if(nonfinite||sentinel)bad=true;
+  s<<" n="<<n<<" nonfinite="<<nonfinite<<" sentinel="<<sentinel<<" zeros="<<zero<<" min="<<mn<<" max="<<mx;
+  return s.str();
+ }
+ extern "C" JNIEXPORT jstring JNICALL Java_com_vobich_bluestar_openocrlab_NativeMnn_inspectNative(JNIEnv* e,jobject,jlong h,jobject input,jlongArray dims){
+  try{
+   auto s=state(h);check(e->GetArrayLength(dims)==4,"inspect rank");
+   jlong raw[4];e->GetLongArrayRegion(dims,0,4,raw);
+   std::vector<int> shape;size_t count=1;
+   for(auto x:raw){check(x>0&&x<=4096,"inspect shape");shape.push_back((int)x);count*=x;}
+   check(shape==s->shape,"inspect requires same resized shape");
+   auto* data=static_cast<float*>(e->GetDirectBufferAddress(input));check(data&&e->GetDirectBufferCapacity(input)>=(jlong)count,"inspect input buffer");
+   auto* in=s->net->getSessionInput(s->session,nullptr);check(in,"inspect missing input");
+   MNN::Tensor host(in,MNN::Tensor::CAFFE);check(host.host<float>()&&host.elementSize()==count,"inspect input host shape");
+   std::memcpy(host.host<float>(),data,count*sizeof(float));ocr_io_reset();check(in->copyFromHostTensor(&host),"inspect input copy failed");
+   std::ostringstream log;log<<"ROOT_TRACE_BEGIN precision="<<s->tuning<<" same_session=1 callback_sync=1 "<<ocr_io_get()<<"\n";
+   int op=0,firstBad=-1;
+   auto before=[](const std::vector<MNN::Tensor*>&,const MNN::OperatorInfo*){return true;};
+   auto after=[&](const std::vector<MNN::Tensor*>& tensors,const MNN::OperatorInfo* info){
+    for(size_t k=0;k<tensors.size();k++){
+     bool bad=false;auto stats=tensorStats(tensors[k],bad);
+     if(bad&&firstBad<0)firstBad=op;
+     log<<"ROOT_OP seq="<<op<<" name="<<(info?info->name():"unknown")<<" type="<<(info?info->type():"unknown")<<" output="<<k<<" "<<stats<<"\n";
+    }
+    op++;return true;
+   };
+   auto rc=s->net->runSessionWithCallBackInfo(s->session,before,after,true);
+   bool finalBad=false;auto* out=s->net->getSessionOutput(s->session,s->tuning>=2?"compact":nullptr);
+   log<<"ROOT_TRACE_END rc="<<int(rc)<<" callbacks="<<op<<" first_bad_seq="<<firstBad<<" compact "<<tensorStats(out,finalBad);
+   if(s->tuning>=2){bool bad=false;log<<" integer_index "<<tensorStats(s->net->getSessionOutput(s->session,s->indexName.c_str()),bad);}
+   return e->NewStringUTF(log.str().c_str());
+  }catch(const std::exception& x){return e->NewStringUTF((std::string("ROOT_TRACE_ERROR ")+x.what()).c_str());}
+ }

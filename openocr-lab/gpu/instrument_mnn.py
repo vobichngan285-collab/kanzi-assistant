@@ -48,3 +48,49 @@ for name,line,backend in [
     s='extern "C" void ocr_device_set(const char*,const char*);\n'+s.replace(line,line+'\n    ocr_device_set("'+backend+'",deviceName.c_str());',1)
     p.write_text(s)
 print("Pinned MNN instrumentation applied (normal execution commands and selected GPU device only)")
+
+# Root-cause diagnostics: record actual host/device transfer return codes.
+# Keep original control flow. Thread-local counters are queried by JNI.
+p=root/"source/core/Pipeline.cpp"
+s=p.read_text()
+anchor="namespace MNN {"
+assert s.count(anchor)==1
+io=r'''
+namespace {
+thread_local int ocr_io_reads=0, ocr_io_writes=0, ocr_io_bad=0;
+thread_local std::string ocr_io_first,ocr_io_serial;
+}
+extern "C" __attribute__((visibility("default"))) void ocr_io_reset(){
+    ocr_io_reads=ocr_io_writes=ocr_io_bad=0;ocr_io_first.clear();
+}
+extern "C" __attribute__((visibility("default"))) void ocr_io_note(const char* phase,int rc){
+    if(phase[0]=='r')++ocr_io_reads;else ++ocr_io_writes;
+    if(rc!=0){++ocr_io_bad;if(ocr_io_first.empty())ocr_io_first=std::string(phase)+":"+std::to_string(rc);}
+}
+extern "C" __attribute__((visibility("default"))) const char* ocr_io_get(){
+    std::ostringstream s;s<<"cl_reads="<<ocr_io_reads<<" cl_writes="<<ocr_io_writes<<" cl_io_errors="<<ocr_io_bad<<" cl_first_error="<<(ocr_io_first.empty()?"none":ocr_io_first);
+    ocr_io_serial=s.str();return ocr_io_serial.c_str();
+}
+'''
+s=s.replace(anchor,io+"\n"+anchor,1);p.write_text(s)
+p=root/"source/backend/opencl/core/OpenCLBackend.cpp"
+s=p.read_text()
+s='extern "C" void ocr_io_note(const char*,int);\n'+s
+def patch_section(s,start,end,replacements):
+    a=s.index(start);b=s.index(end,a+len(start))
+    block=s[a:b]
+    for old,new,n in replacements:
+        assert block.count(old)==n,(start,old,block.count(old))
+        block=block.replace(old,new)
+    return s[:a]+block+s[b:]
+s=patch_section(s,"void OpenCLBackend::copyFromDevice(","void CLRuntime::convertToDevice(",[
+("mOpenCLRuntime->commandQueue().enqueueReadBuffer(openCLBuffer(srcTensor), CL_TRUE, 0, needSize, hostPtr);","ocr_io_note(\"read_direct\",mOpenCLRuntime->commandQueue().enqueueReadBuffer(openCLBuffer(srcTensor), CL_TRUE, 0, needSize, hostPtr));",1),
+("res = mOpenCLRuntime->commandQueue().enqueueReadBuffer(*mHostBuffer.second, CL_TRUE, 0, needSize, hostPtr);","res = mOpenCLRuntime->commandQueue().enqueueReadBuffer(*mHostBuffer.second, CL_TRUE, 0, needSize, hostPtr); ocr_io_note(\"read_converted\",res);",2)
+])
+s=patch_section(s,"void OpenCLBackend::copyToDevice(","void OpenCLBackend::copyBetweenDevice(",[
+("mOpenCLRuntime->commandQueue().enqueueWriteBuffer(openCLBuffer(dstTensor), CL_TRUE, 0, needSize, tmpPtr);","ocr_io_note(\"write_scalar\",mOpenCLRuntime->commandQueue().enqueueWriteBuffer(openCLBuffer(dstTensor), CL_TRUE, 0, needSize, tmpPtr));",1),
+("mOpenCLRuntime->commandQueue().enqueueWriteBuffer(openCLBuffer(dstTensor), CL_TRUE, 0, needSize, hostPtr);","ocr_io_note(\"write_direct\",mOpenCLRuntime->commandQueue().enqueueWriteBuffer(openCLBuffer(dstTensor), CL_TRUE, 0, needSize, hostPtr));",1),
+("auto res = mOpenCLRuntime->commandQueue().enqueueWriteBuffer(*mHostBuffer.second, CL_TRUE, 0, needSize, hostPtr);","auto res = mOpenCLRuntime->commandQueue().enqueueWriteBuffer(*mHostBuffer.second, CL_TRUE, 0, needSize, hostPtr); ocr_io_note(\"write_staging\",res);",1)
+])
+p.write_text(s)
+print("OpenCL host-transfer status instrumentation applied")

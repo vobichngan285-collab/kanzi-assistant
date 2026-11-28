@@ -6,11 +6,11 @@ android {
  namespace = "com.vobich.bluestar.openocrlab"
  compileSdk = 36
  defaultConfig {
-  applicationId = "com.vobich.bluestar.openocrlab.cooperative018"
+  applicationId = "com.vobich.bluestar.openocrlab.rootdiag0110"
   minSdk = 28
   targetSdk = 35
-  versionCode = 9
-  versionName = "0.1.8"
+  versionCode = 11
+  versionName = "0.1.10"
   ndk { abiFilters += "arm64-v8a" }
  }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }

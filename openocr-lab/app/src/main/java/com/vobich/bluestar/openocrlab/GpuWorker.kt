@@ -17,11 +17,13 @@ internal class NativeMnn(path:String,backend:Int,threads:Int,cachePath:String,tu
  companion object { init{System.loadLibrary("ocr_mnn_jni")} }
  private external fun open(path:String,backend:Int,threads:Int,cachePath:String,tuning:Int):Long
  private external fun run(handle:Long,input:FloatBuffer,shape:LongArray):FloatArray
+ private external fun inspectNative(handle:Long,input:FloatBuffer,shape:LongArray):String
  private external fun info(handle:Long):String
  private external fun outputShape(handle:Long):IntArray
  private external fun close(handle:Long)
  private val handle=open(path,backend,threads,cachePath,tuning.wire).also{check(it!=0L)}
  fun infer(input:FloatBuffer,shape:LongArray)=run(handle,input,shape)
+ fun inspect(input:FloatBuffer,shape:LongArray)=inspectNative(handle,input,shape)
  fun details()=info(handle)
  fun shape()=outputShape(handle)
  override fun close(){close(handle)}
@@ -32,6 +34,8 @@ class GpuWorker:Service(){
  private var engine:NativeMnn?=null
  private var file:File?=null
  private var tuning=GpuTuning.FAST
+ private var threadCount=6
+ private var diagnosed=false
  override fun onCreate(){
   super.onCreate()
   thread=HandlerThread("OpenOCR-OpenCL").apply{start()}
@@ -45,6 +49,7 @@ class GpuWorker:Service(){
       // All native handles remain serialized on this HandlerThread.
       val old=engine;engine=null;old?.close();file?.delete();file=null
       tuning=GpuTuning.fromWire(m.arg2)
+      threadCount=m.arg1;diagnosed=false
       val stage=SystemClock.elapsedRealtime()
       val f=File.createTempFile("rep-compact-", ".mnn",cacheDir);file=f
       assets.open("rep-compact.mnn").use{src->f.outputStream().use{src.copyTo(it)}}
@@ -64,12 +69,26 @@ class GpuWorker:Service(){
        require(count*4==mem.size.toLong()&&count<=32L*1024*1024)
        val bytes=mem.mapReadOnly()
        try{
-        val out=e.infer(bytes.order(ByteOrder.nativeOrder()).asFloatBuffer(),shape)
+        val input=bytes.order(ByteOrder.nativeOrder()).asFloatBuffer()
+        var diagnostic=""
+        val out=try{e.infer(input,shape)}catch(t:Exception){
+         if(!diagnosed){diagnosed=true;diagnostic=diagnose(e,bytes,shape,t.toString())}
+         throw IllegalStateException(t.toString()+"\n"+diagnostic,t)
+        }
         val dims=e.shape()
+        val invalid=out.size%2!=0||(out.indices step 2).any{i->
+         val id=out[i];val score=out[i+1]
+         !id.isFinite()||id<0f||id>=6625f||id!=id.toInt().toFloat()||!score.isFinite()
+        }
+        val allBlank=shape[0]>1&&out.isNotEmpty()&&out.size%2==0&&(out.indices step 2).all{out[it]==0f}
+        if((invalid||allBlank)&&!diagnosed){
+         diagnosed=true;diagnostic=diagnose(e,bytes,shape,if(invalid)"invalid_compact" else "all_blank_batch")
+        }
         require(dims.size==3&&dims[0].toLong()==shape[0]&&dims[2]==2&&out.size<=65536&&dims.fold(1L){a,v->a*v}==out.size.toLong())
-        val details=e.details()
+        val details=e.details()+" "+diagnostic
         val commands=Regex("executed_commands_by_backend=([^ ]*)").find(details)?.groupValues?.get(1).orEmpty()
         check(Regex("(?:^|,)3:[1-9][0-9]*(?:,|$)").containsMatchIn(commands)){"OpenCL did not execute any traced command: "+details}
+        if(invalid)throw IllegalStateException("ROOT_ORIGINAL_INVALID "+diagnostic)
         b.putFloatArray("values",out);b.putIntArray("dims",dims);b.putString("detail",details+" cache_bytes="+File(cacheDir,tuning.cacheName).length())
         b.putLong("pss",Debug.getPss())
        }finally{SharedMemory.unmap(bytes)}
@@ -92,6 +111,38 @@ class GpuWorker:Service(){
    runCatching{m.replyTo.send(reply)}
    true
   }
+ }
+ // Only one anomaly per client session; normal healthy batches keep their path.
+ private fun diagnose(e:NativeMnn,bytes:java.nio.ByteBuffer,shape:LongArray,reason:String):String{
+  val log=StringBuilder()
+  val raw=bytes.duplicate().apply{rewind()}
+  val digest=java.security.MessageDigest.getInstance("SHA-256").apply{update(raw)}.digest().joinToString(""){"%02x".format(it.toInt() and 255)}
+  fun input()=bytes.duplicate().order(ByteOrder.nativeOrder()).apply{rewind()}.asFloatBuffer()
+  fun line(s:String){log.append(s).append('\n')}
+  fun summary(out:FloatArray):String{
+   val n=out.size/2
+   var invalidIndex=0;var badScore=0;var blank=0
+   for(i in 0 until n){val x=out[i*2];val y=out[i*2+1];if(!x.isFinite()||x<0f||x>=6625f||x!=x.toInt().toFloat())invalidIndex++;if(!y.isFinite())badScore++;if(x==0f)blank++}
+   return "steps=$n invalid_index=$invalidIndex invalid_score=$badScore zero_index=$blank first="+out.take(8)
+  }
+  line("ROOT_DIAG_BEGIN reason=$reason precision=$tuning shape="+shape.contentToString()+" input_sha256="+digest)
+  // Preserve original error; a callback replay can change synchronization.
+  runCatching{line(e.inspect(input(),shape))}.onFailure{line("ROOT_TRACE_EXCEPTION "+it)}
+  val f=file
+  if(f!=null)for(policy in listOf(tuning,GpuTuning.NONE,GpuTuning.NONE_NORMAL).distinct()){
+   // Separate interpreter and unique cache. No re-cropping or padding.
+   var cache:File?=null
+   try{
+    cache=File.createTempFile("rootdiag-", ".cache",cacheDir).also{it.delete()}
+    NativeMnn(f.absolutePath,3,threadCount,cache.absolutePath,policy).use{fresh->
+     try{val out=fresh.infer(input(),shape);line("ROOT_FRESH precision=$policy "+summary(out)+" "+fresh.details())}
+     catch(t:Exception){line("ROOT_FRESH precision=$policy error="+t)}
+    }
+   }catch(t:Exception){line("ROOT_FRESH precision=$policy setup_error="+t)}
+   finally{cache?.delete()}
+  }
+  line("ROOT_DIAG_END diagnostic_timing_not_benchmark=1")
+  return log.toString().take(160000)
  }
  override fun onBind(i:Intent?):IBinder=Messenger(handler).binder
  override fun onDestroy(){
