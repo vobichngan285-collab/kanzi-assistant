@@ -143,7 +143,7 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
    }
   }
  }
- internal fun cooperate(source:Bitmap,bgr:Mat,boxes:List<TextLocator.Box>,official:Boolean,gpu:GpuClient?,mode:CoopMode,note:(String)->Unit):List<Answer>{
+ internal fun cooperate(source:Bitmap,bgr:Mat,boxes:List<TextLocator.Box>,official:Boolean,gpu:GpuClient?,mode:CoopMode,note:(String)->Unit,onGpuFallback:()->Unit={}):List<Answer>{
   if(boxes.isEmpty())return emptyList()
   val mixed=mode.mixed
   require(mode.cpuOnly||gpu!=null)
@@ -176,6 +176,9 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
   note("BATCH_ORDER ordinals=$order cpu_reserved="+(if(useCpu)order[1] else if(singleCpu)order[0] else -1)+" partial_tail=$partialTail single_cpu=$singleCpu")
   val dispatch=BatchDispatch(groups.size,if(useCpu)2 else 1)
   val aborted=AtomicBoolean(false)
+  val fallbackEnabled=GpuBatchFallbackPolicy.enabled(mode,gpu?.tuning)
+  val cpuInferenceLock=Any()
+  var fallbackCount=0 // GPU lane owns writes; read only after both futures join.
   val finished=mutableListOf<String>()
   val starts=mutableListOf<Triple<String,Long,Long>>()
   // Reserve the first batch for GPU and the second for CPU when both exist.
@@ -209,6 +212,8 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
      if(j.ids.isNotEmpty()){
       val at=System.nanoTime()
       var details=""
+      var completedLane=name
+      var executionStart=at
       val answers=if(name=="GPU"){
        val gpuShape=mode.targetShape(j.shape,gpuWidth,gpuBatch)
        val padAt=System.nanoTime()
@@ -225,7 +230,19 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
         decodeCompact(FixedGpuInput.realPrefix(o.values,o.shape,j.ids.size),realShape,j.shape[3].toInt())
        }catch(t:Throwable){
         synchronized(lock){finished.add("GPU_BATCH_FAIL ordinal="+j.ordinal+" ids="+j.ids+" original_shape="+j.shape.contentToString()+" output_shape="+actualOutputShape+" "+details+" error="+t.message)}
-        throw t
+        if(!GpuBatchFallbackPolicy.allow(mode,gpu?.tuning,t))throw t
+        val failedAt=System.nanoTime()
+        fallbackCount++
+        completedLane="CPU_FALLBACK"
+        // Only replay the failed batch, using the unchanged original input.
+        // Serialize the original ORT session with the existing CPU lane.
+        val recovered=synchronized(cpuInferenceLock){
+         executionStart=System.nanoTime()
+         runCpu(j)
+        }
+        details="gpu_error="+org.json.JSONObject.quote(t.message.orEmpty())+" gpu_failed_ms="+ms(failedAt-at)+" cpu_wait_ms="+ms(executionStart-failedAt)+" original_input=1 gpu_disabled_for_rest_of_page=1"
+        synchronized(lock){finished.add("GPU_FALLBACK_DONE ordinal="+j.ordinal+" ids="+j.ids+" original_shape="+j.shape.contentToString()+" cpu_exec_ms="+ms(System.nanoTime()-executionStart)+" "+details)}
+        recovered
        }
       }else if(mode.cpuOnly){
        val target=mode.targetShape(j.shape,gpuWidth,gpuBatch)
@@ -233,15 +250,17 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
        val padded=FixedGpuInput.pad(j.input,j.ids.size,j.shape[3].toInt(),target[0].toInt(),target[3].toInt())
        details="cpu_fixed_shape="+target.contentToString()+" pad_ms="+ms(System.nanoTime()-padAt)+" real_rows="+j.ids.size+" dummy_rows="+(target[0]-j.ids.size)
        runCpu(j.copy(input=padded,shape=target)).take(j.ids.size).map{it.copy(width=j.shape[3].toInt())}
-      }else runCpu(j)
+      }else if(fallbackEnabled)synchronized(cpuInferenceLock){executionStart=System.nanoTime();runCpu(j)}else runCpu(j)
       val end=System.nanoTime()
       check(answers.size==j.ids.size)
       synchronized(lock){
        for(i in j.ids.indices){check(results[j.ids[i]]==null);results[j.ids[i]]=answers[i]}
-       starts.add(Triple(name,at,end))
+       starts.add(Triple(completedLane,executionStart,end))
        if(mode==CoopMode.GPU_EXACT||mode==CoopMode.GPU_TAIL_FIXED||mode==CoopMode.GPU_TAIL_FIRST)for(i in j.ids.indices){val a=answers[i];finished.add("DIAG_CELL index="+j.ids[i]+" text="+org.json.JSONObject.quote(a.text)+" mean="+a.confidence+" min="+a.minConfidence+" original_width="+a.width)}
-       finished.add("BATCH ordinal="+j.ordinal+" lane="+name+" ids="+j.ids+" shape="+j.shape.contentToString()+" prep_ms="+j.prepMs+" start_ms="+ms(at-began)+" finish_ms="+ms(end-began)+" host_ms="+ms(end-at)+" "+details)
+       finished.add("BATCH ordinal="+j.ordinal+" lane="+completedLane+" ids="+j.ids+" shape="+j.shape.contentToString()+" prep_ms="+j.prepMs+" start_ms="+ms(at-began)+" finish_ms="+ms(end-began)+" host_ms="+ms(end-at)+" "+details)
       }
+      // CPU lane drains all unclaimed jobs; if it already exited, none remain.
+      if(completedLane=="CPU_FALLBACK")break
      }
      job=take()
     }
@@ -255,12 +274,13 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
    var failure:Throwable?=null
    for(f in futures)try{f.get()}catch(t:Throwable){aborted.set(true);if(failure==null)failure=t.cause?:t}
    for(line in finished)note(line)
-   val cpu=starts.filter{it.first=="CPU"};val gpuRuns=starts.filter{it.first=="GPU"}
+   val cpu=starts.filter{it.first=="CPU"||it.first=="CPU_FALLBACK"};val gpuRuns=starts.filter{it.first=="GPU"}
    var overlap=0L
    for(c in cpu)for(g in gpuRuns)overlap+=max(0L,min(c.third,g.third)-max(c.second,g.second))
-   note("COOP_SUMMARY requested="+mode.name+" cpu_batches="+cpu.size+" gpu_batches="+gpuRuns.size+" host_overlap_ms="+ms(overlap)+" elapsed_ms="+ms(System.nanoTime()-began)+" groups="+groups.size+" (host overlap, not measured GPU kernel overlap)")
+   note("COOP_SUMMARY requested="+mode.name+" cpu_batches="+cpu.size+" gpu_batches="+gpuRuns.size+" cpu_fallback_batches="+fallbackCount+" host_overlap_ms="+ms(overlap)+" elapsed_ms="+ms(System.nanoTime()-began)+" groups="+groups.size+" (host overlap, not measured GPU kernel overlap)")
    if(failure!=null)throw failure
    check(results.all{it!=null}){"missing batch result"}
+   if(fallbackCount>0)onGpuFallback()
    return results.map{it!!}
   }finally{pool.shutdown()}
  }
