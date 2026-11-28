@@ -3,6 +3,8 @@
 #include <MNN/Tensor.hpp>
 #include <chrono>
 #include <cstring>
+#include <cstdint>
+#include <dlfcn.h>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -19,11 +21,66 @@ struct State{
  MNN::Session* session=nullptr;
  std::vector<int> shape,output;
  int requested=0;
- std::string info;
+ std::string info, probe;
  MNN::BackendConfig cfg;
  ~State(){if(net){if(session)net->releaseSession(session);MNN::Interpreter::destroy(net);}}
 };
 static void check(bool b,const char* s){if(!b)throw std::runtime_error(s);}
+// Read-only capability probe through the same process' vendor library namespace.
+ // OpenCL C ABI: cl_int=int32, cl_uint=uint32, cl_device_type=cl_ulong.
+ // No context/queue/kernel creation; MNN still owns the execution runtime.
+static std::string probeOpenCL(){
+ std::ostringstream log;
+ dlerror();
+ void* library=dlopen("libOpenCL.so",RTLD_NOW|RTLD_LOCAL);
+ if(!library){const char* error=dlerror();log<<"CL_PROBE dlopen=0 error="<<(error?error:"unknown");return log.str();}
+ struct Close{void* h;~Close(){dlclose(h);}} close{library};
+ using Platforms=int32_t(*)(uint32_t,void**,uint32_t*);
+ using Devices=int32_t(*)(void*,uint64_t,uint32_t,void**,uint32_t*);
+ using DeviceInfo=int32_t(*)(void*,uint32_t,size_t,void*,size_t*);
+ auto platforms=reinterpret_cast<Platforms>(dlsym(library,"clGetPlatformIDs"));
+ auto devices=reinterpret_cast<Devices>(dlsym(library,"clGetDeviceIDs"));
+ auto info=reinterpret_cast<DeviceInfo>(dlsym(library,"clGetDeviceInfo"));
+ log<<"CL_PROBE dlopen=1 symbols="<<(platforms&&devices&&info?1:0);
+ if(!platforms||!devices||!info)return log.str();
+ uint32_t n=0;int32_t rc=platforms(0,nullptr,&n);
+ log<<" platform_rc="<<rc<<" platforms="<<n;
+ if(rc!=0||n==0||n>64)return log.str();
+ std::vector<void*> ps(n);
+ rc=platforms(n,ps.data(),nullptr);
+ log<<" platform_list_rc="<<rc;
+ if(rc!=0)return log.str();
+ for(uint32_t p=0;p<n;p++){
+  uint32_t count=0;rc=devices(ps[p],uint64_t(4),0,nullptr,&count); // CL_DEVICE_TYPE_GPU
+  log<<" platform["<<p<<"]_gpu_rc="<<rc<<" gpu_count="<<count;
+  if(rc!=0||count==0||count>64)continue;
+  std::vector<void*> ds(count);
+  rc=devices(ps[p],uint64_t(4),count,ds.data(),nullptr);
+  log<<" device_list_rc="<<rc;
+  if(rc!=0)continue;
+  for(uint32_t d=0;d<count;d++){
+   for(auto param:{uint32_t(0x102B),uint32_t(0x102D),uint32_t(0x102F)}){ // NAME, DRIVER_VERSION, VERSION
+    char value[512]={};size_t size=0;
+    int32_t result=info(ds[d],param,sizeof(value)-1,value,&size);
+    value[sizeof(value)-1]='\0';
+    log<<" d"<<d<<"_"<<param<<"_rc="<<result;
+    if(result==0)log<<" value=["<<value<<"]";
+   }
+  }
+ }
+ return log.str();
+}
+static int primaryBackend(State* s){
+ int types[16];for(auto& x:types)x=-1;
+ return s->net->getSessionInfo(s->session,MNN::Interpreter::BACKENDS,types)?types[0]:-1;
+}
+static void requireRequestedGpu(State* s,const char* phase){
+ if(s->requested!=3&&s->requested!=7)return;
+ int primary=primaryBackend(s);
+ if(primary!=s->requested){
+  throw std::runtime_error(std::string("GPU_BACKEND_REJECT phase=")+phase+" requested="+std::to_string(s->requested)+" actual="+std::to_string(primary)+" selected_device="+ocr_device_get()+" "+s->probe+" no_inference=1");
+ }
+}
 static void fail(JNIEnv* e,const char* s){e->ThrowNew(e->FindClass("java/lang/IllegalStateException"),s);}
 static State* state(jlong h){auto s=reinterpret_cast<State*>(h);check(s!=nullptr,"null native handle");return s;}
 extern "C" JNIEXPORT jlong JNICALL Java_com_vobich_bluestar_openocrlab_NativeMnn_open(JNIEnv* e,jobject,jstring path,jint backend,jint threads){
@@ -32,6 +89,7 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_vobich_bluestar_openocrlab_NativeMnn
   const char* p=e->GetStringUTFChars(path,nullptr);check(p!=nullptr,"path");
   std::string file(p);e->ReleaseStringUTFChars(path,p);
   auto s=std::make_unique<State>();s->requested=backend;
+  if(backend==3)s->probe=probeOpenCL();
   ocr_device_reset();
   s->net=MNN::Interpreter::createFromFile(file.c_str());check(s->net,"createFromFile failed");
   s->net->setSessionMode(MNN::Interpreter::Session_Resize_Defer);
@@ -41,8 +99,10 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_vobich_bluestar_openocrlab_NativeMnn
   if(backend==0)sc.numThread=threads;
   else if(backend==3)sc.mode=MNN_GPU_TUNING_FAST|MNN_GPU_MEMORY_BUFFER;
   else sc.mode=MNN_GPU_TUNING_NONE;
-  s->session=s->net->createSession(sc);check(s->session,"createSession failed");
-  s->info="requested="+std::to_string(backend)+" MNN="+MNN::getVersion()+" device="+ocr_device_get();
+  s->session=s->net->createSession(sc);
+  if(!s->session)throw std::runtime_error("GPU_SESSION_CREATE_FAILED "+s->probe);
+  requireRequestedGpu(s.get(),"createSession");
+  s->info="requested="+std::to_string(backend)+" actual="+std::to_string(primaryBackend(s.get()))+" MNN="+MNN::getVersion()+" device="+ocr_device_get()+" "+s->probe;
   return reinterpret_cast<jlong>(s.release());
  }catch(const std::exception& x){fail(e,x.what());return 0;}
 }
@@ -63,6 +123,7 @@ extern "C" JNIEXPORT jfloatArray JNICALL Java_com_vobich_bluestar_openocrlab_Nat
    s->shape=shape;in=s->net->getSessionInput(s->session,nullptr);
   }
   double resize=ms(t);t=Clock::now();
+  requireRequestedGpu(s,"before_run");
   check(in&&in->shape()==shape,"input shape mismatch");
   MNN::Tensor host(in,MNN::Tensor::CAFFE);
   check(host.host<float>()&&host.elementSize()==count,"input host shape");
