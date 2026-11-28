@@ -1,0 +1,71 @@
+name: C110 UVC Resolution Lab v0.1.0
+on:
+  push:
+    branches: ['exp/c110-uvc-resolution-v010-20261128']
+    paths:
+      - 'cloud-vision-app/scripts/create_uvc_resolution_lab.py'
+      - '.github/workflows/c110-uvc-resolution-v010.yml'
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ernestp/AndroidUSBCamera
+          ref: 3.6.0
+          path: cloud-vision-app/third_party/AndroidUSBCamera
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Generate isolated lab and apply known USB permission fix
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_usbmonitor.py cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/java/com/jiangdg/usb/USBMonitor.java
+          python3 cloud-vision-app/scripts/create_uvc_resolution_lab.py
+          git diff --exit-code -- cloud-vision-app/app
+          grep -Fq 'callback_frame->width' cloud-vision-app/third_party/AndroidUSBCamera/libuvc/src/main/jni/UVCCamera/UVCPreview.cpp
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Build standalone arm64 UVC test
+        run: |
+          set -euo pipefail
+          cd cloud-vision-app
+          gradle --no-daemon --no-parallel --max-workers=2 :uvclab:assembleDebug
+      - name: Verify package, signature and native library
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          APK=out/BlueStar_C110_UVC_Resolution_0.1.0.apk
+          cp cloud-vision-app/uvclab/build/outputs/apk/debug/uvclab-debug.apk "$APK"
+          unzip -tq "$APK"
+          unzip -Z1 "$APK" >out/entries.txt
+          grep -Fxq 'lib/arm64-v8a/libUVCCamera.so' out/entries.txt
+          ! grep -Ei 'onnx|libvlc|\.onnx$' out/entries.txt
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          "$APKSIGNER" verify --verbose "$APK"
+          "$AAPT" dump badging "$APK" >out/badging.txt
+          grep -Fq "package: name='com.vobich.bluestar.uvclab'" out/badging.txt
+          grep -Fq "versionName='0.1.0'" out/badging.txt
+          "$AAPT" dump permissions "$APK" >out/permissions.txt
+          ! grep -Fq 'android.permission.INTERNET' out/permissions.txt
+          (cd out && sha256sum BlueStar_C110_UVC_Resolution_0.1.0.apk >SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BlueStar_C110_UVC_Resolution_0.1.0
+          path: out/*
+      - name: Publish verified independent APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=bluestar-c110-uvc-resolution-v010-20261128
+          if gh release view "$TAG" >/dev/null 2>&1; then exit 1; fi
+          gh release create "$TAG" out/BlueStar_C110_UVC_Resolution_0.1.0.apk out/SHA256SUMS.txt --target "$GITHUB_SHA" --prerelease --title "BlueStar C110 UVC Resolution Lab v0.1.0" --notes "Independent USB UVC descriptor and native frame diagnostic. No OCR, no network. Real device verification required."
