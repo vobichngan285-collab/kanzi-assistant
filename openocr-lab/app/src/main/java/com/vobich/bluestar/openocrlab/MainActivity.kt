@@ -84,13 +84,13 @@ class MainActivity:Activity(){
   history=ExperimentHistory(this)
   if(Build.VERSION.SDK_INT>=30)box.setOnApplyWindowInsetsListener{v,i->val bars=i.getInsets(WindowInsets.Type.systemBars());v.setPadding(24+bars.left,16+bars.top,24+bars.right,16+bars.bottom);i}
   fun label(t:String)=TextView(this).apply{text=t;textSize=18f;box.addView(this)}
-  label("蓝星 OpenOCR CPU＋GPU v0.1.2\n静态照片协同识别实验 · 基于v0.4.8")
+  label("蓝星 OpenOCR CPU＋GPU v0.1.3\n静态照片协同识别实验 · 基于v0.4.8")
   choose=Button(this).apply{text="选择相册原图";box.addView(this);setOnClickListener{stopSpeech();startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},9)}}
   preview=ImageView(this).apply{adjustViewBounds=true;maxHeight=650;box.addView(this)}
   dbSize=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,DbResolution.sizes.map{DbResolution.label(it)});setSelection(DbResolution.defaultIndex);box.addView(this)}
   mode=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("官方原框（还原实验）","智能主阅读区（保留原版）"));box.addView(this)}
   threads=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("CPU 4线程（默认）","CPU 2线程","CPU 6线程"));box.addView(this)}
-  backend=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("原版 ORT CPU（对照）","CPU＋GPU 协同（OpenCL）","GPU单独识别（OpenCL诊断）"));box.addView(this)}
+  backend=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("原版 ORT CPU（原宽度对照）","CPU＋GPU 协同（固定宽度）","GPU单独识别（固定宽度）","ORT CPU（固定宽度精度对照）","GPU原始形状（精度诊断）","GPU原宽度（仅尾批补齐）"));box.addView(this)}
   run=Button(this).apply{text="开始识别 / 同图复测";box.addView(this);setOnClickListener{test()}}
   status=label("请选择图片")
   voiceStatus=label("系统 TTS 初始化中")
@@ -138,7 +138,9 @@ class MainActivity:Activity(){
   val nt=listOf(4,2,6)[threads.selectedItemPosition]
   val longSide=DbResolution.sizes[dbSize.selectedItemPosition]
   val selected=backend.selectedItemPosition
-  val backendName=listOf("ORT_CPU","CPU_GPU","GPU_ONLY")[selected]
+  val backendName=listOf("ORT_CPU","CPU_GPU","GPU_ONLY","ORT_CPU_FIXED","GPU_EXACT","GPU_TAIL_FIXED")[selected]
+  val coopMode=when(selected){1->CoopMode.MIXED_FIXED;2->CoopMode.GPU_FIXED;3->CoopMode.CPU_FIXED;4->CoopMode.GPU_EXACT;5->CoopMode.GPU_TAIL_FIXED;else->null}
+  val needsGpu=coopMode!=null&&!coopMode.cpuOnly
   val runId=UUID.randomUUID().toString();currentRun=runId;speechRun=""
   val sample=sampleId
   val header="BEGIN run=$runId sample_sha256=$sample backend=$backendName mode=$name source=${bm.width}x${bm.height} db=$longSide cpu_threads=$nt device=${Build.MODEL} sdk=${Build.VERSION.SDK_INT} time_ms=${System.currentTimeMillis()} db_cache=forced_miss thermal_start="+(if(Build.VERSION.SDK_INT>=29)(getSystemService(POWER_SERVICE) as PowerManager).currentThermalStatus else -1)
@@ -168,7 +170,7 @@ class MainActivity:Activity(){
     val pMs=now()-pStart
     val load=now();if(reader==null||readerThreads!=nt){reader?.close();reader=null;reader=Reader(this,"rep.onnx",nt);readerThreads=nt}
     val engine=reader!!;val loadMs=now()-load
-    note("Field CPU_GPU v0.1.2 source=${bm.width}x${bm.height} detector_threads=$nt rec_threads=$nt detector_init_ms=${init-start} detect_ms=${detected-init} recognizer_load_ms=$loadMs raw_boxes=${found.size} focus_plan_ms=$focusMs focus_reason=${plan?.reason?:"official_bypass"} rec_shape=${engine.inputShape} rec_batch=${if(official)engine.officialBatchSize else 1}\nmode=$name roi=$roi selected=${boxes.size} outside=${outside.size} rows=${rows.size} crops=${rows.sumOf{it.size}} duplicates=${columns?.removed?:0} plan_ms=$pMs\n"+(if(outside.isNotEmpty())"提示：区域外${outside.size}个检测框未识别，可切换官方原框。\n" else "")+outside.joinToString("\n"){q->"outside det=${q.score} quad=${q.points.contentToString()}"}+"\n")
+    note("Field CPU_GPU v0.1.3 source=${bm.width}x${bm.height} detector_threads=$nt rec_threads=$nt detector_init_ms=${init-start} detect_ms=${detected-init} recognizer_load_ms=$loadMs raw_boxes=${found.size} focus_plan_ms=$focusMs focus_reason=${plan?.reason?:"official_bypass"} rec_shape=${engine.inputShape} rec_batch=${if(official)engine.officialBatchSize else 1}\nmode=$name roi=$roi selected=${boxes.size} outside=${outside.size} rows=${rows.size} crops=${rows.sumOf{it.size}} duplicates=${columns?.removed?:0} plan_ms=$pMs\n"+(if(outside.isNotEmpty())"提示：区域外${outside.size}个检测框未识别，可切换官方原框。\n" else "")+outside.joinToString("\n"){q->"outside det=${q.score} quad=${q.points.contentToString()}"}+"\n")
     val scale=min(1f,1200f/max(bm.width,bm.height))
     val scaled=Bitmap.createScaledBitmap(bm,(bm.width*scale).toInt(),(bm.height*scale).toInt(),true)
     val shown=scaled.copy(Bitmap.Config.ARGB_8888,true)
@@ -181,7 +183,7 @@ class MainActivity:Activity(){
      paint.color=Color.CYAN;rows.flatten().forEach{b->val path=Path();path.moveTo(b.points[0],b.points[1]);for(i in 1..3)path.lineTo(b.points[2*i],b.points[2*i+1]);path.close();drawPath(path,paint)}
     }
     runOnUiThread{if(!isDestroyed)preview.setImageBitmap(shown)else shown.recycle()}
-    if(selected!=0){
+    if(needsGpu){
      val t=now();val existing=gpu!=null&&gpuThreads==nt
      if(!existing){gpu?.close();gpu=null;gpu=GpuClient(applicationContext,nt);gpuThreads=nt}
      note("GPU_INIT reused=$existing prepare_ms=${now()-t} "+(if(existing)"resident_session=1 initial_load_detail="+gpu!!.loadDetail else gpu!!.loadDetail))
@@ -195,7 +197,7 @@ class MainActivity:Activity(){
      if(official){Utils.bitmapToMat(bm,rgba);Imgproc.cvtColor(rgba,bgr,Imgproc.COLOR_RGBA2BGR);rgba.release()}
      // Bounded batches preserve official ordering and avoid holding all crops in memory.
      val batch=if(official)engine.officialBatchSize else 1
-     val parallel=if(selected==0)null else engine.cooperate(bm,bgr,rows.flatten(),official,gpu!!,selected==1,::note)
+     val parallel=coopMode?.let{engine.cooperate(bm,bgr,rows.flatten(),official,gpu,it,::note)}
      var cooperativeIndex=0
      for(index in rows.indices step batch){
       val batchAt=now()
@@ -227,15 +229,23 @@ class MainActivity:Activity(){
     val original=rawLines.joinToString("\n");val done=now()
     val key="$sample/$name/$longSide/$nt"
     val geometry=rows.flatten().map{it.points.contentToString()}
-    if(selected==0)references[key]=Reference(runId,geometry,compared.toList(),keepFlags.toList(),done-clicked)
-    else{
-     val ref=references[key]
-     if(ref==null)note("REFERENCE_COMPARE unavailable=run_CPU_baseline_first")
-     else if(ref.geometry!=geometry||ref.values.size!=compared.size)note("REFERENCE_COMPARE reference="+ref.run+" geometry_equal=false not_comparable=1")
+    fun compare(ref:Reference?,label:String){
+     if(ref==null)note("$label unavailable=run_matching_CPU_reference_first")
+     else if(ref.geometry!=geometry||ref.values.size!=compared.size)note("$label reference="+ref.run+" geometry_equal=false not_comparable=1")
      else{
       val ids=compared.indices;val textDiff=ids.count{compared[it].text!=ref.values[it].text};val keepDiff=ids.count{keepFlags[it]!=ref.keep[it]};val widthDiff=ids.count{compared[it].width!=ref.values[it].width};val maxConf=ids.maxOfOrNull{abs(compared[it].confidence-ref.values[it].confidence)}?:0f;val maxMin=ids.maxOfOrNull{abs(compared[it].minConfidence-ref.values[it].minConfidence)}?:0f
-      note("REFERENCE_COMPARE reference="+ref.run+" geometry_equal=true cells="+compared.size+" text_diff="+textDiff+" keep_diff="+keepDiff+" width_diff="+widthDiff+" max_mean_conf_diff="+maxConf+" max_min_conf_diff="+maxMin+" reference_complete_ms="+ref.complete+" candidate_complete_ms="+(done-clicked)+" (CPU agreement is not human truth)")
+      note("$label reference="+ref.run+" geometry_equal=true cells="+compared.size+" text_diff="+textDiff+" keep_diff="+keepDiff+" width_diff="+widthDiff+" max_mean_conf_diff="+maxConf+" max_min_conf_diff="+maxMin+" reference_complete_ms="+ref.complete+" candidate_complete_ms="+(done-clicked)+" (CPU agreement is not human truth)")
+      for(i in ids)if(compared[i].text!=ref.values[i].text||keepFlags[i]!=ref.keep[i]){
+       val a=ref.values[i];val b=compared[i]
+       note("$label DIFF index=$i reference_text="+org.json.JSONObject.quote(a.text)+" candidate_text="+org.json.JSONObject.quote(b.text)+" reference_mean="+a.confidence+" candidate_mean="+b.confidence+" reference_keep="+ref.keep[i]+" candidate_keep="+keepFlags[i])
+      }
      }
+    }
+    if(selected==0)references[key]=Reference(runId,geometry,compared.toList(),keepFlags.toList(),done-clicked)
+    else{
+     compare(references[key],"REFERENCE_COMPARE")
+     if(selected==3)references["fixed/$key"]=Reference(runId,geometry,compared.toList(),keepFlags.toList(),done-clicked)
+     if(selected==2)compare(references["fixed/$key"],"MATCHED_FIXED_COMPARE")
     }
     note("\n$name detect_ms=${detected-init} first_row_ms=$first rec_ms=$rec total_ms=$total crops=$count suspect=$uncertain blank=$blank official_dropped=$dropped pss_kb=${Debug.getPss()}\n"+lines.joinToString("\n")+"\n"+notes.joinToString("\n")+"\n OCR 点击至原文就绪：${done-clicked} ms\n")
     note("SUMMARY run=$runId sample_sha256=$sample backend=$backendName complete_ms=${done-clicked} rec_ms=$rec detect_ms=${detected-init} crops=$count first_row_scope="+(if(selected==0)"baseline" else "not_measured_see_batch_finish")+" thermal_status="+(if(Build.VERSION.SDK_INT>=29)(getSystemService(POWER_SERVICE) as PowerManager).currentThermalStatus else -1))
@@ -245,7 +255,7 @@ class MainActivity:Activity(){
      output.text=details.toString();raw.text=original;lastText=original;replay.isEnabled=original.isNotBlank();speechRun=runId;speak(original,clicked);status.text="识别完成 · 历史日志 "+history.size()+" bytes";busy(false)
     }}
    }catch(t:Throwable){
-    if(selected!=0){note("GPU_SESSION_CLOSE reason=failed_run");runCatching{gpu?.close()};gpu=null}
+    if(needsGpu){note("GPU_SESSION_CLOSE reason=failed_run");runCatching{gpu?.close()};gpu=null}
     note("FAIL run=$runId backend=$backendName error="+t.stackTraceToString()+"\nEND run=$runId success=0")
     val saved=runCatching{history.append(details.toString())}
     runOnUiThread{if(!isDestroyed){output.text=details.toString();status.text="失败："+t.message+(if(saved.isFailure)"；历史日志写入失败" else "；已保留日志");busy(false)}}
