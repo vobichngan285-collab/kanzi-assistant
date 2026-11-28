@@ -128,14 +128,14 @@ class MainActivity:Activity(){
   history=ExperimentHistory(this)
   if(Build.VERSION.SDK_INT>=30)box.setOnApplyWindowInsetsListener{v,i->val bars=i.getInsets(WindowInsets.Type.systemBars());v.setPadding(24+bars.left,16+bars.top,24+bars.right,16+bars.bottom);i}
   fun label(t:String)=TextView(this).apply{text=t;textSize=18f;box.addView(this)}
-  label("蓝星 OpenOCR CPU＋GPU v0.1.6\n静态照片GPU冷启动实验 · 基于v0.4.8")
+  label("蓝星 OpenOCR CPU＋GPU v0.1.8\n静态照片GPU精度终局实验 · 基于v0.4.8")
   choose=Button(this).apply{text="选择相册原图";box.addView(this);setOnClickListener{stopSpeech();startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},9)}}
   preview=ImageView(this).apply{adjustViewBounds=true;maxHeight=650;box.addView(this)}
   dbSize=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,DbResolution.sizes.map{DbResolution.label(it)});setSelection(DbResolution.defaultIndex);box.addView(this)}
   mode=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("官方原框（还原实验）","智能主阅读区（保留原版）"));box.addView(this)}
   threads=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("CPU 4线程","CPU 2线程","CPU 6线程（默认）"));setSelection(2);box.addView(this)}
   backend=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("原版 ORT CPU（原宽度对照）","CPU＋GPU 协同（固定宽度）","GPU单独识别（固定宽度）","ORT CPU（固定宽度精度对照）","GPU原始形状（精度诊断）","GPU原宽度（仅尾批补齐）","CPU＋GPU协同（原始宽度，尾批CPU）","GPU尾批优先（新会话诊断）"));setSelection(6);box.addView(this)}
-  tuningChoice=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("GPU FAST（v0.1.5基线）","GPU NONE（关闭调优实验）"));setSelection(0);box.addView(this)}
+  tuningChoice=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("GPU FAST（v0.1.5基线）","GPU NONE（FP32基线，默认）","GPU NONE（FP16存储＋FP32计算）","GPU NONE（FP16存储＋FP16计算）"));setSelection(1);box.addView(this)}
   run=Button(this).apply{text="开始识别 / 同图复测";box.addView(this);setOnClickListener{test()}}
   status=label("请选择图片")
   voiceStatus=label("系统 TTS 初始化中")
@@ -220,7 +220,7 @@ class MainActivity:Activity(){
     val pMs=now()-pStart
     val load=now();if(reader==null||readerThreads!=nt){reader?.close();reader=null;reader=Reader(this,"rep.onnx",nt);readerThreads=nt}
     val engine=reader!!;val loadMs=now()-load
-    note("Field CPU_GPU v0.1.6 source=${bm.width}x${bm.height} detector_threads=$nt rec_threads=$nt detector_init_ms=${init-start} detect_ms=${detected-init} recognizer_load_ms=$loadMs raw_boxes=${found.size} focus_plan_ms=$focusMs focus_reason=${plan?.reason?:"official_bypass"} rec_shape=${engine.inputShape} rec_batch=${if(official)engine.officialBatchSize else 1}\nmode=$name roi=$roi selected=${boxes.size} outside=${outside.size} rows=${rows.size} crops=${rows.sumOf{it.size}} duplicates=${columns?.removed?:0} plan_ms=$pMs\n"+(if(outside.isNotEmpty())"提示：区域外${outside.size}个检测框未识别，可切换官方原框。\n" else "")+outside.joinToString("\n"){q->"outside det=${q.score} quad=${q.points.contentToString()}"}+"\n")
+    note("Field CPU_GPU v0.1.8 source=${bm.width}x${bm.height} detector_threads=$nt rec_threads=$nt detector_init_ms=${init-start} detect_ms=${detected-init} recognizer_load_ms=$loadMs raw_boxes=${found.size} focus_plan_ms=$focusMs focus_reason=${plan?.reason?:"official_bypass"} rec_shape=${engine.inputShape} rec_batch=${if(official)engine.officialBatchSize else 1}\nmode=$name roi=$roi selected=${boxes.size} outside=${outside.size} rows=${rows.size} crops=${rows.sumOf{it.size}} duplicates=${columns?.removed?:0} plan_ms=$pMs\n"+(if(outside.isNotEmpty())"提示：区域外${outside.size}个检测框未识别，可切换官方原框。\n" else "")+outside.joinToString("\n"){q->"outside det=${q.score} quad=${q.points.contentToString()}"}+"\n")
     val scale=min(1f,1200f/max(bm.width,bm.height))
     val scaled=Bitmap.createScaledBitmap(bm,(bm.width*scale).toInt(),(bm.height*scale).toInt(),true)
     val shown=scaled.copy(Bitmap.Config.ARGB_8888,true)
@@ -308,6 +308,10 @@ class MainActivity:Activity(){
      compare(references[key],"REFERENCE_COMPARE")
      if(selected==3)references["fixed/$key"]=Reference(runId,geometry,compared.toList(),keepFlags.toList(),done-clicked)
      if(selected==2)compare(references["fixed/$key"],"MATCHED_FIXED_COMPARE")
+     if(selected==6){
+      if(tuning==GpuTuning.NONE)references["high/$key"]=Reference(runId,geometry,compared.toList(),keepFlags.toList(),done-clicked)
+      else if(tuning==GpuTuning.NONE_NORMAL||tuning==GpuTuning.NONE_LOW)compare(references["high/$key"],"PRECISION_COMPARE")
+     }
     }
     note("\n$name detect_ms=${detected-init} first_row_ms=$first rec_ms=$rec total_ms=$total crops=$count suspect=$uncertain blank=$blank official_dropped=$dropped pss_kb=${Debug.getPss()}\n"+lines.joinToString("\n")+"\n"+notes.joinToString("\n")+"\n OCR 点击至原文就绪：${done-clicked} ms\n")
     note("SUMMARY run=$runId sample_sha256=$sample backend=$backendName gpu_tuning=${if(needsGpu)tuning.name else "NA"} complete_ms=${done-clicked} rec_ms=$rec detect_ms=${detected-init} crops=$count first_row_scope="+(if(selected==0)"baseline" else "not_measured_see_batch_finish")+" thermal_status="+(if(Build.VERSION.SDK_INT>=29)(getSystemService(POWER_SERVICE) as PowerManager).currentThermalStatus else -1))

@@ -22,6 +22,8 @@ struct State{
  std::vector<int> shape,output;
  int requested=0;
  int tuning=0;
+ bool fp16=false;
+ std::string indexName;
  std::string info, probe;
  MNN::BackendConfig cfg;
  ~State(){if(net){if(session)net->releaseSession(session);MNN::Interpreter::destroy(net);}}
@@ -30,7 +32,7 @@ static void check(bool b,const char* s){if(!b)throw std::runtime_error(s);}
 // Read-only capability probe through the same process' vendor library namespace.
  // OpenCL C ABI: cl_int=int32, cl_uint=uint32, cl_device_type=cl_ulong.
  // No context/queue/kernel creation; MNN still owns the execution runtime.
-static std::string probeOpenCL(){
+static std::string probeOpenCL(bool* fp16){
  std::ostringstream log;
  dlerror();
  void* library=dlopen("libOpenCL.so",RTLD_NOW|RTLD_LOCAL);
@@ -60,6 +62,14 @@ static std::string probeOpenCL(){
   log<<" device_list_rc="<<rc;
   if(rc!=0)continue;
   for(uint32_t d=0;d<count;d++){
+   uint64_t halfConfig=0;size_t extSize=0;
+   auto halfRc=info(ds[d],0x1033,sizeof(halfConfig),&halfConfig,nullptr);
+   auto extRc=info(ds[d],0x1030,0,nullptr,&extSize);
+   bool halfExtension=false;
+   if(extRc==0&&extSize>0&&extSize<65536){std::vector<char> ext(extSize,0);if(info(ds[d],0x1030,extSize,ext.data(),nullptr)==0)halfExtension=(std::string(" ")+ext.data()+" ").find(" cl_khr_fp16 ")!=std::string::npos;}
+   bool supports=halfRc==0&&halfConfig!=0&&halfExtension;
+   if(p==0&&d==0&&count==1&&n==1)*fp16=supports;
+   log<<" half_fp_config="<<halfConfig<<" half_extension="<<halfExtension<<" fp16_capability="<<supports;
    for(auto param:{uint32_t(0x102B),uint32_t(0x102D),uint32_t(0x102F)}){ // NAME, DRIVER_VERSION, VERSION
     char value[512]={};size_t size=0;
     int32_t result=info(ds[d],param,sizeof(value)-1,value,&size);
@@ -87,11 +97,13 @@ static State* state(jlong h){auto s=reinterpret_cast<State*>(h);check(s!=nullptr
 extern "C" JNIEXPORT jlong JNICALL Java_com_vobich_bluestar_openocrlab_NativeMnn_open(JNIEnv* e,jobject,jstring path,jint backend,jint threads,jstring cachePath,jint tuning){
  try{
   check(backend==0||backend==3||backend==7,"invalid backend");
-  check(tuning==0||tuning==1,"invalid OpenCL tuning selection");
+  check(tuning>=0&&tuning<=3,"invalid OpenCL policy");
+  check(tuning<2||backend==3,"FP16 experiment requires OpenCL");
   const char* p=e->GetStringUTFChars(path,nullptr);check(p!=nullptr,"path");
   std::string file(p);e->ReleaseStringUTFChars(path,p);
   auto s=std::make_unique<State>();s->requested=backend;s->tuning=tuning;
-  if(backend==3)s->probe=probeOpenCL();
+  if(backend==3)s->probe=probeOpenCL(&s->fp16);
+  if(tuning>=2&&!s->fp16)throw std::runtime_error("FP16 capability not confirmed "+s->probe);
   ocr_device_reset();
   s->net=MNN::Interpreter::createFromFile(file.c_str());check(s->net,"createFromFile failed");
   if(backend==3){
@@ -102,14 +114,20 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_vobich_bluestar_openocrlab_NativeMnn
   s->net->setSessionMode(MNN::Interpreter::Session_Resize_Defer);
   s->net->setSessionMode(MNN::Interpreter::Session_Backend_Fix);
   MNN::ScheduleConfig sc;sc.type=static_cast<MNNForwardType>(backend);sc.backupType=MNN_FORWARD_CPU;
-  s->cfg.precision=MNN::BackendConfig::Precision_High;sc.backendConfig=&s->cfg;
+  s->cfg.precision=tuning==2?MNN::BackendConfig::Precision_Normal:tuning==3?MNN::BackendConfig::Precision_Low:MNN::BackendConfig::Precision_High;sc.backendConfig=&s->cfg;
+  if(tuning>=2)sc.saveTensors={"compact","compact_idx64","compact_idx64/not_keepdim"};
   if(backend==0)sc.numThread=threads;
   else if(backend==3)sc.mode=(tuning==0?MNN_GPU_TUNING_FAST:MNN_GPU_TUNING_NONE)|MNN_GPU_MEMORY_BUFFER;
   else sc.mode=MNN_GPU_TUNING_NONE;
   s->session=s->net->createSession(sc);
   if(!s->session)throw std::runtime_error("GPU_SESSION_CREATE_FAILED "+s->probe);
   requireRequestedGpu(s.get(),"createSession");
-  s->info="requested="+std::to_string(backend)+" actual="+std::to_string(primaryBackend(s.get()))+" gpu_tuning="+(tuning==0?"FAST":"NONE")+" MNN="+MNN::getVersion()+" device="+ocr_device_get()+" "+s->probe;
+  if(tuning>=2){
+   const auto& outputs=s->net->getSessionOutputAll(s->session);
+   for(const char* name:{"compact_idx64","compact_idx64/not_keepdim"})if(outputs.count(name)){s->indexName=name;break;}
+   check(!s->indexName.empty()&&outputs.count("compact"),"integer compact index output unavailable; FP16 blocked");
+  }
+  s->info="requested="+std::to_string(backend)+" actual="+std::to_string(primaryBackend(s.get()))+" gpu_tuning="+(tuning==0?"FAST":"NONE")+" precision_policy="+(tuning==2?"NORMAL_FP16_STORAGE":tuning==3?"LOW_FP16_COMPUTE":"HIGH_FP32")+" index_tensor="+s->indexName+" MNN="+MNN::getVersion()+" device="+ocr_device_get()+" "+s->probe;
   return reinterpret_cast<jlong>(s.release());
  }catch(const std::exception& x){fail(e,x.what());return 0;}
 }
@@ -142,14 +160,24 @@ extern "C" JNIEXPORT jfloatArray JNICALL Java_com_vobich_bluestar_openocrlab_Nat
   double execute=ms(t);check(code==MNN::NO_ERROR,"runSession failed");
   std::string trace=ocr_trace_get();
   t=Clock::now();
-  auto* out=s->net->getSessionOutput(s->session,nullptr);check(out,"missing output");
+  auto* out=s->net->getSessionOutput(s->session,s->tuning>=2?"compact":nullptr);check(out,"missing output");
   MNN::Tensor result(out,MNN::Tensor::CAFFE);
   check(out->copyToHostTensor(&result),"output copy failed");
   s->output=result.shape();
   check(s->output.size()==3&&s->output[0]==shape[0]&&s->output[2]==2,"bad output rank/batch");
   auto length=result.elementSize();check(length>0&&length<=128*1024,"output too large");
   auto values=e->NewFloatArray(length);check(values,"output JNI allocation failed");
-  e->SetFloatArrayRegion(values,0,length,result.host<float>());
+  if(s->tuning>=2){
+   auto* idx=s->net->getSessionOutput(s->session,s->indexName.c_str());
+   check(idx&&idx->getType().code==halide_type_int&&idx->getType().bits==32,"integer compact index must be int32");
+   auto idShape=idx->shape();
+   check((idShape.size()==2||(idShape.size()==3&&idShape[2]==1))&&idShape[0]==s->output[0]&&idShape[1]==s->output[1],"integer compact index shape mismatch");
+   MNN::Tensor ids(idx,MNN::Tensor::CAFFE);
+   check(idx->copyToHostTensor(&ids)&&ids.elementSize()*2==length&&ids.host<int32_t>(),"integer compact index copy failed");
+   std::vector<float> exact(result.host<float>(),result.host<float>()+length);
+   for(int i=0;i<ids.elementSize();i++){int32_t id=ids.host<int32_t>()[i];check(id>=0&&id<6625,"invalid int32 character index");exact[2*i]=static_cast<float>(id);}
+   e->SetFloatArrayRegion(values,0,length,exact.data());
+  }else e->SetFloatArrayRegion(values,0,length,result.host<float>());
   double download=ms(t);
   t=Clock::now();int cacheRc=-1;
   if(resized&&s->requested==3)cacheRc=static_cast<int>(s->net->updateCacheFile(s->session));
@@ -159,7 +187,7 @@ extern "C" JNIEXPORT jfloatArray JNICALL Java_com_vobich_bluestar_openocrlab_Nat
   float memory=-1;s->net->getSessionInfo(s->session,MNN::Interpreter::MEMORY,&memory);
   std::ostringstream log;
   log<<"requested="<<s->requested<<" reported_primary="<<(backendOK?types[0]:-1)<<" selected_device="<<ocr_device_get()
-     <<" gpu_tuning="<<(s->tuning==0?"FAST":"NONE")<<" resized="<<resized<<" resize_ms="<<resize<<" input_copy_ms="<<upload<<" run_submit_ms="<<execute
+     <<" gpu_tuning="<<(s->tuning==0?"FAST":"NONE")<<" precision_policy="<<(s->tuning==2?"NORMAL_FP16_STORAGE":s->tuning==3?"LOW_FP16_COMPUTE":"HIGH_FP32")<<" integer_index_readback="<<(s->tuning>=2?1:0)<<" resized="<<resized<<" resize_ms="<<resize<<" input_copy_ms="<<upload<<" run_submit_ms="<<execute
      <<" output_copy_sync_jni_ms="<<download<<" cache_update_ms="<<cacheMs<<" cache_update_rc="<<cacheRc<<" runtime_reported_memory_mb="<<memory<<" "<<trace;
   s->info=log.str();
   return values;

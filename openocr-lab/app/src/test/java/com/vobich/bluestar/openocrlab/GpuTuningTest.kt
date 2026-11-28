@@ -9,8 +9,11 @@ class GpuTuningTest {
   assertEquals(GpuTuning.NONE,GpuTuning.fromWire(1))
   assertEquals("rep-576805263c70-mnn350-opencl-high-fast-v012.cache",GpuTuning.FAST.cacheName)
   assertNotEquals(GpuTuning.FAST.cacheName,GpuTuning.NONE.cacheName)
+  assertEquals(GpuTuning.NONE_NORMAL,GpuTuning.fromWire(2))
+  assertEquals(GpuTuning.NONE_LOW,GpuTuning.fromWire(3))
+  assertEquals(4,GpuTuning.values().map{it.cacheName}.toSet().size)
  }
  @Test(expected=NoSuchElementException::class) fun invalidWireRejected(){
-  GpuTuning.fromWire(2)
+  GpuTuning.fromWire(4)
  }
 }
