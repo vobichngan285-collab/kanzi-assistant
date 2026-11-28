@@ -246,7 +246,7 @@ class MainActivity:Activity(){
       catch(t:GpuTransportLost){
        // Only the known race between preflight and the first GPU send.
        // Reader has joined both lanes; no partial result is ever published.
-       if(selectedMode!=CoopMode.MIXED_EXACT||!t.beforeSend||client==null||client.completedInferences!=before)throw t
+       if(client==null||!GpuRecoveryPolicy.allow(selectedMode,t.beforeSend,before,client.completedInferences))throw t
        note("GPU_PRE_DISPATCH_RECOVERY attempt=1 discarded_partial_results=1 reason="+t.message)
        ensureGpu(nt,::note,forceNew=true)
        engine.cooperate(bm,bgr,rows.flatten(),official,gpu,selectedMode,::note)
