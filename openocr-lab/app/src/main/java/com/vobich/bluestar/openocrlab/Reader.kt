@@ -143,13 +143,15 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
    }
   }
  }
- internal fun cooperate(source:Bitmap,bgr:Mat,boxes:List<TextLocator.Box>,official:Boolean,gpu:GpuClient,mixed:Boolean,note:(String)->Unit):List<Answer>{
+ internal fun cooperate(source:Bitmap,bgr:Mat,boxes:List<TextLocator.Box>,official:Boolean,gpu:GpuClient?,mode:CoopMode,note:(String)->Unit):List<Answer>{
   if(boxes.isEmpty())return emptyList()
+  val mixed=mode.mixed
+  require(mode.cpuOnly||gpu!=null)
   val began=System.nanoTime()
   val lock=Any();val results=arrayOfNulls<Answer>(boxes.size)
   val groups=boxes.indices.toList().chunked(if(official)officialBatchSize else 1)
   // Compute one GPU width per page without changing the original crop or CPU batch.
-  val widths=boxes.mapNotNull{box->
+  val widths=if(mode.fixedWidth)boxes.mapNotNull{box->
    val p=box.points
    if(official){
     val cw=OfficialGeometry.cropWidth(p);val ch=OfficialGeometry.cropHeight(p)
@@ -162,10 +164,11 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
     require(w>=1&&h>=1)
     max(320,ceil(48*w/h).toInt().coerceIn(1,960))
    }
-  }
-  val gpuWidth=FixedGpuInput.widthFor(widths.maxOrNull()?:320)
+  }else emptyList<Int>()
+  val gpuWidth=if(mode.fixedWidth)FixedGpuInput.widthFor(widths.maxOrNull()?:320)else 0
   val gpuBatch=if(official)officialBatchSize else 1
-  note("GPU_PAGE_PLAN real_max_width="+(widths.maxOrNull()?:0)+" fixed_shape="+longArrayOf(gpuBatch.toLong(),3,48,gpuWidth.toLong()).contentToString()+" width_rounding=64 tail_duplicate=1 smart_batch=1 padding_changes_model_input=1")
+  note("SHAPE_POLICY mode=$mode fixed_width=${mode.fixedWidth} fixed_batch=${mode.fixedBatch} engine="+(if(mode.cpuOnly)"ORT_CPU" else "GPU_OR_MIXED"))
+  if(mode.fixedWidth)note("GPU_PAGE_PLAN real_max_width="+(widths.maxOrNull()?:0)+" fixed_shape="+longArrayOf(gpuBatch.toLong(),3,48,gpuWidth.toLong()).contentToString()+" width_rounding=64 tail_duplicate=1 smart_batch=1 padding_changes_model_input=1")
   val useCpu=mixed&&groups.size>1
   val dispatch=BatchDispatch(groups.size,if(useCpu)2 else 1)
   val aborted=AtomicBoolean(false)
@@ -202,26 +205,36 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
       val at=System.nanoTime()
       var details=""
       val answers=if(name=="GPU"){
-       val gpuShape=longArrayOf(gpuBatch.toLong(),3,48,gpuWidth.toLong())
+       val gpuShape=mode.targetShape(j.shape,gpuWidth,gpuBatch)
        val padAt=System.nanoTime()
-       val padded=FixedGpuInput.pad(j.input,j.ids.size,j.shape[3].toInt(),gpuBatch,gpuWidth)
+       val padded=FixedGpuInput.pad(j.input,j.ids.size,j.shape[3].toInt(),gpuShape[0].toInt(),gpuShape[3].toInt())
        val padMs=ms(System.nanoTime()-padAt)
-       val o=gpu.infer(padded,gpuShape)
-       details=o.detail+" compact_bytes="+o.values.size*4+" gpu_shape="+gpuShape.contentToString()+" gpu_pad_ms="+padMs+" real_rows="+j.ids.size+" dummy_rows="+(gpuBatch-j.ids.size)
+       details="gpu_shape="+gpuShape.contentToString()+" gpu_pad_ms="+padMs+" real_rows="+j.ids.size+" dummy_rows="+(gpuShape[0]-j.ids.size)
+       var actualOutputShape="unavailable"
        try{
-        require(o.shape[0]==gpuBatch)
+        val o=gpu!!.infer(padded,gpuShape)
+        actualOutputShape=o.shape.contentToString()
+        details=o.detail+" compact_bytes="+o.values.size*4+" "+details
+        require(o.shape[0].toLong()==gpuShape[0])
         val realShape=o.shape.copyOf().apply{this[0]=j.ids.size}
         decodeCompact(FixedGpuInput.realPrefix(o.values,o.shape,j.ids.size),realShape,j.shape[3].toInt())
        }catch(t:Throwable){
-        synchronized(lock){finished.add("GPU_BATCH_FAIL ordinal="+j.ordinal+" ids="+j.ids+" original_shape="+j.shape.contentToString()+" output_shape="+o.shape.contentToString()+" "+details+" error="+t.message)}
+        synchronized(lock){finished.add("GPU_BATCH_FAIL ordinal="+j.ordinal+" ids="+j.ids+" original_shape="+j.shape.contentToString()+" output_shape="+actualOutputShape+" "+details+" error="+t.message)}
         throw t
        }
+      }else if(mode.cpuOnly){
+       val target=mode.targetShape(j.shape,gpuWidth,gpuBatch)
+       val padAt=System.nanoTime()
+       val padded=FixedGpuInput.pad(j.input,j.ids.size,j.shape[3].toInt(),target[0].toInt(),target[3].toInt())
+       details="cpu_fixed_shape="+target.contentToString()+" pad_ms="+ms(System.nanoTime()-padAt)+" real_rows="+j.ids.size+" dummy_rows="+(target[0]-j.ids.size)
+       runCpu(j.copy(input=padded,shape=target)).take(j.ids.size).map{it.copy(width=j.shape[3].toInt())}
       }else runCpu(j)
       val end=System.nanoTime()
       check(answers.size==j.ids.size)
       synchronized(lock){
        for(i in j.ids.indices){check(results[j.ids[i]]==null);results[j.ids[i]]=answers[i]}
        starts.add(Triple(name,at,end))
+       if(mode==CoopMode.GPU_EXACT||mode==CoopMode.GPU_TAIL_FIXED)for(i in j.ids.indices){val a=answers[i];finished.add("DIAG_CELL index="+j.ids[i]+" text="+org.json.JSONObject.quote(a.text)+" mean="+a.confidence+" min="+a.minConfidence+" original_width="+a.width)}
        finished.add("BATCH ordinal="+j.ordinal+" lane="+name+" ids="+j.ids+" shape="+j.shape.contentToString()+" prep_ms="+j.prepMs+" start_ms="+ms(at-began)+" finish_ms="+ms(end-began)+" host_ms="+ms(end-at)+" "+details)
       }
      }
@@ -231,7 +244,7 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
   }
   val futures=ArrayList<java.util.concurrent.Future<Unit>>()
   try{
-   futures.add(pool.submit(Callable<Unit>{lane("GPU",0)}))
+   futures.add(pool.submit(Callable<Unit>{lane(if(mode.cpuOnly)"CPU" else "GPU",0)}))
    if(useCpu)futures.add(pool.submit(Callable<Unit>{lane("CPU",1)}))
    // Wait for both workers, including after error, before releasing bitmap/model.
    var failure:Throwable?=null
@@ -240,7 +253,7 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
    val cpu=starts.filter{it.first=="CPU"};val gpuRuns=starts.filter{it.first=="GPU"}
    var overlap=0L
    for(c in cpu)for(g in gpuRuns)overlap+=max(0L,min(c.third,g.third)-max(c.second,g.second))
-   note("COOP_SUMMARY requested="+(if(mixed)"CPU_GPU" else "GPU")+" cpu_batches="+cpu.size+" gpu_batches="+gpuRuns.size+" host_overlap_ms="+ms(overlap)+" elapsed_ms="+ms(System.nanoTime()-began)+" groups="+groups.size+" (host overlap, not measured GPU kernel overlap)")
+   note("COOP_SUMMARY requested="+mode.name+" cpu_batches="+cpu.size+" gpu_batches="+gpuRuns.size+" host_overlap_ms="+ms(overlap)+" elapsed_ms="+ms(System.nanoTime()-began)+" groups="+groups.size+" (host overlap, not measured GPU kernel overlap)")
    if(failure!=null)throw failure
    check(results.all{it!=null}){"missing batch result"}
    return results.map{it!!}
