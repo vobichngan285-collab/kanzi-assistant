@@ -13,14 +13,14 @@ import java.util.concurrent.TimeUnit
 
 // Native GPU lives in a separate process: previous RepSVTR OpenCL crashed.
 // Every handle stays on the same service HandlerThread.
-internal class NativeMnn(path:String,backend:Int,threads:Int,cachePath:String):AutoCloseable{
+internal class NativeMnn(path:String,backend:Int,threads:Int,cachePath:String,tuning:GpuTuning):AutoCloseable{
  companion object { init{System.loadLibrary("ocr_mnn_jni")} }
- private external fun open(path:String,backend:Int,threads:Int,cachePath:String):Long
+ private external fun open(path:String,backend:Int,threads:Int,cachePath:String,tuning:Int):Long
  private external fun run(handle:Long,input:FloatBuffer,shape:LongArray):FloatArray
  private external fun info(handle:Long):String
  private external fun outputShape(handle:Long):IntArray
  private external fun close(handle:Long)
- private val handle=open(path,backend,threads,cachePath).also{check(it!=0L)}
+ private val handle=open(path,backend,threads,cachePath,tuning.wire).also{check(it!=0L)}
  fun infer(input:FloatBuffer,shape:LongArray)=run(handle,input,shape)
  fun details()=info(handle)
  fun shape()=outputShape(handle)
@@ -31,6 +31,7 @@ class GpuWorker:Service(){
  private lateinit var handler:Handler
  private var engine:NativeMnn?=null
  private var file:File?=null
+ private var tuning=GpuTuning.FAST
  override fun onCreate(){
   super.onCreate()
   thread=HandlerThread("OpenOCR-OpenCL").apply{start()}
@@ -43,13 +44,14 @@ class GpuWorker:Service(){
       // A replacement client may bind before Android destroys the prior service.
       // All native handles remain serialized on this HandlerThread.
       val old=engine;engine=null;old?.close();file?.delete();file=null
+      tuning=GpuTuning.fromWire(m.arg2)
       val stage=SystemClock.elapsedRealtime()
       val f=File.createTempFile("rep-compact-", ".mnn",cacheDir);file=f
       assets.open("rep-compact.mnn").use{src->f.outputStream().use{src.copyTo(it)}}
       val loaded=SystemClock.elapsedRealtime()
-      val cache=File(cacheDir,"rep-576805263c70-mnn350-opencl-high-fast-v012.cache")
+      val cache=File(cacheDir,tuning.cacheName)
       val before=cache.length()
-      engine=NativeMnn(f.absolutePath,3,m.arg1,cache.absolutePath)
+      engine=NativeMnn(f.absolutePath,3,m.arg1,cache.absolutePath,tuning)
       b.putString("detail","worker_pid="+android.os.Process.myPid()+" stage_ms="+(loaded-stage)+" load_ms="+(SystemClock.elapsedRealtime()-loaded)+" cache_before_bytes="+before+" "+engine!!.details())
      }
      2->{
@@ -68,7 +70,7 @@ class GpuWorker:Service(){
         val details=e.details()
         val commands=Regex("executed_commands_by_backend=([^ ]*)").find(details)?.groupValues?.get(1).orEmpty()
         check(Regex("(?:^|,)3:[1-9][0-9]*(?:,|$)").containsMatchIn(commands)){"OpenCL did not execute any traced command: "+details}
-        b.putFloatArray("values",out);b.putIntArray("dims",dims);b.putString("detail",details+" cache_bytes="+File(cacheDir,"rep-576805263c70-mnn350-opencl-high-fast-v012.cache").length())
+        b.putFloatArray("values",out);b.putIntArray("dims",dims);b.putString("detail",details+" cache_bytes="+File(cacheDir,tuning.cacheName).length())
         b.putLong("pss",Debug.getPss())
        }finally{SharedMemory.unmap(bytes)}
       }finally{mem.close()}
@@ -78,9 +80,9 @@ class GpuWorker:Service(){
       val f=file?:error("model not staged")
       val started=SystemClock.elapsedRealtime()
       val old=engine;engine=null;old?.close()
-      val cache=File(cacheDir,"rep-576805263c70-mnn350-opencl-high-fast-v012.cache")
+      val cache=File(cacheDir,tuning.cacheName)
       val before=cache.length()
-      engine=NativeMnn(f.absolutePath,3,m.arg1,cache.absolutePath)
+      engine=NativeMnn(f.absolutePath,3,m.arg1,cache.absolutePath,tuning)
       b.putString("detail","worker_pid="+android.os.Process.myPid()+" session_reset_ms="+(SystemClock.elapsedRealtime()-started)+" cache_before_bytes="+before+" "+engine!!.details())
      }
      else->error("unknown GPU message")
@@ -101,7 +103,7 @@ class GpuWorker:Service(){
 // Transport loss is separate from engine errors and timeouts. Only a known
 // pre-dispatch loss may be recovered before the first GPU inference of a page.
 internal class GpuTransportLost(message:String,val beforeSend:Boolean):IllegalStateException(message)
-internal class GpuClient(private val context:Context,threads:Int):AutoCloseable{
+internal class GpuClient(private val context:Context,threads:Int,val tuning:GpuTuning):AutoCloseable{
  data class Output(val values:FloatArray,val shape:IntArray,val detail:String)
  private val connected=CountDownLatch(1)
  private val responses=ArrayBlockingQueue<Bundle>(1)
@@ -178,7 +180,7 @@ internal class GpuClient(private val context:Context,threads:Int):AutoCloseable{
    error("GPU worker unavailable: "+it)
   }
   val r=remote?:throw GpuTransportLost("GPU connection lost before send",true)
-  val m=Message.obtain(null,kind);m.arg1=threads;m.data=b;m.replyTo=reply
+  val m=Message.obtain(null,kind);m.arg1=threads;m.arg2=tuning.wire;m.data=b;m.replyTo=reply
   try{r.send(m)}catch(t:RemoteException){
    disconnected("send_remote_exception")
    throw GpuTransportLost("GPU transport lost during send: "+t,false)
