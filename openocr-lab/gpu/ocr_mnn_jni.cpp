@@ -83,7 +83,7 @@ static void requireRequestedGpu(State* s,const char* phase){
 }
 static void fail(JNIEnv* e,const char* s){e->ThrowNew(e->FindClass("java/lang/IllegalStateException"),s);}
 static State* state(jlong h){auto s=reinterpret_cast<State*>(h);check(s!=nullptr,"null native handle");return s;}
-extern "C" JNIEXPORT jlong JNICALL Java_com_vobich_bluestar_openocrlab_NativeMnn_open(JNIEnv* e,jobject,jstring path,jint backend,jint threads){
+extern "C" JNIEXPORT jlong JNICALL Java_com_vobich_bluestar_openocrlab_NativeMnn_open(JNIEnv* e,jobject,jstring path,jint backend,jint threads,jstring cachePath){
  try{
   check(backend==0||backend==3||backend==7,"invalid backend");
   const char* p=e->GetStringUTFChars(path,nullptr);check(p!=nullptr,"path");
@@ -92,6 +92,11 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_vobich_bluestar_openocrlab_NativeMnn
   if(backend==3)s->probe=probeOpenCL();
   ocr_device_reset();
   s->net=MNN::Interpreter::createFromFile(file.c_str());check(s->net,"createFromFile failed");
+  if(backend==3){
+   const char* c=e->GetStringUTFChars(cachePath,nullptr);check(c!=nullptr,"cache path");
+   std::string cache(c);e->ReleaseStringUTFChars(cachePath,c);
+   s->net->setCacheFile(cache.c_str());
+  }
   s->net->setSessionMode(MNN::Interpreter::Session_Resize_Defer);
   s->net->setSessionMode(MNN::Interpreter::Session_Backend_Fix);
   MNN::ScheduleConfig sc;sc.type=static_cast<MNNForwardType>(backend);sc.backupType=MNN_FORWARD_CPU;
@@ -144,13 +149,16 @@ extern "C" JNIEXPORT jfloatArray JNICALL Java_com_vobich_bluestar_openocrlab_Nat
   auto values=e->NewFloatArray(length);check(values,"output JNI allocation failed");
   e->SetFloatArrayRegion(values,0,length,result.host<float>());
   double download=ms(t);
+  t=Clock::now();int cacheRc=-1;
+  if(resized&&s->requested==3)cacheRc=static_cast<int>(s->net->updateCacheFile(s->session));
+  double cacheMs=ms(t);
   int types[16];for(auto& x:types)x=-1;
   bool backendOK=s->net->getSessionInfo(s->session,MNN::Interpreter::BACKENDS,types);
   float memory=-1;s->net->getSessionInfo(s->session,MNN::Interpreter::MEMORY,&memory);
   std::ostringstream log;
   log<<"requested="<<s->requested<<" reported_primary="<<(backendOK?types[0]:-1)<<" selected_device="<<ocr_device_get()
      <<" resized="<<resized<<" resize_ms="<<resize<<" input_copy_ms="<<upload<<" run_submit_ms="<<execute
-     <<" output_copy_sync_jni_ms="<<download<<" runtime_reported_memory_mb="<<memory<<" "<<trace;
+     <<" output_copy_sync_jni_ms="<<download<<" cache_update_ms="<<cacheMs<<" cache_update_rc="<<cacheRc<<" runtime_reported_memory_mb="<<memory<<" "<<trace;
   s->info=log.str();
   return values;
  }catch(const std::exception& x){if(!e->ExceptionCheck())fail(e,x.what());return nullptr;}
