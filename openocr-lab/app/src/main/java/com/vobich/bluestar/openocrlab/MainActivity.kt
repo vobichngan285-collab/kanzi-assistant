@@ -23,6 +23,7 @@ class MainActivity:Activity(){
  private var db:DbLocator?=null;private var dbThreads=0
  private lateinit var threads:Spinner;private lateinit var dbSize:Spinner
  private lateinit var backend:Spinner
+ private lateinit var tuningChoice:Spinner
  private lateinit var history:ExperimentHistory
  private var sampleId=""
  private var currentRun=""
@@ -52,28 +53,33 @@ class MainActivity:Activity(){
  }
  // OCR executor owns the client. Binder callbacks only invalidate its own
  // generation; they never replace MainActivity.gpu or submit new inference.
- private fun ensureGpu(nt:Int,note:(String)->Unit,forceNew:Boolean=false):Boolean{
+ private fun ensureGpu(nt:Int,tuning:GpuTuning,note:(String)->Unit,forceNew:Boolean=false):Boolean{
   val t=now()
   val old=gpu
+  val unavailable=old?.unavailableReason(probe=true)
   val reason=when{
    old==null->"no_client"
    forceNew->"confirmed_pre_dispatch_transport_loss"
+   unavailable!=null->unavailable
    gpuThreads!=nt->"thread_configuration_changed"
-   else->old.unavailableReason(probe=true)
+   old.tuning!=tuning->"tuning_configuration_changed"
+   else->null
   }
+  val recovering=old!=null&&(forceNew||unavailable!=null)
   val existing=old!=null&&reason==null
-  note("GPU_CONNECTION_CHECK generation=$gpuGeneration live=$existing reason="+(reason?:"alive")+" probe_ms="+(now()-t))
+  note("GPU_CONNECTION_CHECK generation=$gpuGeneration live=$existing reason="+(reason?:"alive")+" probe_ms="+(now()-t)+" gpu_tuning=$tuning")
+  note("GPU_CACHE_AT_REQUEST tuning=$tuning bytes="+java.io.File(cacheDir,tuning.cacheName).length()+" file="+tuning.cacheName)
   if(!existing){
    if(old!=null){
-    if(gpuThreads==nt||forceNew)gpuExitInfo(old,note)
+    if(recovering)gpuExitInfo(old,note)
     note("GPU_SESSION_CLOSE generation=$gpuGeneration reason=$reason")
     gpu=null;old.close()
    }
-   val created=GpuClient(applicationContext,nt)
+   val created=GpuClient(applicationContext,nt,tuning)
    gpu=created;gpuThreads=nt;gpuGeneration++
-   note("GPU_CONNECTION_READY generation=$gpuGeneration recovered="+(old!=null)+" reason=$reason")
+   note("GPU_CONNECTION_READY generation=$gpuGeneration recovered=$recovering reason=$reason gpu_tuning=$tuning")
   }
-  note("GPU_INIT reused=$existing prepare_ms=${now()-t} generation=$gpuGeneration "+(if(existing)"resident_session=1 initial_load_detail="+gpu!!.loadDetail else gpu!!.loadDetail))
+  note("GPU_INIT reused=$existing prepare_ms=${now()-t} generation=$gpuGeneration gpu_tuning=$tuning "+(if(existing)"resident_session=1 initial_load_detail="+gpu!!.loadDetail else gpu!!.loadDetail))
   return existing
  }
  private fun voiceNote(s:String){voiceStatus.text=s;output.append("\nTTS "+s+"\n");if(speechRun.isNotEmpty())runCatching{history.append("TTS run="+speechRun+" "+s+" callback_only=1")}.onFailure{status.text="诊断写入失败："+it.message}}
@@ -122,13 +128,14 @@ class MainActivity:Activity(){
   history=ExperimentHistory(this)
   if(Build.VERSION.SDK_INT>=30)box.setOnApplyWindowInsetsListener{v,i->val bars=i.getInsets(WindowInsets.Type.systemBars());v.setPadding(24+bars.left,16+bars.top,24+bars.right,16+bars.bottom);i}
   fun label(t:String)=TextView(this).apply{text=t;textSize=18f;box.addView(this)}
-  label("蓝星 OpenOCR CPU＋GPU v0.1.5\n静态照片协同识别实验 · 基于v0.4.8")
+  label("蓝星 OpenOCR CPU＋GPU v0.1.6\n静态照片GPU冷启动实验 · 基于v0.4.8")
   choose=Button(this).apply{text="选择相册原图";box.addView(this);setOnClickListener{stopSpeech();startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},9)}}
   preview=ImageView(this).apply{adjustViewBounds=true;maxHeight=650;box.addView(this)}
   dbSize=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,DbResolution.sizes.map{DbResolution.label(it)});setSelection(DbResolution.defaultIndex);box.addView(this)}
   mode=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("官方原框（还原实验）","智能主阅读区（保留原版）"));box.addView(this)}
   threads=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("CPU 4线程","CPU 2线程","CPU 6线程（默认）"));setSelection(2);box.addView(this)}
   backend=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("原版 ORT CPU（原宽度对照）","CPU＋GPU 协同（固定宽度）","GPU单独识别（固定宽度）","ORT CPU（固定宽度精度对照）","GPU原始形状（精度诊断）","GPU原宽度（仅尾批补齐）","CPU＋GPU协同（原始宽度，尾批CPU）","GPU尾批优先（新会话诊断）"));setSelection(6);box.addView(this)}
+  tuningChoice=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("GPU FAST（v0.1.5基线）","GPU NONE（关闭调优实验）"));setSelection(0);box.addView(this)}
   run=Button(this).apply{text="开始识别 / 同图复测";box.addView(this);setOnClickListener{test()}}
   status=label("请选择图片")
   voiceStatus=label("系统 TTS 初始化中")
@@ -171,7 +178,7 @@ class MainActivity:Activity(){
    }catch(t:Throwable){runOnUiThread{status.text=t.toString();busy(false)}}
   }
  }
- private fun busy(v:Boolean){busyNow=v;choose.isEnabled=!v;run.isEnabled=!v;mode.isEnabled=!v;threads.isEnabled=!v;dbSize.isEnabled=!v;backend.isEnabled=!v}
+ private fun busy(v:Boolean){busyNow=v;choose.isEnabled=!v;run.isEnabled=!v;mode.isEnabled=!v;threads.isEnabled=!v;dbSize.isEnabled=!v;backend.isEnabled=!v;tuningChoice.isEnabled=!v}
  private fun test(){
   if(busyNow)return
   val clicked=now();val bm=source?:return
@@ -180,12 +187,13 @@ class MainActivity:Activity(){
   val nt=listOf(4,2,6)[threads.selectedItemPosition]
   val longSide=DbResolution.sizes[dbSize.selectedItemPosition]
   val selected=backend.selectedItemPosition
+  val tuning=GpuTuning.fromWire(tuningChoice.selectedItemPosition)
   val backendName=listOf("ORT_CPU","CPU_GPU","GPU_ONLY","ORT_CPU_FIXED","GPU_EXACT","GPU_TAIL_FIXED","CPU_GPU_EXACT","GPU_TAIL_FIRST")[selected]
   val coopMode=when(selected){1->CoopMode.MIXED_FIXED;2->CoopMode.GPU_FIXED;3->CoopMode.CPU_FIXED;4->CoopMode.GPU_EXACT;5->CoopMode.GPU_TAIL_FIXED;6->CoopMode.MIXED_EXACT;7->CoopMode.GPU_TAIL_FIRST;else->null}
   val needsGpu=coopMode!=null&&!coopMode.cpuOnly
   val runId=UUID.randomUUID().toString();currentRun=runId;speechRun=""
   val sample=sampleId
-  val header="BEGIN run=$runId sample_sha256=$sample backend=$backendName mode=$name source=${bm.width}x${bm.height} db=$longSide cpu_threads=$nt device=${Build.MODEL} sdk=${Build.VERSION.SDK_INT} time_ms=${System.currentTimeMillis()} db_cache=forced_miss thermal_start="+(if(Build.VERSION.SDK_INT>=29)(getSystemService(POWER_SERVICE) as PowerManager).currentThermalStatus else -1)
+  val header="BEGIN run=$runId sample_sha256=$sample backend=$backendName mode=$name source=${bm.width}x${bm.height} db=$longSide cpu_threads=$nt device=${Build.MODEL} sdk=${Build.VERSION.SDK_INT} time_ms=${System.currentTimeMillis()} db_cache=forced_miss gpu_tuning=${if(needsGpu)tuning.name else "NA"} thermal_start="+(if(Build.VERSION.SDK_INT>=29)(getSystemService(POWER_SERVICE) as PowerManager).currentThermalStatus else -1)
   try{history.append(header.replaceFirst("BEGIN","START"))}catch(t:Throwable){status.text="无法保存诊断："+t.message;return}
   stopSpeech();lastText="";raw.text="";replay.isEnabled=false;testStart=clicked
   busy(true);output.text="";status.text="OpenOCR RepViT-DB 定位中"
@@ -212,7 +220,7 @@ class MainActivity:Activity(){
     val pMs=now()-pStart
     val load=now();if(reader==null||readerThreads!=nt){reader?.close();reader=null;reader=Reader(this,"rep.onnx",nt);readerThreads=nt}
     val engine=reader!!;val loadMs=now()-load
-    note("Field CPU_GPU v0.1.5 source=${bm.width}x${bm.height} detector_threads=$nt rec_threads=$nt detector_init_ms=${init-start} detect_ms=${detected-init} recognizer_load_ms=$loadMs raw_boxes=${found.size} focus_plan_ms=$focusMs focus_reason=${plan?.reason?:"official_bypass"} rec_shape=${engine.inputShape} rec_batch=${if(official)engine.officialBatchSize else 1}\nmode=$name roi=$roi selected=${boxes.size} outside=${outside.size} rows=${rows.size} crops=${rows.sumOf{it.size}} duplicates=${columns?.removed?:0} plan_ms=$pMs\n"+(if(outside.isNotEmpty())"提示：区域外${outside.size}个检测框未识别，可切换官方原框。\n" else "")+outside.joinToString("\n"){q->"outside det=${q.score} quad=${q.points.contentToString()}"}+"\n")
+    note("Field CPU_GPU v0.1.6 source=${bm.width}x${bm.height} detector_threads=$nt rec_threads=$nt detector_init_ms=${init-start} detect_ms=${detected-init} recognizer_load_ms=$loadMs raw_boxes=${found.size} focus_plan_ms=$focusMs focus_reason=${plan?.reason?:"official_bypass"} rec_shape=${engine.inputShape} rec_batch=${if(official)engine.officialBatchSize else 1}\nmode=$name roi=$roi selected=${boxes.size} outside=${outside.size} rows=${rows.size} crops=${rows.sumOf{it.size}} duplicates=${columns?.removed?:0} plan_ms=$pMs\n"+(if(outside.isNotEmpty())"提示：区域外${outside.size}个检测框未识别，可切换官方原框。\n" else "")+outside.joinToString("\n"){q->"outside det=${q.score} quad=${q.points.contentToString()}"}+"\n")
     val scale=min(1f,1200f/max(bm.width,bm.height))
     val scaled=Bitmap.createScaledBitmap(bm,(bm.width*scale).toInt(),(bm.height*scale).toInt(),true)
     val shown=scaled.copy(Bitmap.Config.ARGB_8888,true)
@@ -226,7 +234,7 @@ class MainActivity:Activity(){
     }
     runOnUiThread{if(!isDestroyed)preview.setImageBitmap(shown)else shown.recycle()}
     if(needsGpu){
-     val existing=ensureGpu(nt,::note)
+     val existing=ensureGpu(nt,tuning,::note)
      if(coopMode==CoopMode.GPU_TAIL_FIRST&&existing)note("GPU_SESSION_RESET "+gpu!!.resetSession(nt))
      if(coopMode==CoopMode.GPU_TAIL_FIRST)note("GPU_TAIL_FIRST fresh_session=1 same_process_possible=1")
      note("HOST_PROJECTION "+assets.open("compact-report.json").bufferedReader().use{it.readText()}.replace("\n"," "))
@@ -248,7 +256,7 @@ class MainActivity:Activity(){
        // Reader has joined both lanes; no partial result is ever published.
        if(client==null||!GpuRecoveryPolicy.allow(selectedMode,t.beforeSend,before,client.completedInferences))throw t
        note("GPU_PRE_DISPATCH_RECOVERY attempt=1 discarded_partial_results=1 reason="+t.message)
-       ensureGpu(nt,::note,forceNew=true)
+       ensureGpu(nt,tuning,::note,forceNew=true)
        engine.cooperate(bm,bgr,rows.flatten(),official,gpu,selectedMode,::note)
       }
      }
@@ -302,7 +310,7 @@ class MainActivity:Activity(){
      if(selected==2)compare(references["fixed/$key"],"MATCHED_FIXED_COMPARE")
     }
     note("\n$name detect_ms=${detected-init} first_row_ms=$first rec_ms=$rec total_ms=$total crops=$count suspect=$uncertain blank=$blank official_dropped=$dropped pss_kb=${Debug.getPss()}\n"+lines.joinToString("\n")+"\n"+notes.joinToString("\n")+"\n OCR 点击至原文就绪：${done-clicked} ms\n")
-    note("SUMMARY run=$runId sample_sha256=$sample backend=$backendName complete_ms=${done-clicked} rec_ms=$rec detect_ms=${detected-init} crops=$count first_row_scope="+(if(selected==0)"baseline" else "not_measured_see_batch_finish")+" thermal_status="+(if(Build.VERSION.SDK_INT>=29)(getSystemService(POWER_SERVICE) as PowerManager).currentThermalStatus else -1))
+    note("SUMMARY run=$runId sample_sha256=$sample backend=$backendName gpu_tuning=${if(needsGpu)tuning.name else "NA"} complete_ms=${done-clicked} rec_ms=$rec detect_ms=${detected-init} crops=$count first_row_scope="+(if(selected==0)"baseline" else "not_measured_see_batch_finish")+" thermal_status="+(if(Build.VERSION.SDK_INT>=29)(getSystemService(POWER_SERVICE) as PowerManager).currentThermalStatus else -1))
     note("RAW_TEXT_BEGIN\n"+original+"\nRAW_TEXT_END\nEND run=$runId success=1")
     history.append(details.toString())
     runOnUiThread{if(!isDestroyed){
