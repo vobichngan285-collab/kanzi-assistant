@@ -76,16 +76,21 @@ class GpuWorker:Service(){
          throw IllegalStateException(t.toString()+"\n"+diagnostic,t)
         }
         val dims=e.shape()
+        val originalDetail=e.details()
         val invalid=out.size%2!=0||(out.indices step 2).any{i->
          val id=out[i];val score=out[i+1]
          !id.isFinite()||id<0f||id>=6625f||id!=id.toInt().toFloat()||!score.isFinite()
         }
         val allBlank=shape[0]>1&&out.isNotEmpty()&&out.size%2==0&&(out.indices step 2).all{out[it]==0f}
-        if((invalid||allBlank)&&!diagnosed){
-         diagnosed=true;diagnostic=diagnose(e,bytes,shape,if(invalid)"invalid_compact" else "all_blank_batch")
+        val ioError=Regex("cl_io_errors=([0-9]+)").find(originalDetail)?.groupValues?.get(1)?.toIntOrNull()?.let{it>0}?:false
+        if((invalid||allBlank||ioError)&&!diagnosed){
+         diagnosed=true
+         val firstBad=(0 until out.size/2).firstOrNull{i->val x=out[2*i];val y=out[2*i+1];!x.isFinite()||x<0f||x>=6625f||x!=x.toInt().toFloat()||!y.isFinite()}
+         val reason=if(invalid)"invalid_compact first_bad_step=$firstBad pair="+(firstBad?.let{listOf(out[it*2],out[it*2+1])}) else if(ioError)"opencl_transfer_error" else "all_blank_batch"
+         diagnostic=diagnose(e,bytes,shape,reason+" original_detail="+originalDetail)
         }
         require(dims.size==3&&dims[0].toLong()==shape[0]&&dims[2]==2&&out.size<=65536&&dims.fold(1L){a,v->a*v}==out.size.toLong())
-        val details=e.details()+" "+diagnostic
+        val details=originalDetail+" "+diagnostic
         val commands=Regex("executed_commands_by_backend=([^ ]*)").find(details)?.groupValues?.get(1).orEmpty()
         check(Regex("(?:^|,)3:[1-9][0-9]*(?:,|$)").containsMatchIn(commands)){"OpenCL did not execute any traced command: "+details}
         if(invalid)throw IllegalStateException("ROOT_ORIGINAL_INVALID "+diagnostic)
@@ -126,8 +131,10 @@ class GpuWorker:Service(){
    return "steps=$n invalid_index=$invalidIndex invalid_score=$badScore zero_index=$blank first="+out.take(8)
   }
   line("ROOT_DIAG_BEGIN reason=$reason precision=$tuning shape="+shape.contentToString()+" input_sha256="+digest)
-  // Preserve original error; a callback replay can change synchronization.
-  runCatching{line(e.inspect(input(),shape))}.onFailure{line("ROOT_TRACE_EXCEPTION "+it)}
+  // Repeat the ordinary path first. Callback readbacks change synchronization.
+  try{val out=e.infer(input(),shape);line("ROOT_SAME_SESSION "+summary(out)+" "+e.details())}
+  catch(t:Exception){line("ROOT_SAME_SESSION error="+t)}
+  try{line(e.inspect(input(),shape))}catch(t:Exception){line("ROOT_TRACE_EXCEPTION "+t)}
   val f=file
   if(f!=null)for(policy in listOf(tuning,GpuTuning.NONE,GpuTuning.NONE_NORMAL).distinct()){
    // Separate interpreter and unique cache. No re-cropping or padding.

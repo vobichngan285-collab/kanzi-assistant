@@ -223,7 +223,8 @@ extern "C" JNIEXPORT void JNICALL Java_com_vobich_bluestar_openocrlab_NativeMnn_
    std::memset(host->buffer().host,0xA5,host->size());
    ocr_io_reset();
    bool ok=t->copyToHostTensor(host.get());
-   s<<" copied="<<ok<<" "<<ocr_io_get();
+   std::string io=ocr_io_get();s<<" copied="<<ok<<" "<<io;
+   if(io.find("cl_io_errors=0 ")==std::string::npos)bad=true;
    if(!ok){bad=true;return s.str();}
    v=host.get();
   }else{s<<" host_resident=1";}
