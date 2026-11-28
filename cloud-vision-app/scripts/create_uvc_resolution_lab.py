@@ -36,7 +36,14 @@ android {
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }
-dependencies { implementation project(':libuvc'); implementation 'androidx.appcompat:appcompat:1.7.0' }
+dependencies {
+    implementation project(':libuvc')
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation platform('org.jetbrains.kotlin:kotlin-bom:1.8.22')
+}
+configurations.configureEach {
+    resolutionStrategy.force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22', 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22', 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'
+}
 ''')
 write(app/"src/main/AndroidManifest.xml",'''<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 <uses-feature android:name="android.hardware.usb.host" android:required="true"/>
