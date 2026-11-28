@@ -76,4 +76,19 @@ class CoopCoreTest{
   val full=longArrayOf(6,3,48,503)
   assertArrayEquals(full,CoopMode.GPU_TAIL_FIXED.targetShape(full,0,6))
  }
+
+ @Test fun exactMixedReservesPartialTailWithoutRebatching(){
+  val order=ExactBatchOrder.order(CoopMode.MIXED_EXACT,13,true)
+  assertEquals(0,order[0]);assertEquals(12,order[1])
+  assertEquals((0..12).toList(),order.sorted())
+  assertEquals(listOf(0),ExactBatchOrder.order(CoopMode.MIXED_EXACT,1,true))
+  assertEquals((0..12).toList(),ExactBatchOrder.order(CoopMode.MIXED_EXACT,13,false))
+  val original=longArrayOf(6,3,48,503)
+  assertArrayEquals(original,CoopMode.MIXED_EXACT.targetShape(original,0,6))
+ }
+ @Test fun tailFirstReproducesSameShapeBeforeOtherBatches(){
+  assertEquals(listOf(12)+(0..11).toList(),ExactBatchOrder.order(CoopMode.GPU_TAIL_FIRST,13,true))
+  assertEquals(listOf(0),ExactBatchOrder.order(CoopMode.GPU_TAIL_FIRST,1,true))
+  assertArrayEquals(longArrayOf(6,3,48,421),CoopMode.GPU_TAIL_FIRST.targetShape(longArrayOf(4,3,48,421),0,6))
+ }
 }
