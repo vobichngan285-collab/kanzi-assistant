@@ -48,7 +48,7 @@ class GpuWorker:Service(){
       val cache=File(cacheDir,"rep-576805263c70-mnn350-opencl-high-fast-v012.cache")
       val before=cache.length()
       engine=NativeMnn(f.absolutePath,3,m.arg1,cache.absolutePath)
-      b.putString("detail","worker_pid="+Process.myPid()+" stage_ms="+(loaded-stage)+" load_ms="+(SystemClock.elapsedRealtime()-loaded)+" cache_before_bytes="+before+" "+engine!!.details())
+      b.putString("detail","worker_pid="+android.os.Process.myPid()+" stage_ms="+(loaded-stage)+" load_ms="+(SystemClock.elapsedRealtime()-loaded)+" cache_before_bytes="+before+" "+engine!!.details())
      }
      2->{
       val e=engine?:error("GPU not initialized")
@@ -75,11 +75,11 @@ class GpuWorker:Service(){
       // Fresh interpreter/session, same process and persistent cache.
       val f=file?:error("model not staged")
       val started=SystemClock.elapsedRealtime()
-      engine?.close();engine=null
+      val old=engine;engine=null;old?.close()
       val cache=File(cacheDir,"rep-576805263c70-mnn350-opencl-high-fast-v012.cache")
       val before=cache.length()
       engine=NativeMnn(f.absolutePath,3,m.arg1,cache.absolutePath)
-      b.putString("detail","worker_pid="+Process.myPid()+" session_reset_ms="+(SystemClock.elapsedRealtime()-started)+" cache_before_bytes="+before+" "+engine!!.details())
+      b.putString("detail","worker_pid="+android.os.Process.myPid()+" session_reset_ms="+(SystemClock.elapsedRealtime()-started)+" cache_before_bytes="+before+" "+engine!!.details())
      }
      else->error("unknown GPU message")
     }
