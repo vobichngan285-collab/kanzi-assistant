@@ -1,3 +1,8 @@
+# v0.1.6 GPU冷启动专项实验
+从已真机通过17/17、三次低内存GPU死亡自动恢复成功的v0.1.5发布源码0a32d43d69df5d27fc549dfe9b95e606d2fa76e1直接派生，见 BASELINE_V015_20261128.md。v0.1.4/v0.1.5 APK及日志不覆盖。
+仅增加GPU调优选项：FAST（原v0.1.5策略，默认）/NONE（候选）。固定MNN3.5.0源码 c35f14f3ab5cb65094863b9a0e888370b027a670 的 include/MNN/MNNForwardType.h 及 source/backend/opencl/core/OpenCLBackend.cpp 已核对：OpenCL支持两种独占调优标志，NONE禁用调优，可能降低运行性能。两种均使用 Precision_High、BUFFER、原始shape/模型/解码与协同调度不变。禁用调优不等于免内核编译、不承诺冷态加速或识别完全一致。FAST缓存名称延续旧版，NONE使用独立文件，切换策略关闭旧会话后创建新会话，不清空任何缓存、不并存两个GPU引擎；本包为独立安装，不能访问v0.1.5私有缓存。原Binder死亡处理、BIND_IMPORTANT、受限首批前恢复政策、GPU真实命令校验均保留。新增请求时缓存字节数/文件名、实际调优策略、切换原因/恢复区分及原批次日志。没有后台预热、隐藏计时、CPU替代或更改固定宽度模式；默认仍第7项6线程DB1600。
+测试同一76框公告：先第1项ORT CPU6一次作为文字参考，再第7项FAST第一次（空cache）及复测两次，然后第7项NONE第一次（独立空cache）及复测两次。两组首轮可能受驱动全局缓存/先后顺序、CPU模型热态及动态分配影响，不能称完全控制实验；以实际GPU批次shape及resize为主、完整OCR为主用户指标，后续交替比较热态，必要时用Android强制停止应用后重新开启（保留数据，不清缓存）测有cache的进程冷启动。不要反复清除旧版数据。保留全部成功/失败日志，比较REFERENCE_COMPARE文字/keep/width、实际GPU命令、缓存字节、resize、GPU批次耗时和complete_ms。若NONE冷态改善但热态退步或质量不符，不能直接替换FAST。严格MNN数值门槛仍失败，106框热态实际计算瓶颈另行处理。CI校验原识别与生命周期关键代码，JVM新增调优值/缓存隔离测试；真实GPU效果待验证。
+ 
 # v0.1.5 GPU 生命周期定向修复（实验包）
 直接继承冻结 v0.1.4 425ee3986e6d962d166eaf27e63c3b7b3dbfbdf1；完整基线见 BASELINE_V014_20261128.md。真机32次记录30成功/2失败；公告同6线程最佳纯CPU3553ms vs 原宽协同2254ms，文字/keep/width一致；价目表热态均值1262ms，酒店920ms。两次换图首次失败均为旧GPU worker被系统以reason=3 low memory提前终止，v0.1.4只判断对象非空，误复用失效连接。不能据此证明旧原生崩溃根因或内存泄漏。
 本版增加 Binder linkToDeath、ServiceConnection失效标记、不可复用的连接代际、识别前isBinderAlive/pingBinder检查和主动重建，保留同一健康会话及磁盘cache；BIND_IMPORTANT提高绑定期间GPU进程重要性，不能保证Android不回收。只有第7项在确认传输连接已失效且首个GPU推理尚未提交时，允许一次明确记录的恢复并重新执行完整REC（两lane已join，丢弃部分结果）；不重试in-flight传输异常、模型/解码异常或超时，不静默回退CPU，不发布不完整原文。新日志GPU_CONNECTION_CHECK / GPU_CONNECTION_READY / GPU_PRE_DISPATCH_RECOVERY / GPU_EXIT_INFO / generation。
