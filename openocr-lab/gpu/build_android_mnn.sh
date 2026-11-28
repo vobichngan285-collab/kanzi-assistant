@@ -2,6 +2,7 @@
 set -euo pipefail
 test "$(git -C mnn-src rev-parse HEAD)" = c35f14f3ab5cb65094863b9a0e888370b027a670
 python openocr-lab/gpu/instrument_mnn.py
+python openocr-lab/gpu/fix_reduce_mean.py
 NDK="$ANDROID_HOME/ndk/27.2.12479018"
 cmake -S mnn-src -B mnn-build -G Ninja \
  -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \

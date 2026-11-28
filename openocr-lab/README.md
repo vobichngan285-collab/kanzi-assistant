@@ -1,3 +1,6 @@
+# v0.1.11 GPU ReduceMean FP32累加修复
+基于v0.1.10 3cb0a7dd3a9a2a5594ed3e205522dc2cb2f6576f，不采用v0.1.9 CPU容错。真机原始诊断：单框[1,3,48,423] SHA256 d946c68f2fff12f21a9c65f3c28d41486e5d1b2ee72bdc8e0ef7d0e0da34f580，算子5第一处nonfinite（输入96×1272×1全有限，均值输出96个中1个异常）；原会话及新会话LOW、NORMAL均失败，FP32输出有限但全blank，不能据此确认文字正确。对应固定MNN源码的ReduceMean使用half累加后除以dim，即使NORMAL也是half累加。仅在浮点低精度均值归约的scalar/vector分支将累加、local归约树及除法提升到float，仍保留原始FP16输入/输出存储、模型及其他算子、CPU及调度。生成实际嵌入的OpenCL源和新MD5，所有缓存名隔离。CI增加OpenCL语法检查及1272项正负64的host算术测试，非真机证明。原故障不被吞掉；同一423输入SHA精确匹配且原始输出合法时自动记录MEAN_FIX_TARGET和回调trace、首个均值输入各通道和的最大绝对值及超65504个数。诊断时间不计正常性能；其他图片不逐算子检查（出现异常仍诊断）。默认智能主阅读区/第7项/CPU6/DB1600/NONE_LOW。先验证原始武汉热干面样本，必要时重复以让故障框分配到GPU；成功后才验证正常76/71框速度。非法字符编号和FP32整批blank是否同源尚未确认。原完整概率parity gate仍失败；FP16不保证全部文字真值一致。v0.1.6保留。
+ 
 # v0.1.10 GPU根因诊断（不含v0.1.9 CPU容错）
 基于v0.1.8 71fcc53c57cf7063765546804325e1ca409b53b0。保留原模型、原始裁切、CPU、调度及形状。新增OpenCL host transfer返回码记录（并非覆盖所有OpenCL命令）。异常时同一共享内存输入SHA256、原始异常、原会话普通推理重放及逐算子同步回读统计（shape/type/finite/sentinel/min/max）、同精度及FP32/混合精度独立新会话无旧缓存对照。原始结果不被替换；异常依然失败，整批空白仍按原逻辑返回但记录诊断。回调同步可能改变GPU故障表现，不能据此单独断定根因；诊断耗时不能作为性能基准。每个GPU worker初始化后仅自动诊断首次异常，日志有ROOT_DIAG_BEGIN/ROOT_SAME_SESSION/ROOT_OP/ROOT_TRACE_END/ROOT_FRESH/ROOT_DIAG_END。默认智能主阅读区、第7项、CPU6、DB1600、NONE_LOW。仅使用此前连续失败5次的样本，运行一次，导出完整TXT；如GPU服务死亡或超时，保留日志。v0.1.9作为独立容错实验保留；不以CPU容错掩盖诊断。该版本不是正式性能候选。
  

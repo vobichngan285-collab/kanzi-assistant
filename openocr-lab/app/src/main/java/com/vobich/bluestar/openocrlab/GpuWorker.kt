@@ -36,6 +36,7 @@ class GpuWorker:Service(){
  private var tuning=GpuTuning.FAST
  private var threadCount=6
  private var diagnosed=false
+ private var verifiedTarget=false
  override fun onCreate(){
   super.onCreate()
   thread=HandlerThread("OpenOCR-OpenCL").apply{start()}
@@ -49,7 +50,7 @@ class GpuWorker:Service(){
       // All native handles remain serialized on this HandlerThread.
       val old=engine;engine=null;old?.close();file?.delete();file=null
       tuning=GpuTuning.fromWire(m.arg2)
-      threadCount=m.arg1;diagnosed=false
+      threadCount=m.arg1;diagnosed=false;verifiedTarget=false
       val stage=SystemClock.elapsedRealtime()
       val f=File.createTempFile("rep-compact-", ".mnn",cacheDir);file=f
       assets.open("rep-compact.mnn").use{src->f.outputStream().use{src.copyTo(it)}}
@@ -90,6 +91,16 @@ class GpuWorker:Service(){
          diagnostic=diagnose(e,bytes,shape,reason+" original_detail="+originalDetail)
         }
         require(dims.size==3&&dims[0].toLong()==shape[0]&&dims[2]==2&&out.size<=65536&&dims.fold(1L){a,v->a*v}==out.size.toLong())
+        // Trace the exact previously failing input once, even if now valid.
+        // Preserve original ordinary-path output and detail; diagnostics are not timed benchmarks.
+        if(!invalid&&!ioError&&!verifiedTarget&&tuning==GpuTuning.NONE_LOW&&shape.contentEquals(longArrayOf(1,3,48,423))){
+         val hash=inputDigest(bytes)
+         if(hash=="d946c68f2fff12f21a9c65f3c28d41486e5d1b2ee72bdc8e0ef7d0e0da34f580"){
+          verifiedTarget=true
+          val trace=try{e.inspect(bytes.duplicate().order(ByteOrder.nativeOrder()).apply{rewind()}.asFloatBuffer(),shape)}catch(t:Exception){"MEAN_FIX_TRACE_ERROR "+t}
+          diagnostic+="\nMEAN_FIX_TARGET original_input_sha256=$hash ordinary_output_finite=1 diagnostic_timing_not_benchmark=1\n"+trace.take(140000)
+         }else diagnostic+="\nMEAN_FIX_SHAPE_MATCH input_sha256=$hash target_match=0"
+        }
         val details=originalDetail+" "+diagnostic
         val commands=Regex("executed_commands_by_backend=([^ ]*)").find(details)?.groupValues?.get(1).orEmpty()
         check(Regex("(?:^|,)3:[1-9][0-9]*(?:,|$)").containsMatchIn(commands)){"OpenCL did not execute any traced command: "+details}
@@ -118,10 +129,11 @@ class GpuWorker:Service(){
   }
  }
  // Only one anomaly per client session; normal healthy batches keep their path.
+ private fun inputDigest(bytes:java.nio.ByteBuffer):String =
+  java.security.MessageDigest.getInstance("SHA-256").apply{update(bytes.duplicate().apply{rewind()})}.digest().joinToString(""){"%02x".format(it.toInt() and 255)}
  private fun diagnose(e:NativeMnn,bytes:java.nio.ByteBuffer,shape:LongArray,reason:String):String{
   val log=StringBuilder()
-  val raw=bytes.duplicate().apply{rewind()}
-  val digest=java.security.MessageDigest.getInstance("SHA-256").apply{update(raw)}.digest().joinToString(""){"%02x".format(it.toInt() and 255)}
+  val digest=inputDigest(bytes)
   fun input()=bytes.duplicate().order(ByteOrder.nativeOrder()).apply{rewind()}.asFloatBuffer()
   fun line(s:String){log.append(s).append('\n')}
   fun summary(out:FloatArray):String{

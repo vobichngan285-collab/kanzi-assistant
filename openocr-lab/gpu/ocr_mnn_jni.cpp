@@ -192,7 +192,7 @@ extern "C" JNIEXPORT jfloatArray JNICALL Java_com_vobich_bluestar_openocrlab_Nat
   float memory=-1;s->net->getSessionInfo(s->session,MNN::Interpreter::MEMORY,&memory);
   std::ostringstream log;
   log<<"requested="<<s->requested<<" reported_primary="<<(backendOK?types[0]:-1)<<" selected_device="<<ocr_device_get()
-     <<" gpu_tuning="<<(s->tuning==0?"FAST":"NONE")<<" precision_policy="<<(s->tuning==2?"NORMAL_FP16_STORAGE":s->tuning==3?"LOW_FP16_COMPUTE":"HIGH_FP32")<<" integer_index_readback="<<(s->tuning>=2?1:0)<<" resized="<<resized<<" resize_ms="<<resize<<" input_copy_ms="<<upload<<" run_submit_ms="<<execute
+     <<" mean_fp32_accum_patch=v0111"<<" gpu_tuning="<<(s->tuning==0?"FAST":"NONE")<<" precision_policy="<<(s->tuning==2?"NORMAL_FP16_STORAGE":s->tuning==3?"LOW_FP16_COMPUTE":"HIGH_FP32")<<" integer_index_readback="<<(s->tuning>=2?1:0)<<" resized="<<resized<<" resize_ms="<<resize<<" input_copy_ms="<<upload<<" run_submit_ms="<<execute
      <<" output_copy_sync_jni_ms="<<download<<" cache_update_ms="<<cacheMs<<" cache_update_rc="<<cacheRc<<" runtime_reported_memory_mb="<<memory<<" "<<trace<<" "<<ocr_io_get();
   s->info=log.str();
   return values;
@@ -208,7 +208,7 @@ extern "C" JNIEXPORT void JNICALL Java_com_vobich_bluestar_openocrlab_NativeMnn_
 
  // Synchronous diagnostic replay, deliberately not used for normal performance.
  // Host-copy sentinel distinguishes unwritten buffers from observed NaN/Inf.
- static std::string tensorStats(MNN::Tensor* t,bool& bad){
+ static std::string tensorStats(MNN::Tensor* t,bool& bad,bool meanInput=false){
   std::ostringstream s;
   if(!t){s<<"null_tensor";return s.str();}
   auto sh=t->shape();s<<"shape=[";for(int d:sh)s<<d<<",";s<<"] type="<<int(t->getType().code)<<":"<<int(t->getType().bits);
@@ -238,6 +238,16 @@ extern "C" JNIEXPORT void JNICALL Java_com_vobich_bluestar_openocrlab_NativeMnn_
    mn=std::min(mn,x);mx=std::max(mx,x);if(x==0)zero++;
   }
   if(nonfinite||sentinel)bad=true;
+  // Diagnostic-only: exact sums of the finite values read from the first mean input.
+  if(meanInput&&type.code==halide_type_float&&sh.size()==3&&sh[2]==1&&sh[0]>0&&sh[1]>0&&static_cast<long long>(sh[0])*sh[1]==n&&!bad){
+   double maxAbsSum=0;int over=0,channel=-1;double signedSum=0;
+   for(int c=0;c<sh[0];c++){
+    double sum=0;for(int i=0;i<sh[1];i++)sum+=v->host<float>()[c*sh[1]+i];
+    if(std::abs(sum)>65504.)over++;
+    if(std::abs(sum)>maxAbsSum){maxAbsSum=std::abs(sum);channel=c;signedSum=sum;}
+   }
+   s<<" mean_input_dim="<<sh[1]<<" channels_abs_sum_gt65504="<<over<<" largest_abs_sum="<<maxAbsSum<<" largest_channel="<<channel<<" signed_sum="<<signedSum;
+  }
   s<<" n="<<n<<" nonfinite="<<nonfinite<<" sentinel="<<sentinel<<" zeros="<<zero<<" min="<<mn<<" max="<<mx;
   return s.str();
  }
@@ -257,7 +267,7 @@ extern "C" JNIEXPORT void JNICALL Java_com_vobich_bluestar_openocrlab_NativeMnn_
    auto before=[](const std::vector<MNN::Tensor*>&,const MNN::OperatorInfo*){return true;};
    auto after=[&](const std::vector<MNN::Tensor*>& tensors,const MNN::OperatorInfo* info){
     for(size_t k=0;k<tensors.size();k++){
-     bool bad=false;auto stats=tensorStats(tensors[k],bad);
+     bool bad=false;auto stats=tensorStats(tensors[k],bad,info&&info->name()=="/encoder/features.1/token_mixer/token_mixer.1/ReduceMean_output_0_raster_0");
      if(bad&&firstBad<0)firstBad=op;
      log<<"ROOT_OP seq="<<op<<" name="<<(info?info->name():"unknown")<<" type="<<(info?info->type():"unknown")<<" output="<<k<<" "<<stats<<"\n";
     }
