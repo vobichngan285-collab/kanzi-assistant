@@ -48,7 +48,7 @@ internal object PreviewLink {
   value.setPreviewDisplay(surface?.takeIf{it.isValid})
  }
  @Synchronized fun unbind(value:UVCCamera){
-  if(camera===value){value.setPreviewDisplay(null as Surface?);camera=null}
+  if(camera===value){camera=null;value.setPreviewDisplay(null as Surface?)}
  }
 }
 internal object LiveLog {
@@ -106,10 +106,11 @@ class LiveActivity:Activity(){
    contentDescription="C110实时预览，仅显示，不参与OCR取图"
    val width=(resources.displayMetrics.widthPixels-48).coerceAtLeast(160)
    layoutParams=LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,width*9/16)
+   holder.setFixedSize(FrameSize.W,FrameSize.H)
    holder.addCallback(object:SurfaceHolder.Callback{
-    override fun surfaceCreated(h:SurfaceHolder){PreviewLink.setSurface(h.surface)}
+    override fun surfaceCreated(h:SurfaceHolder){PreviewLink.setSurface(h.surface);LiveLog.append(this@LiveActivity,"PREVIEW_ATTACHED")}
     override fun surfaceChanged(h:SurfaceHolder,format:Int,w:Int,ht:Int){}
-    override fun surfaceDestroyed(h:SurfaceHolder){PreviewLink.setSurface(null)}
+    override fun surfaceDestroyed(h:SurfaceHolder){PreviewLink.setSurface(null);LiveLog.append(this@LiveActivity,"PREVIEW_DETACHED")}
    })
    root.addView(this)
   }
@@ -209,7 +210,7 @@ class LiveService:Service(){
  override fun onStartCommand(i:Intent?,flags:Int,startId:Int):Int{
   when(i?.action){
    "stop"->{halt("USER_STOP");return START_NOT_STICKY}
-   "rescan"->{if(active)synchronized(gate){captureManual(i.getLongExtra("tap_at",clock()))};return START_NOT_STICKY}
+   "rescan"->{if(active)synchronized(gate){captureManual(i?.getLongExtra("tap_at",clock())?:clock())};return START_NOT_STICKY}
    "auto_on"->{if(active)synchronized(gate){invalidateLocked();automatic=true;LiveLog.automatic=true;lastSpoken="";lastConsumed=0;gate.notifyAll();status("自动识别运行中");log("AUTO_ON no_motion_gate=1")};return START_NOT_STICKY}
    "auto_off"->{if(active)synchronized(gate){automatic=false;LiveLog.automatic=false;invalidateLocked();status("手动模式 · 点击截帧");log("AUTO_OFF")};return START_NOT_STICKY}
    "start"->{if(active||closing)return START_NOT_STICKY}
@@ -298,7 +299,7 @@ class LiveService:Service(){
   invalidateLocked();LiveLog.raw=""
   val id=++generation;accepted++
   pending=Frame(id,latestAt,latest.copyOf(),tap,true,latestSeq)
-  log("MANUAL_CAPTURE id="+id+" seq="+latestSeq+" source=2560x1440 pixels=3686400 bytes="+FrameSize.BYTES+" frame_age_ms="+(now-latestAt)+" tap_to_capture_ms="+(now-tap)+" no_preview_capture=1 no_jpeg=1")
+  log("MANUAL_CAPTURE id="+id+" seq="+latestSeq+" source=2560x1440 pixels=3686400 bytes="+FrameSize.BYTES+" frame_age_ms="+(now-latestAt)+" tap_to_capture_ms="+(clock()-tap)+" no_preview_capture=1 no_jpeg=1")
   status("手动识别中 · 原始1440P")
   gate.notifyAll()
  }
@@ -449,7 +450,7 @@ class LiveService:Service(){
   main.removeCallbacks(tick)
   status("已停止："+reason);log("STOP "+reason)
   cameraWorker.execute{
-   runCatching{camera?.let{PreviewLink.unbind(it);it.destroy()}};camera=null
+   camera?.let{c->runCatching{PreviewLink.unbind(c)};runCatching{c.destroy()}};camera=null
    runCatching{monitor?.destroy()};monitor=null
    ocrWorker.shutdown()
    runCatching{ocrWorker.awaitTermination(30,java.util.concurrent.TimeUnit.SECONDS)}
