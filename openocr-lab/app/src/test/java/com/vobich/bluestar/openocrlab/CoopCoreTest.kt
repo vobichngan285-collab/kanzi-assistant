@@ -35,4 +35,34 @@ class CoopCoreTest{
   val r=CompactCtc.decode(floatArrayOf(0f,.9f,0f,.8f),intArrayOf(1,2,2),listOf("","甲")).single()
   assertEquals("",r.text);assertEquals(0f,r.confidence,0f);assertEquals(0f,r.minConfidence,0f)
  }
+
+ @Test fun fixedWidthNeverShrinks(){
+  assertEquals(320,FixedGpuInput.widthFor(1))
+  assertEquals(704,FixedGpuInput.widthFor(672))
+  assertEquals(4096,FixedGpuInput.widthFor(4096))
+  try{FixedGpuInput.widthFor(4097);fail("oversize accepted")}catch(_:IllegalArgumentException){}
+ }
+ @Test fun fixedInputPreservesPixelsAndDuplicatesTail(){
+  val width=3;val target=5;val real=4;val batch=6
+  val src=FloatArray(real*3*48*width){(it+1).toFloat()}
+  val buf=java.nio.FloatBuffer.wrap(src)
+  val out=FixedGpuInput.pad(buf,real,width,batch,target)
+  assertTrue(out.isDirect)
+  assertEquals(batch*3*48*target,out.remaining())
+  for(b in 0 until batch)for(y in 0 until 144)for(x in 0 until target){
+   val expected=if(x<width)src[(minOf(b,real-1)*144+y)*width+x]else 0f
+   assertEquals(expected,out.get(),0f)
+  }
+  assertEquals(0,buf.position())
+ }
+ @Test fun fixedPrefixDoesNotDecodeDummyRows(){
+  val values=floatArrayOf(1f,.9f,0f,.8f,2f,.7f,0f,.8f,Float.NaN,.1f,Float.NaN,.2f)
+  val prefix=FixedGpuInput.realPrefix(values,intArrayOf(3,2,2),2)
+  val decoded=CompactCtc.decode(prefix,intArrayOf(2,2,2),listOf("","甲","乙"))
+  assertEquals(listOf("甲","乙"),decoded.map{it.text})
+ }
+ @Test fun realInvalidValueStillRejected(){
+  val values=floatArrayOf(Float.NaN,.9f,1f,.8f)
+  try{CompactCtc.decode(FixedGpuInput.realPrefix(values,intArrayOf(2,1,2),1),intArrayOf(1,1,2),listOf("","甲"));fail("invalid real value accepted")}catch(e:IllegalArgumentException){assertTrue(e.message!!.contains("row=0 step=0"))}
+ }
 }
