@@ -40,7 +40,9 @@ class GpuWorker:Service(){
    try{
     when(m.what){
      1->{
-      check(engine==null){"already initialized"}
+      // A replacement client may bind before Android destroys the prior service.
+      // All native handles remain serialized on this HandlerThread.
+      val old=engine;engine=null;old?.close();file?.delete();file=null
       val stage=SystemClock.elapsedRealtime()
       val f=File.createTempFile("rep-compact-", ".mnn",cacheDir);file=f
       assets.open("rep-compact.mnn").use{src->f.outputStream().use{src.copyTo(it)}}
@@ -96,41 +98,94 @@ class GpuWorker:Service(){
  }
 }
 
+// Transport loss is separate from engine errors and timeouts. Only a known
+// pre-dispatch loss may be recovered before the first GPU inference of a page.
+internal class GpuTransportLost(message:String,val beforeSend:Boolean):IllegalStateException(message)
 internal class GpuClient(private val context:Context,threads:Int):AutoCloseable{
  data class Output(val values:FloatArray,val shape:IntArray,val detail:String)
  private val connected=CountDownLatch(1)
  private val responses=ArrayBlockingQueue<Bundle>(1)
  private val replies=HandlerThread("OpenOCR-GPU-reply").apply{start()}
  private val reply=Messenger(Handler(replies.looper){m->responses.offer(m.data);true})
+ private val linkLock=Any()
  @Volatile private var remote:Messenger?=null
- @Volatile private var failed=false
+ @Volatile private var failureReason:String?=null
+ @Volatile private var transportLost=false
+ @Volatile private var closed=false
+ @Volatile var completedInferences=0L
+  private set
  private var bound=false
- private var closed=false
- private fun disconnected(){
-  failed=true;remote=null;connected.countDown()
-  responses.offer(Bundle().apply{putString("error","GPU worker process disconnected or crashed")})
+ private var linkedBinder:IBinder?=null
+ private val death=IBinder.DeathRecipient{disconnected("binder_death")}
+ private fun disconnected(reason:String){
+  synchronized(linkLock){
+   if(closed||failureReason!=null)return
+   transportLost=true
+   failureReason=reason
+   remote=null
+   connected.countDown()
+   responses.offer(Bundle().apply{putString("error","GPU transport lost: "+reason);putBoolean("local_transport_lost",true)})
+  }
+ }
+ private fun engineFailed(reason:String){
+  synchronized(linkLock){if(failureReason==null)failureReason=reason}
  }
  private val conn=object:ServiceConnection{
-  override fun onServiceConnected(n:ComponentName,b:IBinder){remote=Messenger(b);connected.countDown()}
-  override fun onServiceDisconnected(n:ComponentName){disconnected()}
-  override fun onBindingDied(n:ComponentName){disconnected()}
-  override fun onNullBinding(n:ComponentName){disconnected()}
+  override fun onServiceConnected(n:ComponentName,b:IBinder){
+   synchronized(linkLock){
+    // A client generation is permanently invalid after death. Never adopt
+    // Android's automatic reconnect into an already initialized client.
+    if(closed||failureReason!=null)return
+    if(linkedBinder!=null&&linkedBinder!==b){
+     disconnected("unexpected_reconnect");return
+    }
+    try{
+     if(linkedBinder==null){b.linkToDeath(death,0);linkedBinder=b}
+     if(!b.isBinderAlive){disconnected("binder_not_alive");return}
+     remote=Messenger(b);connected.countDown()
+    }catch(t:RemoteException){disconnected("link_to_death_failed")}
+   }
+  }
+  override fun onServiceDisconnected(n:ComponentName){disconnected("service_disconnected")}
+  override fun onBindingDied(n:ComponentName){disconnected("binding_died")}
+  override fun onNullBinding(n:ComponentName){disconnected("null_binding")}
  }
  val loadDetail:String
  init{
   try{
-   bound=context.bindService(Intent(context,GpuWorker::class.java),conn,Context.BIND_AUTO_CREATE)
-   check(bound&&connected.await(20,TimeUnit.SECONDS)&&remote!=null&&!failed){"GPU service connection failed"}
+   // Keep the worker at the client's importance while bound; Android may
+   // still reclaim it, especially when the photo picker backgrounds us.
+   bound=context.bindService(Intent(context,GpuWorker::class.java),conn,Context.BIND_AUTO_CREATE or Context.BIND_IMPORTANT)
+   check(bound&&connected.await(20,TimeUnit.SECONDS)&&remote!=null&&failureReason==null){"GPU service connection failed: "+failureReason}
    loadDetail=call(1,Bundle(),threads).getString("detail").orEmpty()
   }catch(t:Throwable){close();throw t}
  }
+ // Called on the OCR executor, never on the UI thread. A live binder is not
+ // proof of a healthy GPU engine; engine failures invalidate the client too.
+ fun unavailableReason(probe:Boolean=false):String?{
+  if(closed)return "closed"
+  failureReason?.let{return it}
+  val r=remote?:return "not_connected"
+  if(!r.binder.isBinderAlive||(probe&&!r.binder.pingBinder())){
+   disconnected("binder_not_alive")
+   return failureReason?:"binder_not_alive"
+  }
+  return failureReason
+ }
  private fun call(kind:Int,b:Bundle,threads:Int=0):Bundle{
-  check(!failed&&!closed){"GPU worker unavailable"}
-  val r=remote?:error("GPU worker unavailable")
+  unavailableReason()?.let{
+   if(transportLost)throw GpuTransportLost("GPU transport lost before send: "+it,true)
+   error("GPU worker unavailable: "+it)
+  }
+  val r=remote?:throw GpuTransportLost("GPU connection lost before send",true)
   val m=Message.obtain(null,kind);m.arg1=threads;m.data=b;m.replyTo=reply
-  r.send(m)
-  val result=responses.poll(120,TimeUnit.SECONDS)?:run{failed=true;error("GPU worker timed out after 120s")}
-  result.getString("error")?.let{failed=true;error(it)}
+  try{r.send(m)}catch(t:RemoteException){
+   disconnected("send_remote_exception")
+   throw GpuTransportLost("GPU transport lost during send: "+t,false)
+  }
+  val result=responses.poll(120,TimeUnit.SECONDS)?:run{engineFailed("response_timeout");error("GPU worker timed out after 120s")}
+  if(result.getBoolean("local_transport_lost"))throw GpuTransportLost(result.getString("error").orEmpty(),false)
+  result.getString("error")?.let{engineFailed("engine_error");error(it)}
   return result
  }
  fun resetSession(threads:Int):String=call(3,Bundle(),threads).getString("detail").orEmpty()
@@ -146,13 +201,19 @@ internal class GpuClient(private val context:Context,threads:Int):AutoCloseable{
    check(mem.setProtect(OsConstants.PROT_READ))
    val copied=SystemClock.elapsedRealtime()
    val result=call(2,Bundle().apply{putParcelable("tensor",mem);putLongArray("shape",shape)})
-   return Output(result.getFloatArray("values")?:error("missing compact values"),result.getIntArray("dims")?:error("missing compact shape"),
+   val out=Output(result.getFloatArray("values")?:error("missing compact values"),result.getIntArray("dims")?:error("missing compact shape"),
     "ipc_input_copy_ms="+(copied-start)+" ipc_roundtrip_ms="+(SystemClock.elapsedRealtime()-copied)+" gpu_process_pss_kb="+result.getLong("pss")+" "+result.getString("detail"))
+   completedInferences++
+   return out
   }finally{mem.close()}
  }
  override fun close(){
-  if(closed)return
-  closed=true
+  synchronized(linkLock){
+   if(closed)return
+   closed=true;remote=null;connected.countDown()
+   linkedBinder?.let{runCatching{it.unlinkToDeath(death,0)}};linkedBinder=null
+   responses.offer(Bundle().apply{putString("error","GPU client closed");putBoolean("local_transport_lost",true)})
+  }
   if(bound)runCatching{context.unbindService(conn)}
   bound=false;replies.quitSafely()
  }
