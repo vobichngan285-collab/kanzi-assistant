@@ -538,3 +538,16 @@ patch(jni,"static JNINativeMethod methods[] = {",'''static jstring nativeReadOnl
 
 static JNINativeMethod methods[] = {
     { "nativeReadOnlyC110Report", "(J)Ljava/lang/String;", (void *) nativeReadOnlyC110Report },''')
+
+# libuvc internal declarations are outside its public extern "C" block.
+# Match the linkage of the C implementations in src/device.c.
+patch(uvc/"src/main/jni/libuvc/include/libuvc/libuvc_internal.h",
+      "uvc_error_t uvc_claim_if(uvc_device_handle_t *devh, int idx);\nuvc_error_t uvc_release_if(uvc_device_handle_t *devh, int idx);",
+      '''#ifdef __cplusplus
+extern "C" {
+#endif
+uvc_error_t uvc_claim_if(uvc_device_handle_t *devh, int idx);
+uvc_error_t uvc_release_if(uvc_device_handle_t *devh, int idx);
+#ifdef __cplusplus
+}
+#endif''')
