@@ -7,6 +7,8 @@ import android.graphics.*
 import android.os.*
 import android.widget.*
 import android.view.View
+import android.view.WindowInsets
+import java.util.UUID
 import org.opencv.android.Utils
 import org.opencv.core.Mat
 import org.opencv.imgproc.Imgproc
@@ -20,13 +22,21 @@ class MainActivity:Activity(){
  private var source:Bitmap?=null;private var reader:Reader?=null;private var readerThreads=0
  private var db:DbLocator?=null;private var dbThreads=0
  private lateinit var threads:Spinner;private lateinit var dbSize:Spinner
+ private lateinit var backend:Spinner
+ private lateinit var history:ExperimentHistory
+ private var sampleId=""
+ private var currentRun=""
+ private var speechRun=""
+ private var gpu:GpuClient?=null
+ private var gpuThreads=0
+ private var busyNow=false
  private lateinit var raw:TextView;private lateinit var voiceStatus:TextView
  private lateinit var replay:Button;private lateinit var stopVoice:Button
  private var tts:TextToSpeech?=null;private var ttsReady=false;private var ttsFailed=false
  private var serial=0;private var lastIndex=0;private var speechOrigin=0L;private var queuedAt=0L
  private var lastText="";private var pending:Pair<String,Long>?=null;private var testStart=0L
  private fun now()=SystemClock.elapsedRealtime()
- private fun voiceNote(s:String){voiceStatus.text=s;output.append("\nTTS "+s+"\n")}
+ private fun voiceNote(s:String){voiceStatus.text=s;output.append("\nTTS "+s+"\n");if(speechRun.isNotEmpty())runCatching{history.append("TTS run="+speechRun+" "+s+" callback_only=1")}.onFailure{status.text="诊断写入失败："+it.message}}
  private fun stopSpeech(){serial++;pending=null;tts?.stop();voiceStatus.text="朗读已停止"}
  private fun initSpeech(){
   tts=TextToSpeech(this){result->runOnUiThread{
@@ -65,53 +75,83 @@ class MainActivity:Activity(){
    if(code!=TextToSpeech.SUCCESS){stopSpeech();voiceNote("系统 TTS 入队失败："+code);break}
   }
  }
- override fun onDestroy(){serial++;pending=null;tts?.stop();tts?.shutdown();tts=null;worker.execute{runCatching{db?.close()};runCatching{reader?.close()}};worker.shutdown();super.onDestroy()}
+ override fun onDestroy(){serial++;pending=null;tts?.stop();tts?.shutdown();tts=null;worker.execute{runCatching{db?.close()};runCatching{reader?.close()};runCatching{gpu?.close()}};worker.shutdown();super.onDestroy()}
  override fun onCreate(state:Bundle?){super.onCreate(state)
   val scroll=ScrollView(this);val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,48,24,32)}
   scroll.addView(box);setContentView(scroll)
+  history=ExperimentHistory(this)
+  if(Build.VERSION.SDK_INT>=30)box.setOnApplyWindowInsetsListener{v,i->val bars=i.getInsets(WindowInsets.Type.systemBars());v.setPadding(24+bars.left,16+bars.top,24+bars.right,16+bars.bottom);i}
   fun label(t:String)=TextView(this).apply{text=t;textSize=18f;box.addView(this)}
-  label("蓝星 OpenOCR v0.4.8 · 分辨率上限实验")
+  label("蓝星 OpenOCR CPU＋GPU v0.1.0\n静态照片协同识别实验 · 基于v0.4.8")
   choose=Button(this).apply{text="选择相册原图";box.addView(this);setOnClickListener{stopSpeech();startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="image/*";addCategory(Intent.CATEGORY_OPENABLE)},9)}}
   preview=ImageView(this).apply{adjustViewBounds=true;maxHeight=650;box.addView(this)}
   dbSize=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,DbResolution.sizes.map{DbResolution.label(it)});setSelection(DbResolution.defaultIndex);box.addView(this)}
   mode=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("官方原框（还原实验）","智能主阅读区（保留原版）"));box.addView(this)}
   threads=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("CPU 4线程（默认）","CPU 2线程","CPU 6线程"));box.addView(this)}
+  backend=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("原版 ORT CPU（对照）","CPU＋GPU 协同（OpenCL）","GPU单独识别（OpenCL诊断）"));box.addView(this)}
   run=Button(this).apply{text="开始识别 / 同图复测";box.addView(this);setOnClickListener{test()}}
   status=label("请选择图片")
   voiceStatus=label("系统 TTS 初始化中")
-  replay=Button(this).apply{text="重新朗读原文";isEnabled=false;box.addView(this);setOnClickListener{speak(lastText,now())}}
+  replay=Button(this).apply{text="重新朗读原文";isEnabled=false;box.addView(this);setOnClickListener{speechRun=currentRun+"/replay";speak(lastText,now())}}
   stopVoice=Button(this).apply{text="停止朗读";box.addView(this);setOnClickListener{stopSpeech()}}
-  Button(this).apply{text="复制结果及诊断";box.addView(this);setOnClickListener{(getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("OpenOCR",output.text));Toast.makeText(this@MainActivity,"已复制",Toast.LENGTH_SHORT).show()}}
+  Button(this).apply{text="复制全部照片实验日志";box.addView(this);setOnClickListener{
+   try{val all=history.allForClipboard()
+    if(all==null)Toast.makeText(this@MainActivity,"日志超过安全剪贴板容量，请使用导出完整日志",Toast.LENGTH_LONG).show()
+    else copy(all)
+   }catch(t:Throwable){status.text="复制失败："+t.message}
+  }}
+  Button(this).apply{text="复制当前结果及诊断";box.addView(this);setOnClickListener{copy(output.text.toString()+"\n原文：\n"+raw.text)}}
+  Button(this).apply{text="导出完整累计日志（TXT）";box.addView(this);setOnClickListener{
+   startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply{type="text/plain";addCategory(Intent.CATEGORY_OPENABLE);putExtra(Intent.EXTRA_TITLE,"OpenOCR_CPU_GPU_history.txt")},11)
+  }}
+  Button(this).apply{text="清空累计日志";box.addView(this);setOnClickListener{
+   if(!busyNow)android.app.AlertDialog.Builder(this@MainActivity).setMessage("清空全部历史实验记录？").setNegativeButton("取消",null).setPositiveButton("清空"){_,_->if(!busyNow){stopSpeech();speechRun="";runCatching{history.clear()}.onSuccess{status.text="历史日志已清空"}.onFailure{status.text=it.toString()}}}.show()
+   else Toast.makeText(this@MainActivity,"请在识别完成后清空",Toast.LENGTH_SHORT).show()
+  }}
   raw=label("");raw.setTextIsSelectable(true)
   output=TextView(this)
   initSpeech()
  }
+ private fun copy(s:String){
+  if(s.toByteArray(Charsets.UTF_8).size>300000){Toast.makeText(this,"内容过长，请导出完整日志",Toast.LENGTH_LONG).show();return}
+  (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("OpenOCR",s));Toast.makeText(this,"已复制",Toast.LENGTH_SHORT).show()
+ }
  override fun onActivityResult(req:Int,res:Int,data:Intent?){super.onActivityResult(req,res,data)
+  if(req==11&&res==RESULT_OK){val uri=data?.data?:return;worker.execute{try{val out=contentResolver.openOutputStream(uri)?:error("无法打开导出文件");out.use{history.copyTo(it)};runOnUiThread{status.text="已导出完整历史日志"}}catch(t:Throwable){runOnUiThread{status.text="导出失败："+t.message}}};return}
   if(req!=9||res!=RESULT_OK)return;val uri=data?.data?:return
   busy(true);worker.execute{
-   try{val bm=ImageDecoder.decodeBitmap(ImageDecoder.createSource(contentResolver,uri)){d,i,_->
+   try{val hash=contentResolver.openInputStream(uri)?.use{ExperimentHistory.sampleHash(it)}?:error("无法读取原图");val bm=ImageDecoder.decodeBitmap(ImageDecoder.createSource(contentResolver,uri)){d,i,_->
     require(i.size.width.toLong()*i.size.height<=16_000_000L){"图片超过1600万像素"};d.allocator=ImageDecoder.ALLOCATOR_SOFTWARE}
     db?.clearProbability()
-    runOnUiThread{preview.setImageBitmap(bm);source?.recycle();source=bm;lastText="";raw.text="";output.text="";replay.isEnabled=false;status.text="原图 "+bm.width+"×"+bm.height;busy(false)}
+    runOnUiThread{preview.setImageBitmap(bm);source?.recycle();source=bm;sampleId=hash;lastText="";raw.text="";output.text="";replay.isEnabled=false;status.text="原图 "+bm.width+"×"+bm.height+" · "+hash.take(12)+" · 累计日志 "+history.size()+" bytes";busy(false)}
    }catch(t:Throwable){runOnUiThread{status.text=t.toString();busy(false)}}
   }
  }
- private fun busy(v:Boolean){choose.isEnabled=!v;run.isEnabled=!v;mode.isEnabled=!v;threads.isEnabled=!v;dbSize.isEnabled=!v}
+ private fun busy(v:Boolean){busyNow=v;choose.isEnabled=!v;run.isEnabled=!v;mode.isEnabled=!v;threads.isEnabled=!v;dbSize.isEnabled=!v;backend.isEnabled=!v}
  private fun test(){
   val bm=source?:return
   val official=mode.selectedItemPosition==0
   val name=if(official)"官方原框" else "智能主阅读区（原版）"
   val nt=listOf(4,2,6)[threads.selectedItemPosition]
   val longSide=DbResolution.sizes[dbSize.selectedItemPosition]
+  val selected=backend.selectedItemPosition
+  val backendName=listOf("ORT_CPU","CPU_GPU","GPU_ONLY")[selected]
+  val runId=UUID.randomUUID().toString();currentRun=runId;speechRun=""
+  val sample=sampleId
+  val header="BEGIN run=$runId sample_sha256=$sample backend=$backendName mode=$name source=${bm.width}x${bm.height} db=$longSide cpu_threads=$nt device=${Build.MODEL} sdk=${Build.VERSION.SDK_INT} time_ms=${System.currentTimeMillis()} db_cache=forced_miss"
+  try{history.append(header)}catch(t:Throwable){status.text="无法保存诊断："+t.message;return}
   stopSpeech();lastText="";raw.text="";replay.isEnabled=false;testStart=now();val clicked=testStart
   busy(true);output.text="";status.text="OpenOCR RepViT-DB 定位中"
   worker.execute{
+   val details=StringBuilder(header).append("\n")
+   fun note(s:String){details.append(s).append("\n")}
    try{
     val start=now()
     if(db==null||dbThreads!=nt){db?.close();db=null;db=DbLocator(this,nt);dbThreads=nt}
+    db!!.clearProbability()
     val init=now();val found=db!!.locate(bm,longSide,official);val detected=now()
     val diagnostic=db!!.lastDiagnostic
-    runOnUiThread{output.append(diagnostic+"\n"+found.mapIndexed{i,q->"raw=$i det=${q.score} quad=${q.points.contentToString()}"}.joinToString("\n")+"\n")}
+    note(diagnostic+"\n"+found.mapIndexed{i,q->"raw=$i det=${q.score} quad=${q.points.contentToString()}"}.joinToString("\n"))
     require(found.isNotEmpty()){"未检测到文字"}
     val focusStart=now()
     val plan=if(official)null else FocusPlanner.plan(found.map{q->q.rect.let{FocusPlanner.R(it.left,it.top,it.right,it.bottom,q.score)}},bm.width,bm.height)
@@ -125,7 +165,7 @@ class MainActivity:Activity(){
     val pMs=now()-pStart
     val load=now();if(reader==null||readerThreads!=nt){reader?.close();reader=null;reader=Reader(this,"rep.onnx",nt);readerThreads=nt}
     val engine=reader!!;val loadMs=now()-load
-    runOnUiThread{output.append("Field TTS v0.4.8 source=${bm.width}x${bm.height} detector_threads=$nt rec_threads=$nt detector_init_ms=${init-start} detect_ms=${detected-init} recognizer_load_ms=$loadMs raw_boxes=${found.size} focus_plan_ms=$focusMs focus_reason=${plan?.reason?:"official_bypass"} rec_shape=${engine.inputShape} rec_batch=${if(official)engine.officialBatchSize else 1}\nmode=$name roi=$roi selected=${boxes.size} outside=${outside.size} rows=${rows.size} crops=${rows.sumOf{it.size}} duplicates=${columns?.removed?:0} plan_ms=$pMs\n"+(if(outside.isNotEmpty())"提示：区域外${outside.size}个检测框未识别，可切换官方原框。\n" else "")+outside.joinToString("\n"){q->"outside det=${q.score} quad=${q.points.contentToString()}"}+"\n")}
+    note("Field CPU_GPU v0.1.0 source=${bm.width}x${bm.height} detector_threads=$nt rec_threads=$nt detector_init_ms=${init-start} detect_ms=${detected-init} recognizer_load_ms=$loadMs raw_boxes=${found.size} focus_plan_ms=$focusMs focus_reason=${plan?.reason?:"official_bypass"} rec_shape=${engine.inputShape} rec_batch=${if(official)engine.officialBatchSize else 1}\nmode=$name roi=$roi selected=${boxes.size} outside=${outside.size} rows=${rows.size} crops=${rows.sumOf{it.size}} duplicates=${columns?.removed?:0} plan_ms=$pMs\n"+(if(outside.isNotEmpty())"提示：区域外${outside.size}个检测框未识别，可切换官方原框。\n" else "")+outside.joinToString("\n"){q->"outside det=${q.score} quad=${q.points.contentToString()}"}+"\n")
     val scale=min(1f,1200f/max(bm.width,bm.height))
     val scaled=Bitmap.createScaledBitmap(bm,(bm.width*scale).toInt(),(bm.height*scale).toInt(),true)
     val shown=scaled.copy(Bitmap.Config.ARGB_8888,true)
@@ -138,6 +178,12 @@ class MainActivity:Activity(){
      paint.color=Color.CYAN;rows.flatten().forEach{b->val path=Path();path.moveTo(b.points[0],b.points[1]);for(i in 1..3)path.lineTo(b.points[2*i],b.points[2*i+1]);path.close();drawPath(path,paint)}
     }
     runOnUiThread{preview.setImageBitmap(shown)}
+    if(selected!=0){
+     val t=now();val existing=gpu!=null&&gpuThreads==nt
+     if(!existing){gpu?.close();gpu=null;gpu=GpuClient(applicationContext,nt);gpuThreads=nt}
+     note("GPU_INIT reused=$existing prepare_ms=${now()-t} "+gpu!!.loadDetail)
+     note("HOST_PROJECTION "+assets.open("compact-report.json").bufferedReader().use{it.readText()}.replace("\n"," "))
+    }else note("GPU_RESIDENT="+(gpu!=null))
     val begin=now();var count=0;var uncertain=0;var blank=0;var dropped=0;var first=-1L
     val lines=mutableListOf<String>();val rawLines=mutableListOf<String>();val notes=mutableListOf<String>()
     val rgba=Mat();val bgr=Mat()
@@ -145,14 +191,16 @@ class MainActivity:Activity(){
      if(official){Utils.bitmapToMat(bm,rgba);Imgproc.cvtColor(rgba,bgr,Imgproc.COLOR_RGBA2BGR);rgba.release()}
      // Bounded batches preserve official ordering and avoid holding all crops in memory.
      val batch=if(official)engine.officialBatchSize else 1
+     val parallel=if(selected==0)null else engine.cooperate(bm,bgr,rows.flatten(),official,gpu!!,selected==1,::note)
+     var cooperativeIndex=0
      for(index in rows.indices step batch){
       val chunk=rows.subList(index,min(rows.size,index+batch))
-      val answers=if(official)engine.readOfficial(bgr,chunk.flatten())else emptyList()
+      val answers=if(official&&parallel==null)engine.readOfficial(bgr,chunk.flatten())else emptyList()
       var ai=0
       for((ri,row) in chunk.withIndex()){
        val parts=mutableListOf<String>();val rawParts=mutableListOf<String>()
        for((ci,b) in row.withIndex()){
-        val ans=if(official)answers[ai++]else engine.read(bm,b,true)
+        val ans=if(parallel!=null)parallel[cooperativeIndex++]else if(official)answers[ai++]else engine.read(bm,b,true)
         val suspect=if(official)ans.confidence<.5f else ans.text.isBlank()||ans.confidence<.75f||ans.minConfidence<.65f||(ans.text.count{!it.isWhitespace()}<=2&&b.score<.55f&&ans.confidence<.8f)
         val keep=!official||ans.confidence>=.5f
         if(!keep)dropped++
@@ -163,17 +211,26 @@ class MainActivity:Activity(){
        }
        if(rawParts.isNotEmpty())rawLines.add(rawParts.joinToString(" "))
        if(parts.isNotEmpty())lines.add(parts.joinToString(" | "))
-       if(first<0)first=now()-begin
+       if(first<0&&parallel==null)first=now()-begin
       }
      }
+     if(parallel!=null)check(cooperativeIndex==parallel.size)
     }finally{rgba.release();bgr.release()}
     val rec=now()-begin;val total=detected-init+pMs+rec+focusMs
     val original=rawLines.joinToString("\n");val done=now()
+    note("\n$name detect_ms=${detected-init} first_row_ms=$first rec_ms=$rec total_ms=$total crops=$count suspect=$uncertain blank=$blank official_dropped=$dropped pss_kb=${Debug.getPss()}\n"+lines.joinToString("\n")+"\n"+notes.joinToString("\n")+"\n OCR 点击至原文就绪：${done-clicked} ms\n")
+    note("SUMMARY run=$runId sample_sha256=$sample backend=$backendName complete_ms=${done-clicked} rec_ms=$rec detect_ms=${detected-init} crops=$count first_row_scope="+(if(selected==0)"baseline" else "not_measured_see_batch_finish")+" thermal_status="+(if(Build.VERSION.SDK_INT>=29)(getSystemService(POWER_SERVICE) as PowerManager).currentThermalStatus else -1))
+    note("RAW_TEXT_BEGIN\n"+original+"\nRAW_TEXT_END\nEND run=$runId success=1")
+    history.append(details.toString())
     runOnUiThread{if(!isDestroyed){
-     output.append("\n$name detect_ms=${detected-init} first_row_ms=$first rec_ms=$rec total_ms=$total crops=$count suspect=$uncertain blank=$blank official_dropped=$dropped pss_kb=${Debug.getPss()}\n"+lines.joinToString("\n")+"\n"+notes.joinToString("\n")+"\nOCR 点击至原文就绪：${done-clicked} ms\n")
-     raw.text=original;lastText=original;replay.isEnabled=original.isNotBlank();speak(original,clicked);status.text="识别完成";busy(false)
+     output.text=details.toString();raw.text=original;lastText=original;replay.isEnabled=original.isNotBlank();speechRun=runId;speak(original,clicked);status.text="识别完成 · 历史日志 "+history.size()+" bytes";busy(false)
     }}
-   }catch(t:Throwable){runOnUiThread{output.append("\n失败："+t.toString());status.text="失败";busy(false)}}
+   }catch(t:Throwable){
+    if(selected!=0){runCatching{gpu?.close()};gpu=null}
+    note("FAIL run=$runId backend=$backendName error="+t.stackTraceToString()+"\nEND run=$runId success=0")
+    val saved=runCatching{history.append(details.toString())}
+    runOnUiThread{if(!isDestroyed){output.text=details.toString();status.text="失败："+t.message+(if(saved.isFailure)"；历史日志写入失败" else "；已保留日志");busy(false)}}
+   }
   }
  }
 }
