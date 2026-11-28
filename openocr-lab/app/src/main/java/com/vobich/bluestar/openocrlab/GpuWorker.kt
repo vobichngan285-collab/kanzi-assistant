@@ -65,7 +65,7 @@ class GpuWorker:Service(){
         val commands=Regex("executed_commands_by_backend=([^ ]*)").find(details)?.groupValues?.get(1).orEmpty()
         check(Regex("(?:^|,)3:[1-9][0-9]*(?:,|$)").containsMatchIn(commands)){"OpenCL did not execute any traced command: "+details}
         b.putFloatArray("values",out);b.putIntArray("dims",dims);b.putString("detail",details)
-        b.putInt("pss",Debug.getPss())
+        b.putLong("pss",Debug.getPss())
        }finally{SharedMemory.unmap(bytes)}
       }finally{mem.close()}
      }
@@ -134,7 +134,7 @@ internal class GpuClient(private val context:Context,threads:Int):AutoCloseable{
    val copied=SystemClock.elapsedRealtime()
    val result=call(2,Bundle().apply{putParcelable("tensor",mem);putLongArray("shape",shape)})
    return Output(result.getFloatArray("values")?:error("missing compact values"),result.getIntArray("dims")?:error("missing compact shape"),
-    "ipc_input_copy_ms="+(copied-start)+" ipc_roundtrip_ms="+(SystemClock.elapsedRealtime()-copied)+" gpu_process_pss_kb="+result.getInt("pss")+" "+result.getString("detail"))
+    "ipc_input_copy_ms="+(copied-start)+" ipc_roundtrip_ms="+(SystemClock.elapsedRealtime()-copied)+" gpu_process_pss_kb="+result.getLong("pss")+" "+result.getString("detail"))
   }finally{mem.close()}
  }
  override fun close(){
