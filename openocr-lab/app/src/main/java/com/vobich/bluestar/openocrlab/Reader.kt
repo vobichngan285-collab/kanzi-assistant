@@ -7,6 +7,10 @@ import org.opencv.core.Point
 import org.opencv.imgproc.Imgproc
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.FloatBuffer
+import java.util.concurrent.Executors
+import java.util.concurrent.Callable
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.*
 
 class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
@@ -15,7 +19,7 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
  private val session:OrtSession
  init { val opt=OrtSession.SessionOptions();try{opt.setIntraOpNumThreads(threads);session=env.createSession(context.assets.open(asset).use{it.readBytes()},opt)}finally{opt.close()} }
  data class Answer(val text:String,val confidence:Float,val width:Int,val minConfidence:Float=0f)
- fun read(source:Bitmap,box:TextLocator.Box,forceHorizontal:Boolean=false):Answer {
+ private fun prepareFocus(source:Bitmap,box:TextLocator.Box,forceHorizontal:Boolean):Pair<FloatBuffer,Int> {
   val p=box.points.copyOf()
   fun len(a:Int,b:Int)=hypot(p[a*2]-p[b*2],p[a*2+1]-p[b*2+1])
   // Rotate the longer edge to the horizontal axis, choosing reading direction left to right.
@@ -39,6 +43,10 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
   // Official BGR input, normalized to [-1,1], zero right padding.
   for(shift in intArrayOf(0,8,16))for(y in 0 until 48)for(x in 0 until width)buf.put(if(x<actual)(((pixels[y*actual+x] shr shift) and 255)/127.5f-1f)else 0f)
   buf.rewind()
+  return buf to width
+ }
+ fun read(source:Bitmap,box:TextLocator.Box,forceHorizontal:Boolean=false):Answer {
+  val (buf,width)=prepareFocus(source,box,forceHorizontal)
   OnnxTensor.createTensor(env,buf,longArrayOf(1,3,48,width.toLong())).use{input->
    session.run(mapOf(session.inputNames.single() to input)).use{result->
     val t=result[0] as OnnxTensor;val s=t.info.shape
@@ -109,5 +117,119 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
   }
   return result
  }
+
+ // Immutable ownership: each lane takes one batch, prepares under the single
+ // crop lock, and executes independently. No duplicated inference or reordering.
+ private data class Job(val ordinal:Int,val ids:List<Int>,val input:FloatBuffer,val shape:LongArray,val prepMs:Double)
+ private fun ms(ns:Long)=ns/1e6
+ private fun decodeCompact(values:FloatArray,shape:IntArray,width:Int):List<Answer>{
+  require(shape.size==3&&shape[2]==2&&shape.fold(1L){a,b->a*b}==values.size.toLong())
+  return List(shape[0]){row->
+   var last=-1;var sum=0f;var n=0;var low=1f;val text=StringBuilder()
+   repeat(shape[1]){step->
+    val at=(row*shape[1]+step)*2;val raw=values[at];val score=values[at+1];val id=raw.toInt()
+    require(raw.isFinite()&&raw==id.toFloat()&&id in chars.indices&&score.isFinite()){"invalid compact output"}
+    if(id!=0&&id!=last){text.append(chars[id]);sum+=score;low=min(low,score);n++};last=id
+   }
+   Answer(text.toString(),if(n>0)sum/n else 0f,width,if(n>0)low else 0f)
+  }
+ }
+ private fun runCpu(j:Job):List<Answer>{
+  val buf=j.input.duplicate().apply{rewind()}
+  OnnxTensor.createTensor(env,buf,j.shape).use{input->
+   session.run(mapOf(session.inputNames.single() to input)).use{result->
+    val t=result[0] as OnnxTensor;val shape=t.info.shape
+    require(shape.size==3&&shape[0]==j.shape[0]&&shape[2]==chars.size.toLong())
+    val f=t.floatBuffer.apply{rewind()}
+    return List(shape[0].toInt()){
+     var last=-1;var sum=0f;var count=0;var low=1f;val text=StringBuilder()
+     repeat(shape[1].toInt()){
+      var best=0;var score=-Float.MAX_VALUE
+      repeat(chars.size){id->val v=f.get();if(v>score){best=id;score=v}}
+      if(best!=0&&best!=last){text.append(chars[best]);sum+=score;low=min(low,score);count++};last=best
+     }
+     Answer(text.toString(),if(count>0)sum/count else 0f,j.shape[3].toInt(),if(count>0)low else 0f)
+    }
+   }
+  }
+ }
+ internal fun cooperate(source:Bitmap,bgr:Mat,boxes:List<TextLocator.Box>,official:Boolean,gpu:GpuClient,mixed:Boolean,note:(String)->Unit):List<Answer>{
+  if(boxes.isEmpty())return emptyList()
+  val began=System.nanoTime()
+  val lock=Any();val results=arrayOfNulls<Answer>(boxes.size)
+  val groups=boxes.indices.toList().chunked(if(official)officialBatchSize else 1)
+  var next=0
+  val aborted=AtomicBoolean(false)
+  val finished=mutableListOf<String>()
+  val starts=mutableListOf<Triple<String,Long,Long>>()
+  // Reserve the first batch for GPU and the second for CPU when both exist.
+  // This tests both lanes even when one starts much faster than the other.
+  fun take(reserved:Int?=null):Job?=synchronized(lock){
+   if(aborted.get())return@synchronized null
+   val id=reserved?:next++
+   if(id>=groups.size)return@synchronized null
+   val at=System.nanoTime()
+   val group=groups[id]
+   if(official){
+    val p=group.mapNotNull{index->prepareOfficial(bgr,boxes[index])?.let{index to it}?:run{results[index]=Answer("",0f,0,0f);null}}
+    if(p.isEmpty())return@synchronized Job(id,emptyList(),ByteBuffer.allocateDirect(0).asFloatBuffer(),longArrayOf(0,3,48,0),ms(System.nanoTime()-at))
+    val width=p.maxOf{it.second.width};val n=p.size
+    val buf=ByteBuffer.allocateDirect(Math.multiplyExact(n*3*48*4,width)).order(ByteOrder.nativeOrder()).asFloatBuffer()
+    for((_,v) in p)for(c in 0..2)for(y in 0 until 48){buf.put(v.pixels,(c*48+y)*v.width,v.width);repeat(width-v.width){buf.put(0f)}}
+    buf.rewind()
+    Job(id,p.map{it.first},buf,longArrayOf(n.toLong(),3,48,width.toLong()),ms(System.nanoTime()-at))
+   }else{
+    val (buf,w)=prepareFocus(source,boxes[group.single()],true)
+    Job(id,group,buf,longArrayOf(1,3,48,w.toLong()),ms(System.nanoTime()-at))
+   }
+  }
+  val pool=Executors.newFixedThreadPool(if(mixed)2 else 1)
+  val useCpu=mixed&&groups.size>1
+  next=if(useCpu)2 else 1
+  fun lane(name:String,reserved:Int){
+   try{
+    var job=take(reserved)
+    while(job!=null){
+     val j=job
+     if(aborted.get())break
+     if(j.ids.isNotEmpty()){
+      val at=System.nanoTime()
+      var details=""
+      val answers=if(name=="GPU"){
+       val o=gpu.infer(j.input,j.shape)
+       require(o.shape[0]==j.ids.size)
+       details=o.detail+" compact_bytes="+o.values.size*4
+       decodeCompact(o.values,o.shape,j.shape[3].toInt())
+      }else runCpu(j)
+      val end=System.nanoTime()
+      check(answers.size==j.ids.size)
+      synchronized(lock){
+       for(i in j.ids.indices){check(results[j.ids[i]]==null);results[j.ids[i]]=answers[i]}
+       starts.add(Triple(name,at,end))
+       finished.add("BATCH ordinal="+j.ordinal+" lane="+name+" ids="+j.ids+" shape="+j.shape.contentToString()+" prep_ms="+j.prepMs+" start_ms="+ms(at-began)+" finish_ms="+ms(end-began)+" host_ms="+ms(end-at)+" "+details)
+      }
+     }
+     job=take()
+    }
+   }catch(t:Throwable){aborted.set(true);throw t}
+  }
+  val futures=ArrayList<java.util.concurrent.Future<Unit>>()
+  try{
+   futures.add(pool.submit(Callable<Unit>{lane("GPU",0)}))
+   if(useCpu)futures.add(pool.submit(Callable<Unit>{lane("CPU",1)}))
+   // Wait for both workers, including after error, before releasing bitmap/model.
+   var failure:Throwable?=null
+   for(f in futures)try{f.get()}catch(t:Throwable){aborted.set(true);if(failure==null)failure=t.cause?:t}
+   for(line in finished)note(line)
+   val cpu=starts.filter{it.first=="CPU"};val gpuRuns=starts.filter{it.first=="GPU"}
+   var overlap=0L
+   for(c in cpu)for(g in gpuRuns)overlap+=max(0L,min(c.third,g.third)-max(c.second,g.second))
+   note("COOP_SUMMARY requested="+(if(mixed)"CPU_GPU" else "GPU")+" cpu_batches="+cpu.size+" gpu_batches="+gpuRuns.size+" host_overlap_ms="+ms(overlap)+" elapsed_ms="+ms(System.nanoTime()-began)+" groups="+groups.size+" (host overlap, not measured GPU kernel overlap)")
+   if(failure!=null)throw failure
+   check(results.all{it!=null}){"missing batch result"}
+   return results.map{it!!}
+  }finally{pool.shutdown()}
+ }
+
  override fun close(){session.close()}
 }
