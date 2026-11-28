@@ -170,6 +170,10 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
   note("SHAPE_POLICY mode=$mode fixed_width=${mode.fixedWidth} fixed_batch=${mode.fixedBatch} engine="+(if(mode.cpuOnly)"ORT_CPU" else "GPU_OR_MIXED"))
   if(mode.fixedWidth)note("GPU_PAGE_PLAN real_max_width="+(widths.maxOrNull()?:0)+" fixed_shape="+longArrayOf(gpuBatch.toLong(),3,48,gpuWidth.toLong()).contentToString()+" width_rounding=64 tail_duplicate=1 smart_batch=1 padding_changes_model_input=1")
   val useCpu=mixed&&groups.size>1
+  val partialTail=official&&groups.last().size<officialBatchSize
+  val order=ExactBatchOrder.order(mode,groups.size,partialTail)
+  val singleCpu=mode==CoopMode.MIXED_EXACT&&!useCpu
+  note("BATCH_ORDER ordinals=$order cpu_reserved="+(if(useCpu)order[1] else if(singleCpu)order[0] else -1)+" partial_tail=$partialTail single_cpu=$singleCpu")
   val dispatch=BatchDispatch(groups.size,if(useCpu)2 else 1)
   val aborted=AtomicBoolean(false)
   val finished=mutableListOf<String>()
@@ -178,7 +182,8 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
   // This tests both lanes even when one starts much faster than the other.
   fun take(reserved:Int?=null):Job?=synchronized(lock){
    if(aborted.get())return@synchronized null
-   val id=if(reserved!=null)dispatch.first(reserved) else dispatch.next()?:return@synchronized null
+   val slot=if(reserved!=null)dispatch.first(reserved) else dispatch.next()?:return@synchronized null
+   val id=order[slot]
    val at=System.nanoTime()
    val group=groups[id]
    if(official){
@@ -234,7 +239,7 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
       synchronized(lock){
        for(i in j.ids.indices){check(results[j.ids[i]]==null);results[j.ids[i]]=answers[i]}
        starts.add(Triple(name,at,end))
-       if(mode==CoopMode.GPU_EXACT||mode==CoopMode.GPU_TAIL_FIXED)for(i in j.ids.indices){val a=answers[i];finished.add("DIAG_CELL index="+j.ids[i]+" text="+org.json.JSONObject.quote(a.text)+" mean="+a.confidence+" min="+a.minConfidence+" original_width="+a.width)}
+       if(mode==CoopMode.GPU_EXACT||mode==CoopMode.GPU_TAIL_FIXED||mode==CoopMode.GPU_TAIL_FIRST)for(i in j.ids.indices){val a=answers[i];finished.add("DIAG_CELL index="+j.ids[i]+" text="+org.json.JSONObject.quote(a.text)+" mean="+a.confidence+" min="+a.minConfidence+" original_width="+a.width)}
        finished.add("BATCH ordinal="+j.ordinal+" lane="+name+" ids="+j.ids+" shape="+j.shape.contentToString()+" prep_ms="+j.prepMs+" start_ms="+ms(at-began)+" finish_ms="+ms(end-began)+" host_ms="+ms(end-at)+" "+details)
       }
      }
@@ -244,7 +249,7 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
   }
   val futures=ArrayList<java.util.concurrent.Future<Unit>>()
   try{
-   futures.add(pool.submit(Callable<Unit>{lane(if(mode.cpuOnly)"CPU" else "GPU",0)}))
+   futures.add(pool.submit(Callable<Unit>{lane(if(mode.cpuOnly||singleCpu)"CPU" else "GPU",0)}))
    if(useCpu)futures.add(pool.submit(Callable<Unit>{lane("CPU",1)}))
    // Wait for both workers, including after error, before releasing bitmap/model.
    var failure:Throwable?=null
