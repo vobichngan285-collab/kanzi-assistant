@@ -41,9 +41,9 @@ write(root/"build.gradle",'''ext {
 }
 ''')
 p=root/"app/build.gradle.kts"
-patch(p,'applicationId = "com.vobich.bluestar.openocrlab.fielddb"','applicationId = "com.vobich.bluestar.uvcliveocr"')
-patch(p,'versionCode = 17','versionCode = 1')
-patch(p,'versionName = "0.4.8"','versionName = "0.1.0"')
+patch(p,'applicationId = "com.vobich.bluestar.openocrlab.fielddb"','applicationId = "com.vobich.bluestar.uvcliveocr012"')
+patch(p,'versionCode = 17','versionCode = 3')
+patch(p,'versionName = "0.4.8"','versionName = "0.1.2"')
 patch(p,'dependencies {\n','dependencies {\n implementation(project(":libuvc"))\n implementation(platform("org.jetbrains.kotlin:kotlin-bom:2.3.20"))\n')
 write(root/"app/src/main/AndroidManifest.xml",'''<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
 <uses-permission android:name="android.permission.INTERNET" tools:node="remove"/>
@@ -54,7 +54,7 @@ write(root/"app/src/main/AndroidManifest.xml",'''<manifest xmlns:android="http:/
 <uses-feature android:name="android.hardware.usb.host" android:required="true"/>
 <uses-feature android:name="android.hardware.camera" android:required="false"/>
 <queries><intent><action android:name="android.intent.action.TTS_SERVICE"/></intent></queries>
-<application android:label="蓝星 C110 实时离线OCR" android:allowBackup="false" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+<application android:label="蓝星 C110 截帧实验 v0.1.2" android:allowBackup="false" android:theme="@android:style/Theme.Material.Light.NoActionBar">
 <activity android:name=".LiveActivity" android:exported="true" android:configChanges="orientation|screenSize|keyboardHidden"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity>
 <service android:name=".LiveService" android:exported="false" android:foregroundServiceType="connectedDevice"/>
 </application></manifest>
