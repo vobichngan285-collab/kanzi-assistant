@@ -19,7 +19,7 @@ mkdir -p "$DST"
 cp "$LIB" "$DST/"
 TOOL="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
 "$TOOL/bin/aarch64-linux-android28-clang++" -std=c++17 -O2 -fPIC -shared \
- -I mnn-src/include openocr-lab/gpu/ocr_mnn_jni.cpp -L "$DST" -lMNN -Wl,--no-undefined \
+ -I mnn-src/include openocr-lab/gpu/ocr_mnn_jni.cpp -L "$DST" -lMNN -ldl -Wl,--no-undefined \
  -o "$DST/libocr_mnn_jni.so"
 cp "$TOOL/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$DST/"
 "$TOOL/bin/llvm-readelf" -d "$DST/libocr_mnn_jni.so"
