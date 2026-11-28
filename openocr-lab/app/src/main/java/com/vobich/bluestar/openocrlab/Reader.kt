@@ -148,6 +148,24 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
   val began=System.nanoTime()
   val lock=Any();val results=arrayOfNulls<Answer>(boxes.size)
   val groups=boxes.indices.toList().chunked(if(official)officialBatchSize else 1)
+  // Compute one GPU width per page without changing the original crop or CPU batch.
+  val widths=boxes.mapNotNull{box->
+   val p=box.points
+   if(official){
+    val cw=OfficialGeometry.cropWidth(p);val ch=OfficialGeometry.cropHeight(p)
+    if(cw<1||ch<1)null else if(ch.toDouble()/cw>=1.5)OfficialGeometry.recWidth(ch,cw)else OfficialGeometry.recWidth(cw,ch)
+   }else{
+    val start=if(p[2]>=p[0])0 else 2
+    val q=FloatArray(8){i->p[((start+i/2)%4)*2+i%2]}
+    val w=(hypot(q[2]-q[0],q[3]-q[1])+hypot(q[4]-q[6],q[5]-q[7]))/2
+    val h=(hypot(q[6]-q[0],q[7]-q[1])+hypot(q[4]-q[2],q[5]-q[3]))/2
+    require(w>=1&&h>=1)
+    max(320,ceil(48*w/h).toInt().coerceIn(1,960))
+   }
+  }
+  val gpuWidth=FixedGpuInput.widthFor(widths.maxOrNull()?:320)
+  val gpuBatch=if(official)officialBatchSize else 1
+  note("GPU_PAGE_PLAN real_max_width="+(widths.maxOrNull()?:0)+" fixed_shape="+longArrayOf(gpuBatch.toLong(),3,48,gpuWidth.toLong()).contentToString()+" width_rounding=64 tail_duplicate=1 smart_batch=1 padding_changes_model_input=1")
   val useCpu=mixed&&groups.size>1
   val dispatch=BatchDispatch(groups.size,if(useCpu)2 else 1)
   val aborted=AtomicBoolean(false)
@@ -184,10 +202,20 @@ class Reader(context:Context, asset:String,threads:Int=4):AutoCloseable {
       val at=System.nanoTime()
       var details=""
       val answers=if(name=="GPU"){
-       val o=gpu.infer(j.input,j.shape)
-       require(o.shape[0]==j.ids.size)
-       details=o.detail+" compact_bytes="+o.values.size*4
-       decodeCompact(o.values,o.shape,j.shape[3].toInt())
+       val gpuShape=longArrayOf(gpuBatch.toLong(),3,48,gpuWidth.toLong())
+       val padAt=System.nanoTime()
+       val padded=FixedGpuInput.pad(j.input,j.ids.size,j.shape[3].toInt(),gpuBatch,gpuWidth)
+       val padMs=ms(System.nanoTime()-padAt)
+       val o=gpu.infer(padded,gpuShape)
+       details=o.detail+" compact_bytes="+o.values.size*4+" gpu_shape="+gpuShape.contentToString()+" gpu_pad_ms="+padMs+" real_rows="+j.ids.size+" dummy_rows="+(gpuBatch-j.ids.size)
+       try{
+        require(o.shape[0]==gpuBatch)
+        val realShape=o.shape.copyOf().apply{this[0]=j.ids.size}
+        decodeCompact(FixedGpuInput.realPrefix(o.values,o.shape,j.ids.size),realShape,j.shape[3].toInt())
+       }catch(t:Throwable){
+        synchronized(lock){finished.add("GPU_BATCH_FAIL ordinal="+j.ordinal+" ids="+j.ids+" original_shape="+j.shape.contentToString()+" output_shape="+o.shape.contentToString()+" "+details+" error="+t.message)}
+        throw t
+       }
       }else runCpu(j)
       val end=System.nanoTime()
       check(answers.size==j.ids.size)
