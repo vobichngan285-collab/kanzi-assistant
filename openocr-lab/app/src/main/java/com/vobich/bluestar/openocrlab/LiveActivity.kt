@@ -28,25 +28,6 @@ import kotlin.math.*
 private fun clock()=SystemClock.elapsedRealtime()
 private fun isC110(d:UsbDevice)=d.vendorId==0x0603&&d.productId==0x8612
 
-// Only a coarse luminance comparison gates OCR. Original 2560x1440 YUYV
-// is copied and converted for OCR; the signature is never used as OCR input.
-internal object SceneGate {
- const val W=2560; const val H=1440
- fun signature(b:ByteBuffer):IntArray {
-  val origin=b.position()
-  return IntArray(64*36){i->
-   val x=(i%64)*40+20;val y=(i/64)*40+20
-   val p=origin+2*(y*W+x)
-   ((b.get(p-2).toInt() and 255)+(b.get(p).toInt() and 255)+(b.get(p+2).toInt() and 255))/3
-  }
- }
- fun changed(a:IntArray?,b:IntArray):Boolean {
-  if(a==null)return true
-  var sum=0;var large=0
-  for(i in b.indices){val d=abs(a[i]-b[i]);sum+=d;if(d>=24)large++}
-  return sum>=8*b.size||large*100>=12*b.size
- }
-}
 internal object LiveLog {
  @Volatile var running=false
  @Volatile var status="未启动"
@@ -89,7 +70,7 @@ class LiveActivity:Activity(){
   val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(24,32,24,24)}
   val scroll=ScrollView(this);scroll.addView(root);setContentView(scroll)
   fun label(s:String)=TextView(this).apply{text=s;textSize=18f;root.addView(this)}
-  label("蓝星 C110 实时离线OCR v0.1.0\n原始1440P · 无预览 · 锁屏专项")
+  label("蓝星 C110 实时离线OCR v0.1.1\n原始1440P · 无预览 · 锁屏专项")
   mode=Spinner(this).apply{adapter=ArrayAdapter(this@LiveActivity,android.R.layout.simple_spinner_dropdown_item,listOf("官方原框（全画面）","智能主阅读区（冻结原版）"));root.addView(this)}
   start=Button(this).apply{text="启动实时识别";root.addView(this);setOnClickListener{begin()}}
   Button(this).apply{text="重新识别当前画面";root.addView(this);setOnClickListener{if(LiveLog.running)startService(Intent(this@LiveActivity,LiveService::class.java).setAction("rescan"))}}
@@ -102,7 +83,7 @@ class LiveActivity:Activity(){
   if(Build.VERSION.SDK_INT>=33)registerReceiver(permissionReceiver,IntentFilter(permissionAction),Context.RECEIVER_NOT_EXPORTED)
   else registerReceiver(permissionReceiver,IntentFilter(permissionAction))
   receiverRegistered=true
-  LiveLog.append(this,"APP v0.1.0 model="+Build.MODEL+" sdk="+Build.VERSION.SDK_INT)
+  LiveLog.append(this,"APP v0.1.1 model="+Build.MODEL+" sdk="+Build.VERSION.SDK_INT)
  }
  private fun copy(s:String){(getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("蓝星",s));Toast.makeText(this,"已复制",Toast.LENGTH_SHORT).show()}
  override fun onResume(){super.onResume();main.removeCallbacks(refresh);main.post(refresh)}
@@ -141,7 +122,12 @@ class LiveService:Service(){
  private var wake:PowerManager.WakeLock?=null
  private var tts:TextToSpeech?=null
  @Volatile private var voiceReady=false
- private var signature:IntArray?=null
+ private val sceneGate=SceneGate()
+ private var movingFrames=0L
+ private var motionEpisodes=0L
+ private var invalidatedId=0L
+ private var invalidatedAt=0L
+ private var cancellationFinished=0L
  private var force=false
  private var generation=0L
  private var pending:Frame?=null
@@ -186,7 +172,7 @@ class LiveService:Service(){
    val pm=(getSystemService(POWER_SERVICE) as PowerManager)
    wake=pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,packageName+":live").apply{setReferenceCounted(false);acquire()}
    previousInteractive=pm.isInteractive
-   log("START mode="+(if(official)"official" else "focus")+" db=1600 cpu=4 source=2560x1440 MJPEG no_surface=1 no_network=1")
+   log("START mode="+(if(official)"official" else "focus")+" db=1600 cpu=4 source=2560x1440 MJPEG no_surface=1 no_network=1 gate=motion_episode quiet_comparisons=2")
    status("初始化离线OCR与TTS")
    initTts()
    ocrWorker.execute{ocrLoop()}
@@ -243,6 +229,19 @@ class LiveService:Service(){
   val o=runningOptions
   if(o!=null){try{o.setTerminate(true)}catch(e:Exception){log("TERMINATE_ERROR "+e)}}
  }
+ // gate is held. Invalidate an old scene only once, including its speech.
+ private fun invalidateScene(now:Long){
+  generation++
+  if(processing!=0L&&invalidatedId!=processing){
+   invalidatedId=processing;invalidatedAt=now;cancelled++;cancelLocked()
+  }
+  if(pending!=null){pending=null;replaced++}
+  tts?.stop();LiveLog.raw=""
+ }
+ private fun metrics(d:SceneGate.Difference?):String{
+  if(d==null)return "none"
+  return String.format(Locale.US,"%.2f/%.3f/%.2f/%.2f",d.mean,d.large,d.local,d.exposure)
+ }
  private fun receive(f:ByteBuffer,w:Int,h:Int){
   if(!active)return
   val now=clock()
@@ -250,17 +249,28 @@ class LiveService:Service(){
    if(!active)return
    if(w!=SceneGate.W||h!=SceneGate.H||f.remaining()!=w*h*2){badFrames++;return}
    frameCount++;if(lastFrame>0)maxGap=max(maxGap,now-lastFrame);lastFrame=now
-   val sig=SceneGate.signature(f)
-   if(!force&&!SceneGate.changed(signature,sig))return
-   force=false;signature=sig
-   val id=++generation;accepted++
-   if(processing!=0L){cancelled++;cancelLocked()}
-   if(pending!=null)replaced++
-   tts?.stop();LiveLog.raw=""
-   val bytes=ByteArray(f.remaining());f.duplicate().get(bytes)
-   pending=Frame(id,now,bytes)
-   log("NEW id="+id+" replaced="+replaced+" cancel_requested="+(if(processing!=0L)1 else 0))
-   gate.notifyAll()
+   val forced=force;force=false
+   val decision=sceneGate.observe(SceneGate.signature(f),forced)
+   when(decision.action){
+    SceneGate.Action.HOLD->return
+    SceneGate.Action.WAIT->{movingFrames++;return}
+    SceneGate.Action.INVALIDATE->{
+     motionEpisodes++;movingFrames++
+     invalidateScene(now)
+     log("MOTION_BEGIN episode="+motionEpisodes+" old_task="+processing+" anchor="+metrics(decision.anchor)+" step="+metrics(decision.motion))
+     status("画面变化中 · 等待可识别画面")
+     return
+    }
+    SceneGate.Action.START->{
+     if(forced)invalidateScene(now)
+     val id=++generation;accepted++
+     val bytes=ByteArray(f.remaining());f.duplicate().get(bytes)
+     if(pending!=null)replaced++
+     pending=Frame(id,now,bytes)
+     log("NEW id="+id+" episode="+motionEpisodes+" quiet="+decision.quietCount+" forced="+forced+" step="+metrics(decision.motion)+" anchor="+metrics(decision.anchor))
+     gate.notifyAll()
+    }
+   }
   }
  }
  private fun alive(id:Long):Boolean=synchronized(gate){active&&generation==id}
@@ -288,7 +298,10 @@ class LiveService:Service(){
      if(!alive(frame.id))log("ABORT id="+frame.id+" work_ms="+(clock()-begin)+" frame_age_ms="+(clock()-frame.at))
      else {log("OCR_ERROR id="+frame.id+" "+e);status("识别失败，见日志")}
     }finally{
-     synchronized(gate){runningOptions=null;processing=0;options.close()}
+     synchronized(gate){
+      if(invalidatedId==frame.id){cancellationFinished++;log("CANCEL_DONE id="+frame.id+" cancel_to_release_ms="+(clock()-invalidatedAt));invalidatedId=0;invalidatedAt=0}
+      runningOptions=null;processing=0;options.close()
+     }
     }
    }
   }catch(e:Throwable){log("MODEL_ERROR "+e);main.post{halt("MODEL_ERROR")}}
@@ -364,7 +377,7 @@ class LiveService:Service(){
    val now=clock();val interactive=(getSystemService(POWER_SERVICE) as PowerManager).isInteractive
    synchronized(gate){
     if(interactive!=previousInteractive){previousInteractive=interactive;log("SCREEN interactive="+interactive+" frames="+frameCount)}
-    if(now-lastStats>=5000){lastStats=now;log("HEARTBEAT interactive="+interactive+" frames="+frameCount+" mismatch="+badFrames+" accepted="+accepted+" cancel_requested="+cancelled+" pending_replaced="+replaced+" completed="+completed+" last_frame_age_ms="+(if(lastFrame==0L)-1 else now-lastFrame)+" max_gap_ms="+maxGap)}
+    if(now-lastStats>=5000){lastStats=now;log("HEARTBEAT interactive="+interactive+" frames="+frameCount+" mismatch="+badFrames+" accepted="+accepted+" cancel_requested="+cancelled+" pending_replaced="+replaced+" motion_episodes="+motionEpisodes+" moving_frames="+movingFrames+" cancel_finished="+cancellationFinished+" completed="+completed+" last_frame_age_ms="+(if(lastFrame==0L)-1 else now-lastFrame)+" max_gap_ms="+maxGap)}
     if(now-launchedAt>15000&&(lastFrame==0L||now-lastFrame>10000)){status("超过10秒无视频帧，见日志");log("FRAME_STALL")}
    }
    main.postDelayed(this,1000)
