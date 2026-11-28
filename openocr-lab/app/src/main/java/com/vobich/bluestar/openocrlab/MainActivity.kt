@@ -30,6 +30,8 @@ class MainActivity:Activity(){
  private var gpu:GpuClient?=null
  private var gpuThreads=0
  private var busyNow=false
+ private data class Reference(val run:String,val geometry:List<String>,val values:List<Reader.Answer>,val keep:List<Boolean>,val complete:Long)
+ private val references=object:LinkedHashMap<String,Reference>(){override fun removeEldestEntry(e:MutableMap.MutableEntry<String,Reference>?):Boolean=size>8}
  private lateinit var raw:TextView;private lateinit var voiceStatus:TextView
  private lateinit var replay:Button;private lateinit var stopVoice:Button
  private var tts:TextToSpeech?=null;private var ttsReady=false;private var ttsFailed=false
@@ -114,7 +116,7 @@ class MainActivity:Activity(){
  }
  private fun copy(s:String){
   if(s.toByteArray(Charsets.UTF_8).size>300000){Toast.makeText(this,"内容过长，请导出完整日志",Toast.LENGTH_LONG).show();return}
-  (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("OpenOCR",s));Toast.makeText(this,"已复制",Toast.LENGTH_SHORT).show()
+  runCatching{(getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("OpenOCR",s))}.onSuccess{Toast.makeText(this,"已复制",Toast.LENGTH_SHORT).show()}.onFailure{status.text="复制失败："+it.message}
  }
  override fun onActivityResult(req:Int,res:Int,data:Intent?){super.onActivityResult(req,res,data)
   if(req==11&&res==RESULT_OK){val uri=data?.data?:return;worker.execute{try{val out=contentResolver.openOutputStream(uri)?:error("无法打开导出文件");out.use{history.copyTo(it)};runOnUiThread{status.text="已导出完整历史日志"}}catch(t:Throwable){runOnUiThread{status.text="导出失败："+t.message}}};return}
@@ -123,13 +125,14 @@ class MainActivity:Activity(){
    try{val hash=contentResolver.openInputStream(uri)?.use{ExperimentHistory.sampleHash(it)}?:error("无法读取原图");val bm=ImageDecoder.decodeBitmap(ImageDecoder.createSource(contentResolver,uri)){d,i,_->
     require(i.size.width.toLong()*i.size.height<=16_000_000L){"图片超过1600万像素"};d.allocator=ImageDecoder.ALLOCATOR_SOFTWARE}
     db?.clearProbability()
-    runOnUiThread{preview.setImageBitmap(bm);source?.recycle();source=bm;sampleId=hash;lastText="";raw.text="";output.text="";replay.isEnabled=false;status.text="原图 "+bm.width+"×"+bm.height+" · "+hash.take(12)+" · 累计日志 "+history.size()+" bytes";busy(false)}
+    runOnUiThread{if(isDestroyed){bm.recycle();return@runOnUiThread};preview.setImageBitmap(bm);source?.recycle();source=bm;sampleId=hash;lastText="";raw.text="";output.text="";replay.isEnabled=false;status.text="原图 "+bm.width+"×"+bm.height+" · "+hash.take(12)+" · 累计日志 "+history.size()+" bytes";busy(false)}
    }catch(t:Throwable){runOnUiThread{status.text=t.toString();busy(false)}}
   }
  }
  private fun busy(v:Boolean){busyNow=v;choose.isEnabled=!v;run.isEnabled=!v;mode.isEnabled=!v;threads.isEnabled=!v;dbSize.isEnabled=!v;backend.isEnabled=!v}
  private fun test(){
-  val bm=source?:return
+  if(busyNow)return
+  val clicked=now();val bm=source?:return
   val official=mode.selectedItemPosition==0
   val name=if(official)"官方原框" else "智能主阅读区（原版）"
   val nt=listOf(4,2,6)[threads.selectedItemPosition]
@@ -138,9 +141,9 @@ class MainActivity:Activity(){
   val backendName=listOf("ORT_CPU","CPU_GPU","GPU_ONLY")[selected]
   val runId=UUID.randomUUID().toString();currentRun=runId;speechRun=""
   val sample=sampleId
-  val header="BEGIN run=$runId sample_sha256=$sample backend=$backendName mode=$name source=${bm.width}x${bm.height} db=$longSide cpu_threads=$nt device=${Build.MODEL} sdk=${Build.VERSION.SDK_INT} time_ms=${System.currentTimeMillis()} db_cache=forced_miss"
-  try{history.append(header)}catch(t:Throwable){status.text="无法保存诊断："+t.message;return}
-  stopSpeech();lastText="";raw.text="";replay.isEnabled=false;testStart=now();val clicked=testStart
+  val header="BEGIN run=$runId sample_sha256=$sample backend=$backendName mode=$name source=${bm.width}x${bm.height} db=$longSide cpu_threads=$nt device=${Build.MODEL} sdk=${Build.VERSION.SDK_INT} time_ms=${System.currentTimeMillis()} db_cache=forced_miss thermal_start="+(if(Build.VERSION.SDK_INT>=29)(getSystemService(POWER_SERVICE) as PowerManager).currentThermalStatus else -1)
+  try{history.append(header.replaceFirst("BEGIN","START"))}catch(t:Throwable){status.text="无法保存诊断："+t.message;return}
+  stopSpeech();lastText="";raw.text="";replay.isEnabled=false;testStart=clicked
   busy(true);output.text="";status.text="OpenOCR RepViT-DB 定位中"
   worker.execute{
    val details=StringBuilder(header).append("\n")
@@ -177,7 +180,7 @@ class MainActivity:Activity(){
      if(roi!=null){paint.color=Color.GREEN;drawRect(roi,paint)}
      paint.color=Color.CYAN;rows.flatten().forEach{b->val path=Path();path.moveTo(b.points[0],b.points[1]);for(i in 1..3)path.lineTo(b.points[2*i],b.points[2*i+1]);path.close();drawPath(path,paint)}
     }
-    runOnUiThread{preview.setImageBitmap(shown)}
+    runOnUiThread{if(!isDestroyed)preview.setImageBitmap(shown)else shown.recycle()}
     if(selected!=0){
      val t=now();val existing=gpu!=null&&gpuThreads==nt
      if(!existing){gpu?.close();gpu=null;gpu=GpuClient(applicationContext,nt);gpuThreads=nt}
@@ -186,6 +189,7 @@ class MainActivity:Activity(){
     }else note("GPU_RESIDENT="+(gpu!=null))
     val begin=now();var count=0;var uncertain=0;var blank=0;var dropped=0;var first=-1L
     val lines=mutableListOf<String>();val rawLines=mutableListOf<String>();val notes=mutableListOf<String>()
+    val compared=mutableListOf<Reader.Answer>();val keepFlags=mutableListOf<Boolean>()
     val rgba=Mat();val bgr=Mat()
     try{
      if(official){Utils.bitmapToMat(bm,rgba);Imgproc.cvtColor(rgba,bgr,Imgproc.COLOR_RGBA2BGR);rgba.release()}
@@ -194,6 +198,7 @@ class MainActivity:Activity(){
      val parallel=if(selected==0)null else engine.cooperate(bm,bgr,rows.flatten(),official,gpu!!,selected==1,::note)
      var cooperativeIndex=0
      for(index in rows.indices step batch){
+      val batchAt=now()
       val chunk=rows.subList(index,min(rows.size,index+batch))
       val answers=if(official&&parallel==null)engine.readOfficial(bgr,chunk.flatten())else emptyList()
       var ai=0
@@ -203,6 +208,7 @@ class MainActivity:Activity(){
         val ans=if(parallel!=null)parallel[cooperativeIndex++]else if(official)answers[ai++]else engine.read(bm,b,true)
         val suspect=if(official)ans.confidence<.5f else ans.text.isBlank()||ans.confidence<.75f||ans.minConfidence<.65f||(ans.text.count{!it.isWhitespace()}<=2&&b.score<.55f&&ans.confidence<.8f)
         val keep=!official||ans.confidence>=.5f
+        compared.add(ans);keepFlags.add(keep)
         if(!keep)dropped++
         if(ans.text.isNotBlank()&&keep)rawParts.add(ans.text)
         count++;if(suspect)uncertain++;if(ans.text.isBlank())blank++
@@ -213,11 +219,24 @@ class MainActivity:Activity(){
        if(parts.isNotEmpty())lines.add(parts.joinToString(" | "))
        if(first<0&&parallel==null)first=now()-begin
       }
+      if(parallel==null)note("CPU_BASE_BATCH row_start="+(index+1)+" rows="+chunk.size+" crops="+chunk.sumOf{it.size}+" prep_infer_decode_wall_ms="+(now()-batchAt))
      }
      if(parallel!=null)check(cooperativeIndex==parallel.size)
     }finally{rgba.release();bgr.release()}
     val rec=now()-begin;val total=detected-init+pMs+rec+focusMs
     val original=rawLines.joinToString("\n");val done=now()
+    val key="$sample/$name/$longSide/$nt"
+    val geometry=rows.flatten().map{it.points.contentToString()}
+    if(selected==0)references[key]=Reference(runId,geometry,compared.toList(),keepFlags.toList(),done-clicked)
+    else{
+     val ref=references[key]
+     if(ref==null)note("REFERENCE_COMPARE unavailable=run_CPU_baseline_first")
+     else if(ref.geometry!=geometry||ref.values.size!=compared.size)note("REFERENCE_COMPARE reference="+ref.run+" geometry_equal=false not_comparable=1")
+     else{
+      val ids=compared.indices;val textDiff=ids.count{compared[it].text!=ref.values[it].text};val keepDiff=ids.count{keepFlags[it]!=ref.keep[it]};val widthDiff=ids.count{compared[it].width!=ref.values[it].width};val maxConf=ids.maxOfOrNull{abs(compared[it].confidence-ref.values[it].confidence)}?:0f;val maxMin=ids.maxOfOrNull{abs(compared[it].minConfidence-ref.values[it].minConfidence)}?:0f
+      note("REFERENCE_COMPARE reference="+ref.run+" geometry_equal=true cells="+compared.size+" text_diff="+textDiff+" keep_diff="+keepDiff+" width_diff="+widthDiff+" max_mean_conf_diff="+maxConf+" max_min_conf_diff="+maxMin+" reference_complete_ms="+ref.complete+" candidate_complete_ms="+(done-clicked)+" (CPU agreement is not human truth)")
+     }
+    }
     note("\n$name detect_ms=${detected-init} first_row_ms=$first rec_ms=$rec total_ms=$total crops=$count suspect=$uncertain blank=$blank official_dropped=$dropped pss_kb=${Debug.getPss()}\n"+lines.joinToString("\n")+"\n"+notes.joinToString("\n")+"\n OCR 点击至原文就绪：${done-clicked} ms\n")
     note("SUMMARY run=$runId sample_sha256=$sample backend=$backendName complete_ms=${done-clicked} rec_ms=$rec detect_ms=${detected-init} crops=$count first_row_scope="+(if(selected==0)"baseline" else "not_measured_see_batch_finish")+" thermal_status="+(if(Build.VERSION.SDK_INT>=29)(getSystemService(POWER_SERVICE) as PowerManager).currentThermalStatus else -1))
     note("RAW_TEXT_BEGIN\n"+original+"\nRAW_TEXT_END\nEND run=$runId success=1")
